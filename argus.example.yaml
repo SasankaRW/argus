@@ -50,11 +50,14 @@ events:
 
 ntfy:
   url: https://ntfy.sh     # phone notifications; the topic is NTFY_TOPIC in .env (keep it hard to guess)
-  reply_retry_seconds: 5   # the Approve / Reject buttons reply through ntfy; reconnect wait if that link drops
 
 approvals:
-  public_url:              # how your phone reaches Argus (the Tailscale address) for the Open button;
-                           # Approve / Reject work without it, through ntfy
+  buttons: tailscale       # tailscale: Approve / Reject go straight to Argus (phone must be on Tailscale)
+                           # ntfy: they go through ntfy and work anywhere (only with your own ntfy + login)
+  public_url:              # how your phone reaches Argus, e.g. https://saspc.tail1234.ts.net
+  phone:                   # your phone's Tailscale name, e.g. pixel-8: when it comes back online, Argus
+                           # pushes what is still waiting (checks `tailscale status` every 30 s)
+  back_online_cooldown_minutes: 15
   remind_hours: 24         # one reminder if nobody decided
   expire_hours: 168        # then it counts as "no" and the job carries on
 

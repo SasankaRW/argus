@@ -123,9 +123,17 @@ class NtfyConfig(_Strict):
 
 
 class ApprovalsConfig(_Strict):
-    # The address your phone uses to reach Argus (Tailscale later, e.g. http://laptop:8600). Without it the
-    # notification has no Approve/Reject buttons and you decide in Helios instead.
-    public_url: str | None = None
+    # How the phone's Approve / Reject buttons reach Argus:
+    #   tailscale (default): straight to Argus at public_url, so they only work while the phone is on Tailscale.
+    #       When the phone comes back online, Argus pushes whatever is still waiting (see `phone`).
+    #   ntfy: through a private reply topic on the ntfy server, so they work anywhere; anyone who knows your
+    #       ntfy topic could then approve too. Use only with your own ntfy server behind a login.
+    buttons: Literal["tailscale", "ntfy"] = "tailscale"
+    public_url: str | None = None  # how the phone reaches Argus, e.g. https://saspc.tail1234.ts.net
+    phone: str | None = None  # the phone's Tailscale device name; empty = no "back online" push
+    presence_seconds: float = Field(30, ge=5, le=3600)  # how often `tailscale status` is checked
+    back_online_cooldown_minutes: float = Field(15, ge=0, le=24 * 60)  # at most one push per this long
+    tailscale_command: list[str] = Field(default_factory=lambda: ["tailscale"])
     remind_hours: float = Field(24, gt=0, le=24 * 30)   # one reminder if nobody decided by then
     expire_hours: float = Field(168, gt=0, le=24 * 90)  # then the approval counts as "no" and the job goes on
 
