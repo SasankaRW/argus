@@ -2,7 +2,7 @@
 
 Sep 28, 2026 · @Sasanka
 
-**Version 1.1** · the working tracker · history at the end · all versions in the Argus Docs Index
+**Version 1.2** · the working tracker · history at the end · all versions in the Argus Docs Index
 
 ## Summary
 
@@ -145,7 +145,7 @@ Each milestone lists its tasks in build order and one gate. The next milestone s
 - [ ] `docs/` folder in the repo, `argus docs sync` (exports docs as Markdown and diagrams as SVG, updates the changelog, tags the version) and `argus release patch|minor|major`
 - [ ] Early Wake-on-LAN check from full shutdown, using a WoL app on your phone
 
-**Progress (2026-09-28):** the repo is created at `G:\Projects\argus` with the layout above, CI config, `VERSION` and `CHANGELOG.md`; Argus `0.1.0` is tagged. Core steps C1–C3 are done ahead of M1. Still open in M0: pick the repo host, Docker/WSL2 check, Claude Code test, ntfy, Tailscale, the WoL test, and the `argus` docs and release commands.
+**Progress (2026-09-28):** the repo is at `G:\Projects\argus` and goes to a private GitHub repo with `.\scripts\dev.ps1 github`. Version control is in place: work on branches, pull requests squash-merged after CI passes, `main` protected by a local pre-push hook (GitHub Free doesn't enforce branch rules on private repos), one-command releases (`dev.ps1 release patch|minor|major`: tests, version bump, changelog, tag, GitHub release), and the design docs exported to `docs/`. Argus is at `0.4.0` with core steps C1–C6 done ahead of M1. Still open in M0: Docker/WSL2 check, Claude Code test, ntfy, Tailscale and the WoL test.
 
 **Gate:** a script gets answers from Ollama and `claude -p` and sends an ntfy message; WoL from full shutdown works.
 
@@ -269,7 +269,9 @@ Work happens in short sessions, each finishing one or two checklist items, so pr
 
 Needed before the milestone shown; none of them block M0.
 
-- [ ] **Repo host** (before M0 ends): GitHub private repo, or Forgejo on the laptop later?
+- [x] **Repo host** (before M0 ends): GitHub private repo, or Forgejo on the laptop later?
+
+  Decided 2026-09-28: GitHub, private repo.
 - [ ] **Laptop specs** (M0): RAM and disk size, and which Linux distro (Ubuntu Server 24.04 is the default suggestion)
 - [ ] **Cashly's stack** (before M4): is it a web app with an API, or a desktop app? This decides how the connector and "Open Cashly" work.
 - [ ] **Tracker hours** (before the invoice builder in M5): add hours per issue and a rate per client to the Tracker?
@@ -279,6 +281,7 @@ Needed before the milestone shown; none of them block M0.
 
 | Version | Date | Change |
 | --- | --- | --- |
+| 1.2 | 2026-09-28 | Repo host decided (GitHub, private); version control workflow, one-command releases and docs in Git done; M0 progress updated to Argus 0.4.0 |
 | 1.1 | 2026-09-28 | Repo created at G:\\Projects\\argus; Argus 0.1.0 with core steps C1–C3 |
 | 1.0 | 2026-09-28 | Versioning added; `argus docs sync`, `argus release` (M0) and `argus deploy` / `argus rollback` (MD) tasks; diagram IDs D7, D8 |
 | 0.9 | 2026-09-28 | M1 extended to 3 weeks and linked to the core design; D7 v4 |

@@ -3,14 +3,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ArgusEvent, ArgusMap, AuthError, EventStream, Status } from "./api";
 
-export type Pulse = { id: number; src: string; dst: string; bad: boolean; at: number };
+export type Tone = "flow" | "bad" | "warn";
+export type Pulse = { id: number; src: string; dst: string; tone: Tone; at: number };
 export type Conn = "connecting" | "live" | "offline";
 export type Phase = "loading" | "login" | "ready" | "down";
 
 const MAX_EVENTS = 400;
 const PULSE_MS = 1400;
-const MAP_KINDS = /^(component\.added|edge\.added|worker\.(online|offline))$/;
-const BAD = /(dead|failed|offline)/;
+const MAP_KINDS = /^(component\.added|edge\.added|worker\.(online|offline)|model\.breaker_\w+)$/;
+const BAD = /(dead|failed|offline|timeout|error)/;
+const WARN = /(escalated|skipped|retry)/;
+const pulseTone = (k: string): Tone => (BAD.test(k) ? "bad" : WARN.test(k) ? "warn" : "flow");
 
 export function useArgus() {
   const [phase, setPhase] = useState<Phase>("loading");
@@ -57,9 +60,9 @@ export function useArgus() {
     const touched: Record<string, number> = {};
     for (const e of evs) {
       if (MAP_KINDS.test(e.kind)) mapChanged = true;
-      if (e.kind.startsWith("job.") || e.kind.startsWith("worker.")) jobsChanged = true;
+      if (e.kind.startsWith("job.") || e.kind.startsWith("worker.") || e.kind.startsWith("model.")) jobsChanged = true;
       if (!replay && e.from && e.to && e.kind !== "edge.added") {
-        newPulses.push({ id: ++pulseId.current, src: e.from, dst: e.to, bad: BAD.test(e.kind), at: now });
+        newPulses.push({ id: ++pulseId.current, src: e.from, dst: e.to, tone: pulseTone(e.kind), at: now });
       }
       if (!replay) {
         if (e.from) touched[e.from] = now;

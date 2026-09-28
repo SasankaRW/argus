@@ -7,9 +7,10 @@ const FILTERS: [string, string, (k: string) => boolean][] = [
   ["all", "All", () => true],
   ["jobs", "Jobs", (k) => k.startsWith("job.")],
   ["steps", "Steps", (k) => k.startsWith("step.")],
+  ["models", "Models", (k) => k.startsWith("model.") || k.startsWith("check.")],
   ["workers", "Workers", (k) => k.startsWith("worker.")],
   ["map", "Map", (k) => k === "component.added" || k === "edge.added"],
-  ["problems", "Problems", (k) => /dead|failed|offline|retry/.test(k)],
+  ["problems", "Problems", (k) => /dead|failed|offline|retry|timeout|error|opened/.test(k)],
 ];
 
 export function EventsPanel({ events, conn, onSelect }: { events: ArgusEvent[]; conn: string; onSelect: (s: Selection) => void }) {

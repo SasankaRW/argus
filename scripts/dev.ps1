@@ -8,6 +8,8 @@
 #   .\scripts\dev.ps1 demo    submit a demo job (needs argusd and a worker running)
 #   .\scripts\dev.ps1 events  watch live events in the terminal
 #   .\scripts\dev.ps1 helios  rebuild Helios after changing helios/src (needs Node.js; the built copy is in Git)
+#   .\scripts\dev.ps1 models  check Ollama, the tier models and Claude ("models claude" also makes one real Claude call)
+#   .\scripts\dev.ps1 classify  send a model job; T1's answer is rejected on purpose so you see an escalation
 #
 # Version control (see CONTRIBUTING.md):
 #   .\scripts\dev.ps1 github            one-time: log in to GitHub, create the private repo, push everything
@@ -71,6 +73,24 @@ function Need-Gh {
     gh auth setup-git | Out-Null
 }
 
+function Submit-Job([string]$Body, [int]$Seconds) {
+    $Headers = @{}
+    if (Test-Path ".env") {
+        $Line = Get-Content ".env" | Where-Object { $_ -match "^ARGUS_WORKER_TOKEN=(.+)$" } | Select-Object -First 1
+        if ($Line -match "^ARGUS_WORKER_TOKEN=(.+)$") { $Headers["Authorization"] = "Bearer $($Matches[1].Trim())" }
+    }
+    $Job = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8600/jobs" -Headers $Headers -ContentType "application/json" -Body $Body
+    Write-Host "Submitted job $($Job.id). Waiting for a worker ..."
+    for ($i = 0; $i -lt $Seconds * 2; $i++) {
+        Start-Sleep -Milliseconds 500
+        $J = Invoke-RestMethod -Uri "http://127.0.0.1:8600/jobs/$($Job.id)" -Headers $Headers
+        if ($J.state -in @("succeeded", "dead", "retry")) { break }
+    }
+    Write-Host "State: $($J.state)"
+    if ($J.result) { $J.result | ConvertTo-Json -Compress }
+    if ($J.error) { Write-Host "Error: $($J.error)" }
+}
+
 function Current-Branch { (git rev-parse --abbrev-ref HEAD).Trim() }
 
 switch ($Command) {
@@ -93,6 +113,10 @@ switch ($Command) {
     "run"   { Need-Venv; & $Py -m argus }
     "worker" { Need-Venv; & $Py -m argus.worker.cli }
     "events" { Need-Venv; & $Py -m argus.tail }
+    "models" {
+        Need-Venv
+        if ($Arg -eq "claude") { & $Py -m argus.models.doctor --claude } else { & $Py -m argus.models.doctor }
+    }
     "helios" {
         if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { throw "Needs Node.js (https://nodejs.org). Not needed just to use Helios." }
         Push-Location (Join-Path $Root "helios")
@@ -104,22 +128,11 @@ switch ($Command) {
         } finally { Pop-Location }
         Write-Host "Helios rebuilt. Restart argusd and open http://127.0.0.1:8600"
     }
-    "demo"  {
+    "demo"  { Need-Venv; Submit-Job '{"plugin":"demo","workflow":"echo","input":{"text":"hello from argus"}}' 20 }
+    "classify" {
         Need-Venv
-        $Headers = @{}
-        if (Test-Path ".env") {
-            $Line = Get-Content ".env" | Where-Object { $_ -match "^ARGUS_WORKER_TOKEN=(.+)$" } | Select-Object -First 1
-            if ($Line -match "^ARGUS_WORKER_TOKEN=(.+)$") { $Headers["Authorization"] = "Bearer $($Matches[1].Trim())" }
-        }
-        $Body = '{"plugin":"demo","workflow":"echo","input":{"text":"hello from argus"}}'
-        $Job = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8600/jobs" -Headers $Headers -ContentType "application/json" -Body $Body
-        Write-Host "Submitted job $($Job.id). Waiting for a worker ..."
-        for ($i = 0; $i -lt 20; $i++) {
-            Start-Sleep -Milliseconds 500
-            $J = Invoke-RestMethod -Uri "http://127.0.0.1:8600/jobs/$($Job.id)" -Headers $Headers
-            if ($J.state -in @("succeeded", "dead")) { break }
-        }
-        Write-Host "State: $($J.state)"; $J.result | ConvertTo-Json -Compress
+        $File = if ($Arg) { $Arg } else { "lecture_07.pdf" }
+        Submit-Job ('{"plugin":"demo","workflow":"classify","input":{"filename":"' + $File + '","reject_tier":"T1"}}') 600
     }
     "github" {
         Need-Gh
@@ -205,6 +218,6 @@ switch ($Command) {
         if ($LASTEXITCODE -ne 0) { throw "Release stopped" }
     }
     default {
-        Get-Content $PSCommandPath | Select-Object -Skip 1 -First 17 | ForEach-Object { $_.TrimStart("#") }
+        Get-Content $PSCommandPath | Select-Object -Skip 1 -First 19 | ForEach-Object { $_.TrimStart("#") }
     }
 }

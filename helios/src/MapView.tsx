@@ -12,7 +12,7 @@ import type { Pulse } from "./live";
 export type Selection = { type: "node"; id: string } | { type: "edge"; src: string; dst: string } | { type: "job"; id: string } | null;
 
 type BoxData = { n: MapNode; hot: boolean; fresh: boolean; selected: boolean };
-type LineData = { count: number; pulses: Pulse[]; flow: boolean; selected: boolean; hot: boolean; bad: boolean };
+type LineData = { count: number; pulses: (Pulse & { back: boolean })[]; flow: boolean; selected: boolean; hot: boolean; tone: string };
 
 const KIND_LABEL: Record<string, string> = { core: "core", worker: "worker", plugin: "plugin", model: "model", app: "app", service: "service" };
 
@@ -24,14 +24,36 @@ function sub(n: MapNode): string {
     if (!j.active && !j.queued) return "idle";
     return [j.active ? `${j.active} running` : "", j.queued ? `${j.queued} queued` : ""].filter(Boolean).join(" · ");
   }
+  if (n.kind === "model") {
+    const st = n.state === "open" ? "paused" : n.state === "half_open" ? "trying again" : "ready";
+    const calls = (n as MapNode & { calls?: number }).calls ?? 0;
+    return `${st} · ${calls} call${calls === 1 ? "" : "s"}`;
+  }
   return n.implicit ? "seen in events" : KIND_LABEL[n.kind];
+}
+
+// One line per pair of components: a reply travels back along the request's line instead of adding a second one.
+export type MergedEdge = { src: string; dst: string; count: number; last_kind: string; first_seen: number; last_seen: number };
+export function mergeEdges(edges: ArgusMap["edges"]): MergedEdge[] {
+  const byPair = new Map<string, MergedEdge>();
+  for (const e of [...edges].sort((a, b) => a.first_seen - b.first_seen)) {
+    const key = [e.src, e.dst].sort().join("|");
+    const m = byPair.get(key);
+    if (!m) byPair.set(key, { ...e });
+    else {
+      m.count += e.count;
+      if (e.last_seen > m.last_seen) { m.last_seen = e.last_seen; m.last_kind = e.last_kind; }
+    }
+  }
+  return [...byPair.values()];
 }
 
 function dotColor(n: MapNode, hot: boolean): string {
   if (n.kind === "worker") return n.state === "online" ? "var(--ok)" : "var(--bad)";
+  if (n.kind === "model" && n.state === "open") return "var(--bad)";
   if (hot) return "var(--flow)";
   if (n.kind === "core") return "var(--amber)";
-  if (n.kind === "model") return "var(--violet)";
+  if (n.kind === "model") return n.state === "half_open" ? "var(--amber)" : "var(--violet)";
   if (n.kind === "plugin") return (n.jobs?.active ?? 0) > 0 ? "var(--flow)" : "var(--ok)";
   return "var(--tx3)";
 }
@@ -41,6 +63,8 @@ const Box = memo(function Box({ data }: NodeProps<Node<BoxData>>) {
   return (
     <div className={`box${hot ? " on" : ""}${selected ? " sel" : ""}${n.implicit ? " ghost" : ""}${fresh ? " born" : ""}`}>
       <Handle type="target" position={Position.Left} className="port" isConnectable={false} />
+      <Handle id="t" type="target" position={Position.Top} className="port" isConnectable={false} />
+      <Handle id="b-in" type="target" position={Position.Bottom} className="port" isConnectable={false} />
       <div className="nn">
         <span className="dot" style={{ background: dotColor(n, hot) }} />
         <span className="name">{n.label}</span>
@@ -48,16 +72,18 @@ const Box = memo(function Box({ data }: NodeProps<Node<BoxData>>) {
       </div>
       <div className="ns">{sub(n)}</div>
       <Handle type="source" position={Position.Right} className="port" isConnectable={false} />
+      <Handle id="b" type="source" position={Position.Bottom} className="port" isConnectable={false} />
+      <Handle id="t-out" type="source" position={Position.Top} className="port" isConnectable={false} />
     </div>
   );
 });
 
-function Dot({ path, bad }: { path: string; bad: boolean }) {
+function Dot({ path, tone, back }: { path: string; tone: string; back: boolean }) {
   const ref = useRef<SVGAnimateMotionElement>(null);
   useLayoutEffect(() => { ref.current?.beginElement(); }, []);
   return (
-    <circle r="3.2" className={`packet${bad ? " bad" : ""}`}>
-      <animateMotion ref={ref} dur="1.1s" begin="indefinite" fill="freeze" path={path} keyPoints="0;1" keyTimes="0;1" calcMode="linear" />
+    <circle r="3.2" className={`packet ${tone}`}>
+      <animateMotion ref={ref} dur="1.1s" begin="indefinite" fill="freeze" path={path} keyPoints={back ? "1;0" : "0;1"} keyTimes="0;1" calcMode="linear" />
     </circle>
   );
 }
@@ -66,11 +92,11 @@ const Line = memo(function Line(p: EdgeProps<Edge<LineData>>) {
   const [path] = getBezierPath({ sourceX: p.sourceX, sourceY: p.sourceY, targetX: p.targetX, targetY: p.targetY, sourcePosition: p.sourcePosition, targetPosition: p.targetPosition });
   const d = p.data!;
   const width = Math.min(1.2 + Math.log2(1 + d.count) * 0.35, 3.6);
-  const cls = `line${d.hot ? (d.bad ? " bad" : " on") : ""}${d.selected ? " sel" : ""}`;
+  const cls = `line${d.hot ? (d.tone === "bad" ? " bad" : d.tone === "warn" ? " warn" : " on") : ""}${d.selected ? " sel" : ""}`;
   return (
     <>
       <BaseEdge id={p.id} path={path} className={cls} style={{ strokeWidth: d.hot || d.selected ? width + 0.4 : width }} interactionWidth={16} />
-      {d.flow && d.pulses.map((x) => <Dot key={x.id} path={path} bad={x.bad} />)}
+      {d.flow && d.pulses.map((x) => <Dot key={x.id} path={path} tone={x.tone} back={x.back} />)}
     </>
   );
 });
@@ -97,16 +123,17 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal 
   const rf = useReactFlow();
   const userMoved = useRef(false); // once you pan or zoom, the map stops re-fitting itself
   const wrap = useRef<HTMLDivElement>(null);
-  const fit = (duration = 300) => rf.fitView({ padding: 0.3, maxZoom: 1.1, duration });
+  const fit = (duration = 300) => rf.fitView({ padding: 0.12, maxZoom: 1.1, duration });
 
   // Re-run layout when the set of boxes or lines changes (not on every count update).
+  const lines = useMemo(() => mergeEdges(map.edges), [map.edges]);
   const shapeKey = useMemo(
-    () => map.nodes.map((n) => n.id).sort().join("|") + "#" + map.edges.map((e) => `${e.src}>${e.dst}`).sort().join("|"),
-    [map],
+    () => map.nodes.map((n) => n.id).sort().join("|") + "#" + lines.map((e) => `${e.src}>${e.dst}`).sort().join("|"),
+    [map.nodes, lines],
   );
   useEffect(() => {
     let cancelled = false;
-    layout(map.nodes, map.edges).then((p) => { if (!cancelled) setPositions(p); });
+    layout(map.nodes, lines).then((p) => { if (!cancelled) setPositions(p); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shapeKey]);
@@ -164,16 +191,26 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal 
     });
   }, [map.nodes, positions, pins, active, now, selection, oldest, setNodes]);
 
+  // Boxes in the same column (the model tiers) connect top to bottom instead of side to side.
+  const stacked = (a: string, b: string) => {
+    const pa = pins[a] ?? positions[a], pb = pins[b] ?? positions[b];
+    if (!pa || !pb || Math.abs(pa.x - pb.x) > NODE_W / 2) return {};
+    return pa.y < pb.y ? { sourceHandle: "b", targetHandle: "t" } : { sourceHandle: "t-out", targetHandle: "b-in" };
+  };
+
   useEffect(() => {
     const t = Date.now();
     setEdges(
-      map.edges.map((e) => {
-        const mine = pulses.filter((p) => p.src === e.src && p.dst === e.dst);
-        const live = mine.filter((p) => t - p.at < 1400);
+      lines.map((e) => {
+        const live = pulses
+          .filter((p) => t - p.at < 1400 && ((p.src === e.src && p.dst === e.dst) || (p.src === e.dst && p.dst === e.src)))
+          .map((p) => ({ ...p, back: p.src === e.dst }));
+        const tones = live.map((p) => p.tone);
         return {
           id: `${e.src}>${e.dst}`,
           source: e.src,
           target: e.dst,
+          ...stacked(e.src, e.dst),
           type: "line",
           selectable: false,
           data: {
@@ -181,13 +218,14 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal 
             pulses: live,
             flow,
             hot: live.length > 0,
-            bad: live.some((p) => p.bad),
+            tone: tones.includes("bad") ? "bad" : tones.includes("warn") ? "warn" : "flow",
             selected: selection?.type === "edge" && selection.src === e.src && selection.dst === e.dst,
           },
         };
       }),
     );
-  }, [map.edges, pulses, flow, selection, now, setEdges]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lines, pulses, flow, selection, now, setEdges, positions, pins]);
 
   return (
     <div ref={wrap} style={{ width: "100%", height: "100%" }}>

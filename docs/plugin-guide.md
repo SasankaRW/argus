@@ -2,7 +2,7 @@
 
 Sep 28, 2026 · @Sasanka
 
-**Version 0.2** · draft (plugin API 1.0 draft) · history at the end · all versions in the Argus Docs Index
+**Version 0.3** · draft (plugin API 1.0 draft) · history at the end · all versions in the Argus Docs Index
 
 The reference for adding features to Argus. Keep it updated whenever the plugin API changes or a plugin is added.
 
@@ -138,12 +138,18 @@ Plugins are built from three things core provides: triggers that start a run, st
 ### The ctx API (inside step functions)
 
 ```python
+class BillFields(BaseModel):                                  # the answer must parse into this
+    vendor: str
+    amount: float
+    due: str
+
 def read_bill(ctx, data):
     text = ctx.files.read_text(data["path"], pages=1)      # only declared paths
-    fields = ctx.llm("T1", playbook="classify.md",          # logged, checked, escalated
-                     input=text, schema=BillFields)
-    ctx.log("parsed", vendor=fields.vendor)                  # shows in Helios events
-    return {**data, **fields.dict()}
+    fields = ctx.llm(PLAYBOOK, text, schema=BillFields,       # T1 first, escalates if rejected
+                     check=lambda f, src: None if f"{f.amount:,.2f}" in src
+                                          else "amount not found in the bill text")
+    ctx.log("parsed", vendor=fields.vendor, tier=ctx.last_answer.tier)
+    return {**data, **fields.model_dump()}
 
 def send_to_cashly(ctx, data):
     ok = ctx.approve(type="entry", title=f"{data['vendor']} bill",
@@ -155,8 +161,8 @@ def send_to_cashly(ctx, data):
 
 | `ctx` service | Use |
 | --- | --- |
-| `ctx.llm(tier, playbook, input, schema)` | model call with checks, retries and escalation |
-| `ctx.claude(prompt, schema)` | direct T3 call within budget |
+| `ctx.llm(playbook, input, schema=, check=, tiers=)` | model call, cheapest tier first. The reply is parsed as JSON, validated against the Pydantic `schema`, then `check(answer, input)` runs (return a reason to reject). A rejected answer is retried once with the reason, then escalated up the chain (T1 → T2 → T3) with the rejected answer as advice. Returns the answer; `ctx.last_answer` has the tier, attempts and trail. Built in Argus 0.5 (C7). |
+| `ctx.claude(prompt, input, schema=, check=)` | direct Claude call (tools off, one turn), counted against the daily cap. Built in C7. |
 | `ctx.files` | read, write, move, `recycle` inside declared paths only |
 | `ctx.approve(type, title, fields)` | create an approval and wait for the answer |
 | `ctx.notify(text, buttons)` | ntfy message |
@@ -262,11 +268,13 @@ The plugin API version is what `argus_api` in each manifest refers to. Minor ver
 
 | Version | Date | Change |
 | --- | --- | --- |
+| 1.0 (draft) | 2026-09-28 | ctx.llm and ctx.claude built (Argus C7): playbook, input, Pydantic schema, check function, optional tier chain; the tier is read from ctx.last\_answer instead of being passed in. |
 | 1.0 (draft) | 2026-09-28 | First design: manifest, 5 triggers, 7 step types, `ctx` services, 3 approval card types. Not built yet. |
 
 ## Document history
 
 | Version | Date | Change |
 | --- | --- | --- |
+| 0.3 | 2026-09-28 | ctx.llm and ctx.claude match the built API (schema + check, escalation, last\_answer) |
 | 0.2 | 2026-09-28 | Security rules for plugin authors |
 | 0.1 | 2026-09-28 | Created (D6) |

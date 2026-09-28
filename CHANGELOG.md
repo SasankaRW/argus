@@ -5,6 +5,30 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+Core step C7: models, tiers and escalation.
+
+- **`ctx.llm()` for plugins:** ask the cheapest model tier that can do the job. Every answer is checked in
+  code (JSON parsed and validated against a Pydantic schema, then the plugin's own check). A rejected answer
+  is retried once with the reason, then escalated T1 -> T2 -> T3, and the next tier is told what the smaller
+  model said and why it was rejected. `ctx.claude()` asks Claude directly. The step records which tier
+  answered, and a checkpointed step never asks again after a crash.
+- **Ollama provider:** `/api/chat` with structured JSON output, temperature 0, `keep_alive` so the model stays
+  loaded, and a hard timeout (a hung model never hangs a worker).
+- **Claude provider:** the `claude` CLI in print mode with every tool removed (`--disallowedTools "*"`,
+  one turn, no saved session): text in, text out. Daily cap (default 30 calls) enforced across all workers.
+- **Circuit breakers** per tier, kept in argusd: 3 failed calls in a row pause a model for 60 s, then one
+  trial call; jobs move on to the next tier instead of piling up. Wrong answers don't count as failures.
+- **Helios:** the model tiers are boxes stacked in one column (T1, T2, T3) showing ready / paused and call
+  counts; escalations draw an amber line from tier to tier; a paused model turns red; replies travel back
+  along the request's line. Click a model for its state, calls, last error and Claude budget. New Models
+  filter in the events list.
+- **Tools:** `dev.ps1 models` checks Ollama, pulled models and Claude (with a real test call);
+  `dev.ps1 classify` runs a demo model job with T1 rejected on purpose, to watch an escalation.
+- **API:** `GET /models`, `POST /models/{tier}/permit`, `POST /models/{tier}/report`, `POST /jobs/{id}/events`
+  (a worker's trace events); worker registration now hands out the model configuration. Migration 0003.
+- **Config:** new `models` and `claude` sections, and `ollama.timeout_seconds` / `ollama.keep_alive`.
+- **Tests:** 157, with a fake Ollama (garbage, hang, errors, missing model) and a fake `claude`.
+
 - **Version control:** GitHub connection (`dev.ps1 github`), branch and pull request workflow
   (`branch`, `pr`, `merge`, `sync`), one-command releases (`dev.ps1 release patch|minor|major`), a
   pre-push hook that protects `main`, consistent line endings, and the design docs exported into `docs/`.

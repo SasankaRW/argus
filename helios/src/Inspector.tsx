@@ -83,6 +83,7 @@ function NodePanel({ id, map, status, events, onSelect }: { id: string } & Omit<
             <KV k="Capabilities" v={((n.meta?.capabilities as string[]) ?? []).join(", ") || "none"} />
           </>
         )}
+        {n.kind === "model" && <ModelDetails n={n} />}
         {n.kind === "plugin" && (
           <>
             <KV k="Running" v={n.jobs?.active ?? 0} />
@@ -98,21 +99,58 @@ function NodePanel({ id, map, status, events, onSelect }: { id: string } & Omit<
   );
 }
 
+type ModelsSnap = {
+  tiers: { tier: string; component: string; state: string; retry_after: number | null; calls: number; failures: number;
+    last_error: string | null; last_latency_ms: number | null; provider: string; model: string | null }[];
+  claude: { calls_today: number; calls_per_day: number };
+};
+
+function ModelDetails({ n }: { n: ArgusMap["nodes"][number] }) {
+  const [snap, setSnap] = useState<ModelsSnap | null>(null);
+  useEffect(() => {
+    let off = false;
+    const load = () => api<ModelsSnap>("/models").then((m) => { if (!off) setSnap(m); }).catch(() => {});
+    load();
+    const iv = window.setInterval(load, 3000);
+    return () => { off = true; window.clearInterval(iv); };
+  }, [n.id]);
+  const t = snap?.tiers.find((x) => x.component === n.id);
+  const state = t?.state ?? n.state ?? "closed";
+  const label = state === "open" ? "paused (circuit breaker)" : state === "half_open" ? "trying again" : "ready";
+  return (
+    <>
+      <KV k="State" v={<span className={state === "open" ? "bad" : state === "half_open" ? "warn" : "ok"}>{label}</span>} />
+      {t?.retry_after ? <KV k="Retry in" v={`${Math.ceil(t.retry_after)} s`} /> : null}
+      <KV k="Provider" v={`${t?.provider ?? n.meta?.provider ?? "?"}${t?.model ? ` · ${t.model}` : ""}`} />
+      <KV k="Calls" v={t ? `${t.calls} (${t.failures} failed)` : "–"} />
+      {t?.last_latency_ms != null && <KV k="Last reply" v={`${(t.last_latency_ms / 1000).toFixed(1)} s`} />}
+      {t?.provider === "claude" && snap && <KV k="Today" v={`${snap.claude.calls_today} of ${snap.claude.calls_per_day} calls`} />}
+      {t?.last_error && <KV k="Last error" v={<span className="bad">{t.last_error}</span>} />}
+    </>
+  );
+}
+
 function EdgePanel({ src, dst, map, events, onSelect }: { src: string; dst: string } & Omit<Props, "sel" | "status">) {
-  const e = map.edges.find((x) => x.src === src && x.dst === dst);
-  const evs = useHistory(`e:${src}>${dst}`, `component=${encodeURIComponent(src)}`, events, (x) => x.from === src && x.to === dst);
+  const both = map.edges.filter((x) => (x.src === src && x.dst === dst) || (x.src === dst && x.dst === src));
+  const e = both.length ? {
+    count: both.reduce((a, x) => a + x.count, 0),
+    first_seen: Math.min(...both.map((x) => x.first_seen)),
+    last: both.reduce((a, x) => (x.last_seen > a.last_seen ? x : a)),
+  } : null;
+  const evs = useHistory(`e:${src}>${dst}`, `component=${encodeURIComponent(src)}`, events,
+    (x) => (x.from === src && x.to === dst) || (x.from === dst && x.to === src));
   return (
     <>
       <div className="ih">
         <span className="eyebrow">Line</span>
-        <h2>{src} → {dst}</h2>
+        <h2>{src} ⇄ {dst}</h2>
         <p>{e ? `first used ${ago(e.first_seen)}` : ""}</p>
       </div>
       <div className="ib">
         {e && (
           <>
             <KV k="Messages" v={e.count.toLocaleString()} />
-            <KV k="Last" v={`${e.last_kind} · ${ago(e.last_seen)}`} />
+            <KV k="Last" v={`${e.last.last_kind} · ${ago(e.last.last_seen)}`} />
           </>
         )}
         <div className="sect">Recent messages</div>

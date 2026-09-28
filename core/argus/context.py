@@ -10,6 +10,7 @@ from .config import Config
 from .db import Store
 from .events import EventHub, prune_events
 from .jobs import JobStore, Watchdog
+from .modelboard import ModelBoard
 from .registry import Registry
 
 log = logging.getLogger("argus")
@@ -22,6 +23,7 @@ class Argus:
         self.store = Store(cfg.db_path)
         self.jobs = JobStore(self.store, cfg.jobs)
         self.registry = Registry(self.store)
+        self.models = ModelBoard(self.store, cfg)
         self.hub = EventHub(self.store, queue_size=cfg.events.stream_queue)
         stale_after = cfg.jobs.heartbeat_seconds * 4
         self.watchdog = Watchdog(
@@ -42,6 +44,7 @@ class Argus:
         """Async part of startup: background tasks."""
         group = "laptop" if self.cfg.instance.host == "laptop" else "pc"
         await self.registry.component("argus", "core", "Argus", group, {"version": self.version})
+        await self.models.register()
         await self.hub.start()
         self.watchdog.start()
         self.started_at = time.time()

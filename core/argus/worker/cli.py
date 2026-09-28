@@ -34,6 +34,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--id", default=os.environ.get("ARGUS_WORKER_ID"), help="worker id (default: worker-<host>)")
     p.add_argument("--plugin", action="append", default=[], help="python module with workflows (repeatable)")
     p.add_argument("--cap", action="append", default=[], help="extra capability, e.g. gpu (repeatable)")
+    p.add_argument("--ollama-url", default=os.environ.get("ARGUS_OLLAMA_URL"),
+                   help="Ollama address as this machine sees it (default: the one argusd hands out)")
     p.add_argument("--no-demo", action="store_true", help="do not load the built-in demo plugin")
     p.add_argument("--once", action="store_true", help="run at most one job, then exit")
     p.add_argument("--log-level", default="INFO")
@@ -52,7 +54,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Could not load plugin {name}: {e}", file=sys.stderr)
             return 2
 
-    worker = Worker(ArgusClient(args.url, token), args.id, capabilities=args.cap)
+    worker = Worker(ArgusClient(args.url, token), args.id, capabilities=args.cap, ollama_url=args.ollama_url)
 
     presses = 0
 

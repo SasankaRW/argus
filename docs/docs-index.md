@@ -21,9 +21,9 @@ Every Argus document and diagram carries a version number, and every change to o
 | Document | Version | Status | Covers |
 | --- | --- | --- | --- |
 | LLM Orchestrator Plan | 0.8 | draft, the long-term picture | why Argus exists, tiers, Helios design, automations, apps |
-| Argus Development Plan | 1.1 | the working tracker | milestones, tasks, gates, architecture, security, Helios UI |
-| Argus Core Design | 0.5 | C1–C6 built; becomes 1.0 when M1 completes | argusd, job lifecycle, data model, stability, build steps |
-| Argus Plugin Guide | 0.2 | draft (plugin API 1.0 draft) | how to write and add plugins |
+| Argus Development Plan | 1.2 | the working tracker | milestones, tasks, gates, architecture, security, Helios UI |
+| Argus Core Design | 0.6 | C1–C7 built; becomes 1.0 when M1 completes | argusd, job lifecycle, data model, stability, build steps |
+| Argus Plugin Guide | 0.3 | draft (plugin API 1.0 draft) | how to write and add plugins |
 | [Helios mockup](https://claude.ai/artifact/EAhWvwckWzyc6ouyPdfW6C) | 0.4 | interactive design, simulated data | the dashboard to build in M1–M3 |
 | Argus code (`G:\Projects\argus`) | 0.4.0 | tag `v0.4.0` | core steps C1–C6: foundation, jobs, workers, live events, Helios live map |
 
@@ -86,6 +86,11 @@ Newest first. One line per change, across all documents.
 
 | Date | Document | Version | Change |
 | --- | --- | --- | --- |
+| 2026-09-28 | Argus code | 0.5.0 (branch) | C7 models: ctx.llm with checks and escalation, Ollama and claude -p providers, circuit breakers, daily Claude cap, model boxes and escalation lines in Helios; 157 tests |
+| 2026-09-28 | Core Design | 0.6 | C7 built |
+| 2026-09-28 | Plugin Guide | 0.3 | ctx.llm and ctx.claude match the built API |
+| 2026-09-28 | Argus code | Unreleased | Version control: GitHub connection, branch/PR/merge workflow, one-command releases, pre-push hook protecting main, all five documents exported to docs/ in the repo |
+| 2026-09-28 | Development Plan | 1.2 | Repo host decided (GitHub, private); version control and releases done; M0 progress |
 | 2026-09-28 | Argus code | 0.4.0 | C6 Helios v0: live map (React Flow + ELK) that grows by itself, message pulses, inspector for boxes/lines/jobs, events panel, phone layout; 135 tests; tag v0.4.0 |
 | 2026-09-28 | Core Design | 0.5 | C6 marked done |
 | 2026-09-28 | Argus code | 0.3.0 | C5 live events: WebSocket stream with replay, growing map (edges), /map /events /status, live home page, argus-events; 133 tests; tag v0.3.0 |

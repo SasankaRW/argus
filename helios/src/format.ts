@@ -26,16 +26,16 @@ export function shortId(id: string | null | undefined): string {
 
 // Colour for an event kind: green good, red bad, amber attention, blue flow, grey noise.
 export function tone(kind: string): "ok" | "bad" | "warn" | "flow" | "dim" {
-  if (/succeeded|online|added/.test(kind)) return "ok";
-  if (/dead|failed|offline/.test(kind)) return "bad";
-  if (/retry|waiting|deduped|cancelled/.test(kind)) return "warn";
+  if (/succeeded|online|added|reply|closed/.test(kind)) return "ok";
+  if (/dead|failed|offline|timeout|error|opened/.test(kind)) return "bad";
+  if (/retry|waiting|deduped|cancelled|escalated|skipped|half_open/.test(kind)) return "warn";
   if (/^step\./.test(kind)) return "dim";
   return "flow";
 }
 
 export function detail(data: Record<string, unknown> | null): string {
   if (!data) return "";
-  const keys = ["workflow", "from", "attempt", "worker", "reason", "idx", "tier", "error", "host", "kind", "first_kind"];
+  const keys = ["workflow", "from", "attempt", "worker", "tier", "from_tier", "to_tier", "reason", "latency_ms", "idx", "error", "host", "kind", "first_kind"];
   const bits: string[] = [];
   for (const k of keys) {
     const v = data[k];

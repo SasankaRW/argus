@@ -108,6 +108,31 @@ class Wait(BaseModel):
     reason: str
 
 
+TRACE_KINDS = ("model.", "check.", "log.", "advice.")
+
+
+class TraceEvent(BaseModel):
+    worker: str
+    kind: str = Field(min_length=3, max_length=60)
+    src: str | None = Field(None, max_length=100)
+    dst: str | None = Field(None, max_length=100)
+    step: str | None = Field(None, max_length=100)
+    data: dict[str, Any] | None = None
+
+
+class ModelCall(BaseModel):
+    worker: str | None = None
+    job_id: str | None = None
+
+
+class ModelResult(BaseModel):
+    worker: str | None = None
+    job_id: str | None = None
+    ok: bool
+    latency_ms: float | None = Field(None, ge=0)
+    error: str | None = Field(None, max_length=2000)
+
+
 # ------------------------------------------------------------------ helpers
 
 
@@ -330,7 +355,7 @@ def create_app(argus: Argus) -> FastAPI:
     async def register(body: RegisterWorker) -> dict:
         await argus.registry.register_worker(body.id, body.host, body.capabilities, body.version)
         return {"ok": True, "lease_seconds": argus.cfg.jobs.lease_seconds,
-                "heartbeat_seconds": argus.cfg.jobs.heartbeat_seconds}
+                "heartbeat_seconds": argus.cfg.jobs.heartbeat_seconds, "models": argus.models.worker_config()}
 
     @app.get("/workers", dependencies=guarded)
     async def workers() -> list[dict]:
@@ -371,6 +396,32 @@ def create_app(argus: Argus) -> FastAPI:
     @app.post("/jobs/{job_id}/fail", dependencies=guarded)
     async def fail(job_id: str, body: Fail) -> dict:
         return job_json(await argus.jobs.fail(job_id, body.worker, body.error, retryable=body.retryable))
+
+    @app.post("/jobs/{job_id}/events", dependencies=guarded)
+    async def trace(job_id: str, body: TraceEvent) -> dict:
+        if not body.kind.startswith(TRACE_KINDS):
+            raise HTTPException(status_code=422, detail=f"event kind must start with one of {TRACE_KINDS}")
+        await argus.jobs.record_event(job_id, body.worker, body.kind, src=body.src, dst=body.dst, step=body.step,
+                                      data=body.data)
+        return {"ok": True}
+
+    # -------------------------------------------------------------- models (breakers, Claude budget)
+
+    @app.get("/models", dependencies=guarded)
+    async def models() -> dict:
+        return await argus.models.snapshot()
+
+    @app.post("/models/{tier}/permit", dependencies=guarded)
+    async def model_permit(tier: str, body: ModelCall) -> dict:
+        return (await argus.models.permit(tier, worker=body.worker, job_id=body.job_id)).as_dict()
+
+    @app.post("/models/{tier}/report", dependencies=guarded)
+    async def model_report(tier: str, body: ModelResult) -> dict:
+        if tier not in argus.cfg.models.tiers:
+            raise HTTPException(status_code=404, detail=f"unknown tier {tier}")
+        st = await argus.models.report(tier, body.ok, latency_ms=body.latency_ms, error=body.error,
+                                       job_id=body.job_id)
+        return {"state": st["state"]}
 
     @app.post("/jobs/{job_id}/wait", dependencies=guarded)
     async def wait(job_id: str, body: Wait) -> dict:

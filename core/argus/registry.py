@@ -150,6 +150,7 @@ class Registry:
                     " GROUP BY plugin")}
                 queued = {r[0]: r[1] for r in conn.execute(
                     "SELECT plugin, COUNT(*) FROM jobs WHERE state IN ('queued','retry') GROUP BY plugin")}
+                models = {r["tier"].lower(): dict(r) for r in conn.execute("SELECT * FROM model_state").fetchall()}
             finally:
                 conn.execute("COMMIT")
             known = {c["id"] for c in comps}
@@ -161,6 +162,11 @@ class Registry:
                     node["state"] = workers[c["id"]]["state"]
                 if c["kind"] == "plugin":
                     node["jobs"] = {"active": active.get(c["id"], 0), "queued": queued.get(c["id"], 0)}
+                if c["kind"] == "model" and c["id"] in models:
+                    st = models[c["id"]]
+                    node["state"] = st["state"]
+                    node["calls"] = st["calls"]
+                    node["last_latency_ms"] = st["last_latency_ms"]
                 nodes.append(node)
             # endpoints seen in events but never registered (e.g. the watchdog) still get a box
             for e in edges:

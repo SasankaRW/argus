@@ -42,6 +42,55 @@ class LoggingConfig(_Strict):
 
 class OllamaConfig(_Strict):
     url: str = "http://127.0.0.1:11434"
+    timeout_seconds: float = Field(120, gt=0, le=3600)
+    keep_alive: str = "10m"  # how long Ollama keeps the last model loaded
+
+
+class TierConfig(_Strict):
+    provider: Literal["ollama", "claude"]
+    model: str | None = None  # Ollama model name; for Claude an optional --model alias
+    label: str | None = None  # shown on the map
+    group: str | None = None  # map group, e.g. pc or cloud
+
+
+def _default_tiers() -> dict[str, TierConfig]:
+    return {
+        "T1": TierConfig(provider="ollama", model="qwen2.5-coder:7b", group="pc"),
+        "T2": TierConfig(provider="ollama", model="qwen2.5-coder:14b", group="pc"),
+        "T3": TierConfig(provider="claude", group="cloud"),
+    }
+
+
+class ModelsConfig(_Strict):
+    tiers: dict[str, TierConfig] = Field(default_factory=_default_tiers)
+    chain: list[str] = Field(default_factory=lambda: ["T1", "T2", "T3"])  # default escalation order
+    attempts_per_tier: int = Field(2, ge=1, le=5)  # tries (with feedback) before moving up a tier
+    breaker_failures: int = Field(3, ge=1, le=100)  # consecutive failures that open the circuit breaker
+    breaker_open_seconds: float = Field(60, gt=0, le=3600)
+
+    @field_validator("tiers")
+    @classmethod
+    def _tier_names(cls, v: dict[str, TierConfig]) -> dict[str, TierConfig]:
+        for name in v:
+            if not name.replace("_", "").isalnum() or len(name) > 20:
+                raise ValueError(f"tier name {name!r} must be short letters/digits, like T1")
+        return v
+
+    def model_post_init(self, _ctx) -> None:
+        unknown = [t for t in self.chain if t not in self.tiers]
+        if unknown:
+            raise ValueError(f"chain names unknown tiers: {', '.join(unknown)}")
+
+
+class ClaudeConfig(_Strict):
+    # The claude CLI, called in print mode with every tool removed: text in, text out, nothing else.
+    command: list[str] = Field(default_factory=lambda: ["claude"])
+    args: list[str] = Field(default_factory=lambda: [
+        "-p", "--output-format", "json", "--max-turns", "1", "--disallowedTools", "*",
+        "--no-session-persistence",
+    ])
+    timeout_seconds: float = Field(300, gt=0, le=3600)
+    calls_per_day: int = Field(30, ge=0, le=10000)
 
 
 class JobsConfig(_Strict):
@@ -89,6 +138,8 @@ class Config(_Strict):
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     ollama: OllamaConfig = Field(default_factory=OllamaConfig)
+    models: ModelsConfig = Field(default_factory=ModelsConfig)
+    claude: ClaudeConfig = Field(default_factory=ClaudeConfig)
     jobs: JobsConfig = Field(default_factory=JobsConfig)
     events: EventsConfig = Field(default_factory=EventsConfig)
     power: PowerConfig = Field(default_factory=PowerConfig)
