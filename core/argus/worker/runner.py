@@ -1,0 +1,180 @@
+"""The worker loop: register, claim a job, run its workflow, report, repeat.
+
+Safety rules:
+- A heartbeat thread keeps the lease alive while a job runs. If Argus says the lease is gone, the worker
+  stops that job at the next step boundary and does not report anything else for it.
+- Crashes are fine: the lease expires, the watchdog requeues the job and the next worker skips finished steps.
+- Ctrl+C when idle: exit now. During a job: finish it, then exit. Twice: exit now (the job is retried later).
+"""
+
+from __future__ import annotations
+
+import logging
+import socket
+import threading
+import traceback
+from typing import Any
+
+from .. import __version__
+from .client import ApiError, ArgusClient, LeaseLostError, Unreachable
+from .workflows import REGISTRY, Context, PermanentError, WaitSignal, WorkflowRegistry
+
+log = logging.getLogger("argus.worker")
+
+
+class _JobReporter:
+    def __init__(self, client: ArgusClient, job_id: str, worker_id: str):
+        self.client = client
+        self.job_id = job_id
+        self.worker_id = worker_id
+        self._lost = threading.Event()
+
+    def step(self, idx: int, name: str, state: str, *, output: Any = None, error: str | None = None,
+             tier: str | None = None) -> None:
+        try:
+            self.client.step(self.job_id, self.worker_id, idx, name, state, output=output, error=error, tier=tier)
+        except LeaseLostError:
+            self._lost.set()
+            raise
+
+    def mark_lost(self) -> None:
+        self._lost.set()
+
+    @property
+    def lease_lost(self) -> bool:
+        return self._lost.is_set()
+
+
+class _Heartbeat(threading.Thread):
+    def __init__(self, client: ArgusClient, reporter: _JobReporter, every: float):
+        super().__init__(name=f"heartbeat-{reporter.job_id}", daemon=True)
+        self.client = client
+        self.reporter = reporter
+        self.every = every
+        self._stop = threading.Event()
+
+    def run(self) -> None:
+        while not self._stop.wait(self.every):
+            try:
+                self.client.heartbeat(self.reporter.job_id, self.reporter.worker_id)
+            except LeaseLostError:
+                log.warning("lease lost", extra={"job": self.reporter.job_id})
+                self.reporter.mark_lost()
+                return
+            except (ApiError, Unreachable) as e:  # keep trying; the lease is long enough for a few misses
+                log.warning("heartbeat failed", extra={"job": self.reporter.job_id, "error": str(e)})
+
+    def stop(self) -> None:
+        self._stop.set()
+
+
+class Worker:
+    def __init__(self, client: ArgusClient, worker_id: str | None = None, *, capabilities: list[str] | None = None,
+                 registry: WorkflowRegistry | None = None, host: str | None = None, claim_wait: float = 10.0):
+        self.client = client
+        self.registry = registry or REGISTRY
+        self.host = host or socket.gethostname()
+        self.id = worker_id or f"worker-{self.host}".lower()
+        self.capabilities = sorted(set(capabilities or []) | set(self.registry.needs))
+        self.claim_wait = claim_wait
+        self.heartbeat_seconds = 15.0
+        self.stopping = threading.Event()
+        self.jobs_done = 0
+        self.busy = False  # True while a job runs
+
+    # -------------------------------------------------------------- lifecycle
+
+    def register(self) -> None:
+        info = self.client.register(self.id, self.host, self.capabilities, __version__)
+        self.heartbeat_seconds = float(info.get("heartbeat_seconds", self.heartbeat_seconds))
+        log.info("worker registered", extra={"worker": self.id, "capabilities": self.capabilities,
+                                             "plugins": self.registry.plugins})
+
+    def run_forever(self, max_jobs: int | None = None) -> None:
+        self.register()
+        while not self.stopping.is_set():
+            if max_jobs is not None and self.jobs_done >= max_jobs:
+                return
+            self.run_once()
+
+    def run_once(self, wait: float | None = None) -> bool:
+        """Claim and run at most one job. Returns True if a job was run."""
+        try:
+            job = self.client.claim(self.id, self.capabilities, self.registry.plugins,
+                                    self.claim_wait if wait is None else wait)
+        except Unreachable as e:
+            log.warning("cannot reach argus", extra={"error": str(e)})
+            self.stopping.wait(5)
+            return False
+        except ApiError as e:
+            if e.status == 404:  # Argus forgot us (fresh database): register again
+                self.register()
+                return False
+            raise
+        if job is None:
+            return False
+        self.busy = True
+        try:
+            self.run_job(job)
+        finally:
+            self.busy = False
+        self.jobs_done += 1
+        return True
+
+    # -------------------------------------------------------------- one job
+
+    def run_job(self, job: dict[str, Any]) -> str:
+        """Run a claimed job. Returns what happened: succeeded, waiting, failed, dead, or lost."""
+        job_id = job["id"]
+        jlog = logging.LoggerAdapter(log, {"job": job_id, "plugin": job["plugin"], "workflow": job["workflow"]})
+        wf = self.registry.get(job["plugin"], job["workflow"])
+        try:
+            self.client.start(job_id, self.id)
+        except LeaseLostError:
+            jlog.warning("lease lost before start")
+            return "lost"
+
+        if wf is None:
+            self.client.fail(job_id, self.id, f"unknown workflow {job['plugin']}.{job['workflow']}", False)
+            jlog.error("unknown workflow")
+            return "dead"
+
+        reporter = _JobReporter(self.client, job_id, self.id)
+        beat = _Heartbeat(self.client, reporter, self.heartbeat_seconds)
+        beat.start()
+        ctx = Context(job, reporter, logging.getLogger(f"argus.plugin.{job['plugin']}"))
+        jlog.info("job started", extra={"attempt": job.get("attempt"), "checkpoints": len(ctx._done)})
+        try:
+            result = wf.fn(ctx)
+            if reporter.lease_lost:
+                raise LeaseLostError(409, {"error": "lease_lost"})
+            self.client.succeed(job_id, self.id, result)
+            jlog.info("job succeeded", extra={"skipped_steps": ctx.skipped})
+            return "succeeded"
+        except LeaseLostError:
+            jlog.warning("lease lost; leaving the job to argus")
+            return "lost"
+        except WaitSignal as w:
+            reason = w.reason
+            self._report(jlog, lambda: self.client.wait(job_id, self.id, reason))
+            jlog.info("job waiting", extra={"reason": reason})
+            return "waiting"
+        except PermanentError as e:
+            why = str(e) or type(e).__name__
+            self._report(jlog, lambda: self.client.fail(job_id, self.id, why, False))
+            jlog.error("job failed permanently", extra={"error": why})
+            return "dead"
+        except Exception as e:
+            detail = f"{type(e).__name__}: {e}"
+            self._report(jlog, lambda: self.client.fail(job_id, self.id, detail, True))
+            jlog.error("job failed", extra={"error": detail, "trace": traceback.format_exc(limit=5)})
+            return "failed"
+        finally:
+            beat.stop()
+
+    @staticmethod
+    def _report(jlog: logging.LoggerAdapter, fn) -> None:
+        try:
+            fn()
+        except LeaseLostError:
+            jlog.warning("lease lost while reporting")

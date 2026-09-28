@@ -11,7 +11,7 @@ Design documents (versions tracked in the Argus Docs Index):
 
 ## Status
 
-Version `0.1.0` (see `VERSION` and `CHANGELOG.md`). Core steps done: C1 skeleton, C2 store, C3 jobs.
+Version `0.2.0` (see `VERSION` and `CHANGELOG.md`). Core steps done: C1 skeleton, C2 store, C3 jobs, C4 workers.
 
 ## Run it on Windows (PC, development)
 
@@ -21,9 +21,11 @@ cd G:\Projects\argus
 .\scripts\dev.ps1 test      # runs the test suite
 .\scripts\dev.ps1 check     # validates argus.yaml and the database
 .\scripts\dev.ps1 run       # starts argusd on http://127.0.0.1:8600
+.\scripts\dev.ps1 worker    # (second window) starts a worker with the demo plugin
+.\scripts\dev.ps1 demo      # (third window) submits a demo job
 ```
 
-Then open http://127.0.0.1:8600/health.
+Then open http://127.0.0.1:8600: the worker shows under Workers and the demo job under Jobs.
 
 ## Layout
 
@@ -33,8 +35,10 @@ core/argus/        the argusd package
   db/              SQLite store: single writer, migrations
   jobs/            job state machine, leases, retries, watchdog
   api/             HTTP API (FastAPI)
+  worker/          argus-worker: client, workflow runner, demo plugin
+  registry.py      workers and components (Helios map boxes)
 tests/             unit, state machine and crash tests
-runner/            desktop runner (C4)
+runner/            desktop runner for the PC (later)
 plugins/           one folder per plugin (M2)
 helios/            dashboard (C6)
 cli/               argus command: docs sync, release, deploy

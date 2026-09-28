@@ -74,6 +74,7 @@ class Secrets(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
     admin_password: str | None = None
+    worker_token: str | None = None
     ntfy_topic: str | None = None
 
 
@@ -104,7 +105,7 @@ class Config(_Strict):
         return self.resolve(self.logging.file) if self.logging.file else None
 
 
-def _parse_env_file(path: Path) -> dict[str, str]:
+def parse_env_file(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     if not path.exists():
         return values
@@ -151,10 +152,11 @@ def load_config(path: str | os.PathLike | None = None) -> Config:
         raise ConfigError(_format_validation_error(cfg_path, e)) from e
 
     cfg.base_dir = cfg_path.parent
-    env = _parse_env_file(cfg_path.parent / ".env")
+    env = parse_env_file(cfg_path.parent / ".env")
     env.update({k: v for k, v in os.environ.items() if k.startswith(("ARGUS_", "NTFY_"))})
     cfg.secrets = Secrets(
         admin_password=env.get("ARGUS_ADMIN_PASSWORD"),
+        worker_token=env.get("ARGUS_WORKER_TOKEN"),
         ntfy_topic=env.get("NTFY_TOPIC"),
     )
     return cfg

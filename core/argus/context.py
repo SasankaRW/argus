@@ -9,6 +9,7 @@ from . import __version__
 from .config import Config
 from .db import Store
 from .jobs import JobStore, Watchdog
+from .registry import Registry
 
 log = logging.getLogger("argus")
 
@@ -19,7 +20,13 @@ class Argus:
         self.version = __version__
         self.store = Store(cfg.db_path)
         self.jobs = JobStore(self.store, cfg.jobs)
-        self.watchdog = Watchdog(self.jobs, cfg.jobs.watchdog_interval_seconds)
+        self.registry = Registry(self.store)
+        stale_after = cfg.jobs.heartbeat_seconds * 4
+        self.watchdog = Watchdog(
+            self.jobs,
+            cfg.jobs.watchdog_interval_seconds,
+            extra=[lambda: self.registry.mark_stale_workers(stale_after)],
+        )
         self.started_at: float | None = None
 
     def open(self) -> Argus:
@@ -29,6 +36,8 @@ class Argus:
 
     async def start(self) -> None:
         """Async part of startup: background tasks."""
+        group = "laptop" if self.cfg.instance.host == "laptop" else "pc"
+        await self.registry.component("argus", "core", "Argus", group, {"version": self.version})
         self.watchdog.start()
         self.started_at = time.time()
         log.info("argus started", extra={"version": self.version, "instance": self.cfg.instance.name})

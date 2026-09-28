@@ -161,7 +161,18 @@ class Store:
                     self._write_q.put(None)  # finish this batch, then stop
                     break
                 batch.append(nxt)
-            self._run_batch(conn, batch)
+            # Skip writes whose caller already gave up (e.g. a cancelled request); mark the rest as running
+            # so they can no longer be cancelled and always get their result.
+            batch = [(fn, fut) for fn, fut in batch if fut.set_running_or_notify_cancel()]
+            if not batch:
+                continue
+            try:
+                self._run_batch(conn, batch)
+            except Exception as e:  # never let one bad batch kill the only writer
+                log.exception("writer batch crashed")
+                for _, fut in batch:
+                    if not fut.done():
+                        fut.set_exception(StoreError(f"write failed: {e}"))
 
     def _run_batch(self, conn: sqlite3.Connection, batch: list[tuple[Callable, Future]]) -> None:
         results: list[tuple[Future, bool, Any]] = []

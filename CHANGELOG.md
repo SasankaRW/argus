@@ -2,6 +2,28 @@
 
 All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`.
 
+## 0.2.0 (2026-09-28)
+
+Core step C4: workers.
+
+- **Worker protocol (HTTP):** register, long-poll claim (only jobs whose plugin the worker has), start,
+  heartbeat, step reports, succeed, fail, wait; plus submit, list, counts, events, cancel, rerun and resume
+  for apps and Helios. Errors are plain: 404 unknown job, 409 lease lost, 429 queue full.
+- **Token auth:** set `ARGUS_WORKER_TOKEN` in `.env` and every `/jobs` and `/workers` call needs
+  `Authorization: Bearer <token>`. `/`, `/health` and `/version` stay public.
+- **`argus-worker`:** pulls jobs and runs plugin workflows. Steps are checkpoints (`ctx.step`), so a job
+  retried after a crash skips finished steps; `ctx.idempotency_key` for side effects; `ctx.wait()` parks a
+  job; `PermanentError` sends it straight to dead. Heartbeats in the background, stops a job the moment its
+  lease is lost, rides out Argus restarts (retries for ~30 s). Ctrl+C exits at once when idle, or after the
+  current job.
+- **Built-in demo plugin** (`demo.echo`, `demo.sleep`, `demo.fail`) to try it without writing code.
+- **Registry:** workers and the core show up as components (the boxes Helios will draw); silent workers are
+  marked offline by the watchdog. The home page lists connected workers.
+- **Fix:** a write whose caller gave up (a cancelled request) could crash the database writer thread. Such
+  writes are now skipped and the writer can no longer die from one bad batch.
+- **Tests:** 118. New: the full API contract, auth, end-to-end jobs through a real server, wait and resume,
+  and killing a worker mid-step so another worker finishes the job without redoing the finished step.
+
 ## 0.1.1 (2026-09-28)
 
 - Home page at `/`: status, database, watchdog, job counts and links (it returned "Not Found" before).

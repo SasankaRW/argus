@@ -1,6 +1,7 @@
 """Watchdog: a small background task that repairs things nobody else will.
 
-Today it requeues jobs whose worker stopped heartbeating. Approval expiry joins it in C8.
+Requeues jobs whose worker stopped heartbeating and marks silent workers offline.
+Approval expiry joins it in C8.
 """
 
 from __future__ import annotations
@@ -8,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from collections.abc import Awaitable, Callable
 
 from .store import JobStore
 
@@ -15,9 +17,11 @@ log = logging.getLogger("argus.watchdog")
 
 
 class Watchdog:
-    def __init__(self, jobs: JobStore, interval: float = 5.0):
+    def __init__(self, jobs: JobStore, interval: float = 5.0,
+                 extra: list[Callable[[], Awaitable[object]]] | None = None):
         self.jobs = jobs
         self.interval = interval
+        self.extra = extra or []
         self._task: asyncio.Task | None = None
         self.runs = 0
         self.last_error: str | None = None
@@ -26,6 +30,8 @@ class Watchdog:
         moved = await self.jobs.expire_leases()
         if moved:
             log.warning("leases expired", extra={"jobs": moved})
+        for fn in self.extra:
+            await fn()
         self.runs += 1
         return moved
 

@@ -268,9 +268,14 @@ class JobStore:
 
     # ------------------------------------------------------------------ worker side
 
-    async def claim(self, worker: str, capabilities: Iterable[str]) -> Job | None:
-        """Lease the best claimable job this worker can run, or return None."""
+    async def claim(self, worker: str, capabilities: Iterable[str],
+                    plugins: Iterable[str] | None = None) -> Job | None:
+        """Lease the best claimable job this worker can run, or return None.
+
+        `plugins`, when given, limits the claim to jobs of those plugins (the worker has their code).
+        """
         caps = set(capabilities)
+        only = set(plugins) if plugins is not None else None
         lease = self.cfg.lease_seconds
 
         def fn(conn: sqlite3.Connection) -> Job | None:
@@ -282,7 +287,7 @@ class JobStore:
             ).fetchall()
             for r in rows:
                 job = Job.from_row(r)
-                if set(job.needs) <= caps:
+                if set(job.needs) <= caps and (only is None or job.plugin in only):
                     return self._move(
                         conn, job, S.LEASED, now, src_component=worker,
                         attempt=job.attempt + 1, lease_owner=worker, lease_until=now + lease,

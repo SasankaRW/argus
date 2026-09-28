@@ -95,3 +95,17 @@ def test_write_after_close_is_refused(db_path):
     s.close()
     with pytest.raises(StoreError):
         s.write_sync(lambda c: None)
+
+
+def test_cancelled_write_is_skipped_and_writer_survives(store):
+    import threading
+
+    gate = threading.Event()
+    blocker = store.submit(lambda conn: gate.wait(5))  # holds the writer busy
+    fut = store.submit(lambda conn: conn.execute("INSERT INTO settings (key, value, created_at, updated_at)"
+                                                 " VALUES ('x', '1', 0, 0)"))
+    assert fut.cancel()
+    gate.set()
+    blocker.result(5)
+    assert store.write_sync(lambda conn: 42) == 42
+    assert store.read_sync(lambda conn: conn.execute("SELECT COUNT(*) FROM settings WHERE key='x'").fetchone()[0]) == 0
