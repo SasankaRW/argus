@@ -6,14 +6,14 @@ import {
 } from "@xyflow/react";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ArgusMap, MapNode } from "./api";
-import { ColumnLabel, layout, loadPins, NODE_H, NODE_W, Pos, savePins } from "./layout";
+import { ColumnLabel, layout, loadPins, NODE_H, NODE_W, Pos, roundedPath, Route, savePins } from "./layout";
 import type { Pulse } from "./live";
 import { ago } from "./format";
 
 export type Selection = { type: "node"; id: string } | { type: "edge"; src: string; dst: string } | { type: "job"; id: string } | null;
 
 type BoxData = { n: MapNode; hot: boolean; fresh: boolean; selected: boolean };
-type LineData = { count: number; pulses: (Pulse & { back: boolean })[]; flow: boolean; selected: boolean; hot: boolean; tone: string };
+type LineData = { route?: Route; count: number; pulses: (Pulse & { back: boolean })[]; flow: boolean; selected: boolean; hot: boolean; tone: string };
 
 const KIND_LABEL: Record<string, string> = { core: "core", worker: "worker", plugin: "plugin", model: "model", app: "app", service: "service" };
 
@@ -102,8 +102,13 @@ function Dot({ path, tone, back }: { path: string; tone: string; back: boolean }
 }
 
 const Line = memo(function Line(p: EdgeProps<Edge<LineData>>) {
-  const [path] = getBezierPath({ sourceX: p.sourceX, sourceY: p.sourceY, targetX: p.targetX, targetY: p.targetY, sourcePosition: p.sourcePosition, targetPosition: p.targetPosition });
   const d = p.data!;
+  // ELK's route when the boxes are where the layout put them; a plain curve once you drag one away
+  const r = d.route;
+  const fits = r && r.length >= 2 && Math.abs(r[0].x - p.sourceX) < 3 && Math.abs(r[0].y - p.sourceY) < 3
+    && Math.abs(r[r.length - 1].x - p.targetX) < 3 && Math.abs(r[r.length - 1].y - p.targetY) < 3;
+  const path = fits ? roundedPath(r!)
+    : getBezierPath({ sourceX: p.sourceX, sourceY: p.sourceY, targetX: p.targetX, targetY: p.targetY, sourcePosition: p.sourcePosition, targetPosition: p.targetPosition })[0];
   const width = Math.min(1.2 + Math.log2(1 + d.count) * 0.35, 3.6);
   const cls = `line${d.hot ? (d.tone === "bad" ? " bad" : d.tone === "warn" ? " warn" : " on") : ""}${d.selected ? " sel" : ""}`;
   return (
@@ -135,6 +140,7 @@ type Props = {
 function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal }: Props) {
   const [positions, setPositions] = useState<Record<string, Pos>>({});
   const [labels, setLabels] = useState<ColumnLabel[]>([]);
+  const [routes, setRoutes] = useState<Record<string, Route>>({});
   const [pins, setPins] = useState<Record<string, Pos>>(() => loadPins());
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges] = useEdgesState<Edge<LineData>>([]);
@@ -152,7 +158,7 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal 
   );
   useEffect(() => {
     let cancelled = false;
-    layout(map.nodes, lines).then((r) => { if (!cancelled) { setPositions(r.pos); setLabels(r.labels); } });
+    layout(map.nodes, lines).then((r) => { if (!cancelled) { setPositions(r.pos); setLabels(r.labels); setRoutes(r.routes); } });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shapeKey]);
@@ -237,6 +243,7 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal 
           type: "line",
           selectable: false,
           data: {
+            route: routes[`${e.src}>${e.dst}`],
             count: e.count,
             pulses: live,
             flow,
@@ -248,7 +255,7 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal 
       }),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lines, pulses, flow, selection, now, setEdges, positions, pins]);
+  }, [lines, pulses, flow, selection, now, setEdges, positions, pins, routes]);
 
   return (
     <div ref={wrap} style={{ width: "100%", height: "100%" }}>

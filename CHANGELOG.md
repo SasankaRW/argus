@@ -6,7 +6,9 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 ## Unreleased
 
 - **Devices in their own column:** the PC's worker, the phone and apps always sit in the first column of the
-  Helios map under a plain "Devices" heading; the rest is laid out by traffic as before, models last.
+  Helios map under a plain "Devices" heading; the rest is laid out by traffic as before, models last. Lines follow
+  ELK's routes around the boxes (straight runs, rounded corners) instead of cutting across them, and the map is
+  more compact. A box you drag gets a plain curve until Auto layout.
 - **Phone on the map:** a Phone box shows online / offline (green / red) and since when, like the PC's worker.
 - **Approval notifications say "Approve / Reject need Tailscale"** when the buttons go over Tailscale.
 - **Phone buttons go over Tailscale, and Argus catches up when the phone reconnects:** Approve / Reject go
