@@ -1,0 +1,35 @@
+# Argus configuration. Copy to argus.yaml and edit.
+# The same code runs on the PC (development) and the laptop (after MD); only this file changes.
+
+instance:
+  name: argus-dev          # shown in Helios
+  host: pc                 # pc while developing, laptop after deploy
+
+server:
+  host: 127.0.0.1          # keep on localhost; Tailscale exposes it later
+  port: 8600
+
+database:
+  path: data/argus.db      # relative paths are relative to this file
+
+logging:
+  level: INFO              # DEBUG, INFO, WARNING, ERROR
+  file: logs/argus.log     # JSON lines, rotated at 5 MB, 5 files kept
+
+ollama:
+  url: http://127.0.0.1:11434
+
+jobs:
+  lease_seconds: 60
+  heartbeat_seconds: 15
+  max_attempts: 3
+  backoff_seconds: [10, 60, 600]
+  watchdog_interval_seconds: 5
+  plugin_queue_limit: 100
+
+power:
+  mode: simulated          # simulated on the PC, real on the laptop
+
+paths:
+  allowed: []              # folders plugins may touch, e.g. C:/Users/Sas/Downloads
+  blocked: []              # never touched, e.g. work folders
