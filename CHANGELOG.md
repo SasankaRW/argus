@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+## 0.5.1 (2026-09-28)
+
 - **Helios updates show up on reload:** `index.html` is now served with `Cache-Control: no-cache` (hashed assets
   stay cached), so a browser no longer keeps showing an old Helios after an upgrade.
 - **Model check ignores case:** `dev.ps1 models` finds `Qwen2.5:latest` when the config says `qwen2.5:latest`,
