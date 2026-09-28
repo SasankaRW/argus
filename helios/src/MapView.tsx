@@ -6,7 +6,7 @@ import {
 } from "@xyflow/react";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ArgusMap, MapNode } from "./api";
-import { Lane, layout, loadPins, NODE_H, NODE_W, Pos, savePins } from "./layout";
+import { ColumnLabel, layout, loadPins, NODE_H, NODE_W, Pos, savePins } from "./layout";
 import type { Pulse } from "./live";
 import { ago } from "./format";
 
@@ -33,7 +33,7 @@ function sub(n: MapNode): string {
     return "checking…";
   }
   if (n.id === "approvals") return n.pending ? `${n.pending} waiting for you` : "nothing to decide";
-  if (n.id === "ntfy") return n.failed ? `${n.failed} not delivered` : n.unsent ? `${n.unsent} sending` : "notifications · all sent";
+  if (n.id === "ntfy") return n.failed ? `${n.failed} not delivered` : n.unsent ? `${n.unsent} sending` : "all sent";
   if (n.kind === "model") {
     const st = n.state === "open" ? "paused" : n.state === "half_open" ? "trying again" : "ready";
     const calls = (n as MapNode & { calls?: number }).calls ?? 0;
@@ -114,17 +114,12 @@ const Line = memo(function Line(p: EdgeProps<Edge<LineData>>) {
   );
 });
 
-// A lane: the titled column behind one kind of part. It never takes clicks, so the map pans through it.
-const LaneBg = memo(function LaneBg({ data }: NodeProps<Node<{ lane: Lane }>>) {
-  const l = data.lane;
-  return (
-    <div className="lane" style={{ width: l.w, height: l.h }}>
-      <span className="lane-t">{l.label}</span><span className="lane-n mono">{l.count}</span>
-    </div>
-  );
+// A plain heading above a column; never takes clicks.
+const Heading = memo(function Heading({ data }: NodeProps<Node<{ label: ColumnLabel }>>) {
+  return <span className="col-h">{data.label.text}</span>;
 });
 
-const nodeTypes = { box: Box, lane: LaneBg };
+const nodeTypes = { box: Box, heading: Heading };
 const edgeTypes = { line: Line };
 
 type Props = {
@@ -139,7 +134,7 @@ type Props = {
 
 function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal }: Props) {
   const [positions, setPositions] = useState<Record<string, Pos>>({});
-  const [lanes, setLanes] = useState<Lane[]>([]);
+  const [labels, setLabels] = useState<ColumnLabel[]>([]);
   const [pins, setPins] = useState<Record<string, Pos>>(() => loadPins());
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges] = useEdgesState<Edge<LineData>>([]);
@@ -147,7 +142,7 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal 
   const rf = useReactFlow();
   const userMoved = useRef(false); // once you pan or zoom, the map stops re-fitting itself
   const wrap = useRef<HTMLDivElement>(null);
-  const fit = (duration = 300) => rf.fitView({ padding: 0.04, maxZoom: 1.1, duration });
+  const fit = (duration = 300) => rf.fitView({ padding: 0.12, maxZoom: 1.1, duration });
 
   // Re-run layout when the set of boxes or lines changes (not on every count update).
   const lines = useMemo(() => mergeEdges(map.edges), [map.edges]);
@@ -157,7 +152,7 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal 
   );
   useEffect(() => {
     let cancelled = false;
-    layout(map.nodes, lines).then((r) => { if (!cancelled) { setPositions(r.pos); setLanes(r.lanes); } });
+    layout(map.nodes, lines).then((r) => { if (!cancelled) { setPositions(r.pos); setLabels(r.labels); } });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shapeKey]);
@@ -196,9 +191,9 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal 
     if (!Object.keys(positions).length) return;
     setNodes((prev) => {
       const dragging = new Set(prev.filter((x) => x.dragging).map((x) => x.id));
-      const bg: Node[] = lanes.map((l) => ({
-        id: `lane:${l.id}`, type: "lane", position: { x: l.x, y: l.y }, data: { lane: l }, width: l.w, height: l.h,
-        draggable: false, selectable: false, focusable: false, zIndex: -1, className: "lane-node",
+      const bg: Node[] = labels.map((l) => ({
+        id: `h:${l.id}`, type: "heading", position: { x: l.x, y: l.y }, data: { label: l },
+        draggable: false, selectable: false, focusable: false, className: "heading-node",
       }));
       return [...bg, ...map.nodes.map((n): Node => {
         const pos = pins[n.id] ?? positions[n.id] ?? { x: 0, y: 0 };
@@ -217,7 +212,7 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal 
         };
       })];
     });
-  }, [map.nodes, positions, lanes, pins, active, now, selection, oldest, setNodes]);
+  }, [map.nodes, positions, labels, pins, active, now, selection, oldest, setNodes]);
 
   // Boxes in the same column (the model tiers) connect top to bottom instead of side to side.
   const stacked = (a: string, b: string) => {

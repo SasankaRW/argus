@@ -170,8 +170,6 @@ main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .appr-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 .appr-actions .primary { height: 30px; padding: 0 14px; }
 
-/* map lanes: one titled column per kind of part */
-.react-flow__node-lane.lane-node { pointer-events: none; }
-.lane { border: 1px dashed #232936; border-radius: 12px; background: rgba(255, 255, 255, .012); padding: 8px 10px; display: flex; align-items: baseline; gap: 8px; }
-.lane-t { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--tx3); }
-.lane-n { font-size: 10.5px; color: var(--tx3); opacity: .7; }
+/* a plain column heading on the map (Devices) */
+.react-flow__node-heading.heading-node { pointer-events: none; }
+.col-h { font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--tx3); white-space: nowrap; }

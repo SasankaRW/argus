@@ -5,9 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
-- **Helios map in lanes:** Devices & apps, Argus, Plugins, Services and Models each get their own titled column,
-  so the PC, the phone, ntfy and the model tiers are clearly apart. Replaces the automatic ELK layout (Helios is
-  also smaller: elkjs is gone). Dragging boxes still works; Auto layout puts them back in their lanes.
+- **Devices in their own column:** the PC's worker, the phone and apps always sit in the first column of the
+  Helios map under a plain "Devices" heading; the rest is laid out by traffic as before, models last.
 - **Phone on the map:** a Phone box shows online / offline (green / red) and since when, like the PC's worker.
 - **Approval notifications say "Approve / Reject need Tailscale"** when the buttons go over Tailscale.
 - **Phone buttons go over Tailscale, and Argus catches up when the phone reconnects:** Approve / Reject go
