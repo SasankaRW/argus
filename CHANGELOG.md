@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+## 0.6.0 (2026-09-28)
+
 Core step C8: approvals, the outbox and ntfy.
 
 - **`ctx.approve()` for plugins:** a step asks you and the job waits without holding a worker. When you answer,
