@@ -45,6 +45,18 @@ from ..jobs import InvalidTransition, Job, JobNotFound, JobState, LeaseLost, Que
 from .home import HOME_HTML
 
 HELIOS_DIR = Path(__file__).resolve().parent.parent / "helios_dist"  # built by helios/ (npm run build)
+
+
+class _HeliosFiles(StaticFiles):
+    """Hashed assets cache forever; index.html must be re-checked so a new release shows up on reload."""
+
+    async def get_response(self, path, scope):
+        resp = await super().get_response(path, scope)
+        if path.startswith("assets/"):
+            resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        else:
+            resp.headers["Cache-Control"] = "no-cache"
+        return resp
 MAX_CLAIM_WAIT = 30.0
 CLAIM_POLL = 0.2
 WS_PING_SECONDS = 20.0
@@ -203,7 +215,7 @@ def create_app(argus: Argus) -> FastAPI:
         return HOME_HTML
 
     if (HELIOS_DIR / "index.html").exists():
-        app.mount("/helios", StaticFiles(directory=HELIOS_DIR, html=True), name="helios")
+        app.mount("/helios", _HeliosFiles(directory=HELIOS_DIR, html=True), name="helios")
     else:
         @app.get("/helios", include_in_schema=False)
         @app.get("/helios/", include_in_schema=False)

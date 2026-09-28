@@ -45,10 +45,11 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Ollama at {url}")
     if ollama_tiers:
         try:
-            have = OllamaProvider(url, "", timeout=10).list_models()
+            have = {m.lower() for m in OllamaProvider(url, "", timeout=10).list_models()}
             line(True, f"reachable, {len(have)} model(s) pulled")
             for tier, t in ollama_tiers.items():
-                present = t.model in have or f"{t.model}:latest" in have
+                name = t.model.lower()  # Ollama model names are case-insensitive ("Qwen2.5:latest")
+                present = name in have or f"{name}:latest" in have
                 line(present, f"{tier} {t.model}" + ("" if present else f"  ->  run: ollama pull {t.model}"))
                 if not present:
                     continue

@@ -298,7 +298,10 @@ def test_helios_is_served_and_home_redirects(tmp_path):
         assert r.status_code == 307 and r.headers["location"] == "/helios/?token=abc"
         page = c.get("/helios/")
         assert page.status_code == 200 and '<div id="root">' in page.text
+        assert page.headers["cache-control"] == "no-cache"  # a new release shows up on a normal reload
         asset = page.text.split('src="')[1].split('"')[0]
-        assert asset.startswith("/helios/assets/") and c.get(asset).status_code == 200
+        got = c.get(asset)
+        assert asset.startswith("/helios/assets/") and got.status_code == 200
+        assert "immutable" in got.headers["cache-control"]
         body = c.get("/events?component=argus&newest=true&limit=5").json()
         assert body["events"] and all("argus" in (e["from"], e["to"]) for e in body["events"])
