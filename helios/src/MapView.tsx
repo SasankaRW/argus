@@ -20,10 +20,13 @@ function sub(n: MapNode): string {
   if (n.kind === "core") return `core${n.meta?.version ? ` · v${n.meta.version}` : ""}`;
   if (n.kind === "worker") return `${n.state ?? "unknown"}${n.group ? ` · ${n.group}` : ""}`;
   if (n.kind === "plugin") {
-    const j = n.jobs ?? { active: 0, queued: 0 };
-    if (!j.active && !j.queued) return "idle";
-    return [j.active ? `${j.active} running` : "", j.queued ? `${j.queued} queued` : ""].filter(Boolean).join(" · ");
+    const j = n.jobs ?? { active: 0, queued: 0, waiting: 0 };
+    if (!j.active && !j.queued && !j.waiting) return "idle";
+    return [j.active ? `${j.active} running` : "", j.queued ? `${j.queued} queued` : "",
+      j.waiting ? `${j.waiting} waiting` : ""].filter(Boolean).join(" · ");
   }
+  if (n.id === "approvals") return n.pending ? `${n.pending} waiting for you` : "nothing to decide";
+  if (n.id === "ntfy") return n.failed ? `${n.failed} not delivered` : n.unsent ? `${n.unsent} sending` : "phone · all sent";
   if (n.kind === "model") {
     const st = n.state === "open" ? "paused" : n.state === "half_open" ? "trying again" : "ready";
     const calls = (n as MapNode & { calls?: number }).calls ?? 0;
@@ -54,7 +57,9 @@ function dotColor(n: MapNode, hot: boolean): string {
   if (hot) return "var(--flow)";
   if (n.kind === "core") return "var(--amber)";
   if (n.kind === "model") return n.state === "half_open" ? "var(--amber)" : "var(--violet)";
-  if (n.kind === "plugin") return (n.jobs?.active ?? 0) > 0 ? "var(--flow)" : "var(--ok)";
+  if (n.kind === "plugin") return (n.jobs?.active ?? 0) > 0 ? "var(--flow)" : (n.jobs?.waiting ?? 0) > 0 ? "var(--amber)" : "var(--ok)";
+  if (n.id === "approvals") return n.pending ? "var(--amber)" : "var(--ok)";
+  if (n.id === "ntfy") return n.failed ? "var(--bad)" : "var(--ok)";
   return "var(--tx3)";
 }
 

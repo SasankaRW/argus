@@ -160,3 +160,12 @@ main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
   .ev .j, .ev .d { display: none; }
   .ev .t { font-size: 10.5px; }
 }
+
+/* approvals (C8) */
+.appr { margin: 6px 0 10px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.appr-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.appr-big { font-size: 18px; font-weight: 600; margin: 8px 0 4px; }
+.appr-line { margin: 4px 0; font-size: 12.5px; }
+.appr-in { width: 58%; background: var(--panel); color: var(--tx); border: 1px solid var(--line); border-radius: 6px; padding: 3px 7px; font-size: 12px; text-align: right; }
+.appr-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.appr-actions .primary { height: 30px; padding: 0 14px; }

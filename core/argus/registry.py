@@ -146,8 +146,13 @@ class Registry:
                 workers = {r["id"]: _decode_worker(r) for r in conn.execute("SELECT * FROM workers").fetchall()}
                 edges = [dict(r) for r in conn.execute("SELECT * FROM edges ORDER BY src, dst").fetchall()]
                 active = {r[0]: r[1] for r in conn.execute(
-                    "SELECT plugin, COUNT(*) FROM jobs WHERE state IN ('leased','running','waiting')"
-                    " GROUP BY plugin")}
+                    "SELECT plugin, COUNT(*) FROM jobs WHERE state IN ('leased','running') GROUP BY plugin")}
+                waiting = {r[0]: r[1] for r in conn.execute(
+                    "SELECT plugin, COUNT(*) FROM jobs WHERE state = 'waiting' GROUP BY plugin")}
+                pending = conn.execute("SELECT COUNT(*) FROM approvals WHERE state = 'pending'").fetchone()[0]
+                outbox = {r[0]: r[1] for r in conn.execute(
+                    "SELECT state, COUNT(*) FROM outbox WHERE state IN ('pending','sending','failed')"
+                    " GROUP BY state")}
                 queued = {r[0]: r[1] for r in conn.execute(
                     "SELECT plugin, COUNT(*) FROM jobs WHERE state IN ('queued','retry') GROUP BY plugin")}
                 models = {r["tier"].lower(): dict(r) for r in conn.execute("SELECT * FROM model_state").fetchall()}
@@ -161,7 +166,13 @@ class Registry:
                 if c["kind"] == "worker" and c["id"] in workers:
                     node["state"] = workers[c["id"]]["state"]
                 if c["kind"] == "plugin":
-                    node["jobs"] = {"active": active.get(c["id"], 0), "queued": queued.get(c["id"], 0)}
+                    node["jobs"] = {"active": active.get(c["id"], 0), "queued": queued.get(c["id"], 0),
+                                    "waiting": waiting.get(c["id"], 0)}
+                if c["id"] == "approvals":
+                    node["pending"] = pending
+                if c["id"] == "ntfy":
+                    node["unsent"] = outbox.get("pending", 0) + outbox.get("sending", 0)
+                    node["failed"] = outbox.get("failed", 0)
                 if c["kind"] == "model" and c["id"] in models:
                     st = models[c["id"]]
                     node["state"] = st["state"]

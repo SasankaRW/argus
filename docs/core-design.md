@@ -2,7 +2,7 @@
 
 Sep 28, 2026 · @Sasanka
 
-**Version 0.6** · draft, becomes 1.0 when M1 starts · history at the end · all versions in the Argus Docs Index
+**Version 0.7** · draft, becomes 1.0 when M1 starts · history at the end · all versions in the Argus Docs Index
 
 ## Goals
 
@@ -187,12 +187,13 @@ Twelve steps, each about one evening session with Claude writing the code and yo
 
 After C12 the core is frozen as API version 1.0: later milestones add plugins and Helios views, and core changes only through a versioned, tested change.
 
-**Progress:** C1–C7 are built. C1–C6 are released as Argus `0.4.0` (repo `github.com/SasankaRW/argus`, private). C7 is on the branch `feat/c7-models` for release as `0.5.0`: `ctx.llm()` with schema validation, code checks, one retry with feedback and escalation T1 → T2 → T3 (the next tier sees the rejected answer); an Ollama provider (structured JSON output, `keep_alive`, hard timeout) and a `claude -p` provider with every tool removed; circuit breakers and the daily Claude cap kept in `argusd` for all workers; model boxes on the Helios map with amber escalation lines. Tested with a fake Ollama that sends garbage, hangs and errors, plus a fake `claude`; 157 tests pass. Still to do for the C7 gate: a real T1 → T2 escalation on the PC's Qwen models (`dev.ps1 models`, then `dev.ps1 classify`). Next: C8, approvals, outbox and ntfy.
+**Progress:** C1–C8 are built. C1–C7 are released (Argus `0.5.2`, repo `github.com/SasankaRW/argus`, private); C7 passed its gate on the PC (a real T1 → T2 escalation on the Qwen models). C8 is on the branch `feat/c8-approvals` for release as `0.6.0`: `ctx.approve()` parks the job without holding a worker and returns your answer when the step runs again (one approval per key, so a retried step never asks twice); signed one-time tokens in the phone buttons; a small phone page behind the Open button; reminders after 24 hours and expiry as "no" after 7 days; a transactional outbox with retries and backoff; ntfy for approvals, dead jobs and `ctx.notify()`; Approvals and ntfy boxes on the Helios map, with Approve / Reject in the inspector. Gate tests: phone Approve → job finished in under 1 s, and a crashed worker or argusd sends no duplicate notification; 173 tests pass. Next: C9, the scheduler and dispatcher.
 
 ## Document history
 
 | Version | Date | Change |
 | --- | --- | --- |
+| 0.7 | 2026-09-28 | C7 released (0.5.x); C8 (approvals, outbox, ntfy) built |
 | 0.6 | 2026-09-28 | C7 (models, tiers, escalation, breakers, claude -p) built; real-model check pending |
 | 0.5 | 2026-09-28 | C6 (Helios v0 live map) built and tested in Argus 0.4.0 |
 | 0.4 | 2026-09-28 | C5 (live events, growing map) built and tested in Argus 0.3.0 |

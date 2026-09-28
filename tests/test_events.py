@@ -151,7 +151,7 @@ def test_jobs_add_plugin_boxes_and_lines(jobs, store):
 
     m = run(scenario())
     nodes = {n["id"]: n for n in m["nodes"]}
-    assert nodes["demo"]["kind"] == "plugin" and nodes["demo"]["jobs"] == {"active": 0, "queued": 0}
+    assert nodes["demo"]["kind"] == "plugin" and nodes["demo"]["jobs"] == {"active": 0, "queued": 0, "waiting": 0}
     assert nodes["w1"].get("implicit") and nodes["argus"].get("implicit")  # seen in events, not registered
     pairs = {(e["src"], e["dst"]): e["count"] for e in m["edges"]}
     assert pairs[("argus", "demo")] == 1 and pairs[("w1", "demo")] == 3  # leased, running, succeeded

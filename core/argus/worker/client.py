@@ -123,6 +123,12 @@ class ArgusClient:
     def wait(self, job_id: str, worker: str, reason: str) -> dict:
         return self.post(f"/jobs/{job_id}/wait", {"worker": worker, "reason": reason})
 
+    def approval(self, job_id: str, worker: str, body: dict) -> dict:
+        return self.post(f"/jobs/{job_id}/approvals", {"worker": worker, **body})
+
+    def notify(self, job_id: str, worker: str, body: dict) -> dict:
+        return self.post(f"/jobs/{job_id}/notify", {"worker": worker, **body})
+
     # -------------------------------------------------------------- models
 
     def permit(self, tier: str, worker: str, job_id: str | None) -> dict:

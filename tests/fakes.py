@@ -109,3 +109,49 @@ def fake_claude(tmp: Path, mode: str = "ok", result: str = DEFAULT_RESULT) -> li
                                "result": {result!r}, "total_cost_usd": 0.01, "num_turns": 1}}))
     """), encoding="utf-8")
     return [sys.executable, str(script)]
+
+
+class FakeNtfy:
+    """A tiny ntfy server: records every published message; `fail_next` makes the next N posts answer 500."""
+
+    def __init__(self, fail_next: int = 0):
+        self.messages: list[dict] = []
+        self.fail_next = fail_next
+        self.headers: list[dict] = []
+        outer = self
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                if outer.fail_next > 0:
+                    outer.fail_next -= 1
+                    code, reply = 500, {"error": "boom"}
+                else:
+                    outer.messages.append(body)
+                    outer.headers.append(dict(self.headers))
+                    code, reply = 200, {"id": str(len(outer.messages)), "event": "message"}
+                raw = json.dumps(reply).encode()
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            self.port = s.getsockname()[1]
+        self.url = f"http://127.0.0.1:{self.port}"
+        self.server = ThreadingHTTPServer(("127.0.0.1", self.port), H)
+        self.server.daemon_threads = True
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+
+    def __enter__(self) -> FakeNtfy:
+        self.thread.start()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.server.shutdown()
+        self.server.server_close()

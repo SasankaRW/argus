@@ -21,6 +21,18 @@ Worker protocol (all JSON):
     POST /jobs/{id}/succeed           {worker, result}
     POST /jobs/{id}/fail              {worker, error, retryable}
     POST /jobs/{id}/wait              {worker, reason}
+    POST /jobs/{id}/approvals         {worker, key, type, title, fields, items, summary, link, step}
+                                      -> the approval (pending, or already decided)
+    POST /jobs/{id}/notify            {worker, key, title, text, priority, tags, link} -> {queued}
+
+Approvals (C8):
+    GET  /approvals?state=pending     list (token)
+    GET  /approvals/{id}              one (token)
+    POST /approvals/{id}/decide       {answer: approve|reject, fields, by}; either the Argus token, or ?t=<signed
+                                      one-time token>&answer=... from the phone buttons (no body needed)
+    GET  /a/{id}?t=<token>            the phone page behind the notification's Open button
+    GET  /outbox                      recent outgoing messages and counts (token)
+    POST /outbox/test                 send a test notification (token)
 Errors: 404 unknown job, 409 lease lost or transition not allowed, 429 plugin queue full.
 """
 
@@ -39,9 +51,12 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from ..approvals import ApprovalClosed, ApprovalError, ApprovalNotFound, BadToken
 from ..context import Argus
 from ..events import EventFilter, read_events
 from ..jobs import InvalidTransition, Job, JobNotFound, JobState, LeaseLost, QueueFull, Step
+from ..outbox import PRIORITIES, add_message, ntfy_message
+from . import approval_page
 from .home import HOME_HTML
 
 HELIOS_DIR = Path(__file__).resolve().parent.parent / "helios_dist"  # built by helios/ (npm run build)
@@ -132,6 +147,34 @@ class TraceEvent(BaseModel):
     data: dict[str, Any] | None = None
 
 
+class AskApproval(BaseModel):
+    worker: str
+    key: str = Field(min_length=1, max_length=200)
+    type: str = Field(pattern="^(entry|batch|draft)$")
+    title: str = Field(min_length=1, max_length=200)
+    fields: dict[str, Any] = Field(default_factory=dict)
+    items: list[dict[str, Any]] = Field(default_factory=list, max_length=5000)
+    summary: list[str] = Field(default_factory=list, max_length=50)
+    link: str | None = Field(None, max_length=2000)
+    step: str | None = Field(None, max_length=100)
+
+
+class Notify(BaseModel):
+    worker: str
+    key: str = Field(min_length=1, max_length=200)
+    title: str = Field(min_length=1, max_length=200)
+    text: str = Field("", max_length=3500)
+    priority: str = "default"
+    tags: list[str] = Field(default_factory=list, max_length=5)
+    link: str | None = Field(None, max_length=2000)
+
+
+class Decide(BaseModel):
+    answer: str | None = Field(None, pattern="^(approve|reject)$")
+    fields: dict[str, Any] | None = None
+    by: str | None = Field(None, max_length=60)
+
+
 class ModelCall(BaseModel):
     worker: str | None = None
     job_id: str | None = None
@@ -180,6 +223,22 @@ def create_app(argus: Argus) -> FastAPI:
     @app.exception_handler(InvalidTransition)
     async def _invalid(request: Request, exc: InvalidTransition):
         return JSONResponse({"error": "invalid_transition", "detail": str(exc)}, status_code=409)
+
+    @app.exception_handler(ApprovalNotFound)
+    async def _no_approval(request: Request, exc: ApprovalNotFound):
+        return JSONResponse({"error": "not_found", "detail": f"no approval {exc}"}, status_code=404)
+
+    @app.exception_handler(ApprovalClosed)
+    async def _closed(request: Request, exc: ApprovalClosed):
+        return JSONResponse({"error": "closed", "state": exc.state, "detail": str(exc)}, status_code=409)
+
+    @app.exception_handler(BadToken)
+    async def _bad_token(request: Request, exc: BadToken):
+        return JSONResponse({"error": "bad_token", "detail": str(exc)}, status_code=403)
+
+    @app.exception_handler(ApprovalError)
+    async def _approval_error(request: Request, exc: ApprovalError):
+        return JSONResponse({"error": "invalid", "detail": str(exc)}, status_code=422)
 
     @app.exception_handler(QueueFull)
     async def _full(request: Request, exc: QueueFull):
@@ -434,6 +493,80 @@ def create_app(argus: Argus) -> FastAPI:
         st = await argus.models.report(tier, body.ok, latency_ms=body.latency_ms, error=body.error,
                                        job_id=body.job_id)
         return {"state": st["state"]}
+
+    # -------------------------------------------------------------- approvals and notifications (C8)
+
+    @app.post("/jobs/{job_id}/approvals", dependencies=guarded)
+    async def ask_approval(job_id: str, body: AskApproval) -> dict:
+        a, created = await argus.approvals.request(
+            job_id, body.worker, body.key, body.type, body.title, fields=body.fields, items=body.items,
+            summary=body.summary, link=body.link, step=body.step)
+        if created:
+            argus.outbox.poke()
+        return {**a, "created": created}
+
+    @app.post("/jobs/{job_id}/notify", dependencies=guarded)
+    async def notify(job_id: str, body: Notify) -> dict:
+        if body.priority not in PRIORITIES:
+            raise HTTPException(status_code=422, detail=f"priority must be one of {', '.join(PRIORITIES)}")
+        msg = ntfy_message(body.title, body.text, priority=body.priority, tags=body.tags, click=body.link)
+        return {"queued": await argus.notify_from_job(job_id, body.worker, body.key, msg)}
+
+    @app.get("/approvals", dependencies=guarded)
+    async def list_approvals(state: str | None = None, job: str | None = None, limit: int = 100) -> list[dict]:
+        return await argus.approvals.list(state, job, min(max(limit, 1), 500))
+
+    @app.get("/approvals/{approval_id}", dependencies=guarded)
+    async def get_approval(approval_id: str) -> dict:
+        return await argus.approvals.get(approval_id)
+
+    @app.post("/approvals/{approval_id}/decide")
+    async def decide(approval_id: str, request: Request, t: str | None = None, answer: str | None = None,
+                     authorization: str | None = Header(default=None)) -> dict:
+        """Helios and apps send the Argus token; the phone buttons send ?t= (signed, one-time) instead."""
+        raw = await request.body()
+        try:
+            body = Decide.model_validate_json(raw) if raw.strip() else Decide()
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=f"bad body: {e}") from None
+        ans = body.answer or answer
+        if ans not in ("approve", "reject"):
+            raise HTTPException(status_code=422, detail="answer must be approve or reject")
+        if t is None and not token_ok(authorization):
+            raise HTTPException(status_code=401, detail="missing or wrong token")
+        by = body.by or ("phone" if t is not None else "helios")
+        a = await argus.approvals.decide(approval_id, ans, fields=body.fields, by=by, token=t)
+        return {"id": a["id"], "state": a["state"], "answer": a["answer"]}
+
+    @app.get("/a/{approval_id}", response_class=HTMLResponse, include_in_schema=False)
+    async def approval_page_view(approval_id: str, t: str = "") -> HTMLResponse:
+        try:
+            a = await argus.approvals.verify_link(approval_id, t)
+        except (ApprovalNotFound, BadToken):
+            return HTMLResponse(approval_page.invalid(), status_code=404)
+        return HTMLResponse(approval_page.render(a, t), headers={"Cache-Control": "no-store",
+                                                                 "Referrer-Policy": "no-referrer"})
+
+    @app.post("/outbox/test", dependencies=guarded)
+    async def outbox_test() -> dict:
+        """Send a test notification, to check the ntfy topic and the phone app."""
+        ntfy = argus.outbox.senders.get("ntfy")
+        if not (ntfy and ntfy.enabled):
+            raise HTTPException(status_code=409, detail="ntfy is off: set NTFY_TOPIC in .env and restart argusd")
+
+        def fn(conn):
+            return add_message(conn, time.time(), "ntfy", ntfy_message(
+                "Argus test", f"ntfy works. Sent by {argus.cfg.instance.name} on {argus.cfg.instance.host}.",
+                tags=["wave"]))
+
+        oid = await argus.store.write(fn)
+        argus.outbox.poke()
+        return {"queued": oid}
+
+    @app.get("/outbox", dependencies=guarded)
+    async def outbox(limit: int = 50) -> dict:
+        return {**(await argus.outbox.stats()), "messages": await argus.outbox.recent(min(max(limit, 1), 500)),
+                **argus.outbox.health()}
 
     @app.post("/jobs/{job_id}/wait", dependencies=guarded)
     async def wait(job_id: str, body: Wait) -> dict:

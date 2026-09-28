@@ -8,6 +8,7 @@ const FILTERS: [string, string, (k: string) => boolean][] = [
   ["jobs", "Jobs", (k) => k.startsWith("job.")],
   ["steps", "Steps", (k) => k.startsWith("step.")],
   ["models", "Models", (k) => k.startsWith("model.") || k.startsWith("check.")],
+  ["approvals", "Approvals", (k) => k.startsWith("approval.") || k.startsWith("outbox.") || k.startsWith("notify.")],
   ["workers", "Workers", (k) => k.startsWith("worker.")],
   ["map", "Map", (k) => k === "component.added" || k === "edge.added"],
   ["problems", "Problems", (k) => /dead|failed|offline|retry|timeout|error|opened/.test(k)],

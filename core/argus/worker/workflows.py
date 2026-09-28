@@ -16,6 +16,10 @@ Each finished step is a checkpoint. If the worker dies, the job is retried and f
 
 Inside a step, `ctx.idempotency_key` is "<job id>:<step index>"; pass it to anything with side effects
 outside Argus so a retried step does not do the same thing twice.
+
+`ctx.approve(...)` asks you and parks the job until you answer (the worker is free meanwhile); when the job comes
+back, the step runs again and `ctx.approve` returns your `Decision`. `ctx.notify(...)` sends a phone message,
+once per step even if the step is retried.
 """
 
 from __future__ import annotations
@@ -38,6 +42,20 @@ class WaitSignal(Exception):  # noqa: N818 - a signal, not an error
     def __init__(self, reason: str):
         super().__init__(reason)
         self.reason = reason
+
+
+@dataclass(frozen=True)
+class Decision:
+    """Your answer to `ctx.approve`. Truthy when approved; `fields` holds the values as approved (with edits)."""
+
+    approved: bool
+    state: str  # approved, rejected or expired
+    fields: dict[str, Any]
+    by: str | None
+    approval_id: str
+
+    def __bool__(self) -> bool:
+        return self.approved
 
 
 @dataclass(frozen=True)
@@ -89,6 +107,10 @@ class StepReporter:
     def step(self, idx: int, name: str, state: str, *, output: Any = None, error: str | None = None,
              tier: str | None = None) -> None: ...
 
+    def approval(self, body: dict) -> dict: ...
+
+    def notify(self, body: dict) -> dict: ...
+
     @property
     def lease_lost(self) -> bool: ...
 
@@ -109,6 +131,8 @@ class Context:
         self._router = router  # argus.models.Router bound to this job, set by the worker
         self._tier: str | None = None  # highest tier used by ctx.llm inside the current step
         self._step: str | None = None
+        self._step_idx: int | None = None
+        self._asks = 0  # approve/notify calls in the current step, for their idempotency keys
         self.last_answer: Any = None
 
     def _check_lease(self) -> None:
@@ -128,7 +152,7 @@ class Context:
             self.skipped.append(name)
             return done.get("output")
         self.idempotency_key = f"{self.job_id}:{idx}"
-        self._tier, self._step = None, name
+        self._tier, self._step, self._step_idx, self._asks = None, name, idx, 0
         self._reporter.step(idx, name, "running", tier=tier)
         try:
             output = fn(*args, **kwargs)
@@ -140,7 +164,7 @@ class Context:
             raise
         finally:
             self.idempotency_key = None
-            self._step = None
+            self._step = self._step_idx = None
         self._check_lease()
         self._reporter.step(idx, name, "succeeded", output=output, tier=tier or self._tier)
         return output
@@ -169,6 +193,36 @@ class Context:
         if not tiers:
             raise RuntimeError("Claude is not available on this worker (claude CLI not found)")
         return self.llm(prompt, input, schema=schema, check=check, tiers=tiers[:1], attempts=1)
+
+    def _key(self, what: str) -> str:
+        if self._step_idx is None:
+            raise RuntimeError(f"call ctx.{what}() inside ctx.step(...), so a retried job does not ask twice")
+        self._asks += 1
+        return f"{self.job_id}:{self._step_idx}:{self._asks}"
+
+    def approve(self, type: str, title: str, fields: dict | None = None, *, items: list[dict] | None = None,
+                summary: list[str] | None = None, link: str | None = None) -> Decision:
+        """Ask you. Returns your Decision once you answered; until then the job waits (no worker held).
+
+        type: "entry" (one item, fields editable), "batch" (items, one decision; count and total of their
+        "amount" are added up by Argus) or "draft" (summary lines and a link to review).
+        """
+        self._check_lease()
+        body = {"key": self._key("approve"), "type": type, "title": title, "fields": fields or {},
+                "items": items or [], "summary": summary or [], "link": link, "step": self._step}
+        a = self._reporter.approval(body)
+        if a["state"] == "pending":
+            raise WaitSignal(f"approval:{a['id']}")
+        return Decision(approved=a["state"] == "approved", state=a["state"], fields=a.get("answer") or {},
+                        by=a.get("decided_by"), approval_id=a["id"])
+
+    def notify(self, title: str, text: str = "", *, priority: str = "default", tags: list[str] | None = None,
+               link: str | None = None) -> bool:
+        """Send a phone message (ntfy). Sent once even if this step runs again. Returns True if queued now."""
+        self._check_lease()
+        body = {"key": self._key("notify"), "title": title, "text": text, "priority": priority,
+                "tags": tags or [], "link": link}
+        return bool(self._reporter.notify(body).get("queued"))
 
     def wait(self, reason: str) -> None:
         """Park the job until it is resumed (for example after an approval). Finished steps stay finished."""

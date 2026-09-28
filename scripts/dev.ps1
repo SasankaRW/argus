@@ -12,6 +12,9 @@
 #   .\scripts\dev.ps1 helios  rebuild Helios after changing helios/src (needs Node.js; the built copy is in Git)
 #   .\scripts\dev.ps1 models  check Ollama, the tier models and Claude ("models claude" also makes one real Claude call)
 #   .\scripts\dev.ps1 classify  send a model job; T1's answer is rejected on purpose so you see an escalation
+#   .\scripts\dev.ps1 ntfy      send a test notification to your phone (NTFY_TOPIC in .env)
+#   .\scripts\dev.ps1 approval  send a pretend bill that waits for your approval (phone or Helios)
+#   .\scripts\dev.ps1 approve   approve the newest waiting approval ("approve no" rejects it)
 #
 # Version control (see CONTRIBUTING.md):
 #   .\scripts\dev.ps1 github            one-time: log in to GitHub, create the private repo, push everything
@@ -221,6 +224,38 @@ switch ($Command) {
         $File = if ($Arg) { $Arg } else { "lecture_07.pdf" }
         Submit-Job ('{"plugin":"demo","workflow":"classify","input":{"filename":"' + $File + '","reject_tier":"T1"}}') 600
     }
+    "ntfy" {
+        $H = @{}; $T = Token; if ($T) { $H["Authorization"] = "Bearer $T" }
+        try { Invoke-RestMethod -Method Post -Uri "$ArgusUrl/outbox/test" -Headers $H | Out-Null }
+        catch { throw "Could not send: $($_.ErrorDetails.Message) (is argusd running? is NTFY_TOPIC set in .env?)" }
+        Write-Host "Test message queued. Check the ntfy app on your phone (topic from NTFY_TOPIC)."
+    }
+    "approval" {
+        $H = @{}; $T = Token; if ($T) { $H["Authorization"] = "Bearer $T" }
+        $Body = '{"plugin":"demo","workflow":"approval","input":{"vendor":"CEB","amount":"4250","due":"2026-10-15"}}'
+        $Job = Invoke-RestMethod -Method Post -Uri "$ArgusUrl/jobs" -Headers $H -ContentType "application/json" -Body $Body
+        Write-Host "Submitted job $($Job.id)."
+        $Said = ""
+        for ($i = 0; $i -lt 600; $i++) {
+            Start-Sleep -Milliseconds 500
+            $J = Invoke-RestMethod -Uri "$ArgusUrl/jobs/$($Job.id)" -Headers $H
+            if ($J.state -ne $Said) {
+                if ($J.state -eq "waiting") { Write-Host "Waiting for you: tap Approve on your phone, or open the Approvals box in Helios (or run: .\scripts\dev.ps1 approve)" }
+                else { Write-Host "State: $($J.state)" }
+                $Said = $J.state
+            }
+            if ($J.state -in @("succeeded", "dead", "cancelled")) { break }
+        }
+        if ($J.result) { $J.result | ConvertTo-Json -Compress }
+    }
+    "approve" {
+        $H = @{}; $T = Token; if ($T) { $H["Authorization"] = "Bearer $T" }
+        $P = @(Invoke-RestMethod -Uri "$ArgusUrl/approvals?state=pending&limit=1" -Headers $H)
+        if ($P.Count -eq 0 -or -not $P[0]) { Write-Host "Nothing is waiting for approval."; break }
+        $Answer = if ($Arg -in @("no", "reject")) { "reject" } else { "approve" }
+        $R = Invoke-RestMethod -Method Post -Uri "$ArgusUrl/approvals/$($P[0].id)/decide" -Headers $H -ContentType "application/json" -Body (@{ answer = $Answer; by = "dev.ps1" } | ConvertTo-Json)
+        Write-Host "$($P[0].plugin): $($P[0].title) -> $($R.state)"
+    }
     "github" {
         Need-Gh
         Ensure-Hooks
@@ -305,6 +340,6 @@ switch ($Command) {
         if ($LASTEXITCODE -ne 0) { throw "Release stopped" }
     }
     default {
-        Get-Content $PSCommandPath | Select-Object -Skip 1 -First 21 | ForEach-Object { $_.TrimStart("#") }
+        Get-Content $PSCommandPath | Select-Object -Skip 1 -First 24 | ForEach-Object { $_.TrimStart("#") }
     }
 }

@@ -114,6 +114,30 @@ class EventsConfig(_Strict):
     stream_queue: int = Field(200, ge=10, le=10000)  # batches a slow viewer may lag before it is dropped
 
 
+class NtfyConfig(_Strict):
+    # Phone notifications. The topic is a secret (NTFY_TOPIC in .env): anyone who knows it can read it.
+    url: str = "https://ntfy.sh"          # or your own ntfy server
+    timeout_seconds: float = Field(10, gt=0, le=120)
+    max_attempts: int = Field(8, ge=1, le=50)  # then the message is marked failed (and shown in Helios)
+
+
+class ApprovalsConfig(_Strict):
+    # The address your phone uses to reach Argus (Tailscale later, e.g. http://laptop:8600). Without it the
+    # notification has no Approve/Reject buttons and you decide in Helios instead.
+    public_url: str | None = None
+    remind_hours: float = Field(24, gt=0, le=24 * 30)   # one reminder if nobody decided by then
+    expire_hours: float = Field(168, gt=0, le=24 * 90)  # then the approval counts as "no" and the job goes on
+
+    @field_validator("public_url")
+    @classmethod
+    def _url(cls, v: str | None) -> str | None:
+        if v is None or v.strip() == "":
+            return None
+        if not v.startswith(("http://", "https://")):
+            raise ValueError("must start with http:// or https://")
+        return v.rstrip("/")
+
+
 class PowerConfig(_Strict):
     mode: Literal["simulated", "real"] = "simulated"
 
@@ -130,6 +154,7 @@ class Secrets(BaseModel):
     admin_password: str | None = None
     worker_token: str | None = None
     ntfy_topic: str | None = None
+    ntfy_token: str | None = None  # only for a private ntfy server with access control
 
 
 class Config(_Strict):
@@ -142,6 +167,8 @@ class Config(_Strict):
     claude: ClaudeConfig = Field(default_factory=ClaudeConfig)
     jobs: JobsConfig = Field(default_factory=JobsConfig)
     events: EventsConfig = Field(default_factory=EventsConfig)
+    ntfy: NtfyConfig = Field(default_factory=NtfyConfig)
+    approvals: ApprovalsConfig = Field(default_factory=ApprovalsConfig)
     power: PowerConfig = Field(default_factory=PowerConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
 
@@ -214,6 +241,7 @@ def load_config(path: str | os.PathLike | None = None) -> Config:
     cfg.secrets = Secrets(
         admin_password=env.get("ARGUS_ADMIN_PASSWORD"),
         worker_token=env.get("ARGUS_WORKER_TOKEN"),
-        ntfy_topic=env.get("NTFY_TOPIC"),
+        ntfy_topic=env.get("NTFY_TOPIC") or None,
+        ntfy_token=env.get("NTFY_TOKEN") or None,
     )
     return cfg
