@@ -52,7 +52,7 @@ class _HeliosFiles(StaticFiles):
 
     async def get_response(self, path, scope):
         resp = await super().get_response(path, scope)
-        if path.startswith("assets/"):
+        if path.replace("\\", "/").startswith("assets/"):  # Starlette passes an OS path (assets\\x.js on Windows)
             resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
         else:
             resp.headers["Cache-Control"] = "no-cache"
