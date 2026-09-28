@@ -1,20 +1,19 @@
-// Map layout: ELK arranges boxes left to right by who talks to whom. Boxes you drag stay where you put them.
+// Map layout: one column (lane) per kind of part, left to right, so devices, Argus, plugins, services and models
+// are clearly apart. Boxes you drag stay where you put them; Auto layout puts them back.
 
-import type { ELK as ElkApi } from "elkjs/lib/elk-api";
 import type { MapEdge, MapNode } from "./api";
 
 export const NODE_W = 168;
 export const NODE_H = 50;
+const COL_GAP = 44; // between lanes
+const ROW_GAP = 18; // between boxes in a lane
+export const LANE_PAD = 10;
+export const LANE_HEAD = 30; // room for the lane title above the first box
 
-// ELK is large, so it loads after the first paint, in its own file.
-let elkPromise: Promise<ElkApi> | null = null;
-function getElk(): Promise<ElkApi> {
-  elkPromise ??= import("elkjs/lib/elk.bundled.js").then((m) => new m.default());
-  return elkPromise;
-}
 const PINS_KEY = "helios.pins";
 
 export type Pos = { x: number; y: number };
+export type Lane = { id: string; label: string; x: number; y: number; w: number; h: number; count: number };
 
 export function loadPins(): Record<string, Pos> {
   try { return JSON.parse(localStorage.getItem(PINS_KEY) || "{}"); } catch { return {}; }
@@ -23,40 +22,42 @@ export function savePins(p: Record<string, Pos>) {
   try { localStorage.setItem(PINS_KEY, JSON.stringify(p)); } catch { /* ignore */ }
 }
 
-// Core first, then apps and workers, then plugins, then models and services.
-const RANK: Record<string, number> = { core: 0, app: 1, worker: 1, plugin: 2, service: 3, model: 3 };
+export const LANES: { id: string; label: string }[] = [
+  { id: "devices", label: "Devices & apps" },
+  { id: "argus", label: "Argus" },
+  { id: "plugins", label: "Plugins" },
+  { id: "services", label: "Services" },
+  { id: "models", label: "Models" },
+];
 
-export async function layout(nodes: MapNode[], edges: MapEdge[]): Promise<Record<string, Pos>> {
-  const ids = new Set(nodes.map((n) => n.id));
-  const kind = new Map(nodes.map((n) => [n.id, n.kind]));
-  const graph = {
-    id: "root",
-    layoutOptions: {
-      "elk.algorithm": "layered",
-      "elk.direction": "RIGHT",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "80",
-      "elk.spacing.nodeNode": "34",
-      "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
-      "elk.layered.considerModelOrder.strategy": "PREFER_EDGES",
-      "elk.separateConnectedComponents": "false",
-    },
-    children: [...nodes]
-      .sort((a, b) => (RANK[a.kind] ?? 3) - (RANK[b.kind] ?? 3) || a.first_seen - b.first_seen || a.id.localeCompare(b.id))
-      .map((n) => ({
-        id: n.id,
-        width: NODE_W,
-        height: NODE_H,
-        // core on the left, the model tiers stacked in one column on the right (T1 above T2 above T3)
-        layoutOptions: (n.kind === "core" ? { "elk.layered.layering.layerConstraint": "FIRST" }
-          : n.kind === "model" ? { "elk.layered.layering.layerConstraint": "LAST" } : {}) as Record<string, string>,
-      })),
-    // lines between two models (escalations) are drawn top to bottom, so they don't shape the columns
-    edges: edges
-      .filter((e) => ids.has(e.src) && ids.has(e.dst) && !(kind.get(e.src) === "model" && kind.get(e.dst) === "model"))
-      .map((e, i) => ({ id: `e${i}`, sources: [e.src], targets: [e.dst] })),
-  };
-  const out = await (await getElk()).layout(graph);
+export function laneOf(n: MapNode): string {
+  if (n.kind === "worker" || n.kind === "app" || n.id === "phone") return "devices";
+  if (n.kind === "core") return "argus";
+  if (n.kind === "plugin") return "plugins";
+  if (n.kind === "model") return "models";
+  return "services";
+}
+
+// Within a lane: models in tier order (T1 above T2), the rest oldest first.
+function order(a: MapNode, b: MapNode): number {
+  if (a.kind === "model" && b.kind === "model") return a.id.localeCompare(b.id, undefined, { numeric: true });
+  if (a.implicit !== b.implicit) return a.implicit ? 1 : -1;
+  return a.first_seen - b.first_seen || a.id.localeCompare(b.id);
+}
+
+export async function layout(nodes: MapNode[], _edges: MapEdge[]): Promise<{ pos: Record<string, Pos>; lanes: Lane[] }> {
+  const groups = LANES.map((l) => ({ ...l, items: nodes.filter((n) => laneOf(n) === l.id).sort(order) }))
+    .filter((g) => g.items.length);
+  const step = NODE_H + ROW_GAP;
+  const tallest = Math.max(1, ...groups.map((g) => g.items.length));
   const pos: Record<string, Pos> = {};
-  for (const c of out.children ?? []) pos[c.id] = { x: c.x ?? 0, y: c.y ?? 0 };
-  return pos;
+  const lanes: Lane[] = [];
+  groups.forEach((g, col) => {
+    const x = col * (NODE_W + COL_GAP);
+    const top = ((tallest - g.items.length) * step) / 2; // centre short lanes against the tallest
+    g.items.forEach((n, i) => { pos[n.id] = { x, y: top + i * step }; });
+    lanes.push({ id: g.id, label: g.label, count: g.items.length, x: x - LANE_PAD, y: -LANE_HEAD - LANE_PAD,
+      w: NODE_W + LANE_PAD * 2, h: tallest * step - ROW_GAP + LANE_HEAD + LANE_PAD * 2 });
+  });
+  return { pos, lanes };
 }

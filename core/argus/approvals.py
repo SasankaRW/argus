@@ -202,6 +202,8 @@ class Approvals:
             ]
         if links:
             actions.append({"action": "view", "label": "Open", "url": links["page"]})
+            if not reply:
+                lines.append("Approve / Reject need Tailscale.")
         if not actions:
             lines.append("Decide in Helios.")
         title = f"{'Reminder: ' if reminder else ''}{a['plugin']}: {a['title']}"

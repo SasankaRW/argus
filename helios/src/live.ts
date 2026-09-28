@@ -10,7 +10,7 @@ export type Phase = "loading" | "login" | "ready" | "down";
 
 const MAX_EVENTS = 400;
 const PULSE_MS = 1400;
-const MAP_KINDS = /^(component\.added|edge\.added|worker\.(online|offline)|model\.breaker_\w+)$/;
+const MAP_KINDS = /^(component\.added|edge\.added|worker\.(online|offline)|model\.breaker_\w+|phone\.(online|offline))$/;
 const BAD = /(dead|failed|offline|timeout|error)/;
 const WARN = /(escalated|skipped|retry|requested|rejected|expired)/;
 const pulseTone = (k: string): Tone => (BAD.test(k) ? "bad" : WARN.test(k) ? "warn" : "flow");

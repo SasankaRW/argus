@@ -87,6 +87,7 @@ def test_request_is_idempotent_and_queues_one_message(store, clock):
     assert labels == ["Approve", "Reject", "Open"] and msg["actions"][0]["method"] == "POST"
     # default: the buttons go straight to Argus over Tailscale; knowing the ntfy topic is not enough
     assert ap.reply_topic is None and "body" not in msg["actions"][0]
+    assert msg["message"].endswith("Approve / Reject need Tailscale.")
     assert msg["actions"][0]["url"] == (f"http://phone-reachable:8600/approvals/{a1['id']}/decide"
                                         f"?t={ap.token(a1['id'])}&answer=approve")
     assert msg["actions"][2]["url"].startswith("http://phone-reachable:8600/a/")
@@ -556,6 +557,9 @@ def test_phone_back_online_pushes_what_is_waiting_once(store, clock):
     kinds = store.read_sync(lambda c: [r[0] for r in c.execute("SELECT kind FROM events WHERE kind LIKE 'phone.%'"
                                                                " OR kind = 'approval.pushed'")])
     assert kinds.count("approval.pushed") == 2 and kinds.count("phone.online") == 3
+    meta = json.loads(store.read_sync(lambda c: c.execute("SELECT meta FROM components WHERE id = 'phone'"
+                                                          ).fetchone()[0]))
+    assert meta["online"] is True and meta["device"] == "pixel-8" and meta["since"] == clock()
 
 
 def test_phone_watch_is_off_in_ntfy_mode_or_without_a_phone(store, clock):

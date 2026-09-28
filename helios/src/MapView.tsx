@@ -6,8 +6,9 @@ import {
 } from "@xyflow/react";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ArgusMap, MapNode } from "./api";
-import { layout, loadPins, NODE_H, NODE_W, Pos, savePins } from "./layout";
+import { Lane, layout, loadPins, NODE_H, NODE_W, Pos, savePins } from "./layout";
 import type { Pulse } from "./live";
+import { ago } from "./format";
 
 export type Selection = { type: "node"; id: string } | { type: "edge"; src: string; dst: string } | { type: "job"; id: string } | null;
 
@@ -25,8 +26,14 @@ function sub(n: MapNode): string {
     return [j.active ? `${j.active} running` : "", j.queued ? `${j.queued} queued` : "",
       j.waiting ? `${j.waiting} waiting` : ""].filter(Boolean).join(" · ");
   }
+  if (n.id === "phone") {
+    const m = n.meta as { online?: boolean | null; since?: number | null; device?: string };
+    if (m.online === true) return `online · ${m.device ?? "tailscale"}`;
+    if (m.online === false) return `offline${m.since ? ` · ${ago(m.since)}` : ""}`;
+    return "checking…";
+  }
   if (n.id === "approvals") return n.pending ? `${n.pending} waiting for you` : "nothing to decide";
-  if (n.id === "ntfy") return n.failed ? `${n.failed} not delivered` : n.unsent ? `${n.unsent} sending` : "phone · all sent";
+  if (n.id === "ntfy") return n.failed ? `${n.failed} not delivered` : n.unsent ? `${n.unsent} sending` : "notifications · all sent";
   if (n.kind === "model") {
     const st = n.state === "open" ? "paused" : n.state === "half_open" ? "trying again" : "ready";
     const calls = (n as MapNode & { calls?: number }).calls ?? 0;
@@ -58,6 +65,7 @@ function dotColor(n: MapNode, hot: boolean): string {
   if (n.kind === "core") return "var(--amber)";
   if (n.kind === "model") return n.state === "half_open" ? "var(--amber)" : "var(--violet)";
   if (n.kind === "plugin") return (n.jobs?.active ?? 0) > 0 ? "var(--flow)" : (n.jobs?.waiting ?? 0) > 0 ? "var(--amber)" : "var(--ok)";
+  if (n.id === "phone") return n.meta?.online === true ? "var(--ok)" : n.meta?.online === false ? "var(--bad)" : "var(--tx3)";
   if (n.id === "approvals") return n.pending ? "var(--amber)" : "var(--ok)";
   if (n.id === "ntfy") return n.failed ? "var(--bad)" : "var(--ok)";
   return "var(--tx3)";
@@ -106,7 +114,17 @@ const Line = memo(function Line(p: EdgeProps<Edge<LineData>>) {
   );
 });
 
-const nodeTypes = { box: Box };
+// A lane: the titled column behind one kind of part. It never takes clicks, so the map pans through it.
+const LaneBg = memo(function LaneBg({ data }: NodeProps<Node<{ lane: Lane }>>) {
+  const l = data.lane;
+  return (
+    <div className="lane" style={{ width: l.w, height: l.h }}>
+      <span className="lane-t">{l.label}</span><span className="lane-n mono">{l.count}</span>
+    </div>
+  );
+});
+
+const nodeTypes = { box: Box, lane: LaneBg };
 const edgeTypes = { line: Line };
 
 type Props = {
@@ -121,14 +139,15 @@ type Props = {
 
 function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal }: Props) {
   const [positions, setPositions] = useState<Record<string, Pos>>({});
+  const [lanes, setLanes] = useState<Lane[]>([]);
   const [pins, setPins] = useState<Record<string, Pos>>(() => loadPins());
-  const [nodes, setNodes, onNodesChange] = useNodesState<Node<BoxData>>([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges] = useEdgesState<Edge<LineData>>([]);
   const [now, setNow] = useState(Date.now());
   const rf = useReactFlow();
   const userMoved = useRef(false); // once you pan or zoom, the map stops re-fitting itself
   const wrap = useRef<HTMLDivElement>(null);
-  const fit = (duration = 300) => rf.fitView({ padding: 0.12, maxZoom: 1.1, duration });
+  const fit = (duration = 300) => rf.fitView({ padding: 0.04, maxZoom: 1.1, duration });
 
   // Re-run layout when the set of boxes or lines changes (not on every count update).
   const lines = useMemo(() => mergeEdges(map.edges), [map.edges]);
@@ -138,7 +157,7 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal 
   );
   useEffect(() => {
     let cancelled = false;
-    layout(map.nodes, lines).then((p) => { if (!cancelled) setPositions(p); });
+    layout(map.nodes, lines).then((r) => { if (!cancelled) { setPositions(r.pos); setLanes(r.lanes); } });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shapeKey]);
@@ -177,7 +196,11 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal 
     if (!Object.keys(positions).length) return;
     setNodes((prev) => {
       const dragging = new Set(prev.filter((x) => x.dragging).map((x) => x.id));
-      return map.nodes.map((n) => {
+      const bg: Node[] = lanes.map((l) => ({
+        id: `lane:${l.id}`, type: "lane", position: { x: l.x, y: l.y }, data: { lane: l }, width: l.w, height: l.h,
+        draggable: false, selectable: false, focusable: false, zIndex: -1, className: "lane-node",
+      }));
+      return [...bg, ...map.nodes.map((n): Node => {
         const pos = pins[n.id] ?? positions[n.id] ?? { x: 0, y: 0 };
         const hot = now - (active[n.id] ?? 0) < 1600;
         const fresh = n.first_seen - oldest > 3600 && Date.now() / 1000 - n.first_seen < 7 * 86400;
@@ -192,9 +215,9 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal 
           draggable: true,
           selectable: false,
         };
-      });
+      })];
     });
-  }, [map.nodes, positions, pins, active, now, selection, oldest, setNodes]);
+  }, [map.nodes, positions, lanes, pins, active, now, selection, oldest, setNodes]);
 
   // Boxes in the same column (the model tiers) connect top to bottom instead of side to side.
   const stacked = (a: string, b: string) => {
@@ -245,7 +268,7 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal 
         setPins(next);
         savePins(next);
       }}
-      onNodeClick={(_, node) => onSelect({ type: "node", id: node.id })}
+      onNodeClick={(_, node) => { if (node.type === "box") onSelect({ type: "node", id: node.id }); }}
       onEdgeClick={(_, edge) => onSelect({ type: "edge", src: edge.source, dst: edge.target })}
       onPaneClick={() => onSelect(null)}
       onMoveStart={(e) => { if (e) userMoved.current = true; }}

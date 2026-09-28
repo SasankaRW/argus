@@ -149,7 +149,7 @@ function NodePanel({ id, map, status, events, onSelect }: { id: string } & Omit<
   const evs = useHistory(`n:${id}`, `component=${encodeURIComponent(id)}`, events, (e) => e.from === id || e.to === id);
   if (!n) return <div className="tip">This box is no longer on the map.</div>;
   const lines = map.edges.filter((e) => e.src === id || e.dst === id);
-  const kind = n.implicit ? "Seen in events" : n.kind[0].toUpperCase() + n.kind.slice(1);
+  const kind = n.implicit ? "Seen in events" : n.id === "phone" ? "Device" : n.kind[0].toUpperCase() + n.kind.slice(1);
   return (
     <>
       <div className="ih">
@@ -180,6 +180,16 @@ function NodePanel({ id, map, status, events, onSelect }: { id: string } & Omit<
             <KV k="Running" v={n.jobs?.active ?? 0} />
             <KV k="Queued" v={n.jobs?.queued ?? 0} />
             <KV k="Waiting" v={n.jobs?.waiting ?? 0} />
+          </>
+        )}
+        {n.id === "phone" && (
+          <>
+            <KV k="State" v={n.meta?.online === true ? <span className="ok">online</span>
+              : n.meta?.online === false ? <span className="bad">offline</span> : "checking…"} />
+            <KV k="Device" v={String(n.meta?.device ?? "?")} />
+            {typeof n.meta?.since === "number" && <KV k="Since" v={ago(n.meta.since as number)} />}
+            <div className="tip">Seen through Tailscale every 30 s. Approve / Reject on the phone need it online;
+              when it comes back, anything still waiting is sent again.</div>
           </>
         )}
         {n.id === "ntfy" && (

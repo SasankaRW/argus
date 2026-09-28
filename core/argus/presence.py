@@ -25,7 +25,7 @@ from .config import Config
 from .db import Store
 from .events import insert_event
 from .outbox import Outbox
-from .registry import ensure_component
+from .registry import _upsert_component
 
 log = logging.getLogger("argus.presence")
 
@@ -68,7 +68,7 @@ class PhoneWatch:
     async def start(self) -> None:
         if not self.enabled:
             return
-        await self.store.write(lambda c: ensure_component(c, self.clock(), "phone", "service", "Phone", None))
+        await self._save(None)
         self._task = asyncio.create_task(self._loop(), name="argus-phone-watch")
 
     async def stop(self) -> None:
@@ -117,12 +117,26 @@ class PhoneWatch:
             return "unknown"
         was = self.online
         self.online = now_online
-        if was is not None and was != now_online:
-            kind = "phone.online" if now_online else "phone.offline"
-            await self.store.write(lambda c: insert_event(c, self.clock(), kind, src="phone", dst="argus"))
+        if was != now_online:
+            await self._save(now_online, event=was is not None)
         if now_online and was is False:
             return "back" if await self._push() else "online"
         return "online" if now_online else "offline"
+
+    async def _save(self, online: bool | None, event: bool = False) -> None:
+        """Keep the phone's box on the map current: online or offline, and since when."""
+        name = self.cfg.approvals.phone
+
+        def fn(conn) -> None:
+            now = self.clock()
+            meta = {"device": name, "online": online, "since": now if online is not None else None,
+                    "via": "tailscale"}
+            _upsert_component(conn, now, "phone", "service", "Phone", "tailscale", meta)
+            if event:
+                insert_event(conn, now, "phone.online" if online else "phone.offline", src="phone", dst="argus",
+                             data={"device": name})
+
+        await self.store.write(fn)
 
     async def _push(self) -> bool:
         now = self.clock()
