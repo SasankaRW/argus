@@ -5,6 +5,12 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Approve / Reject work without Tailscale:** the phone buttons now post to a private reply topic on the ntfy
+  server, which the phone can always reach. Argus keeps one streaming connection to that topic, decides the
+  approval with the signed one-time token and sends back "Approved: ..." (or "Already approved: ..." for a second
+  tap). The reply topic is made up from `NTFY_TOPIC` (override with `NTFY_REPLY_TOPIC`). The Open button still
+  needs `approvals.public_url` (Tailscale). `/health` shows the relay under `replies`.
+
 ## 0.6.0 (2026-09-28)
 
 Core step C8: approvals, the outbox and ntfy.
