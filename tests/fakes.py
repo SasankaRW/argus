@@ -112,10 +112,17 @@ def fake_claude(tmp: Path, mode: str = "ok", result: str = DEFAULT_RESULT) -> li
 
 
 class FakeNtfy:
-    """A tiny ntfy server: records every published message; `fail_next` makes the next N posts answer 500."""
+    """A tiny ntfy server.
+
+    POST /            JSON publish (what Argus sends); recorded in `messages`. `fail_next` makes the next N fail.
+    POST /<topic>     plain-text publish (what the phone's http buttons do); kept per topic.
+    GET  /<topic>/json?poll=1&since=<id|unix time>   the cached messages after `since`, one JSON per line.
+    """
 
     def __init__(self, fail_next: int = 0):
         self.messages: list[dict] = []
+        self.topics: dict[str, list[dict]] = {}
+        self.polls: list[str] = []
         self.fail_next = fail_next
         self.headers: list[dict] = []
         outer = self
@@ -124,21 +131,43 @@ class FakeNtfy:
             def log_message(self, *a):
                 pass
 
+            def _reply(self, code: int, body: bytes, ctype: str = "application/json"):
+                self.send_response(code)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
             def do_POST(self):
-                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
                 if outer.fail_next > 0:
                     outer.fail_next -= 1
-                    code, reply = 500, {"error": "boom"}
-                else:
-                    outer.messages.append(body)
-                    outer.headers.append(dict(self.headers))
-                    code, reply = 200, {"id": str(len(outer.messages)), "event": "message"}
-                raw = json.dumps(reply).encode()
-                self.send_response(code)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(raw)))
-                self.end_headers()
-                self.wfile.write(raw)
+                    self._reply(500, b'{"error":"boom"}')
+                    return
+                topic = self.path.strip("/")
+                if topic:  # plain publish to a topic
+                    msg = outer.publish(topic, raw.decode())
+                    self._reply(200, json.dumps(msg).encode())
+                    return
+                body = json.loads(raw)
+                outer.messages.append(body)
+                outer.headers.append(dict(self.headers))
+                self._reply(200, json.dumps({"id": str(len(outer.messages)), "event": "message"}).encode())
+
+            def do_GET(self):
+                from urllib.parse import parse_qs, urlparse
+
+                u = urlparse(self.path)
+                topic = u.path.strip("/").removesuffix("/json")
+                since = parse_qs(u.query).get("since", ["all"])[0]
+                outer.polls.append(since)
+                msgs = outer.topics.get(topic, [])
+                ids = [m["id"] for m in msgs]
+                if since in ids:
+                    msgs = msgs[ids.index(since) + 1:]
+                elif since.isdigit():
+                    msgs = [m for m in msgs if m["time"] >= int(since)]
+                self._reply(200, "".join(json.dumps(m) + "\n" for m in msgs).encode(), "application/x-ndjson")
 
         with socket.socket() as s:
             s.bind(("127.0.0.1", 0))
@@ -147,6 +176,22 @@ class FakeNtfy:
         self.server = ThreadingHTTPServer(("127.0.0.1", self.port), H)
         self.server.daemon_threads = True
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+
+    def publish(self, topic: str, text: str) -> dict:
+        lst = self.topics.setdefault(topic, [])
+        msg = {"id": f"m{len(lst) + 1:04d}", "time": int(time.time()), "event": "message", "topic": topic,
+               "message": text}
+        lst.append(msg)
+        return msg
+
+    def tap(self, action: dict) -> int:
+        """What the ntfy app does for an http button."""
+        import urllib.request
+
+        req = urllib.request.Request(action["url"], data=(action.get("body") or "").encode(),
+                                     method=action.get("method", "POST"))
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return r.status
 
     def __enter__(self) -> FakeNtfy:
         self.thread.start()

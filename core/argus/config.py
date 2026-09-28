@@ -119,6 +119,7 @@ class NtfyConfig(_Strict):
     url: str = "https://ntfy.sh"          # or your own ntfy server
     timeout_seconds: float = Field(10, gt=0, le=120)
     max_attempts: int = Field(8, ge=1, le=50)  # then the message is marked failed (and shown in Helios)
+    reply_retry_seconds: float = Field(5, gt=0, le=300)  # wait before reconnecting to the reply topic
 
 
 class ApprovalsConfig(_Strict):
@@ -155,6 +156,7 @@ class Secrets(BaseModel):
     worker_token: str | None = None
     ntfy_topic: str | None = None
     ntfy_token: str | None = None  # only for a private ntfy server with access control
+    ntfy_reply_topic: str | None = None  # optional; derived from the topic when unset
 
 
 class Config(_Strict):
@@ -243,5 +245,6 @@ def load_config(path: str | os.PathLike | None = None) -> Config:
         worker_token=env.get("ARGUS_WORKER_TOKEN"),
         ntfy_topic=env.get("NTFY_TOPIC") or None,
         ntfy_token=env.get("NTFY_TOKEN") or None,
+        ntfy_reply_topic=env.get("NTFY_REPLY_TOPIC") or None,
     )
     return cfg

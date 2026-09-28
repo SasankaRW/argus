@@ -14,6 +14,7 @@ from .jobs import JobStore, Watchdog
 from .modelboard import ModelBoard
 from .outbox import Outbox, add_message
 from .registry import Registry
+from .relay import ReplyRelay
 
 log = logging.getLogger("argus")
 
@@ -28,6 +29,7 @@ class Argus:
         self.models = ModelBoard(self.store, cfg)
         self.outbox = Outbox(self.store, cfg)
         self.approvals = Approvals(self.store, self.jobs, cfg)
+        self.relay = ReplyRelay(self.store, cfg, self.approvals, self.outbox)
         self.hub = EventHub(self.store, queue_size=cfg.events.stream_queue)
         stale_after = cfg.jobs.heartbeat_seconds * 4
         self.watchdog = Watchdog(
@@ -52,6 +54,7 @@ class Argus:
         await self.models.register()
         await self.approvals.start()
         await self.outbox.start()
+        self.relay.start()
         await self.hub.start()
         self.watchdog.start()
         self.started_at = time.time()
@@ -98,6 +101,7 @@ class Argus:
 
     async def stop(self) -> None:
         await self.watchdog.stop()
+        await self.relay.stop()
         await self.outbox.stop()
         await self.hub.stop()
         self.store.close()
@@ -105,7 +109,7 @@ class Argus:
 
     def health(self) -> dict:
         db = self.store.health()
-        ok = db["ok"] and self.watchdog.alive and self.hub.alive and self.outbox.alive
+        ok = db["ok"] and self.watchdog.alive and self.hub.alive and self.outbox.alive and self.relay.alive
         return {
             "status": "ok" if ok else "degraded",
             "version": self.version,
@@ -115,6 +119,7 @@ class Argus:
             "database": db,
             "events": self.hub.stats(),
             "outbox": self.outbox.health(),
+            "replies": self.relay.health(),
             "watchdog": {
                 "alive": self.watchdog.alive,
                 "runs": self.watchdog.runs,

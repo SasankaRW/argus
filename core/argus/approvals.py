@@ -10,6 +10,8 @@ Rules:
   back instead of a second one, and the notification is queued only once.
 - **One-time signed tokens.** The phone buttons carry `HMAC(install key, approval id)`. It works only while the
   approval is pending, so a used or old link does nothing. Helios and apps use the normal Argus token instead.
+- **Buttons work anywhere.** They post to a private reply topic on the ntfy server (always reachable from the
+  phone); Argus listens there (relay.py) and confirms with a short message. Open needs `approvals.public_url`.
 - **Money is shown from code.** A batch's count and total are added up here (Decimal), never taken from a model.
 - **Waiting is not failing.** After `remind_hours` you get one reminder; after `expire_hours` the approval
   counts as "no" and the job carries on.
@@ -132,7 +134,22 @@ class Approvals:
     def _hash(token: str) -> str:
         return hashlib.sha256(token.encode()).hexdigest()
 
+    @property
+    def reply_topic(self) -> str | None:
+        """The private ntfy topic the phone buttons post to and Argus listens on. NTFY_REPLY_TOPIC, or derived
+        from the main topic and the install key, so there is nothing extra to set up."""
+        sec = self.cfg.secrets
+        if sec.ntfy_reply_topic:
+            return sec.ntfy_reply_topic
+        if not sec.ntfy_topic or self._key is None:
+            return None
+        return f"{sec.ntfy_topic}-reply-{hmac.new(self._key, b'reply', hashlib.sha256).hexdigest()[:10]}"
+
+    def reply_body(self, approval_id: str, answer: str) -> str:
+        return f"{answer} {approval_id} {self.token(approval_id)}"
+
     def links(self, approval_id: str) -> dict[str, str] | None:
+        """Direct links to Argus (need the phone to reach it, e.g. over Tailscale)."""
         base = self.cfg.approvals.public_url
         if not base:
             return None
@@ -162,19 +179,31 @@ class Approvals:
                 shown = p["amount"] if k == "amount" and p.get("amount") else v
                 lines.append(f"{k}: {shown}")
         links = self.links(a["id"])
-        actions = None
-        if links:
-            ok_label = "Approve all" if a["type"] == "batch" else "Approve"
-            actions = [
+        reply = self.reply_topic
+        ok_label = "Approve all" if a["type"] == "batch" else "Approve"
+        actions: list[dict] = []
+        if reply:
+            # The buttons post to the reply topic on the ntfy server, which the phone can always reach; Argus reads
+            # it from there. So they work with or without Tailscale.
+            url = f"{self.cfg.ntfy.url.rstrip('/')}/{reply}"
+            actions += [
+                {"action": "http", "label": ok_label, "url": url, "method": "POST",
+                 "body": self.reply_body(a["id"], "approve"), "clear": True},
+                {"action": "http", "label": "Reject", "url": url, "method": "POST",
+                 "body": self.reply_body(a["id"], "reject"), "clear": True},
+            ]
+        elif links:
+            actions += [
                 {"action": "http", "label": ok_label, "url": links["approve"], "method": "POST", "clear": True},
                 {"action": "http", "label": "Reject", "url": links["reject"], "method": "POST", "clear": True},
-                {"action": "view", "label": "Open", "url": links["page"]},
             ]
-        else:
+        if links:
+            actions.append({"action": "view", "label": "Open", "url": links["page"]})
+        if not actions:
             lines.append("Decide in Helios.")
         title = f"{'Reminder: ' if reminder else ''}{a['plugin']}: {a['title']}"
         return ntfy_message(title, "\n".join(lines), priority="high", tags=["inbox_tray"],
-                            click=links["page"] if links else None, actions=actions)
+                            click=links["page"] if links else None, actions=actions or None)
 
     # -------------------------------------------------------------- worker side
 

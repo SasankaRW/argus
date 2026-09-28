@@ -85,11 +85,27 @@ def test_request_is_idempotent_and_queues_one_message(store, clock):
     assert msg["title"] == "demo: CEB bill" and "amount: 4,250.00" in msg["message"]
     labels = [x["label"] for x in msg["actions"]]
     assert labels == ["Approve", "Reject", "Open"] and msg["actions"][0]["method"] == "POST"
-    assert f"/approvals/{a1['id']}/decide?t={ap.token(a1['id'])}&answer=approve" in msg["actions"][0]["url"]
+    # the buttons post to the private reply topic on the ntfy server, so they work without Tailscale
+    reply = ap.reply_topic
+    assert reply.startswith("argus-test-topic-reply-") and len(reply) == len("argus-test-topic-reply-") + 10
+    assert msg["actions"][0]["url"] == f"https://ntfy.sh/{reply}"
+    assert msg["actions"][0]["body"] == f"approve {a1['id']} {ap.token(a1['id'])}"
+    assert msg["actions"][1]["body"].startswith("reject ")
+    assert msg["actions"][2]["url"].startswith("http://phone-reachable:8600/a/")  # Open still needs Tailscale
 
 
-def test_no_public_url_means_no_buttons(store, clock):
-    jobs, ap, _ = setup(store, clock, cfg_with(None))
+def test_buttons_without_public_url_and_none_without_ntfy(store, clock):
+    jobs, ap, cfg = setup(store, clock, cfg_with(None))
+
+    async def go1():
+        jid = await _leased(jobs)
+        return await ap.request(jid, "w1", "k0", "entry", "Rent", fields={"amount": "1"})
+
+    run(go1())
+    msg = json.loads(store.read_sync(lambda c: c.execute("SELECT payload FROM outbox").fetchone()[0]))
+    assert [a["label"] for a in msg["actions"]] == ["Approve", "Reject"] and "click" not in msg
+    store.write_sync(lambda c: c.execute("DELETE FROM outbox"))
+    cfg.secrets.ntfy_topic = None
 
     async def go():
         jid = await _leased(jobs)
@@ -98,6 +114,41 @@ def test_no_public_url_means_no_buttons(store, clock):
     run(go())
     msg = json.loads(store.read_sync(lambda c: c.execute("SELECT payload FROM outbox").fetchone()[0]))
     assert "actions" not in msg and "Decide in Helios." in msg["message"] and "INV-14" in msg["message"]
+
+
+def test_relay_decides_confirms_and_ignores_forgeries(store, clock):
+    from argus.relay import ReplyRelay
+
+    jobs, ap, cfg = setup(store, clock)
+    ob = Outbox(store, cfg, clock=clock, senders={"ntfy": Sender()})
+    inbox: list[dict] = []
+    relay = ReplyRelay(store, cfg, ap, ob, clock=clock, fetch=lambda since: [m for m in inbox if m["id"] > since])
+
+    async def go():
+        jid = await _leased(jobs)
+        a, _ = await ap.request(jid, "w1", "k", "entry", "CEB bill", fields={"amount": "10"})
+        await jobs.wait(jid, "w1", f"approval:{a['id']}")
+        tok = ap.token(a["id"])
+        inbox.extend([
+            {"id": "m1", "message": "hello"},                                   # noise
+            {"id": "m2", "message": f"approve {a['id']} {'0' * 40}"},           # forged token
+            {"id": "m3", "message": f"approve {a['id']} {tok}"},                # the tap
+            {"id": "m4", "message": f"reject {a['id']} {tok}"},                 # a second tap
+            {"id": "m5", "message": f"reject {a['id']} {tok}"},                 # and a third
+        ])
+        n = await relay.poll_once()
+        again = await relay.poll_once()  # the since-cursor was saved: nothing is handled twice
+        return jid, a, n, again
+
+    jid, a, n, again = run(go())
+    assert n == 5 and again == 0 and relay.handled == 1
+    assert run(ap.get(a["id"]))["state"] == "approved" and run(ap.get(a["id"]))["decided_by"] == "phone"
+    assert run(jobs.get(jid)).state is JobState.QUEUED
+    titles = store.read_sync(lambda c: [json.loads(r[0])["title"] for r in c.execute(
+        "SELECT payload FROM outbox ORDER BY created_at")])
+    assert titles == ["demo: CEB bill", "Approved: CEB bill", "Already approved: CEB bill"]
+    kinds = store.read_sync(lambda c: [r[0] for r in c.execute("SELECT kind FROM events WHERE kind LIKE 'approval.%'")])
+    assert "approval.reply_refused" in kinds and kinds.count("approval.reply") == 2
 
 
 def test_batch_totals_are_computed_in_code():
@@ -261,7 +312,7 @@ def make_argus(tmp_path, ntfy_url: str, public_url: str | None = "http://127.0.0
     (tmp_path / "argus.yaml").write_text(
         "logging:\n  file: null\n"
         "jobs:\n  watchdog_interval_seconds: 0.1\n  lease_seconds: 5\n  heartbeat_seconds: 1\n"
-        f"ntfy:\n  url: {ntfy_url}\n"
+        f"ntfy:\n  url: {ntfy_url}\n  reply_retry_seconds: 0.05\n"
         + (f"approvals:\n  public_url: {public_url}\n" if public_url else "") + extra,
         encoding="utf-8")
     (tmp_path / ".env").write_text(f"ARGUS_WORKER_TOKEN={token}\nNTFY_TOPIC=argus-e2e\n", encoding="utf-8")
@@ -301,9 +352,8 @@ def test_approve_from_the_phone_resumes_the_job_in_under_a_second(tmp_path):
             assert "CEB bill" in html and "4,250.00" in html and "no-store" in page.headers["Cache-Control"]
 
             t0 = time.monotonic()
-            status, body = phone_tap(msg["actions"][0], srv.url)  # Approve
-            assert status == 200 and body["state"] == "approved"
-            assert w.run_once(wait=2)  # the resumed job is claimed and finished
+            assert ntfy.tap(msg["actions"][0]) == 200  # Approve: goes to ntfy, not to Argus
+            assert w.run_once(wait=2)  # the relay picks it up; the resumed job is claimed and finished
             elapsed = time.monotonic() - t0
             job = cl.get(f"/jobs/{jid}")
             assert job["state"] == "succeeded" and job["result"]["filed"] is True
@@ -314,18 +364,25 @@ def test_approve_from_the_phone_resumes_the_job_in_under_a_second(tmp_path):
             # the parse step ran once; the approve step ran twice (asked, then answered); one approval only
             assert [s["name"] for s in job["steps"]] == ["parse", "approve", "file"]
             assert len(cl.get(f"/approvals?job={jid}")) == 1
-            wait_for(lambda: len(ntfy.messages) == 2)
-            assert ntfy.messages[1]["title"] == "Filed: CEB bill"
-
-            # the same button again does nothing; a forged token is refused
-            assert phone_tap(msg["actions"][1], srv.url)[0] == 409
-            bad = dict(msg["actions"][0], url=msg["actions"][0]["url"].replace("t=", "t=x"))
-            assert phone_tap(bad, srv.url)[0] in (403, 409)
-            assert cl.post("/outbox/test")["queued"]
             wait_for(lambda: len(ntfy.messages) == 3)
-            assert ntfy.messages[2]["title"] == "Argus test"
+            assert {m["title"] for m in ntfy.messages[1:]} == {"Approved: CEB bill", "Filed: CEB bill"}
+
+            # tapping Reject afterwards changes nothing and says so; the direct link (Tailscale) is one-time too
+            ntfy.tap(msg["actions"][1])
+            wait_for(lambda: len(ntfy.messages) == 4)
+            assert ntfy.messages[3]["title"] == "Already approved: CEB bill"
+            assert cl.get(f"/approvals?job={jid}")[0]["state"] == "approved"
+            aid = cl.get(f"/approvals?job={jid}")[0]["id"]
+            direct = {"url": f"http://127.0.0.1:1/approvals/{aid}/decide?t={argus.approvals.token(aid)}&answer=reject"}
+            assert phone_tap(direct, srv.url)[0] == 409
+            wrong = {"url": f"http://127.0.0.1:1/approvals/{aid}/decide?t={'0' * 40}&answer=reject"}
+            assert phone_tap(wrong, srv.url)[0] in (403, 409)
+            assert cl.post("/outbox/test")["queued"]
+            wait_for(lambda: len(ntfy.messages) == 5)
+            assert ntfy.messages[4]["title"] == "Argus test"
             box = cl.get("/outbox")
-            assert box["counts"]["sent"] == 3 and box["ntfy"] is True
+            assert box["counts"]["sent"] == 5 and box["ntfy"] is True
+            assert cl.get("/health")["replies"]["handled"] == 1
             evs = [e["kind"] for e in cl.get(f"/jobs/{jid}/events")]
             assert "approval.requested" in evs and "approval.approved" in evs and "outbox.sent" in evs
 
@@ -354,7 +411,7 @@ def test_reject_in_helios_and_edits(tmp_path):
             assert w.run_once(wait=2) and w.run_once(wait=2)
             assert cl.get(f"/jobs/{j1}")["result"] == {"filed": False, "because": "rejected"}
             assert cl.get(f"/jobs/{j2}")["result"]["amount"] == "25.00"
-            assert "actions" not in ntfy.messages[0] and "Decide in Helios." in ntfy.messages[0]["message"]
+            assert [a["label"] for a in ntfy.messages[0]["actions"]] == ["Approve", "Reject"]  # no Open
 
 
 def test_worker_crash_after_asking_sends_no_second_notification(tmp_path):
