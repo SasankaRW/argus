@@ -1,4 +1,4 @@
-"""The home page at /: a small live status page until Helios arrives (C6).
+"""The lite page at /lite (and at / when Helios is not built in): a small live status page.
 
 Status comes from /status every 3 s; events stream over /ws/events. If ARGUS_WORKER_TOKEN is set, open the
 page as /?token=<token> so the live events can connect (the token stays in your browser).
@@ -35,7 +35,7 @@ a{color:var(--warn)}.hint{color:var(--warn);font-size:13px}
 <h2>Live events <span class="m" id="live" style="text-transform:none;letter-spacing:0"></span></h2>
 <p class="hint" id="hint" hidden></p>
 <div class="wrap"><table><tbody id="ev"><tr><td class="m">waiting for events…</td></tr></tbody></table></div>
-<p class="m" style="margin-top:22px">Helios arrives in core step C6. Raw data: <a href="/status">/status</a> ·
+<p class="m" style="margin-top:22px">Full dashboard: <a href="/helios/">Helios</a>. Raw data: <a href="/status">/status</a> ·
 <a href="/health">/health</a> · <a href="/docs">API docs</a></p>
 </main><script>
 const $=id=>document.getElementById(id);

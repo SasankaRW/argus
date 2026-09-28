@@ -31,7 +31,7 @@ version = { file = "VERSION" }
 where = ["core"]
 
 [tool.setuptools.package-data]
-argus = ["db/migrations/*.sql"]
+argus = ["db/migrations/*.sql", "helios_dist/*", "helios_dist/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

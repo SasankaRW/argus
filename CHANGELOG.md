@@ -2,6 +2,29 @@
 
 All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`.
 
+## 0.4.0 (2026-09-28)
+
+Core step C6: Helios v0, the live map.
+
+- **Helios** at http://127.0.0.1:8600 (`/` now opens it; the small page moved to `/lite`). Built with
+  React, React Flow and ELK in the Helios mockup style (dark, Geist, amber accent). Argus serves the built
+  copy, so no Node.js is needed to use it.
+- **Live map:** every component is a box, every pair that has talked is a line. A dot travels along a line
+  for each message (red for failures), lines get thicker with traffic, boxes light up while busy, new boxes
+  fade in with a "new" badge. Workers show online/offline; plugins show running and queued jobs. The map
+  lays itself out left to right and keeps everything in view as it grows; drag boxes to arrange them
+  (remembered in the browser), Auto layout resets.
+- **Inspector:** click a box (details, lines, recent activity), a line (message count, recent messages) or
+  any event (the job: state, attempts, steps with errors, result, input, events).
+- **Status tiles:** running, waiting, succeeded, dead, workers. **Events panel** with filters (jobs, steps,
+  workers, map, problems). Works on a phone.
+- **Token:** Helios asks for `ARGUS_WORKER_TOKEN` once (if set) and keeps it in the browser; password login
+  comes in C11.
+- **API:** `/events` gains `component=` (sent or received by) and `newest=true`; the WebSocket accepts
+  `component=` too.
+- **Dev:** `helios/` source, `dev.ps1 helios` to rebuild, CI type-checks and builds it.
+- **Tests:** 135.
+
 ## 0.3.0 (2026-09-28)
 
 Core step C5: live events and the growing map.

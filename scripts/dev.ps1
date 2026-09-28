@@ -7,6 +7,7 @@
 #   .\scripts\dev.ps1 worker  start a worker (demo plugin) in another window
 #   .\scripts\dev.ps1 demo    submit a demo job (needs argusd and a worker running)
 #   .\scripts\dev.ps1 events  watch live events in the terminal
+#   .\scripts\dev.ps1 helios  rebuild Helios after changing helios/src (needs Node.js; the built copy is in Git)
 param([Parameter(Position = 0)][string]$Command = "help")
 
 $ErrorActionPreference = "Stop"
@@ -47,6 +48,17 @@ switch ($Command) {
     "run"   { Need-Venv; & $Py -m argus }
     "worker" { Need-Venv; & $Py -m argus.worker.cli }
     "events" { Need-Venv; & $Py -m argus.tail }
+    "helios" {
+        if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { throw "Needs Node.js (https://nodejs.org). Not needed just to use Helios." }
+        Push-Location (Join-Path $Root "helios")
+        try {
+            npm ci
+            if ($LASTEXITCODE -ne 0) { throw "npm ci failed" }
+            npm run build
+            if ($LASTEXITCODE -ne 0) { throw "build failed" }
+        } finally { Pop-Location }
+        Write-Host "Helios rebuilt. Restart argusd and open http://127.0.0.1:8600"
+    }
     "demo"  {
         Need-Venv
         $Headers = @{}
@@ -65,6 +77,6 @@ switch ($Command) {
         Write-Host "State: $($J.state)"; $J.result | ConvertTo-Json -Compress
     }
     default {
-        Get-Content $PSCommandPath | Select-Object -Skip 1 -First 9 | ForEach-Object { $_.TrimStart("#") }
+        Get-Content $PSCommandPath | Select-Object -Skip 1 -First 10 | ForEach-Object { $_.TrimStart("#") }
     }
 }

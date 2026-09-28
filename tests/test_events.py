@@ -166,7 +166,7 @@ def test_status_is_public_and_event_endpoints_are_guarded(tmp_path):
         s = c.get("/status").json()
         assert s["status"] == "ok" and s["token_required"] is True and s["events"]["alive"] is True
         assert s["map"]["nodes"] >= 1
-        home = c.get("/")
+        home = c.get("/lite")
         assert home.status_code == 200 and "/ws/events" in home.text
         for path in ("/events", "/map", "/registry"):
             assert c.get(path).status_code == 401
@@ -274,3 +274,31 @@ def test_closed_viewer_is_unsubscribed_at_once(tmp_path):
         while argus.hub.stats()["subscribers"] and time.monotonic() < deadline:
             time.sleep(0.02)
         assert argus.hub.stats()["subscribers"] == 0
+
+
+def test_component_filter_and_newest(store):
+    for i in range(5):
+        write(store, lambda c, i=i: insert_event(c, float(i), f"n.{i}", src="a" if i % 2 else "b", dst="c"))
+    flt = EventFilter.parse("n.", None, "a")
+    assert [e["kind"] for e in store.read_sync(lambda c: read_events(c, 0, flt=flt))] == ["n.1", "n.3"]
+    last2 = store.read_sync(lambda c: read_events(c, 0, limit=2, flt=EventFilter.parse("n."), newest=True))
+    assert [e["kind"] for e in last2] == ["n.3", "n.4"]  # the latest two, oldest first
+    assert EventFilter.parse(None, None, "c").matches({"kind": "x", "job_id": None, "from": "q", "to": "c"})
+
+
+def test_helios_is_served_and_home_redirects(tmp_path):
+    from argus.api.app import HELIOS_DIR
+
+    argus = make(tmp_path).open()
+    with TestClient(create_app(argus)) as c:
+        assert c.get("/lite").status_code == 200
+        if not (HELIOS_DIR / "index.html").exists():
+            pytest.skip("Helios not built into this checkout")
+        r = c.get("/?token=abc", follow_redirects=False)
+        assert r.status_code == 307 and r.headers["location"] == "/helios/?token=abc"
+        page = c.get("/helios/")
+        assert page.status_code == 200 and '<div id="root">' in page.text
+        asset = page.text.split('src="')[1].split('"')[0]
+        assert asset.startswith("/helios/assets/") and c.get(asset).status_code == 200
+        body = c.get("/events?component=argus&newest=true&limit=5").json()
+        assert body["events"] and all("argus" in (e["from"], e["to"]) for e in body["events"])

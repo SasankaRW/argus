@@ -31,10 +31,12 @@ import dataclasses
 import hmac
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from ..context import Argus
@@ -42,6 +44,7 @@ from ..events import EventFilter, read_events
 from ..jobs import InvalidTransition, Job, JobNotFound, JobState, LeaseLost, QueueFull, Step
 from .home import HOME_HTML
 
+HELIOS_DIR = Path(__file__).resolve().parent.parent / "helios_dist"  # built by helios/ (npm run build)
 MAX_CLAIM_WAIT = 30.0
 CLAIM_POLL = 0.2
 WS_PING_SECONDS = 20.0
@@ -161,9 +164,27 @@ def create_app(argus: Argus) -> FastAPI:
 
     # -------------------------------------------------------------- public
 
-    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
-    async def home() -> str:
+    @app.get("/", include_in_schema=False)
+    async def home(request: Request):
+        """Helios when it is built in; otherwise the small status page. Keeps ?token= and friends."""
+        if (HELIOS_DIR / "index.html").exists():
+            q = request.url.query
+            return RedirectResponse("/helios/" + (f"?{q}" if q else ""))
+        return HTMLResponse(HOME_HTML)
+
+    @app.get("/lite", response_class=HTMLResponse, include_in_schema=False)
+    async def lite() -> str:
+        """The small status page, always available."""
         return HOME_HTML
+
+    if (HELIOS_DIR / "index.html").exists():
+        app.mount("/helios", StaticFiles(directory=HELIOS_DIR, html=True), name="helios")
+    else:
+        @app.get("/helios", include_in_schema=False)
+        @app.get("/helios/", include_in_schema=False)
+        async def helios_missing():
+            return HTMLResponse("<p>Helios is not built into this copy of Argus. Run <code>.\\scripts\\dev.ps1 "
+                                "helios</code> or use <a href='/lite'>/lite</a>.</p>", status_code=404)
 
     @app.get("/status")
     async def status() -> dict:
@@ -233,9 +254,10 @@ def create_app(argus: Argus) -> FastAPI:
 
     @app.get("/events", dependencies=guarded)
     async def events(after: int = 0, limit: int = Query(200, ge=1, le=1000), kinds: str | None = None,
-                     job: str | None = None) -> dict:
-        flt = EventFilter.parse(kinds, job)
-        rows = await argus.store.read(lambda c: read_events(c, after, limit=limit, flt=flt))
+                     job: str | None = None, component: str | None = None, newest: bool = False) -> dict:
+        """Event history. `newest=true` returns the latest `limit` matches (oldest first)."""
+        flt = EventFilter.parse(kinds, job, component)
+        rows = await argus.store.read(lambda c: read_events(c, after, limit=limit, flt=flt, newest=newest))
         return {"events": rows, "seq": argus.hub.cursor}
 
     @app.get("/registry", dependencies=guarded)
@@ -248,12 +270,12 @@ def create_app(argus: Argus) -> FastAPI:
 
     @app.websocket("/ws/events")
     async def ws_events(ws: WebSocket, since: int | None = None, kinds: str | None = None,
-                        job: str | None = None, token: str | None = None):
+                        job: str | None = None, component: str | None = None, token: str | None = None):
         if not token_ok(ws.headers.get("authorization"), token):
             await ws.close(code=4401, reason="missing or wrong token")
             return
         await ws.accept()
-        flt = EventFilter.parse(kinds, job)
+        flt = EventFilter.parse(kinds, job, component)
         sub = argus.hub.subscribe(flt)
         try:
             await ws.send_json({"type": "hello", "version": argus.version, "seq": sub.after})

@@ -91,15 +91,19 @@ class EventFilter:
 
     kinds: tuple[str, ...] = ()
     job_id: str | None = None
+    component: str | None = None  # events sent or received by this component
 
     @classmethod
-    def parse(cls, kinds: str | Iterable[str] | None = None, job_id: str | None = None) -> EventFilter:
+    def parse(cls, kinds: str | Iterable[str] | None = None, job_id: str | None = None,
+              component: str | None = None) -> EventFilter:
         if isinstance(kinds, str):
             kinds = [k for k in (x.strip() for x in kinds.split(",")) if k]
-        return cls(tuple(kinds or ()), job_id or None)
+        return cls(tuple(kinds or ()), job_id or None, component or None)
 
     def matches(self, ev: dict[str, Any]) -> bool:
         if self.job_id and ev["job_id"] != self.job_id:
+            return False
+        if self.component and self.component not in (ev["from"], ev["to"]):
             return False
         return not self.kinds or any(ev["kind"].startswith(k) for k in self.kinds)
 
@@ -108,6 +112,9 @@ class EventFilter:
         if self.job_id:
             parts.append("job_id = ?")
             args.append(self.job_id)
+        if self.component:
+            parts.append("(from_component = ? OR to_component = ?)")
+            args += [self.component, self.component]
         if self.kinds:
             parts.append("(" + " OR ".join("kind LIKE ? ESCAPE '\\'" for _ in self.kinds) + ")")
             args += [k.replace("%", "").replace("_", r"\_") + "%" for k in self.kinds]
@@ -115,13 +122,17 @@ class EventFilter:
 
 
 def read_events(conn: sqlite3.Connection, after: int, until: int | None = None, limit: int = 500,
-                flt: EventFilter | None = None) -> list[dict[str, Any]]:
+                flt: EventFilter | None = None, newest: bool = False) -> list[dict[str, Any]]:
+    """Events with after < seq <= until, oldest first. `newest=True` takes the last `limit` of them
+    instead of the first (still returned oldest first)."""
     where, args = (flt or EventFilter()).sql()
     if until is not None:
         where += " AND rowid <= ?"
         args.append(until)
-    sql = f"SELECT {_COLS} FROM events WHERE rowid > ?{where} ORDER BY rowid LIMIT ?"
-    return [event_row(r) for r in conn.execute(sql, (after, *args, limit)).fetchall()]
+    order = "DESC" if newest else ""
+    sql = f"SELECT {_COLS} FROM events WHERE rowid > ?{where} ORDER BY rowid {order} LIMIT ?"
+    rows = [event_row(r) for r in conn.execute(sql, (after, *args, limit)).fetchall()]
+    return rows[::-1] if newest else rows
 
 
 def last_seq(conn: sqlite3.Connection) -> int:

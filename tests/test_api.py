@@ -31,7 +31,7 @@ def test_health_and_version(tmp_path):
 def test_home_page(tmp_path):
     argus = make(tmp_path).open()
     with TestClient(create_app(argus)) as client:
-        r = client.get("/")
+        r = client.get("/lite")
         assert r.status_code == 200 and "text/html" in r.headers["content-type"]
         assert "/status" in r.text and "/ws/events" in r.text
 

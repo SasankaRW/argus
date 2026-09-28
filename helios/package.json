@@ -1,0 +1,27 @@
+{
+  "name": "helios",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Helios: the Argus dashboard. Built into core/argus/helios_dist and served by argusd at /helios.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fontsource/geist-mono": "^5.2.0",
+    "@fontsource/geist-sans": "^5.2.0",
+    "@xyflow/react": "^12.8.0",
+    "elkjs": "^0.10.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "typescript": "~5.9.0",
+    "vite": "^7.1.0"
+  }
+}
