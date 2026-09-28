@@ -1,4 +1,6 @@
 # Argus dev helper for Windows (PowerShell).
+#   .\scripts\dev.ps1 up      start everything: Ollama, argusd, a worker, then open Helios (or double-click scripts\up.cmd)
+#   .\scripts\dev.ps1 down    stop argusd and the worker started by "up" ("down all" also stops Ollama)
 #   .\scripts\dev.ps1 setup   create .venv, install Argus and dev tools, copy example config
 #   .\scripts\dev.ps1 test    run tests
 #   .\scripts\dev.ps1 lint    run ruff
@@ -29,6 +31,9 @@ Set-Location $Root
 $Py = Join-Path $Root ".venv\Scripts\python.exe"
 
 $Stamp = Join-Path $Root ".venv\argus-deps.hash"
+$UpFile = Join-Path $Root ".venv\argus-up.json"
+$ArgusUrl = "http://127.0.0.1:8600"
+$OllamaUrl = if ($env:ARGUS_OLLAMA_URL) { $env:ARGUS_OLLAMA_URL } else { "http://127.0.0.1:11434" }
 
 function Need-Venv {
     if (-not (Test-Path $Py)) { throw "No .venv yet. Run: .\scripts\dev.ps1 setup" }
@@ -91,9 +96,91 @@ function Submit-Job([string]$Body, [int]$Seconds) {
     if ($J.error) { Write-Host "Error: $($J.error)" }
 }
 
+function Is-Up([string]$Url) {
+    try { Invoke-RestMethod -Uri $Url -TimeoutSec 2 | Out-Null; return $true } catch { return $false }
+}
+
+function Wait-Up([string]$Url, [int]$Seconds, [string]$What) {
+    for ($i = 0; $i -lt $Seconds * 2; $i++) {
+        if (Is-Up $Url) { return }
+        Start-Sleep -Milliseconds 500
+    }
+    throw "$What did not start within $Seconds s. Look at its window for the error."
+}
+
+function Start-Window([string]$Title, [string]$Module) {
+    # Own console window, so its log stays visible; the pid is kept so "down" can stop it.
+    $Cmd = "`$Host.UI.RawUI.WindowTitle = '$Title'; & '$Py' -m $Module"
+    $P = Start-Process powershell -PassThru -WorkingDirectory $Root -ArgumentList @("-NoExit", "-NoProfile", "-Command", $Cmd)
+    $P.Id
+}
+
+function Token {
+    if (-not (Test-Path ".env")) { return "" }
+    $Line = Get-Content ".env" | Where-Object { $_ -match "^ARGUS_WORKER_TOKEN=(.+)$" } | Select-Object -First 1
+    if ($Line -match "^ARGUS_WORKER_TOKEN=(.+)$") { return $Matches[1].Trim() }
+    return ""
+}
+
 function Current-Branch { (git rev-parse --abbrev-ref HEAD).Trim() }
 
 switch ($Command) {
+    "up" {
+        Need-Venv
+        $Pids = @{}
+        $Rec = @{}
+        if (Test-Path $UpFile) { (Get-Content $UpFile | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $Rec[$_.Name] = $_.Value } }
+        if (Is-Up "$OllamaUrl/api/version") { Write-Host "[ok] Ollama already running" }
+        elseif (Get-Command ollama -ErrorAction SilentlyContinue) {
+            Write-Host "Starting Ollama ..."
+            $Pids.ollama = (Start-Process ollama -ArgumentList "serve" -WindowStyle Minimized -PassThru).Id
+            Wait-Up "$OllamaUrl/api/version" 30 "Ollama"
+            Write-Host "[ok] Ollama"
+        }
+        else { Write-Host "[--] Ollama not installed; model jobs will wait (get it from ollama.com)" }
+
+        if (Is-Up "$ArgusUrl/health") { Write-Host "[ok] argusd already running" }
+        else {
+            Write-Host "Starting argusd ..."
+            $Pids.argusd = Start-Window "Argus - argusd" "argus"
+            Wait-Up "$ArgusUrl/health" 30 "argusd"
+            Write-Host "[ok] argusd on $ArgusUrl"
+        }
+
+        # Judge the worker by its window, not by /status: after a restart argusd still lists the last
+        # worker as online until its heartbeat times out, which is not a running worker.
+        if ($Rec.worker -and (Get-Process -Id $Rec.worker -ErrorAction SilentlyContinue)) { Write-Host "[ok] worker already running" }
+        else {
+            Write-Host "Starting a worker ..."
+            $Pids.worker = Start-Window "Argus - worker" "argus.worker.cli"
+            Start-Sleep -Seconds 3
+            if (Get-Process -Id $Pids.worker -ErrorAction SilentlyContinue) { Write-Host "[ok] worker started (window 'Argus - worker')" }
+            else { throw "The worker window closed straight away. Run .\scripts\dev.ps1 worker to see the error." }
+        }
+
+        # Remember what we started (merged with an earlier "up") so "down" stops only those.
+        foreach ($K in $Pids.Keys) { $Rec[$K] = $Pids[$K] }
+        $Rec | ConvertTo-Json | Set-Content $UpFile
+
+        $T = Token
+        Start-Process ($(if ($T) { "$ArgusUrl/?token=$T" } else { $ArgusUrl }))
+        Write-Host "Helios is open in your browser. Stop everything with: .\scripts\dev.ps1 down"
+    }
+    "down" {
+        $Names = @("worker", "argusd")
+        if ($Arg -eq "all") { $Names += "ollama" }
+        $Left = @{}
+        if (Test-Path $UpFile) { (Get-Content $UpFile | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $Left[$_.Name] = $_.Value } }
+        if ($Left.Count -eq 0) { Write-Host "Nothing started by 'up' is recorded. Close the windows yourself." }
+        foreach ($N in $Names) {
+            if (-not $Left.ContainsKey($N)) { continue }
+            # /T also stops the python process running inside the window
+            if ((Quiet { taskkill /PID $Left[$N] /T /F }) -eq 0) { Write-Host "[ok] stopped $N" } else { Write-Host "[--] $N was not running" }
+            $Left.Remove($N)
+        }
+        if ($Left.Count) { $Left | ConvertTo-Json | Set-Content $UpFile } elseif (Test-Path $UpFile) { Remove-Item $UpFile }
+        if ($Arg -ne "all" -and (Is-Up "$OllamaUrl/api/version")) { Write-Host "Ollama keeps running (use 'down all' to stop it too)." }
+    }
     "setup" {
         if (-not (Test-Path $Py)) {
             Write-Host "Creating .venv ..."
@@ -218,6 +305,6 @@ switch ($Command) {
         if ($LASTEXITCODE -ne 0) { throw "Release stopped" }
     }
     default {
-        Get-Content $PSCommandPath | Select-Object -Skip 1 -First 19 | ForEach-Object { $_.TrimStart("#") }
+        Get-Content $PSCommandPath | Select-Object -Skip 1 -First 21 | ForEach-Object { $_.TrimStart("#") }
     }
 }
