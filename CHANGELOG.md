@@ -5,6 +5,10 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **One command to start everything:** `dev.ps1 up` (or double-click `scripts\up.cmd`) starts Ollama, argusd
+  and a worker if they are not running, waits until each is ready, and opens Helios. `dev.ps1 down` (or
+  `scripts\down.cmd`) stops what `up` started; `down all` stops Ollama too.
+
 ## 0.5.1 (2026-09-28)
 
 - **Helios updates show up on reload:** `index.html` is now served with `Cache-Control: no-cache` (hashed assets
