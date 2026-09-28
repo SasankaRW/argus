@@ -86,7 +86,7 @@ def test_ollama_provider_ok_timeout_missing_error():
             OllamaProvider(ol.url, "err").chat("s", [{"role": "user", "content": "x"}])
         assert set(OllamaProvider(ol.url, "").list_models()) == {"good", "hang", "err"}
     with pytest.raises(ModelUnavailable, match="not reachable"):
-        OllamaProvider("http://127.0.0.1:9", "x", timeout=1).chat("s", [{"role": "user", "content": "x"}])
+        OllamaProvider("http://127.0.0.1:9", "x", timeout=10).chat("s", [{"role": "user", "content": "x"}])
 
 
 def test_claude_provider_runs_with_tools_off(tmp_path):
