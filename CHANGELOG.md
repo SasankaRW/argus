@@ -2,6 +2,31 @@
 
 All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`.
 
+## 0.3.0 (2026-09-28)
+
+Core step C5: live events and the growing map.
+
+- **Live event stream:** WebSocket `/ws/events` pushes every change (jobs, steps, workers, components) as
+  it happens, typically within 0.1 s. Filters by kind (`kinds=job.,worker.`) or job. Reconnect with
+  `since=<seq>` and missed events are replayed from the database, so a viewer never loses one. A viewer
+  that falls too far behind is disconnected (and simply reconnects), so it can never slow Argus down.
+- **The map grows by itself:** new `edges` table (migration 0002). The first time two components talk, an
+  `edge.added` event appears; plugins get a box the first time a job is queued for them. `GET /map` returns
+  boxes, lines, job counts per plugin and the `seq` to stream from.
+- **More events:** `worker.online` / `worker.offline`, `component.added`, `edge.added`.
+- **New endpoints:** `/events` (paged history), `/map`, `/registry`, public `/status`.
+- **Live home page:** status cards and a live event feed. With a token set, open `/?token=<token>`.
+- **`argus-events`** (`dev.ps1 events`): watch events live in a terminal, with colours, filters and
+  auto-reconnect.
+- **Retention:** events older than `events.retention_days` (default 90) are deleted in small chunks; the
+  map's edges are kept.
+- **Stability:** event IDs stay in order even if the clock steps back; Argus stops at once even with viewers
+  connected (a closed viewer used to linger for up to 20 s and delay shutdown); a hung test now fails after
+  120 s instead of hanging the run.
+- **Dev:** `dev.ps1` reinstalls dependencies automatically when they change (this version adds
+  `websockets`).
+- **Tests:** 133.
+
 ## 0.2.0 (2026-09-28)
 
 Core step C4: workers.

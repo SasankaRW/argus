@@ -18,7 +18,9 @@ from typing import Any
 
 from ..config import JobsConfig
 from ..db import Store
+from ..events import insert_event
 from ..ids import new_id
+from ..registry import ensure_component
 from .states import (
     ACTIVE_STATES,
     ALLOWED,
@@ -150,22 +152,7 @@ class JobStore:
         dst: str | None = None,
         data: dict[str, Any] | None = None,
     ) -> None:
-        conn.execute(
-            "INSERT INTO events (id, job_id, step, kind, from_component, to_component, data, at,"
-            " created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (
-                new_id(),
-                job.id if job else None,
-                step,
-                kind,
-                src,
-                dst,
-                _dumps(data) if data else None,
-                now,
-                now,
-                now,
-            ),
-        )
+        insert_event(conn, now, kind, job_id=job.id if job else None, step=step, src=src, dst=dst, data=data)
 
     def _move(
         self,
@@ -259,6 +246,7 @@ class JobStore:
                 (job_id, plugin, workflow, S.QUEUED.value, priority, _dumps(needs_list), dedupe_key,
                  attempts, now + delay, payload, now, now),
             )
+            ensure_component(conn, now, plugin, "plugin", plugin)
             job = self._get(conn, job_id)
             self._event(conn, now, "job.queued", job, src="argus", dst=plugin,
                         data={"workflow": workflow, "priority": priority})

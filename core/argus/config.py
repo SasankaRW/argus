@@ -60,6 +60,11 @@ class JobsConfig(_Strict):
         return v
 
 
+class EventsConfig(_Strict):
+    retention_days: int = Field(90, ge=1, le=3650)
+    stream_queue: int = Field(200, ge=10, le=10000)  # batches a slow viewer may lag before it is dropped
+
+
 class PowerConfig(_Strict):
     mode: Literal["simulated", "real"] = "simulated"
 
@@ -85,6 +90,7 @@ class Config(_Strict):
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     ollama: OllamaConfig = Field(default_factory=OllamaConfig)
     jobs: JobsConfig = Field(default_factory=JobsConfig)
+    events: EventsConfig = Field(default_factory=EventsConfig)
     power: PowerConfig = Field(default_factory=PowerConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
 

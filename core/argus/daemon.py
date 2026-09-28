@@ -55,7 +55,8 @@ def main(argv: list[str] | None = None) -> int:
 
     app = create_app(argus)
     server = uvicorn.Server(
-        uvicorn.Config(app, host=cfg.server.host, port=cfg.server.port, log_config=None, access_log=False)
+        uvicorn.Config(app, host=cfg.server.host, port=cfg.server.port, log_config=None, access_log=False,
+                       ws="websockets-sansio", timeout_graceful_shutdown=5)
     )
     log.info("listening", extra={"host": cfg.server.host, "port": cfg.server.port})
     server.run()

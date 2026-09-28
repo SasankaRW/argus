@@ -10,17 +10,19 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.110",
-  "uvicorn>=0.29",
+  "uvicorn>=0.35",
+  "websockets>=13",
   "pydantic>=2.6",
   "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "httpx>=0.27", "ruff>=0.5"]
+dev = ["pytest>=8", "pytest-timeout>=2.3", "httpx>=0.27", "ruff>=0.5"]
 
 [project.scripts]
 argusd = "argus.daemon:main"
 argus-worker = "argus.worker.cli:main"
+argus-events = "argus.tail:main"
 
 [tool.setuptools.dynamic]
 version = { file = "VERSION" }
@@ -34,6 +36,7 @@ argus = ["db/migrations/*.sql"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["core"]
+timeout = 120  # a hung test fails instead of hanging the run
 
 [tool.ruff]
 line-length = 120
@@ -42,3 +45,6 @@ src = ["core", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"core/argus/api/home.py" = ["E501"]  # inline HTML/CSS/JS

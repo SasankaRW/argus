@@ -11,7 +11,8 @@ Design documents (versions tracked in the Argus Docs Index):
 
 ## Status
 
-Version `0.2.0` (see `VERSION` and `CHANGELOG.md`). Core steps done: C1 skeleton, C2 store, C3 jobs, C4 workers.
+Version `0.3.0` (see `VERSION` and `CHANGELOG.md`). Core steps done: C1 skeleton, C2 store, C3 jobs, C4 workers,
+C5 live events.
 
 ## Run it on Windows (PC, development)
 
@@ -22,10 +23,11 @@ cd G:\Projects\argus
 .\scripts\dev.ps1 check     # validates argus.yaml and the database
 .\scripts\dev.ps1 run       # starts argusd on http://127.0.0.1:8600
 .\scripts\dev.ps1 worker    # (second window) starts a worker with the demo plugin
-.\scripts\dev.ps1 demo      # (third window) submits a demo job
+.\scripts\dev.ps1 events    # (third window) watches events live
+.\scripts\dev.ps1 demo      # (fourth window) submits a demo job
 ```
 
-Then open http://127.0.0.1:8600: the worker shows under Workers and the demo job under Jobs.
+Then open http://127.0.0.1:8600 to see status and the live event feed (with a token set: `/?token=<token>`).
 
 ## Layout
 
@@ -36,7 +38,9 @@ core/argus/        the argusd package
   jobs/            job state machine, leases, retries, watchdog
   api/             HTTP API (FastAPI)
   worker/          argus-worker: client, workflow runner, demo plugin
-  registry.py      workers and components (Helios map boxes)
+  registry.py      workers, components and edges (the Helios map)
+  events.py        event log, edges, live stream hub, retention
+  tail.py          argus-events: live events in the terminal
 tests/             unit, state machine and crash tests
 runner/            desktop runner for the PC (later)
 plugins/           one folder per plugin (M2)

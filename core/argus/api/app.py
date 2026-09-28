@@ -1,7 +1,16 @@
 """The Argus HTTP API.
 
-Public: /, /health, /version.
-Token-protected when ARGUS_WORKER_TOKEN is set: everything under /jobs and /workers.
+Public: /, /health, /version, /status.
+Token-protected when ARGUS_WORKER_TOKEN is set: /jobs, /workers, /events, /registry, /map and /ws/events
+(the WebSocket also accepts ?token=, since browsers cannot set headers on it).
+
+Live events (WebSocket /ws/events?since=<seq>&kinds=job.,worker.&job=<id>):
+    server -> {"type": "hello", "seq": N}                      first message; N = newest event now
+              {"type": "events", "events": [...], "replay": true}   missed events after `since`, oldest first
+              {"type": "events", "events": [...]}              live batches
+              {"type": "reset", "reason": ...}                 too far behind: reload /map, then carry on
+              {"type": "ping", "seq": N}                       every 20 s when quiet
+    Close 4000 = you fell behind: reconnect with since=<last seq you saw>. Close 1001 = Argus is stopping.
 
 Worker protocol (all JSON):
     POST /workers/register            {id, host, capabilities, version}
@@ -24,15 +33,19 @@ import time
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from ..context import Argus
+from ..events import EventFilter, read_events
 from ..jobs import InvalidTransition, Job, JobNotFound, JobState, LeaseLost, QueueFull, Step
+from .home import HOME_HTML
 
 MAX_CLAIM_WAIT = 30.0
 CLAIM_POLL = 0.2
+WS_PING_SECONDS = 20.0
+MAX_REPLAY = 10_000
 
 
 # ------------------------------------------------------------------ request bodies
@@ -132,12 +145,16 @@ def create_app(argus: Argus) -> FastAPI:
     async def _full(request: Request, exc: QueueFull):
         return JSONResponse({"error": "queue_full", "detail": str(exc)}, status_code=429)
 
-    def auth(authorization: str | None = Header(default=None)) -> None:
+    def token_ok(authorization: str | None, query_token: str | None = None) -> bool:
         token = argus.cfg.secrets.worker_token
         if not token:
-            return
-        expected = f"Bearer {token}"
-        if authorization is None or not hmac.compare_digest(authorization, expected):
+            return True
+        if authorization is not None and hmac.compare_digest(authorization, f"Bearer {token}"):
+            return True
+        return query_token is not None and hmac.compare_digest(query_token, token)
+
+    def auth(authorization: str | None = Header(default=None)) -> None:
+        if not token_ok(authorization):
             raise HTTPException(status_code=401, detail="missing or wrong token")
 
     guarded = [Depends(auth)]
@@ -146,30 +163,23 @@ def create_app(argus: Argus) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
     async def home() -> str:
+        return HOME_HTML
+
+    @app.get("/status")
+    async def status() -> dict:
+        """What the home page shows. Public: counts and names only, no job contents."""
         h = argus.health()
-        counts = await argus.jobs.counts()
-        workers = [w for w in await argus.registry.workers() if w["state"] == "online"]
-        dot = "#3DD68C" if h["status"] == "ok" else "#FF7A6B"
-        jobs_line = ", ".join(f"{k} {v}" for k, v in sorted(counts.items())) or "no jobs yet"
-        workers_line = ", ".join(w["id"] for w in workers) or "none connected"
-        return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>Argus</title>
-<meta http-equiv="refresh" content="5">
-<style>body{{margin:0;background:#0B0D12;color:#E6E8EE;font:15px/1.6 system-ui,sans-serif;padding:40px 24px}}
-main{{max-width:560px;margin:0 auto}}h1{{font-size:22px;margin:0 0 4px}}.m{{color:#98A0B3}}
-.dot{{display:inline-block;width:9px;height:9px;border-radius:50%;background:{dot};margin-right:8px}}
-table{{width:100%;border-collapse:collapse;margin:20px 0}}td{{padding:8px 0;border-bottom:1px solid #1A1F2A}}
-td:last-child{{text-align:right;font-family:ui-monospace,monospace}}a{{color:#F5A524}}</style></head>
-<body><main><h1>Argus <span class="m">{argus.version}</span></h1>
-<div><span class="dot"></span>{h["status"]} &middot; {argus.cfg.instance.name} on {argus.cfg.instance.host}</div>
-<table><tr><td>Database</td><td>{h["database"]["database"]}, schema v{h["database"]["schema_version"]}</td></tr>
-<tr><td>Writer</td><td>{h["database"]["writer"]}</td></tr>
-<tr><td>Watchdog</td><td>{"running" if h["watchdog"]["alive"] else "stopped"}</td></tr>
-<tr><td>Workers</td><td>{workers_line}</td></tr>
-<tr><td>Jobs</td><td>{jobs_line}</td></tr>
-<tr><td>Uptime</td><td>{h["uptime_seconds"]} s</td></tr></table>
-<p class="m">Refreshes every 5 s. Helios arrives in core step C6. Raw data: <a href="/health">/health</a> &middot;
-<a href="/version">/version</a> &middot; <a href="/docs">API docs</a></p></main></body></html>"""
+        workers = await argus.registry.workers()
+        m = await argus.registry.map()
+        return {
+            "status": h["status"], "version": argus.version, "instance": argus.cfg.instance.name,
+            "host": argus.cfg.instance.host, "uptime_seconds": h["uptime_seconds"],
+            "database": h["database"], "watchdog": h["watchdog"], "events": h["events"],
+            "jobs": await argus.jobs.counts(),
+            "workers": [{"id": w["id"], "host": w["host"], "state": w["state"]} for w in workers],
+            "map": {"nodes": len(m["nodes"]), "edges": len(m["edges"])},
+            "token_required": bool(argus.cfg.secrets.worker_token),
+        }
 
     @app.get("/health")
     async def health() -> JSONResponse:
@@ -218,6 +228,79 @@ td:last-child{{text-align:right;font-family:ui-monospace,monospace}}a{{color:#F5
     @app.post("/jobs/{job_id}/resume", dependencies=guarded)
     async def resume(job_id: str) -> dict:
         return job_json(await argus.jobs.resume(job_id))
+
+    # -------------------------------------------------------------- events, registry, map (Helios)
+
+    @app.get("/events", dependencies=guarded)
+    async def events(after: int = 0, limit: int = Query(200, ge=1, le=1000), kinds: str | None = None,
+                     job: str | None = None) -> dict:
+        flt = EventFilter.parse(kinds, job)
+        rows = await argus.store.read(lambda c: read_events(c, after, limit=limit, flt=flt))
+        return {"events": rows, "seq": argus.hub.cursor}
+
+    @app.get("/registry", dependencies=guarded)
+    async def registry() -> dict:
+        return {"components": await argus.registry.components(), "workers": await argus.registry.workers()}
+
+    @app.get("/map", dependencies=guarded)
+    async def graph() -> dict:
+        return await argus.registry.map()
+
+    @app.websocket("/ws/events")
+    async def ws_events(ws: WebSocket, since: int | None = None, kinds: str | None = None,
+                        job: str | None = None, token: str | None = None):
+        if not token_ok(ws.headers.get("authorization"), token):
+            await ws.close(code=4401, reason="missing or wrong token")
+            return
+        await ws.accept()
+        flt = EventFilter.parse(kinds, job)
+        sub = argus.hub.subscribe(flt)
+        try:
+            await ws.send_json({"type": "hello", "version": argus.version, "seq": sub.after})
+            if since is not None:
+                cursor, sent = min(max(since, 0), sub.after), 0
+                while cursor < sub.after:
+                    rows = await argus.store.read(
+                        lambda c, a=cursor: read_events(c, a, until=sub.after, limit=500, flt=flt))
+                    if not rows:
+                        break
+                    await ws.send_json({"type": "events", "replay": True, "events": rows})
+                    cursor, sent = rows[-1]["seq"], sent + len(rows)
+                    if sent >= MAX_REPLAY and cursor < sub.after:
+                        await ws.send_json({"type": "reset", "reason": "too far behind; reload the map"})
+                        break
+            # Wait for events and for the viewer leaving at the same time, so a closed tab (or Argus shutting
+            # down) ends this handler at once instead of at the next ping.
+            recv = asyncio.ensure_future(ws.receive())
+            try:
+                while True:
+                    get = asyncio.ensure_future(sub.queue.get())
+                    done, _ = await asyncio.wait({get, recv}, timeout=WS_PING_SECONDS,
+                                                 return_when=asyncio.FIRST_COMPLETED)
+                    if recv in done:
+                        get.cancel()
+                        if recv.result()["type"] == "websocket.disconnect":
+                            return
+                        recv = asyncio.ensure_future(ws.receive())  # viewers have nothing to say; ignore it
+                        continue
+                    if get not in done:
+                        get.cancel()
+                        await ws.send_json({"type": "ping", "seq": argus.hub.cursor})
+                        continue
+                    batch = get.result()
+                    if batch is None:
+                        if sub.dropped == "shutdown":
+                            await ws.close(code=1001, reason="argus is stopping")
+                        else:
+                            await ws.close(code=4000, reason="fell behind; reconnect with since")
+                        return
+                    await ws.send_json({"type": "events", "events": batch})
+            finally:
+                recv.cancel()
+        except (WebSocketDisconnect, RuntimeError, ConnectionError):
+            pass  # the viewer went away
+        finally:
+            argus.hub.unsubscribe(sub)
 
     # -------------------------------------------------------------- worker protocol
 

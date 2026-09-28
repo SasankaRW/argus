@@ -27,6 +27,10 @@ jobs:
   watchdog_interval_seconds: 5
   plugin_queue_limit: 100
 
+events:
+  retention_days: 90       # older events are deleted; the map's edges are kept
+  stream_queue: 200        # how far a slow viewer may fall behind before it reconnects
+
 power:
   mode: simulated          # simulated on the PC, real on the laptop
 

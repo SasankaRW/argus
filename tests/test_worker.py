@@ -56,7 +56,8 @@ class Server:
             s.bind(("127.0.0.1", 0))
             self.port = s.getsockname()[1]
         self.url = f"http://127.0.0.1:{self.port}"
-        cfg = uvicorn.Config(create_app(argus), host="127.0.0.1", port=self.port, log_config=None, lifespan="on")
+        cfg = uvicorn.Config(create_app(argus), host="127.0.0.1", port=self.port, log_config=None, lifespan="on",
+                             ws="websockets-sansio")
         self.server = uvicorn.Server(cfg)
         self.thread = threading.Thread(target=self.server.run, daemon=True)
 

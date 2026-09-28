@@ -6,6 +6,7 @@
 #   .\scripts\dev.ps1 run     start argusd
 #   .\scripts\dev.ps1 worker  start a worker (demo plugin) in another window
 #   .\scripts\dev.ps1 demo    submit a demo job (needs argusd and a worker running)
+#   .\scripts\dev.ps1 events  watch live events in the terminal
 param([Parameter(Position = 0)][string]$Command = "help")
 
 $ErrorActionPreference = "Stop"
@@ -13,8 +14,18 @@ $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
 $Py = Join-Path $Root ".venv\Scripts\python.exe"
 
+$Stamp = Join-Path $Root ".venv\argus-deps.hash"
+
 function Need-Venv {
     if (-not (Test-Path $Py)) { throw "No .venv yet. Run: .\scripts\dev.ps1 setup" }
+    # New version with new dependencies? Update .venv automatically.
+    $Hash = (Get-FileHash (Join-Path $Root "pyproject.toml")).Hash
+    if (-not (Test-Path $Stamp) -or (Get-Content $Stamp) -ne $Hash) {
+        Write-Host "Dependencies changed; updating .venv ..."
+        & $Py -m pip install -q -e ".[dev]"
+        if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
+        Set-Content $Stamp $Hash
+    }
 }
 
 switch ($Command) {
@@ -25,6 +36,7 @@ switch ($Command) {
         }
         & $Py -m pip install --upgrade pip | Out-Null
         & $Py -m pip install -e ".[dev]"
+        Set-Content $Stamp (Get-FileHash (Join-Path $Root "pyproject.toml")).Hash
         if (-not (Test-Path "argus.yaml")) { Copy-Item "argus.example.yaml" "argus.yaml"; Write-Host "Created argus.yaml" }
         if (-not (Test-Path ".env")) { Copy-Item ".env.example" ".env"; Write-Host "Created .env (edit the password)" }
         Write-Host "Setup done. Next: .\scripts\dev.ps1 test"
@@ -34,7 +46,9 @@ switch ($Command) {
     "check" { Need-Venv; & $Py -m argus --check }
     "run"   { Need-Venv; & $Py -m argus }
     "worker" { Need-Venv; & $Py -m argus.worker.cli }
+    "events" { Need-Venv; & $Py -m argus.tail }
     "demo"  {
+        Need-Venv
         $Headers = @{}
         if (Test-Path ".env") {
             $Line = Get-Content ".env" | Where-Object { $_ -match "^ARGUS_WORKER_TOKEN=(.+)$" } | Select-Object -First 1
@@ -51,6 +65,6 @@ switch ($Command) {
         Write-Host "State: $($J.state)"; $J.result | ConvertTo-Json -Compress
     }
     default {
-        Get-Content $PSCommandPath | Select-Object -Skip 1 -First 8 | ForEach-Object { $_.TrimStart("#") }
+        Get-Content $PSCommandPath | Select-Object -Skip 1 -First 9 | ForEach-Object { $_.TrimStart("#") }
     }
 }

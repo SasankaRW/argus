@@ -72,6 +72,7 @@ class Store:
         self._closed = threading.Event()
         self.schema_version = 0
         self.writes_done = 0
+        self._commit_listeners: list[Callable[[], None]] = []
 
     # ---------------------------------------------------------------- lifecycle
 
@@ -203,11 +204,24 @@ class Store:
                     fut.set_exception(StoreError(f"write failed: {e}"))
             return
         self.writes_done += len(batch)
+        for listener in self._commit_listeners:
+            try:
+                listener()
+            except Exception:  # a listener must never break writes
+                log.exception("commit listener failed")
         for fut, ok, value in results:
             if ok:
                 fut.set_result(value)
             else:
                 fut.set_exception(value)
+
+    def on_commit(self, listener: Callable[[], None]) -> None:
+        """Call `listener()` on the writer thread after every committed batch (keep it tiny and non-blocking)."""
+        self._commit_listeners.append(listener)
+
+    def remove_commit_listener(self, listener: Callable[[], None]) -> None:
+        if listener in self._commit_listeners:
+            self._commit_listeners.remove(listener)
 
     def submit(self, fn: Callable[[sqlite3.Connection], T]) -> Future:
         if self._writer is None or not self._writer.is_alive():

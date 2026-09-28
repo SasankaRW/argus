@@ -33,7 +33,7 @@ def test_home_page(tmp_path):
     with TestClient(create_app(argus)) as client:
         r = client.get("/")
         assert r.status_code == 200 and "text/html" in r.headers["content-type"]
-        assert __version__ in r.text and "/health" in r.text
+        assert "/status" in r.text and "/ws/events" in r.text
 
 
 def test_startup_under_two_seconds(tmp_path):
