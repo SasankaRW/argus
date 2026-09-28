@@ -108,11 +108,6 @@ function Wait-Up([string]$Url, [int]$Seconds, [string]$What) {
     throw "$What did not start within $Seconds s. Look at its window for the error."
 }
 
-function Worker-Online {
-    try { return @((Invoke-RestMethod -Uri "$ArgusUrl/status" -TimeoutSec 2).workers | Where-Object { $_.state -eq "online" }).Count -gt 0 }
-    catch { return $false }
-}
-
 function Start-Window([string]$Title, [string]$Module) {
     # Own console window, so its log stays visible; the pid is kept so "down" can stop it.
     $Cmd = "`$Host.UI.RawUI.WindowTitle = '$Title'; & '$Py' -m $Module"
@@ -133,6 +128,8 @@ switch ($Command) {
     "up" {
         Need-Venv
         $Pids = @{}
+        $Rec = @{}
+        if (Test-Path $UpFile) { (Get-Content $UpFile | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $Rec[$_.Name] = $_.Value } }
         if (Is-Up "$OllamaUrl/api/version") { Write-Host "[ok] Ollama already running" }
         elseif (Get-Command ollama -ErrorAction SilentlyContinue) {
             Write-Host "Starting Ollama ..."
@@ -150,19 +147,20 @@ switch ($Command) {
             Write-Host "[ok] argusd on $ArgusUrl"
         }
 
-        if (Worker-Online) { Write-Host "[ok] worker already online" }
+        # Judge the worker by its window, not by /status: after a restart argusd still lists the last
+        # worker as online until its heartbeat times out, which is not a running worker.
+        if ($Rec.worker -and (Get-Process -Id $Rec.worker -ErrorAction SilentlyContinue)) { Write-Host "[ok] worker already running" }
         else {
             Write-Host "Starting a worker ..."
             $Pids.worker = Start-Window "Argus - worker" "argus.worker.cli"
-            for ($i = 0; $i -lt 40 -and -not (Worker-Online); $i++) { Start-Sleep -Milliseconds 500 }
-            if (Worker-Online) { Write-Host "[ok] worker online" } else { Write-Host "[!!] worker not online yet; check its window" }
+            Start-Sleep -Seconds 3
+            if (Get-Process -Id $Pids.worker -ErrorAction SilentlyContinue) { Write-Host "[ok] worker started (window 'Argus - worker')" }
+            else { throw "The worker window closed straight away. Run .\scripts\dev.ps1 worker to see the error." }
         }
 
         # Remember what we started (merged with an earlier "up") so "down" stops only those.
-        $Old = @{}
-        if (Test-Path $UpFile) { (Get-Content $UpFile | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $Old[$_.Name] = $_.Value } }
-        foreach ($K in $Pids.Keys) { $Old[$K] = $Pids[$K] }
-        $Old | ConvertTo-Json | Set-Content $UpFile
+        foreach ($K in $Pids.Keys) { $Rec[$K] = $Pids[$K] }
+        $Rec | ConvertTo-Json | Set-Content $UpFile
 
         $T = Token
         Start-Process ($(if ($T) { "$ArgusUrl/?token=$T" } else { $ArgusUrl }))
