@@ -344,6 +344,19 @@ class JobStore:
 
         await self.store.write(fn)
 
+    async def record_event(self, job_id: str, worker: str, kind: str, *, src: str | None = None,
+                           dst: str | None = None, step: str | None = None,
+                           data: dict[str, Any] | None = None) -> None:
+        """A worker's own trace event for a job it holds (model calls, checks, escalations)."""
+
+        def fn(conn: sqlite3.Connection) -> None:
+            now = self.clock()
+            job = self._get(conn, job_id)
+            self._check_lease(job, worker, now)
+            insert_event(conn, now, kind, job_id=job_id, step=step, src=src, dst=dst, data=data)
+
+        await self.store.write(fn)
+
     async def succeed(self, job_id: str, worker: str, result: Any = None) -> Job:
         def fn(conn: sqlite3.Connection) -> Job:
             now = self.clock()

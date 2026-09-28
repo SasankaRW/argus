@@ -18,6 +18,23 @@ logging:
 
 ollama:
   url: http://127.0.0.1:11434
+  timeout_seconds: 120     # a model call that takes longer counts as a failure
+  keep_alive: 10m          # keep the last model loaded this long
+
+models:
+  tiers:                   # cheapest first; a step escalates up the chain when its checks fail
+    T1: {provider: ollama, model: "qwen2.5-coder:7b", group: pc}
+    T2: {provider: ollama, model: "qwen2.5-coder:14b", group: pc}
+    T3: {provider: claude, group: cloud}
+  chain: [T1, T2, T3]
+  attempts_per_tier: 2     # tries per tier (the second one is told what was wrong)
+  breaker_failures: 3      # after 3 failed calls in a row a model is paused ...
+  breaker_open_seconds: 60 # ... for this long, and jobs move on instead of waiting
+
+claude:
+  command: [claude]        # the Claude Code CLI, logged in with your subscription
+  timeout_seconds: 300
+  calls_per_day: 30        # hard daily cap across all workers
 
 jobs:
   lease_seconds: 60

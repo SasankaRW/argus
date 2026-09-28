@@ -16,6 +16,7 @@ import traceback
 from typing import Any
 
 from .. import __version__
+from ..models import Router, build_providers
 from .client import ApiError, ArgusClient, LeaseLostError, Unreachable
 from .workflows import REGISTRY, Context, PermanentError, WaitSignal, WorkflowRegistry
 
@@ -45,6 +46,25 @@ class _JobReporter:
         return self._lost.is_set()
 
 
+class _JobBoard:
+    """The router's link to argusd for one job: permits, breaker reports and trace events."""
+
+    def __init__(self, client: ArgusClient, worker_id: str, job_id: str, ctx: Context, jlog):
+        self.client, self.worker, self.job_id, self.ctx, self.log = client, worker_id, job_id, ctx, jlog
+
+    def permit(self, tier: str) -> dict:
+        return self.client.permit(tier, self.worker, self.job_id)
+
+    def report(self, tier: str, ok: bool, latency_ms: float | None, error: str | None) -> None:
+        try:
+            self.client.report(tier, self.worker, self.job_id, ok, latency_ms, error)
+        except ApiError as e:  # the breaker is advisory; a failed report must not fail the step
+            self.log.warning("model report failed", extra={"tier": tier, "error": str(e)})
+
+    def event(self, kind: str, src: str | None, dst: str | None, data: dict) -> None:
+        self.client.trace(self.job_id, self.worker, kind, src=src, dst=dst, step=self.ctx._step, data=data)
+
+
 class _Heartbeat(threading.Thread):
     def __init__(self, client: ArgusClient, reporter: _JobReporter, every: float):
         super().__init__(name=f"heartbeat-{reporter.job_id}", daemon=True)
@@ -70,7 +90,8 @@ class _Heartbeat(threading.Thread):
 
 class Worker:
     def __init__(self, client: ArgusClient, worker_id: str | None = None, *, capabilities: list[str] | None = None,
-                 registry: WorkflowRegistry | None = None, host: str | None = None, claim_wait: float = 10.0):
+                 registry: WorkflowRegistry | None = None, host: str | None = None, claim_wait: float = 10.0,
+                 ollama_url: str | None = None, providers: dict | None = None):
         self.client = client
         self.registry = registry or REGISTRY
         self.host = host or socket.gethostname()
@@ -78,6 +99,10 @@ class Worker:
         self.capabilities = sorted(set(capabilities or []) | set(self.registry.needs))
         self.claim_wait = claim_wait
         self.heartbeat_seconds = 15.0
+        self.ollama_url = ollama_url
+        self.models_cfg: dict = {}
+        self.providers: dict = providers if providers is not None else {}
+        self._fixed_providers = providers is not None  # tests pass their own
         self.stopping = threading.Event()
         self.jobs_done = 0
         self.busy = False  # True while a job runs
@@ -87,6 +112,9 @@ class Worker:
     def register(self) -> None:
         info = self.client.register(self.id, self.host, self.capabilities, __version__)
         self.heartbeat_seconds = float(info.get("heartbeat_seconds", self.heartbeat_seconds))
+        self.models_cfg = info.get("models") or {}
+        if not self._fixed_providers:
+            self.providers = build_providers(self.models_cfg, ollama_url=self.ollama_url)
         log.info("worker registered", extra={"worker": self.id, "capabilities": self.capabilities,
                                              "plugins": self.registry.plugins})
 
@@ -143,6 +171,10 @@ class Worker:
         beat = _Heartbeat(self.client, reporter, self.heartbeat_seconds)
         beat.start()
         ctx = Context(job, reporter, logging.getLogger(f"argus.plugin.{job['plugin']}"))
+        ctx._router = Router(self.providers, _JobBoard(self.client, self.id, job_id, ctx, jlog),
+                             chain=self.models_cfg.get("chain") or sorted(self.providers),
+                             attempts_per_tier=self.models_cfg.get("attempts_per_tier", 2),
+                             source=job["plugin"])
         jlog.info("job started", extra={"attempt": job.get("attempt"), "checkpoints": len(ctx._done)})
         try:
             result = wf.fn(ctx)

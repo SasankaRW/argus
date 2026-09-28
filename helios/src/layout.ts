@@ -28,12 +28,13 @@ const RANK: Record<string, number> = { core: 0, app: 1, worker: 1, plugin: 2, se
 
 export async function layout(nodes: MapNode[], edges: MapEdge[]): Promise<Record<string, Pos>> {
   const ids = new Set(nodes.map((n) => n.id));
+  const kind = new Map(nodes.map((n) => [n.id, n.kind]));
   const graph = {
     id: "root",
     layoutOptions: {
       "elk.algorithm": "layered",
       "elk.direction": "RIGHT",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "110",
+      "elk.layered.spacing.nodeNodeBetweenLayers": "80",
       "elk.spacing.nodeNode": "34",
       "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
       "elk.layered.considerModelOrder.strategy": "PREFER_EDGES",
@@ -45,10 +46,13 @@ export async function layout(nodes: MapNode[], edges: MapEdge[]): Promise<Record
         id: n.id,
         width: NODE_W,
         height: NODE_H,
-        layoutOptions: (n.kind === "core" ? { "elk.layered.layering.layerConstraint": "FIRST" } : {}) as Record<string, string>,
+        // core on the left, the model tiers stacked in one column on the right (T1 above T2 above T3)
+        layoutOptions: (n.kind === "core" ? { "elk.layered.layering.layerConstraint": "FIRST" }
+          : n.kind === "model" ? { "elk.layered.layering.layerConstraint": "LAST" } : {}) as Record<string, string>,
       })),
+    // lines between two models (escalations) are drawn top to bottom, so they don't shape the columns
     edges: edges
-      .filter((e) => ids.has(e.src) && ids.has(e.dst))
+      .filter((e) => ids.has(e.src) && ids.has(e.dst) && !(kind.get(e.src) === "model" && kind.get(e.dst) === "model"))
       .map((e, i) => ({ id: `e${i}`, sources: [e.src], targets: [e.dst] })),
   };
   const out = await (await getElk()).layout(graph);

@@ -122,3 +122,18 @@ class ArgusClient:
 
     def wait(self, job_id: str, worker: str, reason: str) -> dict:
         return self.post(f"/jobs/{job_id}/wait", {"worker": worker, "reason": reason})
+
+    # -------------------------------------------------------------- models
+
+    def permit(self, tier: str, worker: str, job_id: str | None) -> dict:
+        return self.post(f"/models/{tier}/permit", {"worker": worker, "job_id": job_id})
+
+    def report(self, tier: str, worker: str, job_id: str | None, ok: bool, latency_ms: float | None,
+               error: str | None) -> None:
+        self.post(f"/models/{tier}/report", {"worker": worker, "job_id": job_id, "ok": ok,
+                                             "latency_ms": latency_ms, "error": error})
+
+    def trace(self, job_id: str, worker: str, kind: str, *, src: str | None = None, dst: str | None = None,
+              step: str | None = None, data: dict | None = None) -> None:
+        self.post(f"/jobs/{job_id}/events", {"worker": worker, "kind": kind, "src": src, "dst": dst,
+                                             "step": step, "data": data})

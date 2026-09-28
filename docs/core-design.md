@@ -2,7 +2,7 @@
 
 Sep 28, 2026 · @Sasanka
 
-**Version 0.5** · draft, becomes 1.0 when M1 starts · history at the end · all versions in the Argus Docs Index
+**Version 0.6** · draft, becomes 1.0 when M1 starts · history at the end · all versions in the Argus Docs Index
 
 ## Goals
 
@@ -187,12 +187,13 @@ Twelve steps, each about one evening session with Claude writing the code and yo
 
 After C12 the core is frozen as API version 1.0: later milestones add plugins and Helios views, and core changes only through a versioned, tested change.
 
-**Progress:** C1–C6 are done in Argus `0.4.0` (repo `G:\Projects\argus`, commit `c423b35`, tag `v0.4.0`). C6 added Helios v0 at `/helios` (and `/`): a React + React Flow + ELK live map in the mockup style that grows as components talk, with a dot per message along each line, busy and offline states, an inspector for boxes, lines and jobs, status tiles, a filtered event list and a phone layout. The built copy ships inside the Python package, so running it needs no Node.js. 135 tests pass. Next: C7, models, tiers, escalation and `claude -p`.
+**Progress:** C1–C7 are built. C1–C6 are released as Argus `0.4.0` (repo `github.com/SasankaRW/argus`, private). C7 is on the branch `feat/c7-models` for release as `0.5.0`: `ctx.llm()` with schema validation, code checks, one retry with feedback and escalation T1 → T2 → T3 (the next tier sees the rejected answer); an Ollama provider (structured JSON output, `keep_alive`, hard timeout) and a `claude -p` provider with every tool removed; circuit breakers and the daily Claude cap kept in `argusd` for all workers; model boxes on the Helios map with amber escalation lines. Tested with a fake Ollama that sends garbage, hangs and errors, plus a fake `claude`; 157 tests pass. Still to do for the C7 gate: a real T1 → T2 escalation on the PC's Qwen models (`dev.ps1 models`, then `dev.ps1 classify`). Next: C8, approvals, outbox and ntfy.
 
 ## Document history
 
 | Version | Date | Change |
 | --- | --- | --- |
+| 0.6 | 2026-09-28 | C7 (models, tiers, escalation, breakers, claude -p) built; real-model check pending |
 | 0.5 | 2026-09-28 | C6 (Helios v0 live map) built and tested in Argus 0.4.0 |
 | 0.4 | 2026-09-28 | C5 (live events, growing map) built and tested in Argus 0.3.0 |
 | 0.3 | 2026-09-28 | C4 (workers) built and tested in Argus 0.2.0 |

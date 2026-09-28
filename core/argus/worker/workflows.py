@@ -94,7 +94,8 @@ class StepReporter:
 
 
 class Context:
-    def __init__(self, job: dict[str, Any], reporter: StepReporter, log: logging.Logger | None = None):
+    def __init__(self, job: dict[str, Any], reporter: StepReporter, log: logging.Logger | None = None,
+                 router: Any = None):
         self.job = job
         self.job_id: str = job["id"]
         self.input: dict[str, Any] = job.get("input") or {}
@@ -105,6 +106,10 @@ class Context:
         self._idx = 0
         self.idempotency_key: str | None = None
         self.skipped: list[str] = []
+        self._router = router  # argus.models.Router bound to this job, set by the worker
+        self._tier: str | None = None  # highest tier used by ctx.llm inside the current step
+        self._step: str | None = None
+        self.last_answer: Any = None
 
     def _check_lease(self) -> None:
         if self._reporter.lease_lost:
@@ -123,6 +128,7 @@ class Context:
             self.skipped.append(name)
             return done.get("output")
         self.idempotency_key = f"{self.job_id}:{idx}"
+        self._tier, self._step = None, name
         self._reporter.step(idx, name, "running", tier=tier)
         try:
             output = fn(*args, **kwargs)
@@ -130,13 +136,39 @@ class Context:
             raise
         except Exception as e:
             self._check_lease()
-            self._reporter.step(idx, name, "failed", error=f"{type(e).__name__}: {e}", tier=tier)
+            self._reporter.step(idx, name, "failed", error=f"{type(e).__name__}: {e}", tier=tier or self._tier)
             raise
         finally:
             self.idempotency_key = None
+            self._step = None
         self._check_lease()
-        self._reporter.step(idx, name, "succeeded", output=output, tier=tier)
+        self._reporter.step(idx, name, "succeeded", output=output, tier=tier or self._tier)
         return output
+
+    def llm(self, playbook: str, input: Any, *, schema: Any = None, check: Any = None,
+            tiers: list[str] | None = None, attempts: int | None = None) -> Any:
+        """Ask the models, cheapest tier first, escalating when the answer fails the schema or the check.
+
+        Returns the answer (a `schema` instance, or text without a schema). Call it inside `ctx.step`, so a
+        retried job reuses the checkpointed answer instead of asking again. `ctx.last_answer` has the details
+        (tier used, attempts, the trail of rejected answers).
+        """
+        if self._router is None:
+            raise RuntimeError("this worker has no model configuration (is it connected to argusd?)")
+        ans = self._router.ask(playbook, input, schema=schema, check=check, chain=tiers, attempts=attempts)
+        order = list(self._router.chain)
+        if self._tier is None or (ans.tier in order and self._tier in order
+                                  and order.index(ans.tier) > order.index(self._tier)):
+            self._tier = ans.tier
+        self.last_answer = ans
+        return ans.value
+
+    def claude(self, prompt: str, input: Any = "", *, schema: Any = None, check: Any = None) -> Any:
+        """Ask Claude directly (the Claude tier only). Counts against the daily cap."""
+        tiers = [t for t, p in (self._router.providers.items() if self._router else []) if p.kind == "claude"]
+        if not tiers:
+            raise RuntimeError("Claude is not available on this worker (claude CLI not found)")
+        return self.llm(prompt, input, schema=schema, check=check, tiers=tiers[:1], attempts=1)
 
     def wait(self, reason: str) -> None:
         """Park the job until it is resumed (for example after an approval). Finished steps stay finished."""

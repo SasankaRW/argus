@@ -94,9 +94,11 @@ main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .line { stroke: #2a3140 !important; fill: none; transition: stroke .3s; }
 .line.on { stroke: var(--flow) !important; }
 .line.bad { stroke: var(--bad) !important; }
+.line.warn { stroke: var(--amber) !important; }
 .line.sel { stroke: #8a7446 !important; }
 .packet { fill: var(--flow); filter: drop-shadow(0 0 4px rgba(88, 183, 255, .8)); }
 .packet.bad { fill: var(--bad); filter: drop-shadow(0 0 4px rgba(255, 122, 107, .8)); }
+.packet.warn { fill: var(--amber); filter: drop-shadow(0 0 4px rgba(245, 165, 36, .8)); }
 @media (prefers-reduced-motion: reduce) { .packet { display: none; } .react-flow__node { transition: none; } .box.born { animation: none; } }
 
 .insp { display: flex; flex-direction: column; max-height: 590px; }
