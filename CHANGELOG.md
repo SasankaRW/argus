@@ -2,6 +2,11 @@
 
 All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`.
 
+## 0.1.1 (2026-09-28)
+
+- Home page at `/`: status, database, watchdog, job counts and links (it returned "Not Found" before).
+- Logs no longer include uvicorn's `color_message` field with terminal colour codes.
+
 ## 0.1.0 (2026-09-28)
 
 First code: the core foundation (Argus Core Design steps C1-C3).

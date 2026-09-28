@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-_RESERVED = set(logging.LogRecord("", 0, "", 0, "", (), None).__dict__) | {"message", "asctime"}
+_RESERVED = set(logging.LogRecord("", 0, "", 0, "", (), None).__dict__) | {"message", "asctime", "color_message"}
 
 
 class JsonFormatter(logging.Formatter):

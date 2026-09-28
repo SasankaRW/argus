@@ -28,6 +28,14 @@ def test_health_and_version(tmp_path):
         assert client.get("/version").json()["version"] == __version__
 
 
+def test_home_page(tmp_path):
+    argus = make(tmp_path).open()
+    with TestClient(create_app(argus)) as client:
+        r = client.get("/")
+        assert r.status_code == 200 and "text/html" in r.headers["content-type"]
+        assert __version__ in r.text and "/health" in r.text
+
+
 def test_startup_under_two_seconds(tmp_path):
     t0 = time.perf_counter()
     argus = make(tmp_path).open()
