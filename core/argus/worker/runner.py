@@ -38,6 +38,19 @@ class _JobReporter:
             self._lost.set()
             raise
 
+    def approval(self, body: dict) -> dict:
+        return self._call(lambda: self.client.approval(self.job_id, self.worker_id, body))
+
+    def notify(self, body: dict) -> dict:
+        return self._call(lambda: self.client.notify(self.job_id, self.worker_id, body))
+
+    def _call(self, fn):
+        try:
+            return fn()
+        except LeaseLostError:
+            self._lost.set()
+            raise
+
     def mark_lost(self) -> None:
         self._lost.set()
 

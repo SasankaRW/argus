@@ -1,7 +1,7 @@
 // Inspector: details for whatever is selected on the map or in the event list.
 
 import { useEffect, useState } from "react";
-import { api, ArgusEvent, ArgusMap, Job, Status } from "./api";
+import { api, Approval, ArgusEvent, ArgusMap, Job, Status } from "./api";
 import { ago, clock, pretty, shortId, tone, uptime } from "./format";
 import type { Selection } from "./MapView";
 
@@ -53,6 +53,97 @@ function useHistory(key: string, query: string, live: ArgusEvent[], keep: (e: Ar
   return hist.concat(live.filter((e) => e.seq > top && keep(e))).slice(-40);
 }
 
+// Display only: the totals that matter are added up by Argus in code.
+function shownAmount(v: unknown): string {
+  const n = Number(String(v ?? "").replace(/,/g, ""));
+  return v === undefined || v === null || v === "" ? "" : Number.isFinite(n)
+    ? n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : String(v);
+}
+
+// One approval with Approve / Reject. Entry fields can be edited before approving.
+function ApprovalCard({ id, onDone }: { id: string; onDone?: () => void }) {
+  const [a, setA] = useState<Approval | null>(null);
+  const [edits, setEdits] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => { api<Approval>(`/approvals/${id}`).then(setA).catch((e) => setErr(String(e))); }, [id]);
+  if (err) return <div className="tip">{err}</div>;
+  if (!a) return <div className="tip">Loading…</div>;
+  const p = a.payload;
+  const decide = async (answer: "approve" | "reject") => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const fields = answer === "approve" && Object.keys(edits).length ? edits : undefined;
+      const r = await api<{ state: Approval["state"] }>(`/approvals/${id}/decide`, {
+        method: "POST", body: JSON.stringify({ answer, fields, by: "helios" }) });
+      setA({ ...a, state: r.state, decided_by: "helios" });
+      onDone?.();
+    } catch (e) { setErr(String(e)); } finally { setBusy(false); }
+  };
+  const pending = a.state === "pending";
+  return (
+    <div className="appr">
+      <div className="appr-h"><b>{a.title}</b><span className={`pill ${tone("approval." + a.state)}`}>{a.state}</span></div>
+      <div className="tip">{a.plugin} · {a.type} · asked {ago(a.created_at)}{a.decided_by ? ` · by ${a.decided_by}` : ""}</div>
+      {a.type === "batch" && (
+        <>
+          <div className="appr-big mono">{p.count ?? 0} items{p.total ? ` · ${p.total}` : ""}</div>
+          {(p.items ?? []).slice(0, 8).map((it, i) => (
+            <KV key={i} k={String(it.label ?? it.name ?? it.title ?? `#${i + 1}`)} v={shownAmount(it.amount)} />
+          ))}
+        </>
+      )}
+      {a.type === "draft" && (p.summary ?? []).map((l, i) => <p key={i} className="appr-line">{l}</p>)}
+      {a.type === "entry" && (
+        <>
+          {p.amount && <div className="appr-big mono">{p.amount}</div>}
+          {Object.entries(p.fields ?? {}).map(([k, v]) => (
+            <div key={k} className="kv">
+              <span className="k">{k}</span>
+              {pending && (typeof v === "string" || typeof v === "number") ? (
+                <input className="appr-in mono" aria-label={k} defaultValue={String(v)}
+                  onChange={(e) => setEdits((x) => {
+                    const n = { ...x };
+                    if (e.target.value === String(v)) delete n[k]; else n[k] = e.target.value;
+                    return n;
+                  })} />
+              ) : <span className="mono v">{String(v)}</span>}
+            </div>
+          ))}
+        </>
+      )}
+      {p.link && <div className="tip"><a href={p.link} target="_blank" rel="noreferrer">Open the file</a></div>}
+      {pending && (
+        <div className="appr-actions">
+          <button type="button" className="btn" disabled={busy} onClick={() => decide("reject")}>Reject</button>
+          <button type="button" className="primary" disabled={busy} onClick={() => decide("approve")}>
+            {a.type === "batch" ? "Approve all" : Object.keys(edits).length ? "Approve with edits" : "Approve"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PendingApprovals({ events, onSelect }: { events: ArgusEvent[]; onSelect: (s: Selection) => void }) {
+  const [list, setList] = useState<Approval[] | null>(null);
+  const last = events.filter((e) => e.kind.startsWith("approval.")).map((e) => e.seq).pop() ?? 0;
+  useEffect(() => { api<Approval[]>("/approvals?state=pending").then(setList).catch(() => setList([])); }, [last]);
+  if (!list) return <div className="tip">Loading…</div>;
+  if (!list.length) return <div className="tip">Nothing waiting for you.</div>;
+  return (
+    <>
+      {list.map((a) => (
+        <div key={a.id}>
+          <ApprovalCard id={a.id} />
+          {a.job_id && <button type="button" className="btn" onClick={() => onSelect({ type: "job", id: a.job_id! })}>Open job {shortId(a.job_id)}</button>}
+        </div>
+      ))}
+    </>
+  );
+}
+
 function NodePanel({ id, map, status, events, onSelect }: { id: string } & Omit<Props, "sel">) {
   const n = map.nodes.find((x) => x.id === id);
   const evs = useHistory(`n:${id}`, `component=${encodeURIComponent(id)}`, events, (e) => e.from === id || e.to === id);
@@ -88,8 +179,16 @@ function NodePanel({ id, map, status, events, onSelect }: { id: string } & Omit<
           <>
             <KV k="Running" v={n.jobs?.active ?? 0} />
             <KV k="Queued" v={n.jobs?.queued ?? 0} />
+            <KV k="Waiting" v={n.jobs?.waiting ?? 0} />
           </>
         )}
+        {n.id === "ntfy" && (
+          <>
+            <KV k="Sending" v={n.unsent ?? 0} />
+            <KV k="Not delivered" v={<span className={n.failed ? "bad" : ""}>{n.failed ?? 0}</span>} />
+          </>
+        )}
+        {n.id === "approvals" && (<><div className="sect">Waiting for you</div><PendingApprovals events={events} onSelect={onSelect} /></>)}
         <KV k="First seen" v={ago(n.first_seen)} />
         <KV k="Lines" v={lines.length ? lines.map((l) => (l.src === id ? `→ ${l.dst}` : `← ${l.src}`)).join(", ") : "none yet"} />
         <div className="sect">Recent activity</div>
@@ -182,7 +281,10 @@ function JobPanel({ id, events, onSelect }: { id: string; events: ArgusEvent[]; 
       <div className="ib">
         <KV k="Created" v={ago(job.created_at)} />
         {job.finished_at && <KV k="Total time" v={`${(job.finished_at - job.created_at).toFixed(2)} s`} />}
-        {job.wait_reason && <KV k="Waiting for" v={job.wait_reason} />}
+        {job.wait_reason && <KV k="Waiting for" v={job.wait_reason.startsWith("approval:") ? "your approval" : job.wait_reason} />}
+        {job.state === "waiting" && job.wait_reason?.startsWith("approval:") && (
+          <><div className="sect">Approval</div><ApprovalCard id={job.wait_reason.slice(9)} /></>
+        )}
         <div className="sect">Steps</div>
         {job.steps?.length ? (
           <div className="steps">

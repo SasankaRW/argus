@@ -20,6 +20,7 @@ from ..config import JobsConfig
 from ..db import Store
 from ..events import insert_event
 from ..ids import new_id
+from ..outbox import add_message, ntfy_message
 from ..registry import ensure_component
 from .states import (
     ACTIVE_STATES,
@@ -176,6 +177,11 @@ class JobStore:
         )
         if cur.rowcount != 1:  # someone else moved it first; the writer is single, so this is a bug guard
             raise InvalidTransition(f"job {job.id} changed state concurrently")
+        if dst is S.DEAD:  # failures reach the phone at once (through the outbox, same transaction)
+            add_message(conn, now, "ntfy", ntfy_message(
+                f"Job failed: {job.plugin}.{job.workflow}",
+                (fields.get("error") or "failed after retries")[:500] + f"\nJob {job.id}",
+                priority="high", tags=["x"]), job_id=job.id)
         self._event(
             conn,
             now,
@@ -393,6 +399,13 @@ class JobStore:
             now = self.clock()
             job = self._get(conn, job_id)
             self._check_lease(job, worker, now)
+            if reason.startswith("approval:"):
+                # Decided while the worker was still on its way here? Then go straight back to the queue.
+                row = conn.execute("SELECT state FROM approvals WHERE id = ?", (reason[9:],)).fetchone()
+                if row is not None and row["state"] != "pending":
+                    return self._move(conn, job, S.QUEUED, now, src_component=worker, wait_reason=None,
+                                      lease_owner=None, lease_until=None, run_after=now,
+                                      priority=max(job.priority, 80), event_data={"reason": "approval decided"})
             return self._move(conn, job, S.WAITING, now, src_component=worker, wait_reason=reason,
                               lease_owner=None, lease_until=None, event_data={"reason": reason})
 

@@ -2,13 +2,23 @@
 
 from .client import ApiError, ArgusClient, LeaseLostError, Unreachable
 from .runner import Worker
-from .workflows import REGISTRY, Context, PermanentError, WaitSignal, Workflow, WorkflowRegistry, workflow
+from .workflows import (
+    REGISTRY,
+    Context,
+    Decision,
+    PermanentError,
+    WaitSignal,
+    Workflow,
+    WorkflowRegistry,
+    workflow,
+)
 
 __all__ = [
     "REGISTRY",
     "ApiError",
     "ArgusClient",
     "Context",
+    "Decision",
     "LeaseLostError",
     "PermanentError",
     "Unreachable",

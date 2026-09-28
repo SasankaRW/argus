@@ -5,6 +5,31 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+Core step C8: approvals, the outbox and ntfy.
+
+- **`ctx.approve()` for plugins:** a step asks you and the job waits without holding a worker. When you answer,
+  the job goes back to the queue ahead of scheduled work, the step runs again and `ctx.approve` returns your
+  `Decision` (truthy when approved; `.fields` has the values as approved, edits included). Three card types:
+  `entry` (editable fields), `batch` (items; Argus adds up the count and total in code) and `draft`. Asking twice
+  from a retried step returns the same approval, never a second one.
+- **Approve from the phone:** the ntfy message has Approve / Reject / Open buttons carrying a signed one-time
+  token (`approvals.public_url` must be the address your phone reaches Argus on). Open shows a small page with
+  the card. A used or forged link does nothing.
+- **Reminder and expiry:** one reminder after 24 hours; after 7 days the approval counts as "no" and the job
+  carries on.
+- **Outbox:** messages are written in the same transaction as the change that causes them and sent by a
+  background task, with retries and backoff while ntfy is down. Nothing is lost when argusd restarts, and a
+  message is never queued twice.
+- **ntfy:** approvals, dead jobs and `ctx.notify()` reach your phone. Set `NTFY_TOPIC` in `.env`.
+- **Helios:** Approvals and ntfy boxes on the map; Approve / Reject (with edits) in the job and Approvals panels;
+  an Approvals filter in the event list; plugin boxes show waiting jobs.
+- **API:** `POST /jobs/{id}/approvals`, `POST /jobs/{id}/notify`, `GET /approvals`, `POST /approvals/{id}/decide`,
+  `GET /a/{id}` (phone page), `GET /outbox`, `POST /outbox/test`. Database migration 0004.
+- **dev.ps1:** `ntfy` (test message), `approval` (a pretend bill that waits for you), `approve` / `approve no`.
+- **Docs:** Core Design 0.7, Plugin Guide 0.4.
+- 173 tests (16 new, including the gate: phone Approve to finished job in under 1 s, and no duplicate
+  notification after a worker or argusd crash).
+
 ## 0.5.2 (2026-09-28)
 
 - **One command to start everything:** `dev.ps1 up` (or double-click `scripts\up.cmd`) starts Ollama, argusd

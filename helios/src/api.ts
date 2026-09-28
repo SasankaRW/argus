@@ -20,8 +20,35 @@ export type MapNode = {
   meta: Record<string, unknown>;
   first_seen: number;
   state?: string;
-  jobs?: { active: number; queued: number };
+  jobs?: { active: number; queued: number; waiting?: number };
+  pending?: number;
+  unsent?: number;
+  failed?: number;
   implicit?: boolean;
+};
+
+export type Approval = {
+  id: string;
+  job_id: string | null;
+  plugin: string;
+  step: string | null;
+  type: "entry" | "batch" | "draft";
+  title: string;
+  state: "pending" | "approved" | "rejected" | "expired";
+  payload: {
+    fields: Record<string, unknown>;
+    items: Record<string, unknown>[];
+    summary: string[];
+    link: string | null;
+    count?: number;
+    total?: string;
+    amount?: string;
+  };
+  answer: Record<string, unknown> | null;
+  decided_by: string | null;
+  decided_at: number | null;
+  created_at: number;
+  expires_at: number;
 };
 
 export type MapEdge = { src: string; dst: string; count: number; last_kind: string; first_seen: number; last_seen: number };

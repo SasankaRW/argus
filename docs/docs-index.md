@@ -22,10 +22,10 @@ Every Argus document and diagram carries a version number, and every change to o
 | --- | --- | --- | --- |
 | LLM Orchestrator Plan | 0.8 | draft, the long-term picture | why Argus exists, tiers, Helios design, automations, apps |
 | Argus Development Plan | 1.2 | the working tracker | milestones, tasks, gates, architecture, security, Helios UI |
-| Argus Core Design | 0.6 | C1–C7 built; becomes 1.0 when M1 completes | argusd, job lifecycle, data model, stability, build steps |
-| Argus Plugin Guide | 0.3 | draft (plugin API 1.0 draft) | how to write and add plugins |
+| Argus Core Design | 0.7 | C1–C8 built; becomes 1.0 when M1 completes | argusd, job lifecycle, data model, stability, build steps |
+| Argus Plugin Guide | 0.4 | draft (plugin API 1.0 draft) | how to write and add plugins |
 | [Helios mockup](https://claude.ai/artifact/EAhWvwckWzyc6ouyPdfW6C) | 0.4 | interactive design, simulated data | the dashboard to build in M1–M3 |
-| Argus code (`G:\Projects\argus`) | 0.4.0 | tag `v0.4.0` | core steps C1–C6: foundation, jobs, workers, live events, Helios live map |
+| Argus code (`G:\Projects\argus`) | 0.5.2 | tag `v0.5.2 (C8 on feat/c8-approvals)` | core steps C1–C7: foundation, jobs, workers, live events, Helios live map, models and escalation |
 
 ## Diagrams
 
@@ -86,6 +86,10 @@ Newest first. One line per change, across all documents.
 
 | Date | Document | Version | Change |
 | --- | --- | --- | --- |
+| 2026-09-28 | Argus code | branch | C8 approvals: ctx.approve and ctx.notify, signed one-time phone tokens, phone page, reminders and expiry, transactional outbox with retries, ntfy for approvals and dead jobs, Approvals and ntfy boxes in Helios with Approve / Reject; 173 tests |
+| 2026-09-28 | Plugin Guide | 0.4 | ctx.approve and ctx.notify match the built API |
+| 2026-09-28 | Core Design | 0.7 | C7 released as 0.5.x and passed its gate on the PC; C8 built |
+| 2026-09-28 | Argus code | 0.5.1 | Helios reloads after an upgrade (no-cache index.html); model check ignores name case; 0.5.2: dev.ps1 up/down starts and stops everything |
 | 2026-09-28 | Argus code | 0.5.0 (branch) | C7 models: ctx.llm with checks and escalation, Ollama and claude -p providers, circuit breakers, daily Claude cap, model boxes and escalation lines in Helios; 157 tests |
 | 2026-09-28 | Core Design | 0.6 | C7 built |
 | 2026-09-28 | Plugin Guide | 0.3 | ctx.llm and ctx.claude match the built API |

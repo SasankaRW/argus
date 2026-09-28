@@ -2,7 +2,7 @@
 
 Sep 28, 2026 · @Sasanka
 
-**Version 0.3** · draft (plugin API 1.0 draft) · history at the end · all versions in the Argus Docs Index
+**Version 0.4** · draft (plugin API 1.0 draft) · history at the end · all versions in the Argus Docs Index
 
 The reference for adding features to Argus. Keep it updated whenever the plugin API changes or a plugin is added.
 
@@ -164,8 +164,8 @@ def send_to_cashly(ctx, data):
 | `ctx.llm(playbook, input, schema=, check=, tiers=)` | model call, cheapest tier first. The reply is parsed as JSON, validated against the Pydantic `schema`, then `check(answer, input)` runs (return a reason to reject). A rejected answer is retried once with the reason, then escalated up the chain (T1 → T2 → T3) with the rejected answer as advice. Returns the answer; `ctx.last_answer` has the tier, attempts and trail. Built in Argus 0.5 (C7). |
 | `ctx.claude(prompt, input, schema=, check=)` | direct Claude call (tools off, one turn), counted against the daily cap. Built in C7. |
 | `ctx.files` | read, write, move, `recycle` inside declared paths only |
-| `ctx.approve(type, title, fields)` | create an approval and wait for the answer |
-| `ctx.notify(text, buttons)` | ntfy message |
+| `ctx.approve(type, title, fields)` | ask you and park the job (no worker held) until you answer on the phone or in Helios; the step then runs again and gets a Decision: truthy when approved, .fields = the values as approved (edits included), .state = approved, rejected or expired. Types: entry (editable fields), batch (items; Argus adds up count and total), draft (summary + link). Call it inside ctx.step: a retried step gets the same approval back, never a second one. Built in Argus 0.6 (C8). |
+| `ctx.notify(title, text, priority=, tags=, link=)` | phone message through the outbox (ntfy): sent once even if the step runs again, retried if ntfy is down. Built in 0.6 (C8). |
 | `ctx.emit(name, data)` / `ctx.log(msg, **kv)` | events and log lines |
 | `ctx.store` | the plugin's own small table (state between runs) |
 | `ctx.secrets["name"]` | tokens from the encrypted `.env`, never in files |
@@ -275,6 +275,7 @@ The plugin API version is what `argus_api` in each manifest refers to. Minor ver
 
 | Version | Date | Change |
 | --- | --- | --- |
+| 0.4 | 2026-09-28 | ctx.approve (Decision, three card types) and ctx.notify match the built API (C8) |
 | 0.3 | 2026-09-28 | ctx.llm and ctx.claude match the built API (schema + check, escalation, last\_answer) |
 | 0.2 | 2026-09-28 | Security rules for plugin authors |
 | 0.1 | 2026-09-28 | Created (D6) |

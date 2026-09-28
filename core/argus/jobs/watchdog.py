@@ -1,7 +1,7 @@
 """Watchdog: a small background task that repairs things nobody else will.
 
-Requeues jobs whose worker stopped heartbeating and marks silent workers offline.
-Approval expiry joins it in C8.
+Requeues jobs whose worker stopped heartbeating, marks silent workers offline, and (through the extra
+tasks Argus passes in) sends approval reminders and expires old approvals.
 """
 
 from __future__ import annotations
