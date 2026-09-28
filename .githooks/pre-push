@@ -1,0 +1,28 @@
+#!/bin/sh
+# Protects main on this PC (GitHub Free does not enforce branch rules on private repos).
+#  - main is never deleted or force-pushed
+#  - main only moves through a merged pull request or `dev.ps1 release`
+# One-off override for a direct push: set ARGUS_ALLOW_MAIN=1 (the release tool sets ARGUS_RELEASE=1).
+zero=0000000000000000000000000000000000000000
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$remote_ref" = "refs/heads/main" ] || continue
+  if [ "$local_sha" = "$zero" ]; then
+    echo "pre-push: refusing to delete main." >&2
+    exit 1
+  fi
+  if [ "$remote_sha" != "$zero" ]; then
+    if ! git cat-file -e "$remote_sha" 2>/dev/null; then
+      echo "pre-push: GitHub has commits on main you don't have. Run: .\\scripts\\dev.ps1 sync" >&2
+      exit 1
+    fi
+    if ! git merge-base --is-ancestor "$remote_sha" "$local_sha"; then
+      echo "pre-push: refusing to force-push main." >&2
+      exit 1
+    fi
+  fi
+  if [ "$ARGUS_RELEASE" != "1" ] && [ "$ARGUS_ALLOW_MAIN" != "1" ]; then
+    echo "pre-push: main only changes through a pull request (dev.ps1 pr) or a release (dev.ps1 release)." >&2
+    exit 1
+  fi
+done
+exit 0

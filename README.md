@@ -52,9 +52,10 @@ docs/              exported docs and diagrams
 scripts/           dev helpers
 ```
 
-## Versioning
+## Versioning and workflow
 
-- Argus uses `MAJOR.MINOR.PATCH`. The number lives in `VERSION`; every release adds a `CHANGELOG.md` entry
-  and a Git tag `vX.Y.Z`.
-- Database schema changes are numbered migrations in `core/argus/db/migrations/`. Argus refuses to open a
-  database newer than itself.
+- Argus uses `MAJOR.MINOR.PATCH` in `VERSION`; every release has a `CHANGELOG.md` entry, a Git tag `vX.Y.Z`
+  and a GitHub release. Database schema changes are numbered migrations; Argus refuses a newer database.
+- Work goes on a branch, into a pull request, and is squash-merged when CI is green; `main` is protected.
+  Releases are one command: `.\scripts\dev.ps1 release minor`. Details: [CONTRIBUTING.md](CONTRIBUTING.md).
+- Design docs are versioned in [docs/](docs/README.md).

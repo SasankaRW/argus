@@ -1,6 +1,13 @@
 # Changelog
 
-All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`.
+All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries go under **Unreleased**;
+`dev.ps1 release` turns that section into the next version.
+
+## Unreleased
+
+- **Version control:** GitHub connection (`dev.ps1 github`), branch and pull request workflow
+  (`branch`, `pr`, `merge`, `sync`), one-command releases (`dev.ps1 release patch|minor|major`), a
+  pre-push hook that protects `main`, consistent line endings, and the design docs exported into `docs/`.
 
 ## 0.4.0 (2026-09-28)
 

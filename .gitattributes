@@ -1,0 +1,11 @@
+# Same line endings on Windows (PC) and Linux (laptop, CI).
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.png binary
+*.jpg binary
+*.woff binary
+*.woff2 binary
+*.db binary
+# Built Helios: generated, keep diffs out of reviews
+core/argus/helios_dist/** linguist-generated=true -diff
