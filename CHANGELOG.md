@@ -5,11 +5,14 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
-- **Approve / Reject work without Tailscale:** the phone buttons now post to a private reply topic on the ntfy
-  server, which the phone can always reach. Argus keeps one streaming connection to that topic, decides the
-  approval with the signed one-time token and sends back "Approved: ..." (or "Already approved: ..." for a second
-  tap). The reply topic is made up from `NTFY_TOPIC` (override with `NTFY_REPLY_TOPIC`). The Open button still
-  needs `approvals.public_url` (Tailscale). `/health` shows the relay under `replies`.
+- **Phone buttons go over Tailscale, and Argus catches up when the phone reconnects:** Approve / Reject go
+  straight to Argus at `approvals.public_url`, so knowing the ntfy topic is not enough to approve anything. Set
+  `approvals.phone` to the phone's Tailscale name and Argus checks `tailscale status` every 30 s; when the phone
+  comes back online and something is still waiting, it sends one message (the card again with fresh buttons,
+  or "N approvals waiting"), at most once per 15 minutes. `/health` shows it under `phone`.
+- **Optional ntfy mode** (`approvals.buttons: ntfy`, for your own ntfy server behind a login): the buttons post
+  to a private reply topic on the ntfy server so they work anywhere; Argus keeps one streaming connection to it,
+  decides with the signed one-time token and replies "Approved: ..." (or "Already approved: ...").
 
 ## 0.6.0 (2026-09-28)
 

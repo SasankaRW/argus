@@ -10,8 +10,9 @@ Rules:
   back instead of a second one, and the notification is queued only once.
 - **One-time signed tokens.** The phone buttons carry `HMAC(install key, approval id)`. It works only while the
   approval is pending, so a used or old link does nothing. Helios and apps use the normal Argus token instead.
-- **Buttons work anywhere.** They post to a private reply topic on the ntfy server (always reachable from the
-  phone); Argus listens there (relay.py) and confirms with a short message. Open needs `approvals.public_url`.
+- **Buttons.** By default they go straight to Argus over Tailscale (`approvals.public_url`), so knowing the ntfy
+  topic is not enough to approve anything; when the phone comes back online Argus pushes what is still waiting
+  (presence.py). With `approvals.buttons: ntfy` they post to a private reply topic instead (relay.py).
 - **Money is shown from code.** A batch's count and total are added up here (Decimal), never taken from a model.
 - **Waiting is not failing.** After `remind_hours` you get one reminder; after `expire_hours` the approval
   counts as "no" and the job carries on.
@@ -139,6 +140,8 @@ class Approvals:
         """The private ntfy topic the phone buttons post to and Argus listens on. NTFY_REPLY_TOPIC, or derived
         from the main topic and the install key, so there is nothing extra to set up."""
         sec = self.cfg.secrets
+        if self.cfg.approvals.buttons != "ntfy":
+            return None
         if sec.ntfy_reply_topic:
             return sec.ntfy_reply_topic
         if not sec.ntfy_topic or self._key is None:
@@ -331,6 +334,38 @@ class Approvals:
                              data={"approval": a["id"]})
                 reminded += 1
             return {"reminded": reminded, "expired": expired}
+
+        return await self.store.write(fn)
+
+    # -------------------------------------------------------------- the phone is back
+
+    async def push_waiting(self, dedupe: str) -> int:
+        """Queue one message about everything still waiting (the phone just came back on Tailscale).
+        One approval: its card again with fresh buttons. Several: a count and titles, opening Helios."""
+
+        def fn(conn: sqlite3.Connection) -> int:
+            now = self.clock()
+            rows = [_decode(r) for r in conn.execute(
+                "SELECT * FROM approvals WHERE state = 'pending' ORDER BY created_at").fetchall()]
+            if not rows:
+                return 0
+            if len(rows) == 1:
+                msg = self._message(rows[0])
+                msg["title"] = f"Still waiting: {rows[0]['plugin']}: {rows[0]['title']}"
+            else:
+                base = self.cfg.approvals.public_url
+                lines = [f"• {a['plugin']}: {a['title']}" for a in rows[:8]]
+                if len(rows) > 8:
+                    lines.append(f"… and {len(rows) - 8} more")
+                msg = ntfy_message(f"{len(rows)} approvals waiting", "\n".join(lines), priority="high",
+                                   tags=["inbox_tray"], click=f"{base}/" if base else None,
+                                   actions=[{"action": "view", "label": "Open Helios", "url": f"{base}/"}]
+                                   if base else None)
+            if add_message(conn, now, "ntfy", msg, dedupe_key=dedupe) is None:
+                return 0
+            insert_event(conn, now, "approval.pushed", src="approvals", dst="ntfy",
+                         data={"count": len(rows), "reason": "phone back online"})
+            return len(rows)
 
         return await self.store.write(fn)
 

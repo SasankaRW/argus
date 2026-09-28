@@ -85,7 +85,24 @@ def test_request_is_idempotent_and_queues_one_message(store, clock):
     assert msg["title"] == "demo: CEB bill" and "amount: 4,250.00" in msg["message"]
     labels = [x["label"] for x in msg["actions"]]
     assert labels == ["Approve", "Reject", "Open"] and msg["actions"][0]["method"] == "POST"
-    # the buttons post to the private reply topic on the ntfy server, so they work without Tailscale
+    # default: the buttons go straight to Argus over Tailscale; knowing the ntfy topic is not enough
+    assert ap.reply_topic is None and "body" not in msg["actions"][0]
+    assert msg["actions"][0]["url"] == (f"http://phone-reachable:8600/approvals/{a1['id']}/decide"
+                                        f"?t={ap.token(a1['id'])}&answer=approve")
+    assert msg["actions"][2]["url"].startswith("http://phone-reachable:8600/a/")
+
+
+def test_ntfy_mode_buttons_post_to_the_reply_topic(store, clock):
+    cfg = cfg_with()
+    cfg.approvals.buttons = "ntfy"
+    jobs, ap, _ = setup(store, clock, cfg)
+
+    async def go():
+        jid = await _leased(jobs)
+        return (await ap.request(jid, "w1", "k", "entry", "CEB bill", fields={"amount": "1"}))[0]
+
+    a1 = run(go())
+    msg = json.loads(store.read_sync(lambda c: c.execute("SELECT payload FROM outbox").fetchone()[0]))
     reply = ap.reply_topic
     assert reply.startswith("argus-test-topic-reply-") and len(reply) == len("argus-test-topic-reply-") + 10
     assert msg["actions"][0]["url"] == f"https://ntfy.sh/{reply}"
@@ -94,8 +111,9 @@ def test_request_is_idempotent_and_queues_one_message(store, clock):
     assert msg["actions"][2]["url"].startswith("http://phone-reachable:8600/a/")  # Open still needs Tailscale
 
 
-def test_buttons_without_public_url_and_none_without_ntfy(store, clock):
+def test_buttons_without_public_url(store, clock):
     jobs, ap, cfg = setup(store, clock, cfg_with(None))
+    cfg.approvals.buttons = "ntfy"  # ntfy mode: Approve / Reject without Tailscale, but no Open page
 
     async def go1():
         jid = await _leased(jobs)
@@ -105,7 +123,7 @@ def test_buttons_without_public_url_and_none_without_ntfy(store, clock):
     msg = json.loads(store.read_sync(lambda c: c.execute("SELECT payload FROM outbox").fetchone()[0]))
     assert [a["label"] for a in msg["actions"]] == ["Approve", "Reject"] and "click" not in msg
     store.write_sync(lambda c: c.execute("DELETE FROM outbox"))
-    cfg.secrets.ntfy_topic = None
+    cfg.approvals.buttons = "tailscale"  # Tailscale mode without an address: no buttons at all
 
     async def go():
         jid = await _leased(jobs)
@@ -308,12 +326,12 @@ def test_crash_while_sending_resends_on_restart_but_never_twice_after_sent(store
 
 
 def make_argus(tmp_path, ntfy_url: str, public_url: str | None = "http://127.0.0.1:1", token: str = "tok",
-               extra: str = "") -> Argus:
+               extra: str = "", buttons: str = "tailscale") -> Argus:
     (tmp_path / "argus.yaml").write_text(
         "logging:\n  file: null\n"
         "jobs:\n  watchdog_interval_seconds: 0.1\n  lease_seconds: 5\n  heartbeat_seconds: 1\n"
         f"ntfy:\n  url: {ntfy_url}\n  reply_retry_seconds: 0.05\n"
-        + (f"approvals:\n  public_url: {public_url}\n" if public_url else "") + extra,
+        f"approvals:\n  buttons: {buttons}\n" + (f"  public_url: {public_url}\n" if public_url else "") + extra,
         encoding="utf-8")
     (tmp_path / ".env").write_text(f"ARGUS_WORKER_TOKEN={token}\nNTFY_TOPIC=argus-e2e\n", encoding="utf-8")
     return Argus(load_config(tmp_path / "argus.yaml"))
@@ -331,8 +349,9 @@ def phone_tap(action: dict, base: str) -> tuple[int, dict]:
 
 
 def test_approve_from_the_phone_resumes_the_job_in_under_a_second(tmp_path):
+    """ntfy mode end to end: tap -> reply topic -> relay -> decision -> job done -> confirmation."""
     with FakeNtfy() as ntfy:
-        argus = make_argus(tmp_path, ntfy.url).open()
+        argus = make_argus(tmp_path, ntfy.url, buttons="ntfy").open()
         with Server(argus) as srv:
             cl = client(srv.url, "tok")
             w = Worker(cl, "w-phone")
@@ -411,7 +430,7 @@ def test_reject_in_helios_and_edits(tmp_path):
             assert w.run_once(wait=2) and w.run_once(wait=2)
             assert cl.get(f"/jobs/{j1}")["result"] == {"filed": False, "because": "rejected"}
             assert cl.get(f"/jobs/{j2}")["result"]["amount"] == "25.00"
-            assert [a["label"] for a in ntfy.messages[0]["actions"]] == ["Approve", "Reject"]  # no Open
+            assert "actions" not in ntfy.messages[0] and "Decide in Helios." in ntfy.messages[0]["message"]
 
 
 def test_worker_crash_after_asking_sends_no_second_notification(tmp_path):
@@ -479,3 +498,73 @@ def test_page_escapes_and_rejects_bad_links(tmp_path):
             with pytest.raises(urllib.error.HTTPError) as e:
                 urllib.request.urlopen(f"{srv.url}/a/{a['id']}?t=nope")
             assert e.value.code == 404
+
+
+# ------------------------------------------------------------------ phone presence (Tailscale mode)
+
+
+def _status(online: bool) -> dict:
+    return {"Self": {"HostName": "saspc"}, "Peer": {
+        "k1": {"HostName": "laptop", "DNSName": "laptop.tail1234.ts.net.", "Online": True},
+        "k2": {"HostName": "Pixel-8", "DNSName": "pixel-8.tail1234.ts.net.", "Online": online}}}
+
+
+def test_phone_online_matches_host_or_dns_name():
+    from argus.presence import phone_online
+
+    assert phone_online(_status(True), "pixel-8") is True
+    assert phone_online(_status(False), "pixel-8.tail1234.ts.net") is False
+    assert phone_online(_status(True), "iphone") is None
+
+
+def test_phone_back_online_pushes_what_is_waiting_once(store, clock):
+    from argus.presence import PhoneWatch
+
+    cfg = cfg_with()
+    cfg.approvals.phone, cfg.approvals.back_online_cooldown_minutes = "pixel-8", 15
+    jobs, ap, _ = setup(store, clock, cfg)
+    seq = iter([False, True, True, False, True, False, True])
+    sender = Sender()
+    ob = Outbox(store, cfg, clock=clock, senders={"ntfy": sender})
+    watch = PhoneWatch(store, cfg, ap, ob, clock=clock, status=lambda: _status(next(seq)))
+
+    async def go():
+        jid = await _leased(jobs)
+        await ap.request(jid, "w1", "k1", "entry", "CEB bill", fields={"amount": "10"})
+        out = [await watch.check()]          # offline (first look)
+        out.append(await watch.check())      # online: one waiting -> pushed
+        out.append(await watch.check())      # still online: nothing
+        clock.advance(60)
+        out.append(await watch.check())      # offline
+        out.append(await watch.check())      # online again within 15 min: no second push
+        clock.advance(20 * 60)
+        jid2 = await _leased(jobs)
+        await ap.request(jid2, "w1", "k2", "batch", "3 payments", items=[{"label": "a", "amount": "1"}])
+        out.append(await watch.check())      # offline
+        out.append(await watch.check())      # online after the cooldown: two waiting -> one summary
+        await ob.send_due()
+        return out
+
+    assert run(go()) == ["offline", "back", "online", "offline", "online", "offline", "back"]
+    titles = [m["title"] for m in sender.sent]
+    assert titles == ["demo: CEB bill", "Still waiting: demo: CEB bill", "demo: 3 payments",
+                      "2 approvals waiting"]
+    still = sender.sent[1]
+    assert [a["label"] for a in still["actions"]] == ["Approve", "Reject", "Open"]  # fresh buttons
+    summary = sender.sent[3]
+    assert "CEB bill" in summary["message"] and summary["actions"][0]["label"] == "Open Helios"
+    kinds = store.read_sync(lambda c: [r[0] for r in c.execute("SELECT kind FROM events WHERE kind LIKE 'phone.%'"
+                                                               " OR kind = 'approval.pushed'")])
+    assert kinds.count("approval.pushed") == 2 and kinds.count("phone.online") == 3
+
+
+def test_phone_watch_is_off_in_ntfy_mode_or_without_a_phone(store, clock):
+    from argus.presence import PhoneWatch
+
+    cfg = cfg_with()
+    jobs, ap, _ = setup(store, clock, cfg)
+    assert not PhoneWatch(store, cfg, ap, None).enabled  # no phone set
+    cfg.approvals.phone = "pixel-8"
+    assert PhoneWatch(store, cfg, ap, None).enabled
+    cfg.approvals.buttons = "ntfy"
+    assert not PhoneWatch(store, cfg, ap, None).enabled
