@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+## 0.5.0 (2026-09-28)
+
 Core step C7: models, tiers and escalation.
 
 - **`ctx.llm()` for plugins:** ask the cheapest model tier that can do the job. Every answer is checked in
