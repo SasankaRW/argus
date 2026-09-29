@@ -57,9 +57,10 @@ def check_rules(r: object) -> dict:
             bad(f"{sect}: {', '.join(wrong[:3])} - the target must be one of the categories")
     if not isinstance(r.get("guidance") or [], list):
         bad("guidance: should be a list of lines starting with -")
-    fb = r.get("extension_fallback") or {}
-    if not isinstance(fb, dict) or any(k not in cats or not isinstance(v, list) for k, v in fb.items()):
-        bad("extension_fallback: should be  Category: [.ext, .ext]  with real categories")
+    for sect in ("extension_fallback", "by_extension"):
+        fb = r.get(sect) or {}
+        if not isinstance(fb, dict) or any(k not in cats or not isinstance(v, list) for k, v in fb.items()):
+            bad(f"{sect}: should be  Category: [.ext, .ext]  with real categories")
     dests = r.get("destinations") or {}
     if not isinstance(dests, dict) or any(k not in cats or not isinstance(v, str) or not v.strip()
                                           for k, v in dests.items()):
@@ -175,6 +176,14 @@ def normalise(cat: str | None) -> str | None:
     for a, target in (RULES.get("aliases") or {}).items():
         if c == a.lower() and target in CATEGORIES:
             return target
+    return None
+
+
+def by_type(ext: str) -> str | None:
+    """rules: by_extension - file types that always go to one category, decided in code (no model)."""
+    for cat, exts in (RULES.get("by_extension") or {}).items():
+        if ext.lower() in [e.lower() for e in exts] and cat in CATEGORIES:
+            return cat
     return None
 
 
@@ -309,9 +318,16 @@ def plan_groups(ctx: Context, root: Path, groups: list[dict], limit: int) -> dic
         if len(moves) >= limit:
             note = f"hit max_files_per_run ({limit}); the rest waits for the next run"
             break
+        types = {by_type(f["ext"]) for f in ready}
         hit = match_existing(idx, grp["key"])
         tier = None
-        if hit:
+        if len(types) == 1 and None not in types:  # a video is a video: straight to Videos, no guessing
+            cat = types.pop()
+            dest = folder_for(root, cat)
+            reason = f"file type ({', '.join(sorted({f['ext'] for f in ready}))})"
+            if grp["label"] and len(grp["members"]) >= int(ctx.config.get("min_group_size", 2)):
+                dest = dest / grp["label"]
+        elif hit:
             cat, dest = hit[0], Path(hit[1])
             reason = f"goes with existing {cat}/{os.path.basename(hit[1])}"
         else:
@@ -502,6 +518,23 @@ def tidy(ctx: Context):
                 out.append({"from": str(d), "to": str(folder_for(root, cat)), "items": ctx.files.list(d)})
         return out
 
+    def misplaced():
+        """Files whose type has a fixed category (by_extension) sitting in another category's folder, e.g. a
+        video in Audio or Misc: -> [{from, to}], keeping a group subfolder's name."""
+        out = []
+        for cat in CATEGORIES:
+            base = folder_for(root, cat)
+            if not ctx.files.exists(base) or not ctx.files.is_dir(base):
+                continue
+            for p in ctx.files.list(base):
+                inner = ctx.files.list(p) if ctx.files.is_dir(p) else [p]
+                for f in inner:
+                    want = by_type(os.path.splitext(f)[1].lower())
+                    if want and want != cat and not ctx.files.is_dir(f):
+                        sub = os.path.basename(p) if f != p else ""
+                        out.append({"from": f, "to": str(folder_for(root, want) / sub / os.path.basename(f))})
+        return out
+
     merges = ctx.step("plan", plan)
 
     def run():
@@ -517,6 +550,13 @@ def tidy(ctx: Context):
         return done
 
     done = ctx.step("merge", run)
-    ctx.emit("tidied", folders=len(done), dry_run=ctx.dry_run)
-    return {"merged": done, "rules": source, "dry_run": ctx.dry_run,
-            "note": None if done else "nothing to tidy: no folders named in merge:"}
+    strays = ctx.step("find misplaced", misplaced)  # after the merge: a video that was in Media is in Audio now
+
+    def fix():
+        return [{"file": os.path.basename(m["from"]), "to": os.path.relpath(ctx.files.move(m["from"], m["to"]), root)}
+                for m in strays if os.path.exists(m["from"])]
+
+    moved = ctx.step("move misplaced", fix)
+    ctx.emit("tidied", folders=len(done), files=len(moved), dry_run=ctx.dry_run)
+    return {"merged": done, "misplaced": moved, "rules": source, "dry_run": ctx.dry_run,
+            "note": None if done or moved else "nothing to tidy"}

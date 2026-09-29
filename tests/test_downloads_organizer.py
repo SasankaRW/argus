@@ -280,27 +280,33 @@ def test_rules_edited_in_helios_apply_to_the_next_job(tmp_path, monkeypatch):
     assert sorted(p.name for p in (d / "Images").iterdir()) == ["cat (1).jpg", "cat.jpg"]
 
 
-def test_videos_go_to_your_videos_folder(tmp_path, monkeypatch):
+def test_videos_always_go_to_videos(tmp_path, monkeypatch):
+    """By file type, in code: no model call. Tidy folders also moves videos out of the wrong folders."""
     argus, d = setup(tmp_path, monkeypatch, live=True)
-    home = d.parent
+    for f in d.iterdir():  # only the video this time
+        if f.is_file():
+            f.unlink()
     (d / "holiday-2026.mp4").write_text("v")
     os.utime(d / "holiday-2026.mp4", (OLD, OLD))
-    (d / "Videos").mkdir()
-    (d / "Videos" / "old clip.mkv").write_text("o")  # sorted there before: Tidy folders brings it over
-    replies = {"qwen2.5-coder:7b": [{"category": "Videos", "reason": "a video"}]}
-    with FakeOllama(replies) as ol, Server(argus.open()) as srv:
+    (d / "Media").mkdir()
+    (d / "Media" / "old clip.mkv").write_text("o")  # Media folds into Audio, then the video leaves Audio
+    (d / "Media" / "song.mp3").write_text("s")
+    (d / "Misc").mkdir()
+    (d / "Misc" / "screen recording.webm").write_text("w")
+    with FakeOllama({"qwen2.5-coder:7b": [{"category": "Misc", "reason": "?"}]}) as ol, Server(argus.open()) as srv:
         cl = client(srv.url)
         w = Worker(cl, "pc", capabilities=["desktop"], ollama_url=ol.url, watch_folders=False)
         w.register()
-        for f in d.iterdir():  # only the video this time
-            if f.is_file() and f.name != "holiday-2026.mp4":
-                f.rename(tmp_path / f.name)
+        results = {}
         for wf in ("sort", "tidy"):
             job = cl.post(f"/plugins/{dorg.PLUGIN}/run", {"workflow": wf})
             assert w.run_once(wait=2)
             done = wait_for(lambda jid=job["id"]: (j := cl.get(f"/jobs/{jid}"))["state"] in ("succeeded", "dead") and j)
             assert done["state"] == "succeeded", done["error"]
-        changes = cl.get(f"/jobs/{job['id']}/changes")
-        assert any(c["can_undo"] for c in changes)
-    assert sorted(p.name for p in (home / "Videos").iterdir()) == ["holiday-2026.mp4", "old clip.mkv"]
-    assert not (d / "Videos").exists()
+            results[wf] = done["result"]
+        assert not ol.requests  # no model needed
+    assert sorted(p.name for p in (d / "Videos").iterdir()) == ["holiday-2026.mp4", "old clip.mkv",
+                                                                "screen recording.webm"]
+    assert sorted(p.name for p in (d / "Audio").iterdir()) == ["song.mp3"] and not (d / "Media").exists()
+    assert results["sort"]["moved"][0]["category"] == "Videos"
+    assert len(results["tidy"]["misplaced"]) == 2

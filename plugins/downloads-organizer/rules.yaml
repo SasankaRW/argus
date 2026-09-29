@@ -18,9 +18,15 @@ categories:
 aliases: {Miscellaneous: Misc, Pictures: Images, Photos: Images, Media: Audio, Music: Audio, Code: Projects,
           Software: Installers}
 
-# Categories kept outside Downloads (default: Downloads/<category>). Tidy folders moves the old Downloads copy.
-destinations:
-  Videos: ~/Videos
+# File types that always go to one category, decided in code - no model, no guessing. Tidy folders also moves
+# such files out of the wrong folder (a video in Audio -> Videos).
+by_extension:
+  Videos: [.mp4, .mkv, .mov, .avi, .webm, .flv, .wmv, .m4v]
+  Audio: [.mp3, .wav, .flac, .m4a, .aac, .ogg, .wma]
+
+# Optional: a category kept outside Downloads, e.g.  destinations: {Videos: ~/Videos}. By default every
+# category is a folder inside Downloads. (A folder outside Downloads must also be allowed in plugin.yaml.)
+destinations: {}
 
 # Folders to fold into the real ones with "Tidy folders" (their files move over, the empty folder goes).
 merge: {Pictures: Images, Photos: Images, Media: Audio, Music: Audio, Miscellaneous: Misc}

@@ -15,10 +15,7 @@ triggers:
 workflows: [file, sort, undo, take]   # undo: {"from": where it is now, "to": where it was}
 
 permissions:
-  files:                   # Downloads, plus your own library folders for rules: destinations
-    read: ["~/Downloads", "~/Videos", "~/Pictures", "~/Music", "~/Documents"]
-    write: ["~/Downloads", "~/Videos", "~/Pictures", "~/Music", "~/Documents"]
-    delete: none
+  files: {read: ["~/Downloads"], write: ["~/Downloads"], delete: none}
   models: [T1]               # starts at T1; T2 only when T1's answer fails the check
   claude_calls_per_day: 0
 
