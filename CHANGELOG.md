@@ -5,6 +5,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- downloads-organizer: a category can live outside Downloads (rules `destinations:`); videos now go to your own Videos folder, and Tidy folders moves the old Downloads\Videos there.
 - **screenshot-renamer names the window in front, not the background:** the vision model goes first (it sees which window the screenshot is about), with the text near the middle as a hint. Every word of a name must be on screen in the front window or be a plain describing word (folder, error, login page); made-up words or words from other windows are sent back, and if nothing passes the name stays as it is.
 - **downloads-organizer: one folder per kind.** Media is now Audio; "Tidy folders" folds Pictures into Images, Media and Music into Audio, Miscellaneous into Misc (each move can be undone).
 - **Rules in Helios:** plugins with a rules file (downloads-organizer) get an "Edit sorting rules" button: a YAML editor with Save, Reset to default, and the examples learned from Wrong folder. Edits apply from the next job, no restart; rules that make no sense stop the job with a message that says what to fix.

@@ -60,6 +60,10 @@ def check_rules(r: object) -> dict:
     fb = r.get("extension_fallback") or {}
     if not isinstance(fb, dict) or any(k not in cats or not isinstance(v, list) for k, v in fb.items()):
         bad("extension_fallback: should be  Category: [.ext, .ext]  with real categories")
+    dests = r.get("destinations") or {}
+    if not isinstance(dests, dict) or any(k not in cats or not isinstance(v, str) or not v.strip()
+                                          for k, v in dests.items()):
+        bad("destinations: should be  Category: folder  (e.g. Videos: ~/Videos) with real categories")
     for k in (r.get("merge") or {}):
         if k in cats:
             bad(f"merge: {k} is itself a category")
@@ -254,13 +258,20 @@ def candidates(ctx: Context, root: Path, min_age: float) -> list[dict]:
     return out
 
 
+def folder_for(root: Path, cat: str) -> Path:
+    """Where a category's files go: Downloads/<category>, or the folder set under destinations: (e.g. Videos in
+    your own Videos folder)."""
+    dest = (RULES.get("destinations") or {}).get(cat)
+    return Path(os.path.expandvars(os.path.expanduser(str(dest)))) if dest else root / cat
+
+
 def folder_index(ctx: Context, root: Path) -> dict[str, tuple[str, str]]:
     """Subfolders already inside the category folders: Projects/DeepLense -> 'deeplense'."""
     idx: dict[str, tuple[str, str]] = {}
     if not ctx.config.get("match_existing_folders", True):
         return idx
     for cat in CATEGORIES:
-        d = root / cat
+        d = folder_for(root, cat)
         if not ctx.files.exists(d) or not ctx.files.is_dir(d):
             continue
         for sub in ctx.files.list(d):
@@ -309,13 +320,14 @@ def plan_groups(ctx: Context, root: Path, groups: list[dict], limit: int) -> dic
             if cat is None:
                 skipped += [{"name": f["name"], "reason": reason} for f in ready]
                 continue
-            dest = root / cat
+            dest = folder_for(root, cat)
             if grp["label"] and len(grp["members"]) >= min_group:
                 dest = dest / grp["label"]
                 reason = f"{reason} (grouped: {len(grp['members'])} files share a name)"
         for f in ready:
             moves.append({"src": f["path"], "dst": str(dest / f["name"]), "name": f["name"], "category": cat,
-                          "folder": os.path.relpath(dest, root), "reason": reason, "tier": tier})
+                          "folder": os.path.relpath(dest, root) if _inside(dest, root) else str(dest),
+                          "reason": reason, "tier": tier})
     return {"moves": moves, "skipped": skipped, "note": note}
 
 
@@ -347,6 +359,14 @@ def sort(ctx: Context):
 
     plan = ctx.step("plan", make_plan)
     return ctx.step("move", apply, ctx, plan)
+
+
+def _inside(p: str | Path, root: str | Path) -> bool:
+    try:
+        Path(os.path.realpath(p)).relative_to(os.path.realpath(root))
+        return True
+    except ValueError:
+        return False
 
 
 def _same(a: str | Path, b: str | Path) -> bool:
@@ -401,8 +421,10 @@ def correct(ctx: Context):
     if not os.path.exists(src):
         raise PermanentError(f"{src} is no longer there")
     root = downloads(ctx)
-    parts = Path(os.path.relpath(os.path.dirname(src), root)).parts
-    dest = root / value / (parts[1] if len(parts) >= 2 and parts[0] != ".." else "") / os.path.basename(src)
+    parent = Path(os.path.dirname(src))
+    cat_dirs = {os.path.normcase(str(folder_for(root, c))) for c in CATEGORIES}
+    sub = parent.name if os.path.normcase(str(parent.parent)) in cat_dirs else ""  # keep its group subfolder
+    dest = folder_for(root, value) / sub / os.path.basename(src)
     moved = ctx.step("move", ctx.files.move, src, str(dest))
 
     def learn():
@@ -472,8 +494,12 @@ def tidy(ctx: Context):
         out = []
         for src, dst in (RULES.get("merge") or {}).items():
             d = root / src
-            if ctx.files.exists(d) and ctx.files.is_dir(d) and not _same(d, root / dst):
-                out.append({"from": str(d), "to": str(root / dst), "items": ctx.files.list(d)})
+            if ctx.files.exists(d) and ctx.files.is_dir(d) and not _same(d, folder_for(root, dst)):
+                out.append({"from": str(d), "to": str(folder_for(root, dst)), "items": ctx.files.list(d)})
+        for cat in (RULES.get("destinations") or {}):  # a category that now lives elsewhere: bring its old folder
+            d = root / cat
+            if ctx.files.exists(d) and ctx.files.is_dir(d) and not _same(d, folder_for(root, cat)):
+                out.append({"from": str(d), "to": str(folder_for(root, cat)), "items": ctx.files.list(d)})
         return out
 
     merges = ctx.step("plan", plan)
@@ -485,7 +511,8 @@ def tidy(ctx: Context):
                 if os.path.exists(item):
                     ctx.files.move(item, os.path.join(m["to"], os.path.basename(item)))
             removed = ctx.files.remove_empty_dir(m["from"])
-            done.append({"folder": os.path.basename(m["from"]), "into": os.path.basename(m["to"]),
+            done.append({"folder": os.path.basename(m["from"]), "into": m["to"] if not _inside(m["to"], root)
+                         else os.path.basename(m["to"]),
                          "moved": len(m["items"]), "removed": removed})
         return done
 

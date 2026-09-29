@@ -18,6 +18,10 @@ categories:
 aliases: {Miscellaneous: Misc, Pictures: Images, Photos: Images, Media: Audio, Music: Audio, Code: Projects,
           Software: Installers}
 
+# Categories kept outside Downloads (default: Downloads/<category>). Tidy folders moves the old Downloads copy.
+destinations:
+  Videos: ~/Videos
+
 # Folders to fold into the real ones with "Tidy folders" (their files move over, the empty folder goes).
 merge: {Pictures: Images, Photos: Images, Media: Audio, Music: Audio, Miscellaneous: Misc}
 
