@@ -79,7 +79,10 @@ plugins:
 2. Let the phone reach Helios over Tailscale: `tailscale serve --bg 8600`. It prints the https address; put it in
    `approvals.public_url`.
 3. Install the ntfy app on the phone and subscribe to your `NTFY_TOPIC`.
-4. Test: `.\scripts\dev.ps1 ntfy` (a notification) and `.\scripts\dev.ps1 approval` (Approve / Reject on the phone).
+4. Put Helios on the phone: open the https address from step 2 + `/helios/` in Chrome, sign in with the token,
+   then menu > **Add to Home screen** (Install). Helios now shows up in the phone's **share menu**: share a photo,
+   PDF or link to it, pick where it goes, Send.
+5. Test: `.\scripts\dev.ps1 ntfy` (a notification) and `.\scripts\dev.ps1 approval` (Approve / Reject on the phone).
 
 ## 8. Start it
 

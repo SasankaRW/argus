@@ -5,6 +5,9 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Share to Argus:** Helios installs on the phone (Add to Home screen) and appears in its share menu. Share a photo, PDF, link or text, pick where it goes, Send. Also on the new Share page in Helios (Add files).
+- downloads-organizer takes shares ("Save to PC"): files are saved to Downloads and sorted at once; links become .url shortcuts, text a .txt.
+- Plugins declare `share:` targets; jobs read shared files with `ctx.shared(name)`. API: `GET /share/targets`, `POST /shares`, `PUT /shares/{id}/files`, `POST /shares/{id}/send`; shares are kept 7 days (`share.keep_days`, `share.max_mb`).
 - **`dev.ps1 up` without extra windows:** Ollama, argusd and the worker run in the background and "up" prints one tidy summary. `dev.ps1 status` shows what runs; `dev.ps1 logs` follows every log in one coloured terminal. If something fails to start, its last log lines are shown right away.
 - **Helios Logs page:** argusd, worker and Ollama logs in one live view, with source tabs, Warnings / Errors filters, search and pause (`GET /logs`, `GET /logs/{name}`).
 - The worker can write a rotated log file (`--log-file`); a process running in the background logs only to its file.

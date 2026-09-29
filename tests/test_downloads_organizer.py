@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import time
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -12,6 +14,7 @@ import pytest
 from argus.config import load_config
 from argus.context import Argus
 from argus.worker import Worker
+from argus.worker.client import ApiError
 from fakes import FakeOllama
 from test_worker import Server, client, wait_for
 
@@ -190,3 +193,44 @@ def test_wrong_button_fixes_the_file_and_teaches_the_models(tmp_path, monkeypatc
         system = ol.requests[-1]["messages"][0]["content"]
         assert '"lecture_07.pdf" -> Private' in system
     assert (d / "Private" / "lecture" / "lecture_07.pdf").exists()  # keeps its group folder
+
+
+def test_share_from_the_phone_lands_sorted(tmp_path, monkeypatch):
+    argus, d = setup(tmp_path, monkeypatch, live=True)
+    replies = {"qwen2.5-coder:7b": [{"category": "Web", "reason": "a link"},  # groups go by name: "Argus repo" first
+                                    {"category": "Private", "reason": "bank statement"}]}
+    with FakeOllama(replies) as ol, Server(argus.open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        targets = cl.get("/share/targets")
+        assert {"plugin": dorg.PLUGIN, "workflow": "take"}.items() <= targets[0].items()
+        share = cl.post("/shares", {"title": "Argus repo", "url": "https://github.com/SasankaRW/argus"})
+        req = urllib.request.Request(f"{srv.url}/shares/{share['id']}/files?name=bank-statement-sep.pdf"
+                                     "&type=application/pdf", data=b"%PDF-1.4 fake", method="PUT")
+        meta = json.loads(urllib.request.urlopen(req).read())
+        assert meta["files"] == [{"name": "bank-statement-sep.pdf", "type": "application/pdf", "size": 13}]
+        sent = cl.post(f"/shares/{share['id']}/send", {"plugin": dorg.PLUGIN, "workflow": "take"})
+        assert cl.post(f"/shares/{share['id']}/send", {"plugin": dorg.PLUGIN, "workflow": "take"})["id"] == sent["id"]
+        assert w.run_once(wait=2)
+        job = wait_for(lambda: (j := cl.get(f"/jobs/{sent['id']}"))["state"] in ("succeeded", "dead") and j)
+        assert job["state"] == "succeeded", job["error"]
+    assert (d / "Private" / "bank-statement-sep.pdf").read_bytes() == b"%PDF-1.4 fake"
+    url = d / "Web" / "Argus repo.url"
+    assert "URL=https://github.com/SasankaRW/argus" in url.read_text()
+
+
+def test_share_rules(tmp_path, monkeypatch):
+    argus, d = setup(tmp_path, monkeypatch, live=True)
+    with Server(argus.open()) as srv:
+        cl = client(srv.url)
+        share = cl.post("/shares", {})
+        with pytest.raises(ApiError) as e:  # empty
+            cl.post(f"/shares/{share['id']}/send", {"plugin": dorg.PLUGIN, "workflow": "take"})
+        assert e.value.status == 422
+        with pytest.raises(ApiError) as e:
+            cl.post(f"/shares/{share['id']}/send", {"plugin": dorg.PLUGIN, "workflow": "sort"})  # not a share target
+        assert e.value.status == 422
+        with pytest.raises(ApiError) as e:
+            cl.get("/shares/..%2F..%2Fetc/files/passwd")
+        assert e.value.status == 404

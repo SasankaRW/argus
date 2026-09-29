@@ -90,6 +90,26 @@ main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .ll.lv-error .m, .ll.lv-critical .m { color: #ffb4b4; }
 .ll.lv-debug .m { color: var(--tx3); }
 .ll .exc { grid-column: 1 / -1; margin: 2px 0 6px 118px; color: var(--bad); font-size: 11px; white-space: pre-wrap; }
+.share { max-width: 720px; }
+.share-body { padding: 4px 18px 18px; display: flex; flex-direction: column; gap: 10px; }
+.share-items { display: flex; flex-direction: column; gap: 6px; }
+.sitem { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 6px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg); }
+.sitem img, .sitem .ficon { width: 48px; height: 48px; border-radius: 6px; object-fit: cover; }
+.sitem .ficon { display: grid; place-items: center; font-size: 11px; color: var(--amber); background: var(--raise); }
+.sinfo { display: flex; flex-direction: column; min-width: 0; font-size: 12.5px; }
+.sinfo .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.addfiles { align-self: flex-start; display: inline-flex; align-items: center; background: var(--raise); }
+.fld { display: grid; grid-template-columns: 60px minmax(0, 1fr); gap: 10px; align-items: start; font-size: 12.5px; color: var(--tx2); }
+.fld span { padding-top: 7px; }
+.fld input, .fld textarea { font: inherit; color: var(--tx); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; min-width: 0; }
+.targets { display: flex; flex-direction: column; gap: 6px; }
+.target { display: flex; gap: 10px; align-items: center; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; cursor: pointer; font-size: 13px; }
+.target.on { border-color: var(--amber); background: rgba(245, 165, 36, .06); }
+.target input { accent-color: #f5a524; }
+.primary-btn { background: var(--amber) !important; color: #111 !important; font-weight: 600; padding: 0 16px; height: 34px; }
+.primary-btn:disabled { opacity: .5; }
+.share-done { padding: 36px 24px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.share-done .big { font-size: 28px; font-weight: 600; }
 .changes { display: flex; flex-direction: column; gap: 2px; }
 .chg { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; align-items: center; font-size: 12px; padding: 4px 0; border-bottom: 1px solid var(--line); }
 .chg .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -186,7 +206,7 @@ main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 @media (max-width: 860px) {
   .ll { grid-template-columns: 56px minmax(0, 1fr); } .ll .s, .ll .l { display: none; } .logs .search { width: 100%; }
   .run { grid-template-columns: 70px minmax(0, 1fr) 80px; } .run .d, .run .t:not(:first-child) { display: none; }
-  .shell { grid-template-columns: minmax(0, 1fr); padding: 12px; }
+  .shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto 1fr; align-content: start; padding: 12px; }
   .brand { width: auto; }
   .rail { flex-direction: row; overflow-x: auto; }
   .rail .nav { width: auto; flex: none; }

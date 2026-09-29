@@ -145,6 +145,7 @@ class Context:
         self.store: Any = None
         self.emit: Callable[..., None] = lambda name, **data: None
         self._allowed_tiers: list[str] | None = None  # None: any tier
+        self.shared: Callable[[str], bytes] | None = None  # a shared file's bytes, for jobs from Helios > Share
 
     def _check_lease(self) -> None:
         if self._reporter.lease_lost:

@@ -11,7 +11,7 @@ triggers:
   - schedule: {workflow: sort, cron: "30 3 * * *"}      # nightly sweep for anything left over
   - manual: {workflow: sort, label: Sort Downloads now}
 
-workflows: [file, sort, undo]   # undo: {"from": where it is now, "to": where it was}
+workflows: [file, sort, undo, take]   # undo: {"from": where it is now, "to": where it was}
 
 permissions:
   files: {read: ["~/Downloads"], write: ["~/Downloads"], delete: none}
@@ -24,6 +24,9 @@ config:
   max_files_per_run: {type: int, default: 60, label: Files per sweep at most}
   min_group_size: {type: int, default: 2, label: Siblings needed for their own subfolder}
   match_existing_folders: {type: bool, default: true, label: Put files next to an existing folder of the same name}
+
+share:                    # Helios > Share (the phone's share menu): saved to Downloads, then sorted
+  - {workflow: take, label: Save to PC (sorted into Downloads), accepts: [file, url, text]}
 
 helios:
   node: {label: Downloads, group: files}

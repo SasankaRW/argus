@@ -117,6 +117,16 @@ class Files:
             target.write_text(text, encoding=encoding)
         return str(target)
 
+    def write_bytes(self, path: str | Path, data: bytes) -> str:
+        """A new file (never replacing one: "name (1).ext"). Returns where it went."""
+        p = self._check(path, True)
+        target = self._free(p)
+        self._trace("file.written", {"path": str(target), "size": len(data), "dry_run": self.dry_run})
+        if not self.dry_run:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        return str(target)
+
     def move(self, src: str | Path, dst: str | Path) -> str:
         """Move (or rename) a file. Both ends must be writable; an existing target is never replaced."""
         s = self._check(src, True)
