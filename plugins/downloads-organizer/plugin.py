@@ -135,11 +135,20 @@ class Placement(BaseModel):
     reason: str = Field("", description="at most 8 words")
 
 
-PLAYBOOK = ("Sort a download into exactly one category.\n\nCATEGORIES (choose one, spelled exactly):\n"
+LEARNED_MAX = 50  # corrections kept as examples (newest win)
+
+
+def playbook(learned: dict[str, str] | None = None) -> str:
+    """The instructions, with rules.yaml's examples plus the corrections you made with the Wrong button."""
+    examples = {**(RULES.get("examples") or {}), **(learned or {})}
+    return ("Sort a download into exactly one category.\n\nCATEGORIES (choose one, spelled exactly):\n"
             + "\n".join(f"- {k}: {v}" for k, v in CATEGORIES.items())
             + "\n\nRULES:\n" + "\n".join(f"- {g}" for g in RULES.get("guidance") or [])
-            + "\n\nEXAMPLES:\n" + "\n".join(f'- "{f}" -> {c}' for f, c in (RULES.get("examples") or {}).items())
+            + "\n\nEXAMPLES:\n" + "\n".join(f'- "{f}" -> {c}' for f, c in examples.items())
             + '\n\nAnswer as JSON: {"category": "<one name from the list>", "reason": "<max 8 words>"}')
+
+
+PLAYBOOK = playbook()
 
 
 def classify(ctx: Context, names: list[str], ext: str, preview: str) -> tuple[str | None, str, str | None]:
@@ -156,7 +165,7 @@ def classify(ctx: Context, names: list[str], ext: str, preview: str) -> tuple[st
     if preview:
         task["content_preview"] = preview
     try:
-        p = ctx.llm(PLAYBOOK, task, schema=Placement, check=check)
+        p = ctx.llm(playbook(getattr(ctx, "learned", None)), task, schema=Placement, check=check)
         return normalise(p.category), (p.reason or "model")[:120], ctx.last_answer.tier
     except EscalationExhausted as e:
         cat = by_extension(ext)
@@ -220,6 +229,9 @@ def preview(ctx: Context, f: dict) -> str:
 def plan_groups(ctx: Context, root: Path, groups: list[dict], limit: int) -> dict:
     """Decide where each group goes. Only files that are old enough are moved; young siblings still count
     towards the group (their own job moves them later, to the same place)."""
+    if ctx.store is not None:
+        ctx.store.set("choices", list(CATEGORIES))  # for the Wrong button in Helios
+        ctx.learned = ctx.store.get("learned", {}) or {}
     idx = folder_index(ctx, root)
     min_group = int(ctx.config.get("min_group_size", 2))
     moves: list[dict] = []
@@ -320,3 +332,28 @@ def undo(ctx: Context):
     if not os.path.exists(src):
         raise PermanentError(f"{src} is no longer there")
     return {"back_to": ctx.step("undo", ctx.files.move, src, dst), "dry_run": ctx.dry_run}
+
+
+@workflow(PLUGIN, "correct")
+def correct(ctx: Context):
+    """The Wrong button: input {"from": where the file is now, "value": the right category}. Moves it there (keeping
+    its group subfolder) and remembers the answer as an example for the models."""
+    src, value = str(ctx.input.get("from") or ""), normalise(str(ctx.input.get("value") or ""))
+    if value is None:
+        raise PermanentError(f"{ctx.input.get('value')!r} is not a category ({', '.join(CATEGORIES)})")
+    if not os.path.exists(src):
+        raise PermanentError(f"{src} is no longer there")
+    root = downloads(ctx)
+    parts = Path(os.path.relpath(os.path.dirname(src), root)).parts
+    dest = root / value / (parts[1] if len(parts) >= 2 and parts[0] != ".." else "") / os.path.basename(src)
+    moved = ctx.step("move", ctx.files.move, src, str(dest))
+
+    def learn():
+        learned = ctx.store.get("learned", {}) or {}
+        learned.pop(os.path.basename(src), None)
+        learned[os.path.basename(src)] = value
+        ctx.store.set("learned", dict(list(learned.items())[-LEARNED_MAX:]))
+        return len(learned)
+
+    kept = ctx.step("learn", learn)
+    return {"moved_to": moved, "category": value, "examples_learned": min(kept, LEARNED_MAX), "dry_run": ctx.dry_run}

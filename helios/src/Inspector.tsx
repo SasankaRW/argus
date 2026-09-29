@@ -365,6 +365,90 @@ function EdgePanel({ src, dst, map, events, onSelect }: { src: string; dst: stri
   );
 }
 
+type Change = { event_id: string; kind: string; at: number; from: string | null; to: string | null; path: string | null;
+  dry_run: boolean; can_undo: boolean; can_fix: boolean; undo: { job_id: string; state: string } | null;
+  fix: { job_id: string; state: string; value: string | null } | null };
+
+const live = (x: { state: string } | null) => x && x.state !== "dead" && x.state !== "cancelled";
+
+const base = (p: string | null) => (p ?? "").split(/[\\/]/).pop() ?? "";
+// Where a move went, relative to where the file was: "Documents/lecture".
+const whereTo = (c: { from: string | null; to: string | null }) => {
+  const from = (c.from ?? "").split(/[\\/]/).slice(0, -1);
+  const to = (c.to ?? "").split(/[\\/]/).slice(0, -1);
+  let i = 0;
+  while (i < from.length && i < to.length && from[i].toLowerCase() === to[i].toLowerCase()) i++;
+  return to.slice(i).join("/") || to.slice(-1)[0] || "";
+};
+
+// What a job changed on disk (the undo log), with an Undo button per move.
+function Changes({ id, plugin, tick, onSelect }: { id: string; plugin: string; tick: number; onSelect: (s: Selection) => void }) {
+  const [list, setList] = useState<Change[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [wrong, setWrong] = useState<{ label: string; choices: string[] } | null>(null);
+  const [picking, setPicking] = useState<string | null>(null);
+  const load = () => api<Change[]>(`/jobs/${id}/changes`).then(setList).catch(() => setList([]));
+  useEffect(() => { load(); }, [id, tick]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    Promise.all([api<{ plugins: { id: string; wrong: { label: string } | null }[] }>("/plugins"),
+      api<{ value: string[] | null }>(`/plugins/${plugin}/state/choices`)])
+      .then(([ps, ch]) => {
+        const w = ps.plugins.find((x) => x.id === plugin)?.wrong;
+        setWrong(w && ch.value?.length ? { label: w.label, choices: ch.value } : null);
+      }).catch(() => setWrong(null));
+  }, [plugin]);
+  const act = async (c: Change, path: string, body?: object) => {
+    setBusy(c.event_id); setErr(null);
+    try { await api(`/jobs/${id}/changes/${c.event_id}/${path}`, { method: "POST", body: body ? JSON.stringify(body) : undefined }); setPicking(null); await load(); }
+    catch (e) { setErr(String(e)); } finally { setBusy(null); }
+  };
+  if (!list || list.length === 0) return null;
+  const dry = list.every((c) => c.dry_run);
+  return (
+    <>
+      <div className="sect">{dry ? "Would change (dry-run)" : "Changes"}</div>
+      <div className="changes">
+        {list.map((c) => (
+          <div key={c.event_id} className="chg">
+            <span className="mono">{c.kind === "file.moved" ? base(c.from) : base(c.path)}</span>
+            <span className="muted">{c.kind === "file.moved" ? `→ ${whereTo(c)}${base(c.to) !== base(c.from) ? ` as ${base(c.to)}` : ""}` : c.kind.slice(5)}</span>
+            <span className="acts">
+              {live(c.fix) ? (
+                <button type="button" className="btn" onClick={() => onSelect({ type: "job", id: c.fix!.job_id })}>
+                  {c.fix!.state === "succeeded" ? `fixed → ${c.fix!.value}` : "fixing…"}
+                </button>
+              ) : live(c.undo) ? (
+                <button type="button" className="btn" onClick={() => onSelect({ type: "job", id: c.undo!.job_id })}>
+                  {c.undo!.state === "succeeded" ? "undone" : "undoing…"}
+                </button>
+              ) : (
+                <>
+                  {c.can_fix && wrong && picking !== c.event_id && (
+                    <button type="button" className="btn" disabled={busy !== null} onClick={() => setPicking(c.event_id)}>{wrong.label}</button>
+                  )}
+                  {c.can_undo && picking !== c.event_id && (
+                    <button type="button" className="btn" disabled={busy !== null} onClick={() => act(c, "undo")}>Undo</button>
+                  )}
+                </>
+              )}
+            </span>
+            {picking === c.event_id && wrong && (
+              <div className="pick">
+                {wrong.choices.filter((x) => x !== whereTo(c).split("/")[0]).map((x) => (
+                  <button key={x} type="button" className="btn" disabled={busy !== null} onClick={() => act(c, "wrong", { value: x })}>{x}</button>
+                ))}
+                <button type="button" className="btn dim" onClick={() => setPicking(null)}>cancel</button>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      {err && <div className="tip bad">{err}</div>}
+    </>
+  );
+}
+
 function JobPanel({ id, events, onSelect }: { id: string; events: ArgusEvent[]; onSelect: (s: Selection) => void }) {
   const [job, setJob] = useState<Job | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -405,6 +489,7 @@ function JobPanel({ id, events, onSelect }: { id: string; events: ArgusEvent[]; 
           </div>
         ) : <div className="tip">No steps recorded.</div>}
         {job.error && (<><div className="sect">Error</div><pre className="code bad">{job.error}</pre></>)}
+        <Changes id={id} plugin={job.plugin} tick={lastSeq + events.filter((e) => e.kind.startsWith("job.")).length} onSelect={onSelect} />
         {job.result !== null && job.result !== undefined && (<><div className="sect">Result</div><pre className="code">{pretty(job.result)}</pre></>)}
         <div className="sect">Input</div>
         <pre className="code">{pretty(job.input) || "{}"}</pre>

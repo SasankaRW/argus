@@ -5,13 +5,14 @@ import { uptime } from "./format";
 import { Inspector } from "./Inspector";
 import { useArgus } from "./live";
 import { MapView, Selection } from "./MapView";
+import { RunsView } from "./RunsView";
 
 const NAV: { id: string; label: string; icon: string; soon?: string }[] = [
   { id: "map", label: "Live map", icon: "M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3zM9 3v15M15 6v15" },
-  { id: "runs", label: "Runs", icon: "M4 6h16M4 12h11M4 18h14", soon: "M2" },
-  { id: "inbox", label: "Approvals", icon: "M4 13l2.5-8h11l2.5 8v6H4zM4 13h5l1.5 2h3l1.5-2h5", soon: "C11" },
+  { id: "runs", label: "Runs", icon: "M4 6h16M4 12h11M4 18h14" },
+  { id: "inbox", label: "Approvals", icon: "M4 13l2.5-8h11l2.5 8v6H4zM4 13h5l1.5 2h3l1.5-2h5", soon: "M3" },
   { id: "models", label: "Models", icon: "M12 3l8 4.5v9L12 21l-8-4.5v-9zM12 12l8-4.5M12 12v9M12 12L4 7.5", soon: "later" },
-  { id: "power", label: "Power", icon: "M12 3v8M7.5 6.5a7 7 0 1 0 9 0", soon: "C10" },
+  { id: "power", label: "Power", icon: "M12 3v8M7.5 6.5a7 7 0 1 0 9 0", soon: "MD" },
   { id: "custom", label: "Customize", icon: "M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1M15 4v4M9 10v4M17 16v4", soon: "later" },
 ];
 
@@ -84,6 +85,8 @@ export function App() {
   const [flow, setFlow] = useState(true);
   const [relayout, setRelayout] = useState(0);
   const [triedLogin, setTriedLogin] = useState(false);
+  const [view, setView] = useState<string>(() => (location.hash === "#runs" ? "runs" : "map"));
+  const go = (v: string) => { setView(v); history.replaceState(null, "", v === "map" ? location.pathname : `#${v}`); };
 
   if (a.phase === "login") return <Login bad={triedLogin} onDone={() => { setTriedLogin(true); a.reconnect(); }} />;
 
@@ -108,7 +111,7 @@ export function App() {
 
       <nav className="rail" aria-label="Helios sections">
         {NAV.map((n) => (
-          <button key={n.id} type="button" className="nav" aria-current={n.id === "map" ? "page" : undefined} disabled={!!n.soon} title={n.soon ? `Arrives in ${n.soon}` : undefined}>
+          <button key={n.id} type="button" className="nav" aria-current={n.id === view ? "page" : undefined} disabled={!!n.soon} onClick={() => go(n.id)} title={n.soon ? `Arrives in ${n.soon}` : undefined}>
             <Icon d={n.icon} /><span>{n.label}</span>{n.soon && <span className="soon mono">{n.soon}</span>}
           </button>
         ))}
@@ -123,6 +126,9 @@ export function App() {
       <main>
         <Kpis status={st} />
         <div className="mid">
+          {view === "runs" ? (
+            <RunsView events={a.events} selected={sel?.type === "job" ? sel.id : null} onSelect={setSel} />
+          ) : (
           <section className="panel mappanel" aria-label="Live map">
             <div className="ph">
               <span className="pt">Live map</span>
@@ -147,6 +153,7 @@ export function App() {
               <span className="right">Drag boxes to arrange · click to inspect</span>
             </div>
           </section>
+          )}
           {a.map && <Inspector sel={sel} map={a.map} status={st} events={a.events} onSelect={setSel} />}
         </div>
         <EventsPanel events={a.events} conn={a.conn} onSelect={setSel} />

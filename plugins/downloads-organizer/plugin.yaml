@@ -27,3 +27,4 @@ config:
 
 helios:
   node: {label: Downloads, group: files}
+  wrong: {workflow: correct, label: Wrong folder}   # fixes the file and keeps it as an example

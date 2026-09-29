@@ -5,6 +5,9 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Helios Runs page:** every job, newest first, filtered by plugin and state, with a one-line summary; click one for its details.
+- **Undo and Wrong buttons:** a job's Changes list shows each file it moved. Undo puts one back; Wrong folder moves it to the folder you pick and keeps that as an example the models see next time (downloads-organizer).
+- `GET /jobs?plugin=&before=`; `GET /jobs/{id}/changes`, `POST /jobs/{id}/changes/{event}/undo` and `/wrong`.
 - A plugin switched to live (or with new settings) takes effect on the next job, even if the worker registered before argusd restarted.
 - downloads-organizer: a dry-run result now says "would_move" and "nothing was moved" instead of "moved".
 - Plugin trace events no longer draw stray "file" and "plugin" boxes on the map (old ones are removed).
