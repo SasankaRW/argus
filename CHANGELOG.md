@@ -5,6 +5,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- A plugin switched to live (or with new settings) takes effect on the next job, even if the worker registered before argusd restarted.
 - downloads-organizer: a dry-run result now says "would_move" and "nothing was moved" instead of "moved".
 - Plugin trace events no longer draw stray "file" and "plugin" boxes on the map (old ones are removed).
 - **First plugin: downloads-organizer.** Sorts new files in Downloads into category folders: siblings stay
