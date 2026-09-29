@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+## 0.7.0 (2026-09-29)
+
 - **Helios Runs page:** every job, newest first, filtered by plugin and state, with a one-line summary; click one for its details.
 - **Undo and Wrong buttons:** a job's Changes list shows each file it moved. Undo puts one back; Wrong folder moves it to the folder you pick and keeps that as an example the models see next time (downloads-organizer).
 - `GET /jobs?plugin=&before=`; `GET /jobs/{id}/changes`, `POST /jobs/{id}/changes/{event}/undo` and `/wrong`.
