@@ -134,6 +134,16 @@ class Context:
         self._step_idx: int | None = None
         self._asks = 0  # approve/notify calls in the current step, for their idempotency keys
         self.last_answer: Any = None
+        # Set by the worker for plugins loaded from a folder (argus.worker.plugins); None for built-in workflows.
+        self.plugin: Any = None
+        self.config: dict[str, Any] = {}
+        self.dry_run = False
+        self.files: Any = None
+        self.http: Any = None
+        self.secrets: Any = None
+        self.store: Any = None
+        self.emit: Callable[..., None] = lambda name, **data: None
+        self._allowed_tiers: list[str] | None = None  # None: any tier
 
     def _check_lease(self) -> None:
         if self._reporter.lease_lost:
@@ -179,6 +189,12 @@ class Context:
         """
         if self._router is None:
             raise RuntimeError("this worker has no model configuration (is it connected to argusd?)")
+        if self._allowed_tiers is not None:
+            tiers = [t for t in (tiers or self._router.chain) if t in self._allowed_tiers]
+            if not tiers:
+                from .plugins import PermissionDenied
+                raise PermissionDenied(f"{self.job.get('plugin')} may not use these models "
+                                       "(permissions.models in plugin.yaml)")
         ans = self._router.ask(playbook, input, schema=schema, check=check, chain=tiers, attempts=attempts)
         order = list(self._router.chain)
         if self._tier is None or (ans.tier in order and self._tier in order

@@ -48,6 +48,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import hmac
+import json
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -59,6 +60,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from ..approvals import ApprovalClosed, ApprovalError, ApprovalNotFound, BadToken
+from ..config import PRIORITY_INTERACTIVE
 from ..context import Argus
 from ..events import EventFilter, read_events
 from ..jobs import InvalidTransition, Job, JobNotFound, JobState, LeaseLost, QueueFull, Step
@@ -145,7 +147,7 @@ class Wait(BaseModel):
     reason: str
 
 
-TRACE_KINDS = ("model.", "check.", "log.", "advice.")
+TRACE_KINDS = ("model.", "check.", "log.", "advice.", "plugin.", "file.", "http.")
 
 
 class TraceEvent(BaseModel):
@@ -155,6 +157,15 @@ class TraceEvent(BaseModel):
     dst: str | None = Field(None, max_length=100)
     step: str | None = Field(None, max_length=100)
     data: dict[str, Any] | None = None
+
+
+class RunPlugin(BaseModel):
+    workflow: str | None = Field(None, max_length=100)  # default: the plugin's first manual trigger
+    input: dict[str, Any] = Field(default_factory=dict)
+
+
+class StateValue(BaseModel):
+    value: Any = None
 
 
 class FileTrigger(BaseModel):
@@ -352,7 +363,8 @@ def create_app(argus: Argus) -> FastAPI:
     @app.post("/jobs", status_code=201, dependencies=guarded)
     async def submit(body: SubmitJob) -> dict:
         job_id, created = await argus.jobs.enqueue(
-            body.plugin, body.workflow, body.input, needs=body.needs, priority=body.priority,
+            body.plugin, body.workflow, body.input, needs=[*body.needs, *argus.plugin_host.needs_for(body.plugin)],
+            priority=body.priority,
             dedupe_key=body.dedupe_key, max_attempts=body.max_attempts, delay=body.delay,
             model_group=body.model, window=body.window,
         )
@@ -468,7 +480,8 @@ def create_app(argus: Argus) -> FastAPI:
         await argus.registry.register_worker(body.id, body.host, body.capabilities, body.version)
         return {"ok": True, "lease_seconds": argus.cfg.jobs.lease_seconds,
                 "heartbeat_seconds": argus.cfg.jobs.heartbeat_seconds, "models": argus.models.worker_config(),
-                "folders": argus.triggers.folders_for(body.id, body.host)}
+                "folders": argus.triggers.folders_for(body.id, body.host, body.capabilities),
+                "plugins": argus.plugin_host.for_worker(body.capabilities), "paths": argus.path_rules()}
 
     @app.get("/workers", dependencies=guarded)
     async def workers() -> list[dict]:
@@ -638,6 +651,53 @@ def create_app(argus: Argus) -> FastAPI:
     async def webhook(name: str, request: Request) -> dict:
         body = await request.body()
         return await argus.triggers.webhook(name, request.headers, body)
+
+    # -------------------------------------------------------------- plugins and power (C10)
+
+    @app.get("/plugins", dependencies=guarded)
+    async def plugins() -> dict:
+        return argus.plugin_host.list()
+
+    @app.post("/plugins/{pid}/run", dependencies=guarded)
+    async def plugin_run(pid: str, body: RunPlugin) -> dict:
+        """The manual trigger (a button in Helios): runs at interactive priority."""
+        p = argus.plugin_host.plugins.get(pid)
+        if p is None:
+            raise HTTPException(status_code=404, detail=f"no plugin {pid}")
+        manual = [t.manual.workflow for t in p.manifest.triggers if t.manual]
+        wf = body.workflow or (manual[0] if manual else None)
+        if wf is None or wf not in p.manifest.all_workflows():
+            raise HTTPException(status_code=422, detail=f"{pid} has no workflow {wf!r}")
+        job_id, created = await argus.jobs.enqueue(pid, wf, body.input, needs=p.manifest.job_needs(),
+                                                   priority=PRIORITY_INTERACTIVE, source="helios")
+        return {"id": job_id, "created": created}
+
+    @app.get("/plugins/{pid}/state/{key}", dependencies=guarded)
+    async def plugin_state_get(pid: str, key: str) -> dict:
+        def fn(conn):
+            row = conn.execute("SELECT value FROM plugin_state WHERE plugin = ? AND key = ?", (pid, key)).fetchone()
+            return json.loads(row[0]) if row and row[0] is not None else None
+
+        return {"value": await argus.store.read(fn)}
+
+    @app.put("/plugins/{pid}/state/{key}", dependencies=guarded)
+    async def plugin_state_put(pid: str, key: str, body: StateValue) -> dict:
+        raw = json.dumps(body.value)
+        if len(raw) > 256_000:
+            raise HTTPException(status_code=413, detail="value too large (256 KB)")
+
+        def fn(conn):
+            now = time.time()
+            conn.execute("INSERT INTO plugin_state (plugin, key, value, created_at, updated_at) VALUES (?,?,?,?,?)"
+                         " ON CONFLICT(plugin, key) DO UPDATE SET value = excluded.value,"
+                         " updated_at = excluded.updated_at", (pid, key[:200], raw, now, now))
+
+        await argus.store.write(fn)
+        return {"ok": True}
+
+    @app.get("/power", dependencies=guarded)
+    async def power() -> dict:
+        return argus.power.status()
 
     @app.post("/jobs/{job_id}/wait", dependencies=guarded)
     async def wait(job_id: str, body: Wait) -> dict:

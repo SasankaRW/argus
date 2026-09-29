@@ -237,6 +237,16 @@ function NodePanel({ id, map, status, events, onSelect }: { id: string } & Omit<
               when it comes back, anything still waiting is sent again.</div>
           </>
         )}
+        {n.id === "power" && (
+          <>
+            <KV k="Mode" v={String(n.meta?.mode ?? "?")} />
+            <KV k="State" v={String(n.meta?.state ?? "?").replace("_", " ")} />
+            {typeof n.meta?.idle_since === "number" && <KV k="Idle since" v={ago(n.meta.idle_since as number)} />}
+            <KV k="Shut down after" v={`${n.meta?.idle_minutes ?? "?"} min idle`} />
+            <div className="tip">Simulated while developing: it only logs "would wake" and "would shut down" in
+              Events. The real switch comes with the laptop.</div>
+          </>
+        )}
         {n.id === "ntfy" && (
           <>
             <KV k="Sending" v={n.unsent ?? 0} />

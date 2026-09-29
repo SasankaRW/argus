@@ -39,6 +39,17 @@ Because everything passes through `ctx`, a new plugin automatically gets logging
 
 One folder per plugin under `argus/plugins/`. Only `plugin.yaml` is required; everything else is added when the plugin needs it.
 
+**As built (API 1.0, C10):** a plugin is `plugin.yaml` plus `plugin.py`. The workflows are Python functions in `plugin.py`, registered with `@workflow("<id>", "<name>")` from `argus.worker`; YAML workflow files come later. argusd reads the manifest (bad ones show under `GET /plugins` errors, never stop Argus), wires its triggers, and hands it to workers that have what it needs (`runs_on: desktop` needs a worker started with `--cap desktop`). The worker imports `plugin.py` and gives each job `ctx.files` (only the manifest's folders, minus `paths.blocked`; moves never overwrite; deletes go to the Recycle Bin), `ctx.http` (only listed hosts), `ctx.secrets` (only listed names), `ctx.store` (small state in argusd), `ctx.config`, `ctx.emit`, `ctx.dry_run`, and `ctx.llm` starting at the manifest's tiers. Anything outside the manifest raises `PermissionDenied` and the job goes dead. A new plugin runs in dry-run (changes are logged, not made) until it is listed under `plugins.live` in argus.yaml.
+
+```python
+from argus.worker import workflow
+
+@workflow("downloads-organizer", "sort")
+def sort(ctx):
+    for f in ctx.files.list(ctx.config["inbox"]):
+        ctx.step("move", ctx.files.move, f, ctx.config["target"])
+```
+
 ```
 argus/plugins/bill-filer/
   plugin.yaml          # manifest: who, what, triggers, permissions, config

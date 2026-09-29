@@ -98,6 +98,13 @@ triggers:
 
 power:
   mode: simulated          # simulated on the PC, real on the laptop
+  idle_minutes: 20         # no GPU or desktop work this long -> (would) shut the PC down
+  pc_needs: [gpu, desktop] # job needs only the PC can serve
+
+plugins:
+  dirs: [plugins]          # one folder per plugin: plugin.yaml + plugin.py
+  live: []                 # plugins promoted out of dry-run, e.g. [downloads-organizer]
+  config: {}               # per-plugin settings over the manifest defaults, e.g. {downloads-organizer: {...}}
 
 paths:
   allowed: []              # folders plugins may touch, e.g. C:/Users/Sas/Downloads

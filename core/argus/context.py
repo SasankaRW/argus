@@ -13,6 +13,8 @@ from .events import EventHub, insert_event, prune_events
 from .jobs import JobStore, Watchdog
 from .modelboard import ModelBoard
 from .outbox import Outbox, add_message
+from .plugins import PluginHost
+from .power import PowerManager
 from .presence import PhoneWatch
 from .registry import Registry
 from .relay import ReplyRelay
@@ -34,6 +36,8 @@ class Argus:
         self.approvals = Approvals(self.store, self.jobs, cfg)
         self.relay = ReplyRelay(self.store, cfg, self.approvals, self.outbox)
         self.phone = PhoneWatch(self.store, cfg, self.approvals, self.outbox)
+        self.plugin_host = PluginHost(cfg)
+        self.power = PowerManager(self.store, cfg)
         self.scheduler = Scheduler(self.store, self.jobs, cfg)
         self.triggers = Triggers(self.store, self.jobs, cfg)
         self.hub = EventHub(self.store, queue_size=cfg.events.stream_queue)
@@ -42,7 +46,8 @@ class Argus:
             self.jobs,
             cfg.jobs.watchdog_interval_seconds,
             extra=[lambda: self.registry.mark_stale_workers(stale_after), self.prune_events,
-                   self.approval_tick, self.scheduler.tick],
+                   self.approval_tick, self.scheduler.tick,
+                   self.power.tick],
         )
         self.started_at: float | None = None
         self._next_prune = 0.0
@@ -59,7 +64,11 @@ class Argus:
         await self.registry.component("argus", "core", "Argus", group, {"version": self.version})
         await self.models.register()
         await self.approvals.start()
+        self.plugin_host.load()  # adds the plugins' schedules and triggers before the scheduler reads them
+        await self.register_plugins()
+        self.models.plugin_caps = self.plugin_host.claude_caps()
         await self.scheduler.sync()
+        await self.power.start()
         await self.outbox.start()
         self.relay.start()
         await self.phone.start()
@@ -86,6 +95,23 @@ class Argus:
         if queued:
             self.outbox.poke()
         return queued
+
+    async def register_plugins(self) -> None:
+        from .registry import _upsert_component
+
+        def fn(conn) -> None:
+            now = time.time()
+            for pid, p in self.plugin_host.plugins.items():
+                node = p.manifest.helios.node
+                _upsert_component(conn, now, pid, "plugin", node.label or p.manifest.name, node.group,
+                                  {"version": p.manifest.version, "live": p.live, "kind": p.manifest.kind})
+
+        await self.store.write(fn)
+
+    def path_rules(self) -> dict[str, list[str]]:
+        """Folders any plugin may touch at all (argus.yaml paths), on top of each manifest's own list."""
+        return {"allowed": [str(p) for p in self.cfg.paths.allowed],
+                "blocked": [str(p) for p in self.cfg.paths.blocked]}
 
     async def approval_tick(self) -> None:
         done = await self.approvals.tick()

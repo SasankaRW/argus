@@ -3,6 +3,10 @@
     argus-worker                                  demo plugin, http://127.0.0.1:8600
     argus-worker --url http://laptop:8600 --plugin myplugins.files --cap fs
     argus-worker --once                           run one job (if any) and exit
+    argus-worker --cap desktop --cap gpu          the PC: runs desktop and GPU plugins
+
+Capabilities come from --cap and ARGUS_WORKER_CAPS (comma separated, env or .env). Plugins from the plugins
+folder are loaded from argusd's list when the worker has what they need.
 
 The token comes from --token, $ARGUS_WORKER_TOKEN, or ARGUS_WORKER_TOKEN in ./.env.
 Exit codes: 0 ok, 2 bad arguments or plugin import failed, 4 argus unreachable.
@@ -46,6 +50,10 @@ def main(argv: list[str] | None = None) -> int:
     token = args.token or os.environ.get("ARGUS_WORKER_TOKEN") or parse_env_file(Path(".env")).get(
         "ARGUS_WORKER_TOKEN")
 
+    env = parse_env_file(Path(".env"))
+    caps_env = os.environ.get("ARGUS_WORKER_CAPS") or env.get("ARGUS_WORKER_CAPS") or ""
+    caps = sorted(set(args.cap) | {c.strip() for c in caps_env.split(",") if c.strip()})
+
     modules = ([] if args.no_demo else ["argus.worker.demo"]) + args.plugin
     for name in modules:
         try:
@@ -54,7 +62,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Could not load plugin {name}: {e}", file=sys.stderr)
             return 2
 
-    worker = Worker(ArgusClient(args.url, token), args.id, capabilities=args.cap, ollama_url=args.ollama_url)
+    worker = Worker(ArgusClient(args.url, token), args.id, capabilities=caps, ollama_url=args.ollama_url)
 
     presses = 0
 

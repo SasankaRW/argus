@@ -177,7 +177,7 @@ switch ($Command) {
         if (Live-Proc $Rec.worker) { Write-Host "[ok] worker already running" }
         else {
             Write-Host "Starting a worker ..."
-            $W = Start-Window "Argus - worker" "argus.worker.cli"
+            $W = Start-Window "Argus - worker" "argus.worker.cli --cap desktop --cap gpu"
             $Rec.worker = Proc-Record $W
             Save-Up $Rec
             Start-Sleep -Seconds 3
@@ -222,7 +222,7 @@ switch ($Command) {
     "lint"  { Need-Venv; & $Py -m ruff check core tests scripts }
     "check" { Need-Venv; & $Py -m argus --check }
     "run"   { Need-Venv; & $Py -m argus }
-    "worker" { Need-Venv; & $Py -m argus.worker.cli }
+    "worker" { Need-Venv; & $Py -m argus.worker.cli --cap desktop --cap gpu }
     "events" { Need-Venv; & $Py -m argus.tail }
     "models" {
         Need-Venv

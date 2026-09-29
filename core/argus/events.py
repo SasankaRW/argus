@@ -231,8 +231,11 @@ class EventHub:
     async def _run(self) -> None:
         assert self._wake is not None
         while True:
+            # asyncio.timeout, not wait_for: on Python 3.11 wait_for can swallow a cancel that lands as the wait
+            # ends, and then stop() would wait for this task forever
             try:
-                await asyncio.wait_for(self._wake.wait(), timeout=self.poll_interval)
+                async with asyncio.timeout(self.poll_interval):
+                    await self._wake.wait()
             except TimeoutError:
                 pass
             self._wake.clear()

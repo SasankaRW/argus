@@ -162,8 +162,9 @@ class Outbox:
             except Exception as e:  # keep going
                 self.last_error = str(e)
                 log.exception("outbox loop failed")
-            with contextlib.suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(self._wake.wait(), self.poll_seconds)
+            with contextlib.suppress(TimeoutError):  # asyncio.timeout: see events.EventHub._run
+                async with asyncio.timeout(self.poll_seconds):
+                    await self._wake.wait()
             self._wake.clear()
 
     # -------------------------------------------------------------- sending

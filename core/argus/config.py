@@ -217,7 +217,17 @@ class TriggersConfig(_Strict):
 
 
 class PowerConfig(_Strict):
+    # simulated: Argus only logs "would wake" / "would shut down" (the PC while developing). real comes with the
+    # laptop deployment (Wake-on-LAN and the desktop runner's shutdown).
     mode: Literal["simulated", "real"] = "simulated"
+    idle_minutes: float = Field(20, ge=1, le=24 * 60)  # nothing for the PC to do this long -> shut it down
+    pc_needs: list[str] = Field(default_factory=lambda: ["gpu", "desktop"])  # job needs only the PC can serve
+
+
+class PluginsConfig(_Strict):
+    dirs: list[Path] = Field(default_factory=lambda: [Path("plugins")])  # folders holding one folder per plugin
+    live: list[str] = Field(default_factory=list)  # plugins promoted out of dry-run
+    config: dict[str, dict] = Field(default_factory=dict)  # per-plugin settings over the manifest defaults
 
 
 class PathsConfig(_Strict):
@@ -236,6 +246,7 @@ class Secrets(BaseModel):
     ntfy_reply_topic: str | None = Field(None, repr=False)  # optional; derived from the topic when unset
     ntfy_reply_write_token: str | None = Field(None, repr=False)  # ntfy mode with a login: write-only token
     webhooks: dict[str, str] = Field(default_factory=dict, repr=False)  # hook name -> its secret
+    env: dict[str, str] = Field(default_factory=dict, repr=False)  # .env as read, for secrets named later
 
 
 class Config(_Strict):
@@ -254,6 +265,7 @@ class Config(_Strict):
     schedules: list[ScheduleConfig] = Field(default_factory=list)
     triggers: TriggersConfig = Field(default_factory=TriggersConfig)
     power: PowerConfig = Field(default_factory=PowerConfig)
+    plugins: PluginsConfig = Field(default_factory=PluginsConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
 
     def model_post_init(self, _ctx) -> None:
@@ -349,6 +361,7 @@ def load_config(path: str | os.PathLike | None = None) -> Config:
         ntfy_reply_topic=env.get("NTFY_REPLY_TOPIC") or None,
         ntfy_reply_write_token=env.get("NTFY_REPLY_WRITE_TOKEN") or None,
     )
+    cfg.secrets.env = env
     missing = []
     for hook in cfg.triggers.webhooks:
         secret = env.get(hook.secret_env) or os.environ.get(hook.secret_env)

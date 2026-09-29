@@ -32,6 +32,14 @@ function sub(n: MapNode): string {
     if (m.online === false) return `offline${m.since ? ` · ${ago(m.since)}` : ""}`;
     return "checking…";
   }
+  if (n.id === "power") {
+    const m = n.meta as { state?: string; mode?: string; idle_since?: number };
+    const sim = m.mode === "simulated" ? " (sim)" : "";
+    if (m.state === "busy") return `PC busy${sim}`;
+    if (m.state === "would_shutdown") return `would shut down${sim}`;
+    if (m.state === "idle") return `idle${m.idle_since ? ` ${ago(m.idle_since)}` : ""}${sim}`;
+    return `watching${sim}`;
+  }
   if (n.id === "approvals") return n.pending ? `${n.pending} waiting for you` : "nothing to decide";
   if (n.id === "scheduler") return "cron · triggers";
   if (n.id === "ntfy") return n.failed ? `${n.failed} not delivered` : n.unsent ? `${n.unsent} sending` : "all sent";
@@ -67,6 +75,7 @@ function dotColor(n: MapNode, hot: boolean): string {
   if (n.kind === "model") return n.state === "half_open" ? "var(--amber)" : "var(--violet)";
   if (n.kind === "plugin") return (n.jobs?.active ?? 0) > 0 ? "var(--flow)" : (n.jobs?.waiting ?? 0) > 0 ? "var(--amber)" : "var(--ok)";
   if (n.id === "phone") return n.meta?.online === true ? "var(--ok)" : n.meta?.online === false ? "var(--bad)" : "var(--tx3)";
+  if (n.id === "power") return n.meta?.state === "busy" ? "var(--flow)" : n.meta?.state === "would_shutdown" ? "var(--amber)" : "var(--ok)";
   if (n.id === "approvals") return n.pending ? "var(--amber)" : "var(--ok)";
   if (n.id === "ntfy") return n.failed ? "var(--bad)" : "var(--ok)";
   return "var(--tx3)";
