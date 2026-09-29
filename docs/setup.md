@@ -125,6 +125,13 @@ can be put back with **Undo** on the job's Changes (downloads-organizer also has
 If you used the old standalone Downloads script, remove its scheduled task first:
 `C:\Users\Sas\projects\downloads-organizer\uninstall-schedule.bat`.
 
+## Ask Argus
+
+The box at the top of Helios (Ctrl+K) and on the phone (with a microphone button): plain words like "sort
+downloads", "what's running?", "anything waiting for me?", "shut down the PC". Common asks are answered at once;
+anything else goes to T1 (T2 if needed), which answers from Argus's current state. A suggested action only runs
+when you tap **Do it**.
+
 ## PC power buttons
 
 Helios > **Power** (and the **PC power** card on the phone): **Sleep**, **Restart**, **Shut down** (waits

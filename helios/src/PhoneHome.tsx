@@ -1,14 +1,16 @@
 import { useEffect, useState } from "react";
 import { api, Approval, ArgusEvent, Job, Status } from "./api";
 import { ago, tone } from "./format";
+import { AskBox } from "./AskBox";
 import { ApprovalCard } from "./Inspector";
 import type { Selection } from "./MapView";
 import { PowerControls } from "./PowerView";
 import { prio, useQueue, waitText, whyText } from "./QueueView";
 
 // The phone's Helios: what needs you, what runs, what's next, what just finished. The full dashboard is one tap away.
-export function PhoneHome({ status, events, onSelect, onShare, onFull }: {
+export function PhoneHome({ status, events, onSelect, onShare, onFull, onView }: {
   status: Status | null; events: ArgusEvent[]; onSelect: (s: Selection) => void; onShare: () => void; onFull: () => void;
+  onView: (v: string) => void;
 }) {
   const q = useQueue(events);
   const [pending, setPending] = useState<Approval[]>([]);
@@ -26,6 +28,8 @@ export function PhoneHome({ status, events, onSelect, onShare, onFull }: {
         <b>{ok ? "Argus is running" : status ? "Argus needs a look" : "Connecting…"}</b>
         {q && <span className="muted">{q.workers_online ? "PC online" : "PC offline"}</span>}
       </div>
+
+      <AskBox big onSelect={onSelect} onView={onView} />
 
       <button type="button" className="pshare" onClick={onShare}>
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 15V3M7 8l5-5 5 5M5 13v6h14v-6" /></svg>

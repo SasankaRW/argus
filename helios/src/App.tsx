@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { setToken, Status } from "./api";
+import { AskBox } from "./AskBox";
 import { EventsPanel } from "./EventsPanel";
 import { uptime } from "./format";
 import { Inspector } from "./Inspector";
@@ -136,7 +137,8 @@ export function App() {
         ) : view === "share" ? (
           <ShareView onJob={(id) => { setSel({ type: "job", id }); }} onDone={() => go("map")} />
         ) : (
-          <PhoneHome status={st} events={a.events} onSelect={setSel} onShare={() => go("share")} onFull={() => setFullView(true)} />
+          <PhoneHome status={st} events={a.events} onSelect={setSel} onShare={() => go("share")} onFull={() => setFullView(true)}
+            onView={(v) => (v === "share" ? go("share") : (setFullView(true), go(v)))} />
         )}
       </div>
     );
@@ -145,6 +147,7 @@ export function App() {
     <div className="shell">
       <header className="top">
         <div className="brand"><Logo /><b>Helios</b></div>
+        <AskBox onSelect={setSel} onView={(v) => go(v)} />
         <div className="status">
           <span className="inline">
             <span className="dot" style={{ background: a.phase === "down" ? "var(--bad)" : ok ? "var(--ok)" : "var(--amber)" }} />

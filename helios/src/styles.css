@@ -283,3 +283,20 @@ main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .pbtn.danger:not(:disabled) { color: var(--bad); }
 .pwr-pending { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border: 1px solid var(--amber); border-radius: 10px; background: rgba(245, 165, 36, .08); font-size: 13px; }
 @media (max-width: 720px) { .pwr-btns { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* ---- Ask Argus */
+.ask { position: relative; flex: 1; max-width: 520px; margin: 0 16px; }
+.ask form { display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 6px 0 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.ask form:focus-within { border-color: var(--amber); }
+.ask input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; color: var(--tx); font: inherit; font-size: 13px; }
+.ask .mic { display: grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 8px; background: none; color: var(--tx2); cursor: pointer; }
+.ask .mic.on { color: #111; background: var(--amber); }
+.ask-out { position: absolute; z-index: 30; left: 0; right: 0; top: 40px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); box-shadow: 0 12px 30px rgba(0, 0, 0, .45); }
+.ask-out p { margin: 0 0 10px; font-size: 13.5px; line-height: 1.45; }
+.ask-acts { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ask-acts .via { margin-left: auto; font-size: 11px; }
+.ask.big { max-width: none; margin: 0; }
+.ask.big form { height: 48px; border-radius: 12px; }
+.ask.big input { font-size: 15px; }
+.ask.big .ask-out { position: static; margin-top: 8px; box-shadow: none; }
+@media (max-width: 860px) { .top .ask { display: none; } }
