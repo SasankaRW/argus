@@ -17,6 +17,8 @@ triggers and dispatcher.
 
 ## Run it on Windows (PC, development)
 
+First time: follow **[docs/setup.md](docs/setup.md)** (tools, models, Claude, `.env`, phone, plugins).
+
 ```powershell
 cd G:\Projects\argus
 .\scripts\dev.ps1 setup     # once: creates .venv, installs Argus + dev tools, copies example config
