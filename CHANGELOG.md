@@ -5,6 +5,12 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **First plugin: downloads-organizer.** Sorts new files in Downloads into category folders: siblings stay
+  together, a matching existing folder wins without a model, T1 picks the category (T2 when T1's answer isn't a
+  real category), extension fallback last. Starts from the folder watch, a nightly sweep, or its Sort now button.
+  Dry-run until listed under `plugins.live`. Rules in `plugins/downloads-organizer/rules.yaml`.
+- Helios: a plugin's box shows dry-run or live, what starts it, and its buttons.
+- Folder triggers accept `~` in paths.
 - **Plugins as folders (C10):** a plugin is `plugins/<id>/plugin.yaml` + `plugin.py`. argusd checks manifests
   (bad ones are listed under `GET /plugins`, never fatal), wires their triggers (schedules, folder watches,
   webhooks, Run now) and applies a per-plugin Claude cap. Workers load the plugins they can run (`--cap desktop

@@ -1,3 +1,8 @@
 # Plugins
 
-One folder per plugin, each with a `plugin.yaml`. See the Argus Plugin Guide. First plugin: downloads organizer (M2).
+One folder per plugin: `plugin.yaml` (the manifest) and `plugin.py` (its workflows). See `docs/plugin-guide.md`.
+A plugin starts in dry-run; list it under `plugins.live` in argus.yaml to let it change things.
+
+| Plugin | What it does |
+| --- | --- |
+| downloads-organizer | sorts new files in Downloads into category folders |

@@ -72,14 +72,25 @@ class Files:
 
     # -------------------------------------------------------------- reading
 
-    def read_text(self, path: str | Path, encoding: str = "utf-8") -> str:
-        return self._check(path, False).read_text(encoding=encoding, errors="replace")
+    def read_text(self, path: str | Path, encoding: str = "utf-8", limit: int | None = None) -> str:
+        """The file's text (the first `limit` characters when given)."""
+        p = self._check(path, False)
+        if limit is None:
+            return p.read_text(encoding=encoding, errors="replace")
+        with open(p, encoding=encoding, errors="replace") as f:
+            return f.read(limit)
 
     def read_bytes(self, path: str | Path) -> bytes:
         return self._check(path, False).read_bytes()
 
     def exists(self, path: str | Path) -> bool:
         return self._check(path, False).exists()
+
+    def stat(self, path: str | Path) -> os.stat_result:
+        return self._check(path, False).stat()
+
+    def is_dir(self, path: str | Path) -> bool:
+        return self._check(path, False).is_dir()
 
     def list(self, folder: str | Path, pattern: str = "*") -> list[str]:
         d = self._check(folder, False)

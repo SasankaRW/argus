@@ -1,0 +1,137 @@
+"""The downloads-organizer plugin: grouping rules, and a full run through argusd, a worker and (fake) Ollama."""
+
+from __future__ import annotations
+
+import importlib.util
+import os
+import time
+from pathlib import Path
+
+import pytest
+
+from argus.config import load_config
+from argus.context import Argus
+from argus.worker import Worker
+from fakes import FakeOllama
+from test_worker import Server, client, wait_for
+
+ROOT = Path(__file__).resolve().parents[1]
+PLUGIN_DIR = ROOT / "plugins" / "downloads-organizer"
+spec = importlib.util.spec_from_file_location("dorg_under_test", PLUGIN_DIR / "plugin.py")
+dorg = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(dorg)
+
+
+def test_names_reduce_to_what_they_are_about():
+    for name in ("resume_v2.pdf", "resume (1).pdf", "resume-final.pdf", "Resume 2026-09-01.pdf"):
+        assert dorg.norm_stem(name) == "resume", name
+    assert dorg.norm_stem("structural_break_v1.ipynb") == dorg.norm_stem("structural_break_v2.ipynb")
+    assert dorg.group_label(["lecture_07.pdf", "lecture_08.pdf"]) == "lecture"
+    assert dorg.group_label(["deck_v1.pptx", "deck_v2.pptx"], "deck") == "deck"
+    assert dorg.safe_folder('a<b>:"c') == "abc"
+
+
+def test_groups_and_existing_folders():
+    files = [{"name": n} for n in ("lecture_07.pdf", "lecture_08.pdf", "a.txt", "b.txt", "notes.md")]
+    groups = {g["label"] or g["members"][0]["name"]: len(g["members"]) for g in dorg.build_groups(files)}
+    assert groups == {"lecture": 2, "a.txt": 1, "b.txt": 1, "notes.md": 1}  # short names never group
+    idx = {"deeplense": ("Projects", "/d/Projects/DeepLense"), "deep": ("Misc", "/d/Misc/deep")}
+    assert dorg.match_existing(idx, "deeplense")[1].endswith("DeepLense")  # the longest match wins
+    assert dorg.match_existing(idx, "deeplense notes")[0] == "Projects"
+    assert dorg.match_existing(idx, "deeplensex") is None
+    assert dorg.normalise("pictures") == "Images" and dorg.normalise("Lectures") is None
+
+
+OLD = time.time() - 3600
+
+
+def downloads(home: Path) -> Path:
+    d = home / "Downloads"
+    (d / "Projects" / "DeepLense").mkdir(parents=True)
+    for n in ("lecture_07.pdf", "lecture_08.pdf", "train_model.py", "DeepLense_v2.zip", "weird.bin",
+              "big.iso.crdownload", "desktop.ini"):
+        (d / n).write_text(n)
+        os.utime(d / n, (OLD, OLD))
+    (d / "fresh.pdf").write_text("still downloading?")  # younger than min_age: left for later
+    return d
+
+
+def setup(tmp_path: Path, monkeypatch, live: bool) -> tuple[Argus, Path]:
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))  # the manifest says ~/Downloads
+    monkeypatch.setenv("USERPROFILE", str(home))
+    d = downloads(home)
+    (tmp_path / "argus.yaml").write_text(
+        "logging:\n  file: null\njobs:\n  watchdog_interval_seconds: 0.1\n"
+        f"plugins:\n  dirs: ['{(ROOT / 'plugins').as_posix()}']\n  live: {[dorg.PLUGIN] if live else []}\n"
+        f"  config: {{{dorg.PLUGIN}: {{min_age_seconds: 60}}}}\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    return Argus(load_config(tmp_path / "argus.yaml")), d
+
+
+REPLIES = {"qwen2.5-coder:7b": [{"category": "Documents", "reason": "lecture notes"},
+                                {"category": "Projects", "reason": "python script"},
+                                {"category": "Stuff", "reason": "?"}],  # not a category: T1 fails, T2 answers
+           "qwen2.5-coder:14b": [{"category": "Misc", "reason": "unknown binary"}]}
+
+
+def run_job(argus: Argus, ol: FakeOllama, submit) -> dict:
+    with Server(argus.open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        assert dorg.PLUGIN in w.plugins, w.plugin_errors
+        job = submit(cl)
+        assert w.run_once(wait=2)
+        return wait_for(lambda: (j := cl.get(f"/jobs/{job['id']}"))["state"] in ("succeeded", "dead", "retry")
+                        and j)
+
+
+def names(d: Path) -> set[str]:
+    return {str(p.relative_to(d)).replace(os.sep, "/") for p in d.rglob("*") if p.is_file()}
+
+
+def test_sweep_live_sorts_groups_and_escalates(tmp_path, monkeypatch):
+    argus, d = setup(tmp_path, monkeypatch, live=True)
+    with FakeOllama(REPLIES) as ol:
+        job = run_job(argus, ol, lambda cl: cl.post(f"/plugins/{dorg.PLUGIN}/run", {}))
+    assert job["state"] == "succeeded", job.get("error")
+    assert names(d) == {"Documents/lecture/lecture_07.pdf", "Documents/lecture/lecture_08.pdf",
+                        "Projects/train_model.py", "Projects/DeepLense/DeepLense_v2.zip", "Misc/weird.bin",
+                        "fresh.pdf", "big.iso.crdownload", "desktop.ini"}
+    moved = {m["name"]: m for m in job["result"]["moved"]}
+    assert set(moved) == {"lecture_07.pdf", "lecture_08.pdf", "train_model.py", "DeepLense_v2.zip", "weird.bin"}
+    assert len(ol.requests) == 5  # one per group, the existing folder needs none, plus T1's two tries and T2
+
+
+def test_dry_run_moves_nothing_and_file_job_takes_its_siblings(tmp_path, monkeypatch):
+    argus, d = setup(tmp_path, monkeypatch, live=False)
+    before = names(d)
+    with FakeOllama(REPLIES) as ol:
+        job = run_job(argus, ol, lambda cl: cl.post("/jobs", {"plugin": dorg.PLUGIN, "workflow": "file",
+                                                               "input": {"path": str(d / "lecture_07.pdf")},
+                                                               "needs": ["desktop"]}))
+    assert job["state"] == "succeeded", job.get("error")
+    res = job["result"]
+    assert res["dry_run"] is True and names(d) == before
+    assert sorted(Path(m["to"]).name for m in res["moved"]) == ["lecture_07.pdf", "lecture_08.pdf"]
+    assert all(Path(m["to"]).parent.name == "lecture" for m in res["moved"])
+
+
+def test_file_job_for_a_file_already_gone(tmp_path, monkeypatch):
+    argus, d = setup(tmp_path, monkeypatch, live=True)
+    with FakeOllama(REPLIES) as ol:
+        job = run_job(argus, ol, lambda cl: cl.post("/jobs", {"plugin": dorg.PLUGIN, "workflow": "file",
+                                                               "input": {"path": str(d / "nope.pdf")},
+                                                               "needs": ["desktop"]}))
+    assert job["state"] == "succeeded" and job["result"]["note"] == "already gone" and not ol.requests
+
+
+@pytest.mark.parametrize("bad", ["../outside.txt"])
+def test_undo_stays_inside_downloads(tmp_path, monkeypatch, bad):
+    argus, d = setup(tmp_path, monkeypatch, live=True)
+    with FakeOllama(REPLIES) as ol:
+        job = run_job(argus, ol, lambda cl: cl.post(f"/plugins/{dorg.PLUGIN}/run", {
+            "workflow": "undo", "input": {"from": str(d / "weird.bin"), "to": str(d / ".." / bad)}}))
+    assert job["state"] == "dead" and "may not write" in job["error"]
+    assert (d / "weird.bin").exists()

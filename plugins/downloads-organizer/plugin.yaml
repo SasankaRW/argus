@@ -1,0 +1,29 @@
+id: downloads-organizer
+name: Downloads organizer
+version: 1.0.0
+kind: workflow
+argus_api: ">=1.0 <2.0"
+description: Sorts files that land in Downloads into category folders; siblings (v1, v2, (1) copies) stay together.
+runs_on: desktop
+
+triggers:
+  - folder_watch: {workflow: file, paths: ["~/Downloads"], stable_for: 2m}
+  - schedule: {workflow: sort, cron: "30 3 * * *"}      # nightly sweep for anything left over
+  - manual: {workflow: sort, label: Sort Downloads now}
+
+workflows: [file, sort, undo]   # undo: {"from": where it is now, "to": where it was}
+
+permissions:
+  files: {read: ["~/Downloads"], write: ["~/Downloads"], delete: none}
+  models: [T1]               # starts at T1; T2 only when T1's answer fails the check
+  claude_calls_per_day: 0
+
+config:
+  downloads_dir: {type: path, default: "~/Downloads", label: Folder to sort}
+  min_age_seconds: {type: int, default: 120, label: Leave files younger than this (sweep only)}
+  max_files_per_run: {type: int, default: 60, label: Files per sweep at most}
+  min_group_size: {type: int, default: 2, label: Siblings needed for their own subfolder}
+  match_existing_folders: {type: bool, default: true, label: Put files next to an existing folder of the same name}
+
+helios:
+  node: {label: Downloads, group: files}
