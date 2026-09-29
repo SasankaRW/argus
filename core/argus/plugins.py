@@ -140,8 +140,16 @@ class HeliosNode(_M):
     icon: str | None = None
 
 
+class WrongButton(_M):
+    """A "Wrong" button on each change a job made: you pick the right answer, the plugin fixes the file and keeps
+    the correction as an example for next time. The choices come from the plugin's state key `choices`."""
+    workflow: str
+    label: str = "Wrong"
+
+
 class HeliosInfo(_M):
     node: HeliosNode = Field(default_factory=HeliosNode)
+    wrong: WrongButton | None = None
 
 
 class Manifest(_M):
@@ -173,7 +181,8 @@ class Manifest(_M):
         return self
 
     def all_workflows(self) -> list[str]:
-        return sorted(set(self.workflows) | {t.workflow() for t in self.triggers})
+        extra = {self.helios.wrong.workflow} if self.helios.wrong else set()
+        return sorted(set(self.workflows) | {t.workflow() for t in self.triggers} | extra)
 
     def job_needs(self) -> list[str]:
         """What a worker must offer to run this plugin's jobs."""
@@ -206,7 +215,8 @@ class Plugin(BaseModel):
         return {"id": m.id, "name": m.name, "version": m.version, "kind": m.kind, "description": m.description,
                 "path": str(self.path), "live": self.live, "runs_on": m.runs_on, "needs": m.job_needs(),
                 "workflows": m.all_workflows(), "permissions": m.permissions.model_dump(), "config": self.config,
-                "triggers": [t.model_dump(exclude_none=True) for t in m.triggers]}
+                "triggers": [t.model_dump(exclude_none=True) for t in m.triggers],
+                "wrong": m.helios.wrong.model_dump() if m.helios.wrong else None}
 
 
 # ------------------------------------------------------------------ loading

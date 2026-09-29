@@ -63,6 +63,22 @@ main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 /* map + inspector */
 .mid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; }
 .mappanel { display: flex; flex-direction: column; }
+.runs { display: flex; flex-direction: column; min-height: 560px; }
+.runs select { font-size: 12px; height: 28px; color: var(--tx); background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 0 8px; }
+.runlist { flex: 1; overflow: auto; max-height: 560px; padding: 0 8px 8px; }
+.run { width: 100%; display: grid; grid-template-columns: 90px minmax(160px, 240px) 90px minmax(0, 1fr) 90px 60px; gap: 10px; align-items: center; padding: 6px 10px; border: 0; background: none; text-align: left; font-size: 12px; color: var(--tx2); border-radius: 7px; cursor: pointer; white-space: nowrap; }
+.run:hover { background: var(--raise); }
+.run[aria-current="true"] { background: var(--raise); color: var(--tx); }
+.run .w { color: var(--tx); overflow: hidden; text-overflow: ellipsis; }
+.run .d { overflow: hidden; text-overflow: ellipsis; }
+.run .t { color: var(--tx3); font-size: 11px; }
+.changes { display: flex; flex-direction: column; gap: 2px; }
+.chg { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; align-items: center; font-size: 12px; padding: 4px 0; border-bottom: 1px solid var(--line); }
+.chg .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chg .muted { grid-column: 1; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chg .acts { grid-column: 2; grid-row: 1 / span 2; display: flex; gap: 2px; }
+.chg .pick { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 0 2px; }
+.chg .pick .btn { background: var(--raise); }
 .mapwrap { height: 470px; margin: 0 8px; border-radius: 9px; overflow: hidden; background: var(--bg); border: 1px solid var(--line); }
 .empty { height: 100%; display: grid; place-items: center; color: var(--tx3); }
 .legend { display: flex; gap: 18px; flex-wrap: wrap; padding: 10px 18px 14px; font-size: 11.5px; color: var(--tx3); }
@@ -150,6 +166,7 @@ main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 
 @media (max-width: 1180px) { .mid { grid-template-columns: minmax(0, 1fr); } .insp { max-height: none; } }
 @media (max-width: 860px) {
+  .run { grid-template-columns: 70px minmax(0, 1fr) 80px; } .run .d, .run .t:not(:first-child) { display: none; }
   .shell { grid-template-columns: minmax(0, 1fr); padding: 12px; }
   .brand { width: auto; }
   .rail { flex-direction: row; overflow-x: auto; }

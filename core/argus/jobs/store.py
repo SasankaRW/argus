@@ -570,14 +570,23 @@ class JobStore:
         """Checkpoints a retried job can skip, by step index."""
         return {s.idx: s for s in await self.steps(job_id) if s.state == "succeeded"}
 
-    async def list_jobs(self, state: JobState | None = None, limit: int = 100) -> list[Job]:
+    async def list_jobs(self, state: JobState | None = None, limit: int = 100, plugin: str | None = None,
+                        before: float | None = None) -> list[Job]:
+        """Newest first. `before` (a created_at) pages back through older runs."""
+
         def fn(conn: sqlite3.Connection) -> list[Job]:
-            if state is None:
-                rows = conn.execute("SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,))
-            else:
-                rows = conn.execute(
-                    "SELECT * FROM jobs WHERE state = ? ORDER BY created_at DESC LIMIT ?", (state.value, limit)
-                )
+            where, args = [], []
+            if state is not None:
+                where.append("state = ?")
+                args.append(state.value)
+            if plugin:
+                where.append("plugin = ?")
+                args.append(plugin)
+            if before is not None:
+                where.append("created_at < ?")
+                args.append(before)
+            sql = "SELECT * FROM jobs" + (" WHERE " + " AND ".join(where) if where else "")
+            rows = conn.execute(sql + " ORDER BY created_at DESC LIMIT ?", (*args, limit))
             return [Job.from_row(r) for r in rows.fetchall()]
 
         return await self.store.read(fn)

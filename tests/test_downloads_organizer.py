@@ -136,3 +136,57 @@ def test_undo_stays_inside_downloads(tmp_path, monkeypatch, bad):
             "workflow": "undo", "input": {"from": str(d / "weird.bin"), "to": str(d / ".." / bad)}}))
     assert job["state"] == "dead" and "may not write" in job["error"]
     assert (d / "weird.bin").exists()
+
+
+def test_undo_a_move_from_the_job_changes(tmp_path, monkeypatch):
+    argus, d = setup(tmp_path, monkeypatch, live=True)
+    with FakeOllama(REPLIES) as ol, Server(argus.open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        job = cl.post(f"/plugins/{dorg.PLUGIN}/run", {})
+        assert w.run_once(wait=2)
+        wait_for(lambda: cl.get(f"/jobs/{job['id']}")["state"] == "succeeded")
+        changes = cl.get(f"/jobs/{job['id']}/changes")
+        assert len(changes) == 5 and all(c["can_undo"] for c in changes)
+        c = next(c for c in changes if c["to"].endswith("weird.bin"))
+        u = cl.post(f"/jobs/{job['id']}/changes/{c['event_id']}/undo")
+        assert u["created"] and cl.post(f"/jobs/{job['id']}/changes/{c['event_id']}/undo")["id"] == u["id"]
+        assert w.run_once(wait=2)
+        wait_for(lambda: cl.get(f"/jobs/{u['id']}")["state"] == "succeeded")
+        after = {x["event_id"]: x for x in cl.get(f"/jobs/{job['id']}/changes")}
+        assert after[c["event_id"]]["undo"]["state"] == "succeeded" and not after[c["event_id"]]["can_undo"]
+        assert cl.post(f"/jobs/{job['id']}/changes/{c['event_id']}/undo") == {"id": u["id"], "created": False}
+        assert [j["workflow"] for j in cl.get(f"/jobs?plugin={dorg.PLUGIN}")] == ["undo", "sort"]
+    assert (d / "weird.bin").exists() and not (d / "Misc" / "weird.bin").exists()
+
+
+def test_wrong_button_fixes_the_file_and_teaches_the_models(tmp_path, monkeypatch):
+    argus, d = setup(tmp_path, monkeypatch, live=True)
+    with FakeOllama(REPLIES) as ol, Server(argus.open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        job = cl.post(f"/plugins/{dorg.PLUGIN}/run", {})
+        assert w.run_once(wait=2)
+        wait_for(lambda: cl.get(f"/jobs/{job['id']}")["state"] == "succeeded")
+        assert cl.get(f"/plugins/{dorg.PLUGIN}/state/choices")["value"] == list(dorg.CATEGORIES)
+        info = next(p for p in cl.get("/plugins")["plugins"] if p["id"] == dorg.PLUGIN)
+        assert info["wrong"] == {"workflow": "correct", "label": "Wrong folder"}
+        changes = cl.get(f"/jobs/{job['id']}/changes")
+        lec = next(c for c in changes if c["to"].endswith("lecture_07.pdf"))
+        fix = cl.post(f"/jobs/{job['id']}/changes/{lec['event_id']}/wrong", {"value": "Private"})
+        assert w.run_once(wait=2)
+        done = wait_for(lambda: (j := cl.get(f"/jobs/{fix['id']}"))["state"] in ("succeeded", "dead") and j)
+        assert done["state"] == "succeeded", done["error"]
+        after = next(c for c in cl.get(f"/jobs/{job['id']}/changes") if c["event_id"] == lec["event_id"])
+        assert after["fix"]["value"] == "Private" and not after["can_fix"] and not after["can_undo"]
+        assert cl.get(f"/plugins/{dorg.PLUGIN}/state/learned")["value"] == {"lecture_07.pdf": "Private"}
+        # the next decision sees the correction as an example
+        (d / "slides_week3.pdf").write_text("x")
+        os.utime(d / "slides_week3.pdf", (OLD, OLD))
+        cl.post(f"/plugins/{dorg.PLUGIN}/run", {})
+        assert w.run_once(wait=2)
+        system = ol.requests[-1]["messages"][0]["content"]
+        assert '"lecture_07.pdf" -> Private' in system
+    assert (d / "Private" / "lecture" / "lecture_07.pdf").exists()  # keeps its group folder
