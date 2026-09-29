@@ -61,6 +61,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from .. import ask as ask_mod
 from .. import logview
 from ..approvals import ApprovalClosed, ApprovalError, ApprovalNotFound, BadToken
 from ..config import PRIORITY_INTERACTIVE
@@ -170,6 +171,14 @@ class SendShare(BaseModel):
 
 class RulesText(BaseModel):
     text: str = Field(max_length=200_000)
+
+
+class Ask(BaseModel):
+    text: str = Field(min_length=1, max_length=500)
+
+
+class AskDo(BaseModel):
+    action: str = Field(min_length=1, max_length=200)
 
 
 class Fix(BaseModel):
@@ -468,6 +477,41 @@ def create_app(argus: Argus) -> FastAPI:
             needs=p.manifest.job_needs(), priority=PRIORITY_INTERACTIVE, dedupe_key=f"fix:{event_id}",
             source="helios")
         return {"id": job_id2, "created": created}
+
+    # -------------------------------------------------------------- Ask Argus
+
+    @app.post("/ask", dependencies=guarded)
+    async def ask(body: Ask) -> dict:
+        """Plain words -> an answer and at most one suggested action (never done without POST /ask/do).
+        Common asks are answered at once from data (rules); the rest go to a model as a job (poll its result)."""
+        actions = ask_mod.catalog(argus.plugin_host)
+        snap = await ask_mod.snapshot(argus)
+        hit = ask_mod.rules(body.text, actions, snap)
+        labels = {a["id"]: a["label"] for a in actions}
+        if hit is not None:
+            return {"via": "rules", **hit, "label": labels.get(hit.get("action") or "")}
+        job_id, _ = await argus.jobs.enqueue(
+            "ask", "ask", {"text": body.text, "actions": actions, "snapshot": snap},
+            priority=PRIORITY_INTERACTIVE, source="helios")
+        return {"via": "model", "job_id": job_id}
+
+    @app.post("/ask/do", dependencies=guarded)
+    async def ask_do(body: AskDo) -> dict:
+        """Do a suggested action (you tapped it)."""
+        a = body.action
+        if a.startswith("show:"):
+            return {"view": a[5:]}
+        if a.startswith("power:"):
+            return {"power": await power_action(a[6:])}
+        if a.startswith("run:"):
+            _, pid, wf = (a.split(":", 2) + ["", ""])[:3]
+            p = argus.plugin_host.plugins.get(pid)
+            if p is None or wf not in [t.manual.workflow for t in p.manifest.triggers if t.manual]:
+                raise HTTPException(status_code=404, detail=f"no button {a!r}")
+            job_id, created = await argus.jobs.enqueue(pid, wf, {}, needs=p.manifest.job_needs(),
+                                                       priority=PRIORITY_INTERACTIVE, source="helios")
+            return {"job_id": job_id, "created": created}
+        raise HTTPException(status_code=404, detail=f"unknown action {a!r}")
 
     # -------------------------------------------------------------- plugin rules (read and edit in Helios)
 

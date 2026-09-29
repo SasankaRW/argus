@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Fixed a rare crash at shutdown (seen as a segfault in CI): the database now waits for reads in progress before closing its connections, and refuses new ones.
+- **Ask Argus:** a box at the top of Helios (Ctrl+K) and on the phone, with a microphone button where the browser supports it. Common asks ("sort downloads", "what's running?", "anything waiting for me?", "shut down the PC", "open logs") are answered at once by rules; the rest go to T1/T2 as a job that answers from a snapshot of Argus. It suggests at most one action, which runs only when you tap Do it. `POST /ask`, `POST /ask/do`.
 - **PC power buttons:** Helios > Power and a "PC power" card on the phone: Sleep, Restart, Shut down (after `power.shutdown_delay_seconds`, with Cancel) run on the PC's worker ahead of other jobs; Wake sends Wake-on-LAN from argusd (`power.pc_mac`). Shows whether the PC is on and what auto power would do. `GET /power`, `POST /power/{wake|sleep|restart|shutdown|cancel}`.
 - Helios shows the server's reason when an action is refused.
 - **Helios Queue page:** what runs now (worker, step, time), what waits for you, and what runs next in order, each with the reason it waits (after the running job of the same plugin, GPU busy, night window opens at, no worker online, retry in); Cancel on each queued job. `GET /queue`.

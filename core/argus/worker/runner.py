@@ -18,6 +18,7 @@ from typing import Any
 
 from .. import __version__
 from ..models import Router, build_providers
+from . import ask as _ask  # noqa: F401 - Ask Argus (the model part)
 from . import power as _power  # noqa: F401 - the built-in power buttons (sleep, shut down, ...)
 from .client import ApiError, ArgusClient, LeaseLostError, Unreachable
 from .plugins import Files, Http, LoadedPlugin, Secrets, Store
