@@ -45,9 +45,12 @@ def setup_logging(level: str = "INFO", file: Path | None = None) -> None:
     root.setLevel(level)
     fmt = JsonFormatter()
 
-    out = logging.StreamHandler(sys.stdout)
-    out.setFormatter(fmt)
-    root.addHandler(out)
+    # To the terminal when there is one. Started in the background ("dev.ps1 up") there is only the file, so the
+    # log isn't written twice (the redirected output would grow without rotation).
+    if sys.stdout is not None and (file is None or sys.stdout.isatty()):
+        out = logging.StreamHandler(sys.stdout)
+        out.setFormatter(fmt)
+        root.addHandler(out)
 
     if file is not None:
         file.parent.mkdir(parents=True, exist_ok=True)

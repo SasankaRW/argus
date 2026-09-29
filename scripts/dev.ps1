@@ -1,12 +1,14 @@
 # Argus dev helper for Windows (PowerShell).
 #   .\scripts\dev.ps1 up      start everything: Ollama, argusd, a worker, then open Helios (or double-click scripts\up.cmd)
 #   .\scripts\dev.ps1 down    stop argusd and the worker started by "up" ("down all" also stops Ollama)
+#   .\scripts\dev.ps1 status  what is running
+#   .\scripts\dev.ps1 logs    every log in one terminal ("logs worker" or "logs argus,worker" for some); also in Helios
 #   .\scripts\dev.ps1 setup   create .venv, install Argus and dev tools, copy example config
 #   .\scripts\dev.ps1 test    run tests
 #   .\scripts\dev.ps1 lint    run ruff
 #   .\scripts\dev.ps1 check   validate argus.yaml and the database
 #   .\scripts\dev.ps1 run     start argusd
-#   .\scripts\dev.ps1 worker  start a worker (demo plugin) in another window
+#   .\scripts\dev.ps1 worker  run a worker in this terminal (for debugging; "up" runs one in the background)
 #   .\scripts\dev.ps1 demo    submit a demo job (needs argusd and a worker running)
 #   .\scripts\dev.ps1 events  watch live events in the terminal
 #   .\scripts\dev.ps1 helios  rebuild Helios after changing helios/src (needs Node.js; the built copy is in Git)
@@ -36,6 +38,7 @@ $Py = Join-Path $Root ".venv\Scripts\python.exe"
 $Stamp = Join-Path $Root ".venv\argus-deps.hash"
 $UpFile = Join-Path $Root ".venv\argus-up.json"
 $ArgusUrl = "http://127.0.0.1:8600"
+$LogDir = Join-Path $Root "logs"
 $OllamaUrl = if ($env:ARGUS_OLLAMA_URL) { $env:ARGUS_OLLAMA_URL } else { "http://127.0.0.1:11434" }
 
 function Need-Venv {
@@ -108,14 +111,33 @@ function Wait-Up([string]$Url, [int]$Seconds, [string]$What) {
         if (Is-Up $Url) { return }
         Start-Sleep -Milliseconds 500
     }
-    throw "$What did not start within $Seconds s. Look at its window for the error."
+    throw "$What did not start within $Seconds s."
 }
 
-function Start-Window([string]$Title, [string]$Module) {
-    # Own console window, so its log stays visible; the process is recorded so "down" can stop it.
-    $Cmd = "`$Host.UI.RawUI.WindowTitle = '$Title'; & '$Py' -m $Module"
-    Start-Process powershell -PassThru -WorkingDirectory $Root -ArgumentList @("-NoExit", "-NoProfile", "-Command", $Cmd)
+function Start-Hidden([string]$Name, [string]$Exe, [string[]]$ArgList, [string]$OutFile, [string]$ErrFile) {
+    # No console window: output goes to files in logs\, shown in Helios (Logs) and by ".\scripts\dev.ps1 logs".
+    New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+    Start-Process -FilePath $Exe -ArgumentList $ArgList -WorkingDirectory $Root -WindowStyle Hidden -PassThru `
+        -RedirectStandardOutput (Join-Path $LogDir $OutFile) -RedirectStandardError (Join-Path $LogDir $ErrFile)
 }
+
+function Show-Tail([string]$File, [int]$Lines = 15) {
+    $F = Join-Path $LogDir $File
+    if ((Test-Path $F) -and (Get-Item $F).Length -gt 0) {
+        Write-Host "  --- last lines of logs\$File ---" -ForegroundColor DarkGray
+        Get-Content $F -Tail $Lines | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+    }
+}
+
+function Line([string]$Mark, [string]$Name, [string]$State, [string]$Detail) {
+    $Colour = switch ($Mark) { "ok" { "Green" } "--" { "Yellow" } default { "Red" } }
+    Write-Host ("  [" + $Mark + "] ") -ForegroundColor $Colour -NoNewline
+    Write-Host ($Name.PadRight(9)) -NoNewline
+    Write-Host ($State.PadRight(10)) -ForegroundColor Gray -NoNewline
+    Write-Host $Detail -ForegroundColor DarkGray
+}
+
+function Rule { Write-Host ("  " + ("-" * 58)) -ForegroundColor DarkGray }
 
 # What "up" started: pid plus start time, because Windows reuses pids quickly. A record only counts when both
 # still match, so "down" never kills an unrelated program and "up" never trusts a stale entry.
@@ -153,53 +175,78 @@ switch ($Command) {
     "up" {
         Need-Venv
         $Rec = Load-Up
-        if (Is-Up "$OllamaUrl/api/version") { Write-Host "[ok] Ollama already running" }
+        $Ver = (Get-Content (Join-Path $Root "VERSION") -Raw).Trim()
+        Write-Host ""
+        Write-Host "  Argus " -NoNewline -ForegroundColor Yellow
+        Write-Host "v$Ver" -ForegroundColor DarkGray
+        Rule
+
+        if (Is-Up "$OllamaUrl/api/version") { Line "ok" "Ollama" "running" $OllamaUrl }
         elseif (Get-Command ollama -ErrorAction SilentlyContinue) {
-            Write-Host "Starting Ollama ..."
-            $Rec.ollama = Proc-Record (Start-Process ollama -ArgumentList "serve" -WindowStyle Minimized -PassThru)
+            $O = Start-Hidden "ollama" (Get-Command ollama).Source @("serve") "ollama.out" "ollama.log"
+            $Rec.ollama = Proc-Record $O
             Save-Up $Rec
-            Wait-Up "$OllamaUrl/api/version" 30 "Ollama"
-            Write-Host "[ok] Ollama"
+            try { Wait-Up "$OllamaUrl/api/version" 30 "Ollama" } catch { Line "!!" "Ollama" "failed" "see below"; Show-Tail "ollama.log"; throw }
+            Line "ok" "Ollama" "started" $OllamaUrl
         }
-        else { Write-Host "[--] Ollama not installed; model jobs will wait (get it from ollama.com)" }
+        else { Line "--" "Ollama" "missing" "model jobs will wait (winget install Ollama.Ollama)" }
 
-        if (Is-Up "$ArgusUrl/health") { Write-Host "[ok] argusd already running" }
+        if (Is-Up "$ArgusUrl/health") { Line "ok" "argusd" "running" $ArgusUrl }
         else {
-            Write-Host "Starting argusd ..."
-            $Rec.argusd = Proc-Record (Start-Window "Argus - argusd" "argus")
+            $A = Start-Hidden "argusd" $Py @("-m", "argus") "argusd.out" "argusd-crash.log"
+            $Rec.argusd = Proc-Record $A
             Save-Up $Rec  # recorded at once, so "down" can stop it even if the wait below fails
-            Wait-Up "$ArgusUrl/health" 30 "argusd"
-            Write-Host "[ok] argusd on $ArgusUrl"
+            try { Wait-Up "$ArgusUrl/health" 30 "argusd" }
+            catch { Line "!!" "argusd" "failed" "see below"; Show-Tail "argusd-crash.log"; Show-Tail "argus.log"; throw }
+            Line "ok" "argusd" "started" $ArgusUrl
         }
 
-        # Judge the worker by its window, not by /status: after a restart argusd still lists the last
+        # Judge the worker by its process, not by /status: after a restart argusd still lists the last
         # worker as online until its heartbeat times out, which is not a running worker.
-        if (Live-Proc $Rec.worker) { Write-Host "[ok] worker already running" }
+        if (Live-Proc $Rec.worker) { Line "ok" "worker" "running" "desktop, gpu" }
         else {
-            Write-Host "Starting a worker ..."
-            $W = Start-Window "Argus - worker" "argus.worker.cli --cap desktop --cap gpu"
+            $W = Start-Hidden "worker" $Py @("-m", "argus.worker.cli", "--cap", "desktop", "--cap", "gpu", "--log-file", "logs/worker.log") "worker.out" "worker-crash.log"
             $Rec.worker = Proc-Record $W
             Save-Up $Rec
             Start-Sleep -Seconds 3
-            if (Get-Process -Id $W.Id -ErrorAction SilentlyContinue) { Write-Host "[ok] worker started (window 'Argus - worker')" }
-            else { throw "The worker window closed straight away. Run .\scripts\dev.ps1 worker to see the error." }
+            if (Get-Process -Id $W.Id -ErrorAction SilentlyContinue) { Line "ok" "worker" "started" "desktop, gpu" }
+            else { Line "!!" "worker" "stopped" "it exited straight away"; Show-Tail "worker-crash.log"; Show-Tail "worker.log"; throw "The worker did not start." }
         }
 
+        Rule
         $T = Token
         Start-Process ($(if ($T) { "$ArgusUrl/?token=$T" } else { $ArgusUrl }))
-        Write-Host "Helios is open in your browser. Stop everything with: .\scripts\dev.ps1 down"
+        Write-Host "  Helios   " -NoNewline; Write-Host "$ArgusUrl  (opened in your browser)" -ForegroundColor Cyan
+        Write-Host "  Logs     " -NoNewline; Write-Host "Helios > Logs, or .\scripts\dev.ps1 logs" -ForegroundColor DarkGray
+        Write-Host "  Stop     " -NoNewline; Write-Host ".\scripts\dev.ps1 down" -ForegroundColor DarkGray
+        Write-Host ""
+    }
+    "status" {
+        $Rec = Load-Up
+        Write-Host ""
+        Line $(if (Is-Up "$OllamaUrl/api/version") { "ok" } else { "--" }) "Ollama" $(if (Is-Up "$OllamaUrl/api/version") { "running" } else { "stopped" }) $OllamaUrl
+        Line $(if (Is-Up "$ArgusUrl/health") { "ok" } else { "--" }) "argusd" $(if (Is-Up "$ArgusUrl/health") { "running" } else { "stopped" }) $ArgusUrl
+        $WP = Live-Proc $Rec.worker
+        Line $(if ($WP) { "ok" } else { "--" }) "worker" $(if ($WP) { "running" } else { "stopped" }) $(if ($WP) { "pid $($WP.Id)" } else { "" })
+        Write-Host ""
+    }
+    "logs" {
+        # Every log in one terminal, coloured; e.g. ".\scripts\dev.ps1 logs worker" for one of them.
+        Need-Venv
+        $Names = @(); if ($Arg) { $Names = $Arg -split "," }
+        & $Py -m argus.logview @Names
     }
     "down" {
         $Names = @("worker", "argusd")
         if ($Arg -eq "all") { $Names += "ollama" }
         $Left = Load-Up
-        if ($Left.Count -eq 0) { Write-Host "Nothing started by 'up' is recorded. Close the windows yourself." }
+        if ($Left.Count -eq 0) { Write-Host "Nothing started by 'up' is recorded." }
         foreach ($N in $Names) {
             if (-not $Left.ContainsKey($N)) { continue }
             $P = Live-Proc $Left[$N]
             # /T also stops the python process running inside the window
-            if ($P -and (Quiet { taskkill /PID $P.Id /T /F }) -eq 0) { Write-Host "[ok] stopped $N" }
-            else { Write-Host "[--] $N was not running" }
+            if ($P -and (Quiet { taskkill /PID $P.Id /T /F }) -eq 0) { Line "ok" $N "stopped" "" }
+            else { Line "--" $N "was not running" "" }
             $Left.Remove($N)
         }
         Save-Up $Left

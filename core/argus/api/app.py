@@ -59,6 +59,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from .. import logview
 from ..approvals import ApprovalClosed, ApprovalError, ApprovalNotFound, BadToken
 from ..config import PRIORITY_INTERACTIVE
 from ..context import Argus
@@ -441,6 +442,25 @@ def create_app(argus: Argus) -> FastAPI:
             needs=p.manifest.job_needs(), priority=PRIORITY_INTERACTIVE, dedupe_key=f"fix:{event_id}",
             source="helios")
         return {"id": job_id2, "created": created}
+
+    @app.get("/logs", dependencies=guarded)
+    async def log_sources() -> list[dict]:
+        """The log files Helios can show: argusd, the worker(s) on this machine, Ollama."""
+        out = []
+        for name, path in logview.sources(argus.cfg.log_dir).items():
+            try:
+                st = path.stat()
+            except OSError:
+                continue
+            out.append({"name": name, "size": st.st_size, "modified": st.st_mtime})
+        return out
+
+    @app.get("/logs/{name}", dependencies=guarded)
+    async def log_read(name: str, after: int | None = None, lines: int = Query(300, ge=1, le=2000)) -> dict:
+        path = logview.sources(argus.cfg.log_dir).get(name)
+        if path is None:
+            raise HTTPException(status_code=404, detail=f"no log {name!r}")
+        return await asyncio.to_thread(logview.read, path, name, after=after, lines=lines)
 
     @app.get("/jobs/{job_id}/changes", dependencies=guarded)
     async def job_changes(job_id: str) -> list[dict]:
