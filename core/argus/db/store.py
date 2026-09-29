@@ -69,6 +69,9 @@ class Store:
         self._local = threading.local()
         self._read_conns: list[sqlite3.Connection] = []
         self._read_lock = threading.Lock()
+        self._reads = threading.Condition()  # reads in progress; close() waits for them
+        self._reading = 0
+        self._closing = False
         self._closed = threading.Event()
         self.schema_version = 0
         self.writes_done = 0
@@ -77,6 +80,7 @@ class Store:
     # ---------------------------------------------------------------- lifecycle
 
     def open(self) -> Store:
+        self._closing = False
         self.path.parent.mkdir(parents=True, exist_ok=True)
         conn = _connect(self.path)
         mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
@@ -108,6 +112,11 @@ class Store:
         if self._writer_conn is not None and not writer.is_alive():
             self._writer_conn.close()
             self._writer_conn = None
+        # Closing a connection another thread is still reading from can crash the process (seen as a segfault
+        # in CI at shutdown): refuse new reads, wait for the ones running, then close.
+        with self._reads:
+            self._closing = True
+            self._reads.wait_for(lambda: self._reading == 0, timeout=10)
         with self._read_lock:
             for c in self._read_conns:
                 try:
@@ -260,7 +269,16 @@ class Store:
         return conn
 
     def read_sync(self, fn: Callable[[sqlite3.Connection], T]) -> T:
-        return fn(self._read_conn())
+        with self._reads:
+            if self._closing:
+                raise StoreError("store closed")
+            self._reading += 1
+        try:
+            return fn(self._read_conn())
+        finally:
+            with self._reads:
+                self._reading -= 1
+                self._reads.notify_all()
 
     async def read(self, fn: Callable[[sqlite3.Connection], T]) -> T:
         return await asyncio.to_thread(self.read_sync, fn)
@@ -272,7 +290,7 @@ class Store:
         try:
             self.read_sync(lambda c: c.execute("SELECT 1").fetchone())
             db_ok = True
-        except sqlite3.Error:
+        except (sqlite3.Error, StoreError):
             db_ok = False
         return {
             "ok": writer_ok and db_ok,
