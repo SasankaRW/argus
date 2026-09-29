@@ -26,6 +26,7 @@ models:
     T1: {provider: ollama, model: "qwen2.5-coder:7b", group: pc}
     T2: {provider: ollama, model: "qwen2.5-coder:14b", group: pc}
     T3: {provider: claude, group: cloud}
+    V1: {provider: ollama, model: "qwen2.5vl:7b", group: pc}   # vision (screenshot-renamer); not in the chain
   chain: [T1, T2, T3]
   attempts_per_tier: 2     # tries per tier (the second one is told what was wrong)
   breaker_failures: 3      # after 3 failed calls in a row a model is paused ...

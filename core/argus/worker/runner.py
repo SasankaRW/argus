@@ -275,7 +275,8 @@ class Worker:
         if ctx._router is not None:  # start at the lowest tier the manifest lists; higher ones by escalation
             chain = list(ctx._router.chain)
             starts = [chain.index(t) for t in perms.get("models") or [] if t in chain]
-            ctx._allowed_tiers = chain[min(starts):] if starts else []
+            outside = [t for t in perms.get("models") or [] if t not in chain]  # e.g. V1, asked for directly
+            ctx._allowed_tiers = (chain[min(starts):] if starts else []) + outside
 
     @staticmethod
     def _report(jlog: logging.LoggerAdapter, fn) -> None:

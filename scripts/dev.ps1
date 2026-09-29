@@ -44,7 +44,7 @@ function Need-Venv {
     $Hash = (Get-FileHash (Join-Path $Root "pyproject.toml")).Hash
     if (-not (Test-Path $Stamp) -or (Get-Content $Stamp) -ne $Hash) {
         Write-Host "Dependencies changed; updating .venv ..."
-        & $Py -m pip install -q -e ".[dev]"
+        & $Py -m pip install -q -e ".[dev,plugins]"
         if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
         Set-Content $Stamp $Hash
     }
@@ -211,7 +211,7 @@ switch ($Command) {
             py -3 -m venv .venv
         }
         & $Py -m pip install --upgrade pip | Out-Null
-        & $Py -m pip install -e ".[dev]"
+        & $Py -m pip install -e ".[dev,plugins]"
         Set-Content $Stamp (Get-FileHash (Join-Path $Root "pyproject.toml")).Hash
         if (-not (Test-Path "argus.yaml")) { Copy-Item "argus.example.yaml" "argus.yaml"; Write-Host "Created argus.yaml" }
         if (-not (Test-Path ".env")) { Copy-Item ".env.example" ".env"; Write-Host "Created .env (edit the password)" }

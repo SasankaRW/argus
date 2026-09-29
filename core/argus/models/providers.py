@@ -51,7 +51,7 @@ class OllamaProvider:
         self.timeout = timeout
         self.keep_alive = keep_alive
 
-    def chat(self, system: str, messages: list[dict[str, str]], schema: dict | None = None) -> Reply:
+    def chat(self, system: str, messages: list[dict[str, Any]], schema: dict | None = None) -> Reply:
         body: dict[str, Any] = {
             "model": self.model,
             "messages": [{"role": "system", "content": system}, *messages],
