@@ -61,7 +61,7 @@ function shownAmount(v: unknown): string {
 }
 
 // One approval with Approve / Reject. Entry fields can be edited before approving.
-function ApprovalCard({ id, onDone }: { id: string; onDone?: () => void }) {
+export function ApprovalCard({ id, onDone }: { id: string; onDone?: () => void }) {
   const [a, setA] = useState<Approval | null>(null);
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
@@ -126,7 +126,7 @@ function ApprovalCard({ id, onDone }: { id: string; onDone?: () => void }) {
   );
 }
 
-function PendingApprovals({ events, onSelect }: { events: ArgusEvent[]; onSelect: (s: Selection) => void }) {
+export function PendingApprovals({ events, onSelect }: { events: ArgusEvent[]; onSelect: (s: Selection) => void }) {
   const [list, setList] = useState<Approval[] | null>(null);
   const last = events.filter((e) => e.kind.startsWith("approval.")).map((e) => e.seq).pop() ?? 0;
   useEffect(() => { api<Approval[]>("/approvals?state=pending").then(setList).catch(() => setList([])); }, [last]);

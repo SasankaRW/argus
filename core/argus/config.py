@@ -6,6 +6,7 @@ A bad config stops argusd with a clear message instead of failing later.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -222,6 +223,22 @@ class PowerConfig(_Strict):
     mode: Literal["simulated", "real"] = "simulated"
     idle_minutes: float = Field(20, ge=1, le=24 * 60)  # nothing for the PC to do this long -> shut it down
     pc_needs: list[str] = Field(default_factory=lambda: ["gpu", "desktop"])  # job needs only the PC can serve
+    # Buttons in Helios (Power page, phone). Wake-on-LAN is sent by argusd, so it works once argusd runs on the
+    # laptop; sleep / shut down / restart run on the PC's worker.
+    pc_mac: str | None = None  # the PC's wired network card, e.g. 04:7C:16:AB:CD:EF (ipconfig /all)
+    wol_broadcast: str = "255.255.255.255"
+    wol_port: int = Field(9, ge=1, le=65535)
+    shutdown_delay_seconds: int = Field(60, ge=0, le=3600)  # time to cancel a shutdown or restart
+
+    @field_validator("pc_mac")
+    @classmethod
+    def _mac(cls, v: str | None) -> str | None:
+        if v is None or not v.strip():
+            return None
+        h = re.sub(r"[^0-9A-Fa-f]", "", v)
+        if len(h) != 12:
+            raise ValueError(f"pc_mac {v!r} is not a MAC address like 04:7C:16:AB:CD:EF")
+        return ":".join(h[i:i + 2] for i in range(0, 12, 2)).upper()
 
 
 class PluginsConfig(_Strict):

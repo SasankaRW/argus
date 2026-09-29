@@ -101,6 +101,8 @@ power:
   mode: simulated          # simulated on the PC, real on the laptop
   idle_minutes: 20         # no GPU or desktop work this long -> (would) shut the PC down
   pc_needs: [gpu, desktop] # job needs only the PC can serve
+  pc_mac:                  # for the Wake button: the PC's wired card, e.g. 04:7C:16:AB:CD:EF (ipconfig /all)
+  shutdown_delay_seconds: 60   # Shut down / Restart wait this long, so Cancel still works
 
 plugins:
   dirs: [plugins]          # one folder per plugin: plugin.yaml + plugin.py
