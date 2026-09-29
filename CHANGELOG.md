@@ -5,6 +5,9 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **screenshot-renamer plugin:** new screenshots get names like "2026-09-28 cashly login bug.png". Text on screen (Tesseract) goes to T1; otherwise the vision model V1 (qwen2.5vl:7b) looks at the picture. Names are checked in code; only default names are touched; Undo in Helios.
+- Models: `ctx.llm(..., images=[...])` sends pictures to a vision tier; tiers outside the chain (like V1) can be listed in a manifest.
+- New `plugins` extra (send2trash, Pillow, pytesseract), installed by dev.ps1.
 ## 0.7.0 (2026-09-29)
 
 - **Helios Runs page:** every job, newest first, filtered by plugin and state, with a one-line summary; click one for its details.

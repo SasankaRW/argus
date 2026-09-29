@@ -1,0 +1,30 @@
+id: screenshot-renamer
+name: Screenshot renamer
+version: 1.0.0
+kind: workflow
+argus_api: ">=1.0 <2.0"
+description: Gives new screenshots descriptive names, e.g. "2026-09-28 cashly login bug.png".
+runs_on: desktop
+
+triggers:
+  - folder_watch: {workflow: name, paths: ["~/Pictures/Screenshots", "~/OneDrive/Pictures/Screenshots"],
+                   match: ["*.png", "*.jpg", "*.jpeg"], stable_for: 20s}
+  - folder_watch: {workflow: name, paths: ["~/Desktop", "~/OneDrive/Desktop"], match: ["Screenshot*.png"], stable_for: 20s}
+  - manual: {workflow: sweep, label: Name screenshots now}
+
+workflows: [name, sweep, undo]   # undo: {"from": where it is now, "to": where it was}
+
+permissions:
+  files:
+    read: ["~/Pictures/Screenshots", "~/OneDrive/Pictures/Screenshots", "~/Desktop", "~/OneDrive/Desktop"]
+    write: ["~/Pictures/Screenshots", "~/OneDrive/Pictures/Screenshots", "~/Desktop", "~/OneDrive/Desktop"]
+    delete: none
+  models: [T1, V1]           # text read from the picture -> T1 (T2 if needed); no readable text -> V1 looks at it
+  claude_calls_per_day: 0
+
+config:
+  max_per_sweep: {type: int, default: 30, label: Screenshots per sweep at most}
+  vision_max_side: {type: int, default: 1280, label: Longest side sent to the vision model (pixels)}
+
+helios:
+  node: {label: Screenshots, group: files}

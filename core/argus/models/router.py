@@ -105,7 +105,8 @@ class Router:
         self.current_tier: str | None = None  # the tier being tried right now (checks may look at it)
 
     def ask(self, playbook: str, input: Any, *, schema: type[BaseModel] | None = None, check: Check | None = None,
-            chain: list[str] | None = None, attempts: int | None = None) -> Answer:
+            chain: list[str] | None = None, attempts: int | None = None, images: list[str] | None = None) -> Answer:
+        """`images`: base64-encoded pictures for a vision model (sent with the first message)."""
         tiers = chain or self.chain
         tries = attempts or self.attempts
         json_schema = schema.model_json_schema() if schema is not None else None
@@ -127,7 +128,9 @@ class Router:
                 self.board.event("model.escalated", prev.lower(), comp,
                                  {"from_tier": prev, "to_tier": tier, "reason": _clip(advice or "", 200)})
             self.current_tier = tier
-            messages = [{"role": "user", "content": task}]
+            messages: list[dict[str, Any]] = [{"role": "user", "content": task}]
+            if images:
+                messages[0]["images"] = list(images)
             if advice:
                 messages[0]["content"] += f"\n\nA smaller model tried this first and failed:\n{advice}"
             for attempt in range(1, tries + 1):

@@ -34,7 +34,7 @@ log = logging.getLogger("argus.plugins")
 
 API_VERSION = (1, 0)  # the plugin API this Argus provides (Plugin Guide: "Plugin API changelog")
 ID = r"^[a-z0-9][a-z0-9-]{0,62}$"
-TIERS_PATTERN = r"^T\d$"
+TIERS_PATTERN = r"^[A-Z]\d$"  # T1..T3 text, V1 vision
 
 
 class _M(BaseModel):
@@ -123,7 +123,7 @@ class Permissions(_M):
     def _tiers(cls, v: list[str]) -> list[str]:
         for t in v:
             if not re.fullmatch(TIERS_PATTERN, t):
-                raise ValueError(f"{t!r} is not a tier name like T1")
+                raise ValueError(f"{t!r} is not a tier name like T1 or V1")
         return v
 
 

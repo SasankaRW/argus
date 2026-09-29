@@ -24,6 +24,7 @@ once per step even if the step is retried.
 
 from __future__ import annotations
 
+import base64
 import logging
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -180,7 +181,7 @@ class Context:
         return output
 
     def llm(self, playbook: str, input: Any, *, schema: Any = None, check: Any = None,
-            tiers: list[str] | None = None, attempts: int | None = None) -> Any:
+            tiers: list[str] | None = None, attempts: int | None = None, images: list[bytes] | None = None) -> Any:
         """Ask the models, cheapest tier first, escalating when the answer fails the schema or the check.
 
         Returns the answer (a `schema` instance, or text without a schema). Call it inside `ctx.step`, so a
@@ -195,7 +196,9 @@ class Context:
                 from .plugins import PermissionDenied
                 raise PermissionDenied(f"{self.job.get('plugin')} may not use these models "
                                        "(permissions.models in plugin.yaml)")
-        ans = self._router.ask(playbook, input, schema=schema, check=check, chain=tiers, attempts=attempts)
+        pics = [base64.b64encode(b).decode() for b in images] if images else None
+        ans = self._router.ask(playbook, input, schema=schema, check=check, chain=tiers, attempts=attempts,
+                               images=pics)
         order = list(self._router.chain)
         if self._tier is None or (ans.tier in order and self._tier in order
                                   and order.index(ans.tier) > order.index(self._tier)):

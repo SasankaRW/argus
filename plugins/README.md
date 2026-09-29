@@ -6,3 +6,4 @@ A plugin starts in dry-run; list it under `plugins.live` in argus.yaml to let it
 | Plugin | What it does |
 | --- | --- |
 | downloads-organizer | sorts new files in Downloads into category folders |
+| screenshot-renamer | gives new screenshots descriptive names (OCR + T1, or the vision model) |
