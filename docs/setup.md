@@ -125,6 +125,11 @@ can be put back with **Undo** on the job's Changes (downloads-organizer also has
 If you used the old standalone Downloads script, remove its scheduled task first:
 `C:\Users\Sas\projects\downloads-organizer\uninstall-schedule.bat`.
 
+## Moving to the laptop
+
+See `deploy/README.md`: install script, services, moving the database, the PC as the GPU worker, backups,
+and real automatic power.
+
 ## Ask Argus
 
 The box at the top of Helios (Ctrl+K) and on the phone (with a microphone button): plain words like "sort

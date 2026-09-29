@@ -1,0 +1,40 @@
+# Argus on the laptop (after the move). Copied to /opt/argus/argus.yaml by install.sh; edit it there.
+instance:
+  name: argus
+  host: laptop
+
+server:
+  host: 127.0.0.1          # Tailscale (tailscale serve) is the only way in from outside
+  port: 8600
+
+logging: {level: INFO, file: logs/argus.log}
+
+ollama:
+  url: http://127.0.0.1:11434  # as the PC worker sees it (Ollama runs on the PC; the laptop never loads models)
+
+models:
+  tiers:
+    T1: {provider: ollama, model: "qwen2.5-coder:7b", group: pc}
+    T2: {provider: ollama, model: "qwen2.5-coder:14b", group: pc}
+    T3: {provider: claude, group: cloud}
+    V1: {provider: ollama, model: "qwen2.5vl:7b", group: pc}
+  chain: [T1, T2, T3]
+
+power:
+  mode: real               # wake the PC for GPU/desktop work, shut it down when idle (with a phone warning)
+  idle_minutes: 20
+  warn_minutes: 5
+  pc_mac:                  # the PC's wired card (ipconfig /all), e.g. 04:7C:16:AB:CD:EF
+  wol_broadcast: 255.255.255.255
+
+backup:
+  at: "02:30"
+  keep: 5
+  copy_to: G:/ArgusBackups # a folder on the PC: its worker fetches each night's backup
+
+approvals:
+  public_url:              # the laptop's Tailscale https address, e.g. https://laptop.tail65c634.ts.net
+  phone: pixel-8a
+
+plugins:
+  live: [downloads-organizer, screenshot-renamer]

@@ -84,3 +84,38 @@ def cancel(ctx: Context):
             return f"nothing to cancel ({e})"
 
     return {"pc": ctx.step("cancel", go)}
+
+
+def input_idle_seconds() -> float | None:
+    """How long nobody touched the keyboard or mouse (Windows), or None when unknown."""
+    if not WIN:
+        return None
+    import ctypes
+
+    class LASTINPUTINFO(ctypes.Structure):
+        _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
+
+    lii = LASTINPUTINFO()
+    lii.cbSize = ctypes.sizeof(LASTINPUTINFO)
+    if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(lii)):  # type: ignore[attr-defined]
+        return None
+    return (ctypes.windll.kernel32.GetTickCount() - lii.dwTime) / 1000.0  # type: ignore[attr-defined]
+
+
+@workflow(PLUGIN, "auto_shutdown")
+def auto_shutdown(ctx: Context):
+    """The power manager's shutdown after an idle stretch: never while someone uses the PC."""
+    need = float(ctx.input.get("idle_minutes", 20)) * 60
+
+    def go():
+        idle = input_idle_seconds()
+        if idle is not None and idle < need:
+            return {"skipped": f"someone used the PC {round(idle / 60)} min ago"}
+        d = _delay(ctx)
+        if WIN:
+            _run(["shutdown", "/s", "/t", str(d), "/c", "Argus: idle, shutting down (cancel in Helios)"])
+        else:
+            _run(["shutdown", "-h", f"+{max(1, round(d / 60))}"])
+        return {"pc": f"shutting down in {d} s", "input_idle_seconds": idle}
+
+    return ctx.step("shutdown", go)

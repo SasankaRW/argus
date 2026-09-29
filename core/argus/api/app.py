@@ -50,6 +50,7 @@ import dataclasses
 import hmac
 import json
 import mimetypes
+import re
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -632,6 +633,24 @@ def create_app(argus: Argus) -> FastAPI:
         await asyncio.to_thread(shares.mark_sent, sid, job_id)
         return {"id": job_id, "created": created}
 
+    # -------------------------------------------------------------- backups
+
+    @app.get("/backups", dependencies=guarded)
+    async def backups() -> dict:
+        return {"files": argus.backups.list(), "last": argus.last_backup, "at": argus.cfg.backup.at,
+                "keep": argus.cfg.backup.keep, "copy_to": argus.cfg.backup.copy_to,
+                "enabled": argus.cfg.backup.enabled}
+
+    @app.post("/backups", dependencies=guarded)
+    async def backup_now() -> dict:
+        return await argus.backup_now()
+
+    @app.get("/backups/files/{name}", dependencies=guarded)
+    async def backup_file(name: str):
+        if not re.fullmatch(r"argus-\d{8}-\d{6}\.db", name) or not (argus.backups.dir / name).is_file():
+            raise HTTPException(status_code=404, detail="no such backup")
+        return FileResponse(argus.backups.dir / name, media_type="application/octet-stream", filename=name)
+
     @app.get("/logs", dependencies=guarded)
     async def log_sources() -> list[dict]:
         """The log files Helios can show: argusd, the worker(s) on this machine, Ollama."""
@@ -1023,6 +1042,7 @@ def create_app(argus: Argus) -> FastAPI:
             raise HTTPException(status_code=404, detail=f"no power action {action!r}")
         dropped = []
         if action == "cancel":
+            await argus.power.hold()  # and no automatic shutdown for this idle stretch
             for j in await argus.jobs.list_jobs(None, 20, "power"):
                 if j.state.value in ("queued", "retry") and j.workflow in ("sleep", "shutdown", "restart"):
                     await argus.jobs.cancel(j.id)

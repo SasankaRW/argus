@@ -1,0 +1,20 @@
+[Unit]
+Description=Argus worker on the laptop (connectors, Claude)
+After=argusd.service
+Wants=argusd.service
+
+[Service]
+User=argus
+Group=argus
+WorkingDirectory=/opt/argus
+Environment=ARGUS_URL=http://127.0.0.1:8600
+ExecStart=/opt/argus/.venv/bin/python -m argus.worker.cli --cap laptop --no-demo --log-file logs/worker-laptop.log
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/argus/data /opt/argus/logs /home/argus
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

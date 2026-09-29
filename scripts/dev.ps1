@@ -191,28 +191,27 @@ switch ($Command) {
         }
         else { Line "--" "Ollama" "missing" "model jobs will wait (winget install Ollama.Ollama)" }
 
-        if (Is-Up "$ArgusUrl/health") { Line "ok" "argusd" "running" $ArgusUrl }
+        # argusd and the worker run under the supervisor: it restarts them if they stop, and on new code
+        # (a merged pull request) once no job is running.
+        if (Live-Proc $Rec.supervisor) { Line "ok" "argusd" "running" "$ArgusUrl (supervised)" }
         else {
-            $A = Start-Hidden "argusd" $Py @("-m", "argus") "argusd.out" "argusd-crash.log"
-            $Rec.argusd = Proc-Record $A
-            Save-Up $Rec  # recorded at once, so "down" can stop it even if the wait below fails
-            try { Wait-Up "$ArgusUrl/health" 30 "argusd" }
-            catch { Line "!!" "argusd" "failed" "see below"; Show-Tail "argusd-crash.log"; Show-Tail "argus.log"; throw }
-            Line "ok" "argusd" "started" $ArgusUrl
-        }
-
-        # Judge the worker by its process, not by /status: after a restart argusd still lists the last
-        # worker as online until its heartbeat times out, which is not a running worker.
-        if (Live-Proc $Rec.worker) { Line "ok" "worker" "running" "desktop, gpu" }
-        else {
-            $W = Start-Hidden "worker" $Py @("-m", "argus.worker.cli", "--cap", "desktop", "--cap", "gpu", "--log-file", "logs/worker.log") "worker.out" "worker-crash.log"
-            $Rec.worker = Proc-Record $W
+            foreach ($Old in @("worker", "argusd")) {  # from an older "up" that started them one by one
+                $P = Live-Proc $Rec.$Old
+                if ($P) { Quiet { taskkill /PID $P.Id /T /F } | Out-Null }
+                $Rec.Remove($Old)
+            }
+            if (Is-Up "$ArgusUrl/health") { throw "Something else is already running on $ArgusUrl. Stop it first." }
+            $S = Start-Hidden "supervisor" $Py @("-m", "argus.supervisor") "supervisor.out" "supervisor-crash.log"
+            $Rec.supervisor = Proc-Record $S
             Save-Up $Rec
-            Start-Sleep -Seconds 3
-            if (Get-Process -Id $W.Id -ErrorAction SilentlyContinue) { Line "ok" "worker" "started" "desktop, gpu" }
-            else { Line "!!" "worker" "stopped" "it exited straight away"; Show-Tail "worker-crash.log"; Show-Tail "worker.log"; throw "The worker did not start." }
+            try { Wait-Up "$ArgusUrl/health" 45 "argusd" }
+            catch { Line "!!" "argusd" "failed" "see below"; Show-Tail "supervisor-crash.log"; Show-Tail "argusd-crash.log"; Show-Tail "argus.log"; throw }
+            Line "ok" "argusd" "started" "$ArgusUrl (supervised)"
+            Start-Sleep -Seconds 4
+            $Wk = $false
+            try { $St = Invoke-RestMethod -Uri "$ArgusUrl/status" -TimeoutSec 3; $Wk = @($St.workers | Where-Object { $_.state -eq "online" }).Count -gt 0 } catch { }
+            if ($Wk) { Line "ok" "worker" "started" "desktop, gpu" } else { Line "--" "worker" "starting" "see Helios > Logs if it stays offline" }
         }
-
         Rule
         $T = Token
         Start-Process ($(if ($T) { "$ArgusUrl/?token=$T" } else { $ArgusUrl }))
@@ -226,8 +225,8 @@ switch ($Command) {
         Write-Host ""
         Line $(if (Is-Up "$OllamaUrl/api/version") { "ok" } else { "--" }) "Ollama" $(if (Is-Up "$OllamaUrl/api/version") { "running" } else { "stopped" }) $OllamaUrl
         Line $(if (Is-Up "$ArgusUrl/health") { "ok" } else { "--" }) "argusd" $(if (Is-Up "$ArgusUrl/health") { "running" } else { "stopped" }) $ArgusUrl
-        $WP = Live-Proc $Rec.worker
-        Line $(if ($WP) { "ok" } else { "--" }) "worker" $(if ($WP) { "running" } else { "stopped" }) $(if ($WP) { "pid $($WP.Id)" } else { "" })
+        $SP = Live-Proc $Rec.supervisor
+        Line $(if ($SP) { "ok" } else { "--" }) "supervisor" $(if ($SP) { "running" } else { "stopped" }) $(if ($SP) { "restarts argusd and the worker on new code" } else { "" })
         Write-Host ""
     }
     "logs" {
@@ -237,7 +236,7 @@ switch ($Command) {
         & $Py -m argus.logview @Names
     }
     "down" {
-        $Names = @("worker", "argusd")
+        $Names = @("supervisor", "worker", "argusd")
         if ($Arg -eq "all") { $Names += "ollama" }
         $Left = Load-Up
         if ($Left.Count -eq 0) { Write-Host "Nothing started by 'up' is recorded." }

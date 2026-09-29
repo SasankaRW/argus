@@ -260,9 +260,12 @@ def load(infos: list[dict[str, Any]], registry: WorkflowRegistry | None = None) 
     errors: dict[str, str] = {}
     for info in infos:
         pid, path = info["id"], Path(info["path"]) / "plugin.py"
-        if not path.exists():
-            errors[pid] = f"{path} not found on this machine"
-            continue
+        if not path.exists():  # argusd runs elsewhere (the laptop): use this machine's copy of the repo
+            here = Path(os.environ.get("ARGUS_PLUGINS_DIR", "plugins")).resolve() / pid / "plugin.py"
+            if not here.exists():
+                errors[pid] = f"{path} not found on this machine (nor {here})"
+                continue
+            path = here
         name = "argus_plugin_" + pid.replace("-", "_")
         for r in {id(REGISTRY): REGISTRY, id(reg): reg}.values():  # a reload replaces the old workflows
             for k in [k for k in r.items if k[0] == pid]:
