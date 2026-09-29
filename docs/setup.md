@@ -88,7 +88,16 @@ plugins:
 .\scripts\dev.ps1 down      # stop ("down all" also stops Ollama)
 ```
 
-Or double-click `scripts\up.cmd`. After changing argus.yaml or .env, run `down` then `up`.
+Or double-click `scripts\up.cmd`. Everything runs in the background (no extra windows); one summary is printed.
+After changing argus.yaml or .env, run `down` then `up`.
+
+| Command | What |
+| --- | --- |
+| `.\scripts\dev.ps1 status` | what is running |
+| `.\scripts\dev.ps1 logs` | every log in this terminal, coloured (`logs worker` for one) |
+| Helios > **Logs** | the same, with filters and search |
+
+Logs live in `logs\` (argus.log, worker.log, ollama.log; a `-crash.log` appears only if a process died on start).
 
 ## 9. Check it works
 

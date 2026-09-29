@@ -303,6 +303,11 @@ class Config(_Strict):
     def log_path(self) -> Path | None:
         return self.resolve(self.logging.file) if self.logging.file else None
 
+    @property
+    def log_dir(self) -> Path:
+        """Where every process's log lives (argusd's, the worker's, Ollama's when `up` started it)."""
+        return self.log_path.parent if self.log_path else self.resolve(Path("logs"))
+
 
 def parse_env_file(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}

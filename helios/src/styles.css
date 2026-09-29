@@ -72,6 +72,24 @@ main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .run .w { color: var(--tx); overflow: hidden; text-overflow: ellipsis; }
 .run .d { overflow: hidden; text-overflow: ellipsis; }
 .run .t { color: var(--tx3); font-size: 11px; }
+.logs { display: flex; flex-direction: column; }
+.logs .search { height: 28px; width: 180px; font-size: 12px; color: var(--tx); background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 0 10px; }
+.logs .tools { margin-left: auto; }
+.errn { margin-left: 6px; font-size: 10px; padding: 0 5px; border-radius: 8px; background: rgba(240, 82, 82, .18); color: var(--bad); }
+.logbox { height: calc(100vh - 290px); min-height: 420px; overflow: auto; margin: 0 8px 8px; padding: 6px 0; border-radius: 9px; background: var(--bg); border: 1px solid var(--line); font-size: 11.5px; line-height: 19px; }
+.ll { display: grid; grid-template-columns: 64px 64px 44px minmax(0, 1fr); gap: 10px; padding: 0 12px; cursor: default; }
+.ll:hover { background: var(--panel); }
+.ll .t { color: var(--tx3); }
+.ll .s { color: var(--tx2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ll .s.src-argus { color: var(--amber); } .ll .s.src-worker { color: var(--flow); } .ll .s.src-ollama { color: var(--violet); }
+.ll .l { color: var(--tx3); }
+.ll .m { color: var(--tx); white-space: pre-wrap; word-break: break-word; }
+.ll .x { color: var(--tx3); }
+.ll.lv-warn .l, .ll.lv-warning .l { color: var(--amber); }
+.ll.lv-error .l, .ll.lv-critical .l, .ll.lv-fatal .l { color: var(--bad); }
+.ll.lv-error .m, .ll.lv-critical .m { color: #ffb4b4; }
+.ll.lv-debug .m { color: var(--tx3); }
+.ll .exc { grid-column: 1 / -1; margin: 2px 0 6px 118px; color: var(--bad); font-size: 11px; white-space: pre-wrap; }
 .changes { display: flex; flex-direction: column; gap: 2px; }
 .chg { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; align-items: center; font-size: 12px; padding: 4px 0; border-bottom: 1px solid var(--line); }
 .chg .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -166,6 +184,7 @@ main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 
 @media (max-width: 1180px) { .mid { grid-template-columns: minmax(0, 1fr); } .insp { max-height: none; } }
 @media (max-width: 860px) {
+  .ll { grid-template-columns: 56px minmax(0, 1fr); } .ll .s, .ll .l { display: none; } .logs .search { width: 100%; }
   .run { grid-template-columns: 70px minmax(0, 1fr) 80px; } .run .d, .run .t:not(:first-child) { display: none; }
   .shell { grid-template-columns: minmax(0, 1fr); padding: 12px; }
   .brand { width: auto; }

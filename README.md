@@ -22,8 +22,9 @@ First time: follow **[docs/setup.md](docs/setup.md)** (tools, models, Claude, `.
 ```powershell
 cd G:\Projects\argus
 .\scripts\dev.ps1 setup     # once: creates .venv, installs Argus + dev tools, copies example config
-.\scripts\dev.ps1 up        # starts Ollama, argusd and a worker, then opens Helios (or double-click scripts\up.cmd)
+.\scripts\dev.ps1 up        # starts Ollama, argusd and a worker in the background, then opens Helios (or double-click scripts\up.cmd)
 .\scripts\dev.ps1 down      # stops what "up" started ("down all" also stops Ollama)
+.\scripts\dev.ps1 logs      # every log in one terminal (also Helios > Logs); "status" shows what runs
 ```
 
 Trying things out: `demo` (a small job), `classify` (a model job with an escalation), `approval` (a pretend bill

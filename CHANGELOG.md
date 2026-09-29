@@ -5,6 +5,9 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **`dev.ps1 up` without extra windows:** Ollama, argusd and the worker run in the background and "up" prints one tidy summary. `dev.ps1 status` shows what runs; `dev.ps1 logs` follows every log in one coloured terminal. If something fails to start, its last log lines are shown right away.
+- **Helios Logs page:** argusd, worker and Ollama logs in one live view, with source tabs, Warnings / Errors filters, search and pause (`GET /logs`, `GET /logs/{name}`).
+- The worker can write a rotated log file (`--log-file`); a process running in the background logs only to its file.
 - **screenshot-renamer plugin:** new screenshots get names like "2026-09-28 cashly login bug.png". Text on screen (Tesseract) goes to T1; otherwise the vision model V1 (qwen2.5vl:7b) looks at the picture. Names are checked in code; only default names are touched; Undo in Helios.
 - Models: `ctx.llm(..., images=[...])` sends pictures to a vision tier; tiers outside the chain (like V1) can be listed in a manifest.
 - New `plugins` extra (send2trash, Pillow, pytesseract), installed by dev.ps1.

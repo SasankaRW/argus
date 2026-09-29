@@ -5,11 +5,13 @@ import { uptime } from "./format";
 import { Inspector } from "./Inspector";
 import { useArgus } from "./live";
 import { MapView, Selection } from "./MapView";
+import { LogsView } from "./LogsView";
 import { RunsView } from "./RunsView";
 
 const NAV: { id: string; label: string; icon: string; soon?: string }[] = [
   { id: "map", label: "Live map", icon: "M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3zM9 3v15M15 6v15" },
   { id: "runs", label: "Runs", icon: "M4 6h16M4 12h11M4 18h14" },
+  { id: "logs", label: "Logs", icon: "M5 4h14v16H5zM8 8h8M8 12h8M8 16h5" },
   { id: "inbox", label: "Approvals", icon: "M4 13l2.5-8h11l2.5 8v6H4zM4 13h5l1.5 2h3l1.5-2h5", soon: "M3" },
   { id: "models", label: "Models", icon: "M12 3l8 4.5v9L12 21l-8-4.5v-9zM12 12l8-4.5M12 12v9M12 12L4 7.5", soon: "later" },
   { id: "power", label: "Power", icon: "M12 3v8M7.5 6.5a7 7 0 1 0 9 0", soon: "MD" },
@@ -85,7 +87,7 @@ export function App() {
   const [flow, setFlow] = useState(true);
   const [relayout, setRelayout] = useState(0);
   const [triedLogin, setTriedLogin] = useState(false);
-  const [view, setView] = useState<string>(() => (location.hash === "#runs" ? "runs" : "map"));
+  const [view, setView] = useState<string>(() => (["#runs", "#logs"].includes(location.hash) ? location.hash.slice(1) : "map"));
   const go = (v: string) => { setView(v); history.replaceState(null, "", v === "map" ? location.pathname : `#${v}`); };
 
   if (a.phase === "login") return <Login bad={triedLogin} onDone={() => { setTriedLogin(true); a.reconnect(); }} />;
@@ -125,6 +127,7 @@ export function App() {
 
       <main>
         <Kpis status={st} />
+        {view === "logs" ? <LogsView /> : (
         <div className="mid">
           {view === "runs" ? (
             <RunsView events={a.events} selected={sel?.type === "job" ? sel.id : null} onSelect={setSel} />
@@ -156,7 +159,8 @@ export function App() {
           )}
           {a.map && <Inspector sel={sel} map={a.map} status={st} events={a.events} onSelect={setSel} />}
         </div>
-        <EventsPanel events={a.events} conn={a.conn} onSelect={setSel} />
+        )}
+        {view !== "logs" && <EventsPanel events={a.events} conn={a.conn} onSelect={setSel} />}
       </main>
     </div>
   );

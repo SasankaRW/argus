@@ -43,10 +43,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--no-demo", action="store_true", help="do not load the built-in demo plugin")
     p.add_argument("--once", action="store_true", help="run at most one job, then exit")
     p.add_argument("--log-level", default="INFO")
+    p.add_argument("--log-file", default=os.environ.get("ARGUS_WORKER_LOG"),
+                   help="also write JSON-lines logs here (rotated), e.g. logs/worker.log; Helios shows it")
     p.add_argument("--version", action="version", version=f"argus-worker {__version__}")
     args = p.parse_args(argv)
 
-    setup_logging(args.log_level, None)
+    setup_logging(args.log_level, Path(args.log_file) if args.log_file else None)
     token = args.token or os.environ.get("ARGUS_WORKER_TOKEN") or parse_env_file(Path(".env")).get(
         "ARGUS_WORKER_TOKEN")
 
