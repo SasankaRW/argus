@@ -22,6 +22,7 @@ import os
 import re
 import stat
 import time
+import urllib.parse
 from pathlib import Path
 
 import yaml
@@ -357,3 +358,47 @@ def correct(ctx: Context):
 
     kept = ctx.step("learn", learn)
     return {"moved_to": moved, "category": value, "examples_learned": min(kept, LEARNED_MAX), "dry_run": ctx.dry_run}
+
+
+def _title_name(text: str, fallback: str) -> str:
+    words = re.sub(r"[^A-Za-z0-9 ]+", " ", text).split()[:8]
+    return safe_folder(" ".join(words)) if words else fallback
+
+
+@workflow(PLUGIN, "take")
+def take(ctx: Context):
+    """Something shared from the phone: files, a link (saved as a .url shortcut) or text (a .txt). Saved to the
+    Downloads root, then sorted straight away like any other download."""
+    root = downloads(ctx)
+    inp = ctx.input
+
+    def save():
+        saved = []
+        for f in inp.get("files") or []:
+            if ctx.shared is None:
+                raise PermanentError("no shared files available to this job")
+            saved.append(ctx.files.write_bytes(root / f["name"], ctx.shared(f["name"])))
+        if inp.get("url"):
+            name = _title_name(inp.get("title") or "", urllib.parse.urlparse(inp["url"]).hostname or "link")
+            saved.append(ctx.files.write_text(root / f"{name}.url", f"[InternetShortcut]\r\nURL={inp['url']}\r\n"))
+        if inp.get("text") and not inp.get("url"):
+            name = _title_name(inp.get("title") or inp["text"], "shared text")
+            body = inp["text"] + (f"\n\n{inp['note']}" if inp.get("note") else "")
+            saved.append(ctx.files.write_text(root / f"{name}.txt", body))
+        return saved
+
+    saved = ctx.step("save", save)
+    if ctx.dry_run:
+        return {"saved": saved, "mode": "dry-run: nothing was saved or sorted", "dry_run": True}
+
+    def make_plan():
+        names = {os.path.basename(p) for p in saved}
+        files = candidates(ctx, root, float(ctx.config.get("min_age_seconds", 120)))
+        for f in files:
+            if f["name"] in names:
+                f["young"] = False  # complete: we just wrote it
+        mine = [g for g in build_groups(files) if any(f["name"] in names for f in g["members"])]
+        return plan_groups(ctx, root, mine, int(ctx.config.get("max_files_per_run", 60)))
+
+    plan = ctx.step("plan", make_plan)
+    return {"saved": saved, **ctx.step("move", apply, ctx, plan)}

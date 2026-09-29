@@ -13,6 +13,7 @@ import logging
 import socket
 import threading
 import traceback
+import urllib.parse
 from typing import Any
 
 from .. import __version__
@@ -272,6 +273,10 @@ class Worker:
         ctx.secrets = Secrets(pid, perms.get("secrets") or [])
         ctx.store = Store(client, pid)
         ctx.emit = lambda name, **data: trace(f"plugin.{name}", data)
+        share = (ctx.input or {}).get("share")
+        if share:  # something sent from the phone's share menu: its files come from argusd
+            ctx.shared = lambda name: client.get_bytes(
+                f"/shares/{urllib.parse.quote(str(share))}/files/{urllib.parse.quote(name, safe='')}")
         if ctx._router is not None:  # start at the lowest tier the manifest lists; higher ones by escalation
             chain = list(ctx._router.chain)
             starts = [chain.index(t) for t in perms.get("models") or [] if t in chain]

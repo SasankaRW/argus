@@ -85,6 +85,19 @@ class ArgusClient:
             time.sleep(delays[attempt])
         raise AssertionError("unreachable")  # pragma: no cover
 
+    def get_bytes(self, path: str, timeout: float = 60.0) -> bytes:
+        """A file from argusd (e.g. something shared from the phone)."""
+        req = urllib.request.Request(self.url + path, method="GET")
+        if self.token:
+            req.add_header("Authorization", f"Bearer {self.token}")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.read()
+        except urllib.error.HTTPError as e:
+            raise ApiError(e.code, e.read().decode(errors="replace")[:300]) from None
+        except (urllib.error.URLError, OSError) as e:
+            raise Unreachable(f"{self.url}{path}: {e}") from e
+
     def post(self, path: str, body: Any = None, **kw) -> Any:
         return self.call("POST", path, body if body is not None else {}, **kw)[1]
 

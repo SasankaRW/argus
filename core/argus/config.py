@@ -230,6 +230,11 @@ class PluginsConfig(_Strict):
     config: dict[str, dict] = Field(default_factory=dict)  # per-plugin settings over the manifest defaults
 
 
+class ShareConfig(_Strict):
+    max_mb: float = Field(50, gt=0, le=2000)  # per share, all files together
+    keep_days: float = Field(7, gt=0, le=365)  # shared files are deleted after this
+
+
 class PathsConfig(_Strict):
     allowed: list[Path] = Field(default_factory=list)
     blocked: list[Path] = Field(default_factory=list)
@@ -266,6 +271,7 @@ class Config(_Strict):
     triggers: TriggersConfig = Field(default_factory=TriggersConfig)
     power: PowerConfig = Field(default_factory=PowerConfig)
     plugins: PluginsConfig = Field(default_factory=PluginsConfig)
+    share: ShareConfig = Field(default_factory=ShareConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
 
     def model_post_init(self, _ctx) -> None:

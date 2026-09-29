@@ -49,13 +49,14 @@ import asyncio
 import dataclasses
 import hmac
 import json
+import mimetypes
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -66,10 +67,12 @@ from ..context import Argus
 from ..events import EventFilter, read_events
 from ..jobs import InvalidTransition, Job, JobNotFound, JobState, LeaseLost, QueueFull, Step
 from ..outbox import PRIORITIES, add_message, ntfy_message
+from ..shares import ShareError, ShareStore, kinds_of
 from ..triggers import BadSignature, TriggerError, UnknownTrigger
 from . import approval_page
 from .home import HOME_HTML
 
+mimetypes.add_type("application/manifest+json", ".webmanifest")  # Helios as an installable app (share menu)
 HELIOS_DIR = Path(__file__).resolve().parent.parent / "helios_dist"  # built by helios/ (npm run build)
 
 
@@ -149,6 +152,18 @@ class Wait(BaseModel):
 
 
 TRACE_KINDS = ("model.", "check.", "log.", "advice.", "plugin.", "file.", "http.")
+
+
+class NewShare(BaseModel):
+    title: str = Field("", max_length=300)
+    text: str = Field("", max_length=20000)
+    url: str = Field("", max_length=2000)
+    note: str = Field("", max_length=2000)
+
+
+class SendShare(BaseModel):
+    plugin: str
+    workflow: str
 
 
 class Fix(BaseModel):
@@ -442,6 +457,74 @@ def create_app(argus: Argus) -> FastAPI:
             needs=p.manifest.job_needs(), priority=PRIORITY_INTERACTIVE, dedupe_key=f"fix:{event_id}",
             source="helios")
         return {"id": job_id2, "created": created}
+
+    # -------------------------------------------------------------- share (the phone's share menu)
+
+    shares = ShareStore(argus.cfg.db_path.parent / "shares", argus.cfg.share.max_mb, argus.cfg.share.keep_days)
+
+    def share_targets() -> list[dict]:
+        return [{"plugin": pid, "name": p.manifest.name, **t.model_dump()}
+                for pid, p in sorted(argus.plugin_host.plugins.items()) for t in p.manifest.share]
+
+    def share_or_404(fn, *a):
+        try:
+            return fn(*a)
+        except ShareError as e:
+            raise HTTPException(status_code=404 if "no such" in str(e) or "bad" in str(e) else 422,
+                                detail=str(e)) from None
+
+    @app.get("/share/targets", dependencies=guarded)
+    async def get_share_targets() -> list[dict]:
+        return share_targets()
+
+    @app.post("/shares", dependencies=guarded)
+    async def new_share(body: NewShare) -> dict:
+        return await asyncio.to_thread(shares.create, body.title, body.text, body.url, body.note)
+
+    @app.put("/shares/{sid}/files", dependencies=guarded)
+    async def add_share_file(sid: str, request: Request, name: str = Query(..., max_length=200),
+                             type: str = Query("application/octet-stream", max_length=100)) -> dict:
+        data = bytearray()
+        async for chunk in request.stream():
+            data += chunk
+            if len(data) > shares.max_bytes:
+                raise HTTPException(status_code=413, detail=f"too big: shares are limited to "
+                                                            f"{shares.max_bytes // (1024 * 1024)} MB")
+        return await asyncio.to_thread(share_or_404, shares.add_file, sid, name, type, bytes(data))
+
+    @app.get("/shares/{sid}", dependencies=guarded)
+    async def get_share(sid: str) -> dict:
+        return share_or_404(shares.meta, sid)
+
+    @app.get("/shares/{sid}/files/{name}", dependencies=guarded)
+    async def get_share_file(sid: str, name: str):
+        path = share_or_404(shares.file_path, sid, name)
+        meta = shares.meta(sid)
+        mime = next((f["type"] for f in meta["files"] if f["name"] == name), "application/octet-stream")
+        return FileResponse(path, media_type=mime or "application/octet-stream")
+
+    @app.post("/shares/{sid}/send", dependencies=guarded)
+    async def send_share(sid: str, body: SendShare) -> dict:
+        """Queue the share for the plugin you picked (interactive priority)."""
+        meta = share_or_404(shares.meta, sid)
+        if meta["job_id"]:
+            return {"id": meta["job_id"], "created": False}
+        t = next((x for x in share_targets() if x["plugin"] == body.plugin and x["workflow"] == body.workflow), None)
+        if t is None:
+            raise HTTPException(status_code=422, detail=f"{body.plugin}.{body.workflow} does not take shares")
+        have = kinds_of(meta)
+        if not have:
+            raise HTTPException(status_code=422, detail="nothing to send: add a file, a link or some text")
+        if not have & set(t["accepts"]):
+            raise HTTPException(status_code=422, detail=f"{t['label']} takes {', '.join(t['accepts'])}")
+        p = argus.plugin_host.plugins[body.plugin]
+        job_id, created = await argus.jobs.enqueue(
+            body.plugin, body.workflow,
+            {"share": sid, "title": meta["title"], "text": meta["text"], "url": meta["url"], "note": meta["note"],
+             "files": meta["files"]},
+            needs=p.manifest.job_needs(), priority=PRIORITY_INTERACTIVE, dedupe_key=f"share:{sid}", source="helios")
+        await asyncio.to_thread(shares.mark_sent, sid, job_id)
+        return {"id": job_id, "created": created}
 
     @app.get("/logs", dependencies=guarded)
     async def log_sources() -> list[dict]:

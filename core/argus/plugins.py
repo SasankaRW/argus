@@ -127,6 +127,13 @@ class Permissions(_M):
         return v
 
 
+class ShareTarget(_M):
+    """What the plugin can take from the phone's share menu (Helios > Share)."""
+    workflow: str
+    label: str
+    accepts: list[Literal["file", "image", "pdf", "url", "text"]] = Field(min_length=1)
+
+
 class ConfigField(_M):
     type: Literal["list", "int", "text", "bool", "choice", "path"] = "text"
     default: Any = None
@@ -167,6 +174,7 @@ class Manifest(_M):
     approvals: list[dict] = Field(default_factory=list)
     config: dict[str, ConfigField] = Field(default_factory=dict)
     helios: HeliosInfo = Field(default_factory=HeliosInfo)
+    share: list[ShareTarget] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _checks(self) -> Manifest:
@@ -181,7 +189,7 @@ class Manifest(_M):
         return self
 
     def all_workflows(self) -> list[str]:
-        extra = {self.helios.wrong.workflow} if self.helios.wrong else set()
+        extra = ({self.helios.wrong.workflow} if self.helios.wrong else set()) | {t.workflow for t in self.share}
         return sorted(set(self.workflows) | {t.workflow() for t in self.triggers} | extra)
 
     def job_needs(self) -> list[str]:
@@ -216,7 +224,8 @@ class Plugin(BaseModel):
                 "path": str(self.path), "live": self.live, "runs_on": m.runs_on, "needs": m.job_needs(),
                 "workflows": m.all_workflows(), "permissions": m.permissions.model_dump(), "config": self.config,
                 "triggers": [t.model_dump(exclude_none=True) for t in m.triggers],
-                "wrong": m.helios.wrong.model_dump() if m.helios.wrong else None}
+                "wrong": m.helios.wrong.model_dump() if m.helios.wrong else None,
+                "share": [t.model_dump() for t in m.share]}
 
 
 # ------------------------------------------------------------------ loading
