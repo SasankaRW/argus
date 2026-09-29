@@ -114,8 +114,9 @@ def test_dry_run_moves_nothing_and_file_job_takes_its_siblings(tmp_path, monkeyp
     assert job["state"] == "succeeded", job.get("error")
     res = job["result"]
     assert res["dry_run"] is True and names(d) == before
-    assert sorted(Path(m["to"]).name for m in res["moved"]) == ["lecture_07.pdf", "lecture_08.pdf"]
-    assert all(Path(m["to"]).parent.name == "lecture" for m in res["moved"])
+    assert "moved" not in res and res["mode"].startswith("dry-run")
+    assert sorted(Path(m["to"]).name for m in res["would_move"]) == ["lecture_07.pdf", "lecture_08.pdf"]
+    assert all(Path(m["to"]).parent.name == "lecture" for m in res["would_move"])
 
 
 def test_file_job_for_a_file_already_gone(tmp_path, monkeypatch):

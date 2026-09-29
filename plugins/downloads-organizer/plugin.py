@@ -261,7 +261,10 @@ def apply(ctx: Context, plan: dict) -> dict:
             continue
         done.append({"name": m["name"], "to": ctx.files.move(m["src"], m["dst"]), "category": m["category"]})
     ctx.emit("sorted", moved=len(done), skipped=len(plan["skipped"]), dry_run=ctx.dry_run)
-    return {"moved": done, "skipped": plan["skipped"], "gone": gone, "dry_run": ctx.dry_run, "note": plan["note"]}
+    if ctx.dry_run:  # say it plainly: nothing moved
+        return {"mode": "dry-run: nothing was moved (add downloads-organizer to plugins.live to let it move files)",
+                "would_move": done, "skipped": plan["skipped"], "dry_run": True, "note": plan["note"]}
+    return {"moved": done, "skipped": plan["skipped"], "gone": gone, "dry_run": False, "note": plan["note"]}
 
 
 # ------------------------------------------------------------------ workflows
