@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **PC power buttons:** Helios > Power and a "PC power" card on the phone: Sleep, Restart, Shut down (after `power.shutdown_delay_seconds`, with Cancel) run on the PC's worker ahead of other jobs; Wake sends Wake-on-LAN from argusd (`power.pc_mac`). Shows whether the PC is on and what auto power would do. `GET /power`, `POST /power/{wake|sleep|restart|shutdown|cancel}`.
+- Helios shows the server's reason when an action is refused.
 - **Helios Queue page:** what runs now (worker, step, time), what waits for you, and what runs next in order, each with the reason it waits (after the running job of the same plugin, GPU busy, night window opens at, no worker online, retry in); Cancel on each queued job. `GET /queue`.
 - **Simple phone view:** on a phone Helios opens to one clean screen: status, a big "Send something to Argus" button, approvals that need you, Now, Up next and Just finished. Tap any job for details; "Open the full dashboard" switches to the full view (remembered).
 - downloads-organizer: videos always go to Downloads\Videos and audio to Downloads\Audio, decided by file type in code (rules `by_extension:`), no model; Tidy folders also moves such files out of the wrong folders. Optional `destinations:` keeps a category outside Downloads.

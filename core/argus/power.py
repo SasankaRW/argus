@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import socket
 import sqlite3
 import time
 from collections.abc import Callable
@@ -30,6 +31,10 @@ from .registry import _upsert_component
 log = logging.getLogger("argus.power")
 
 WAKE_REPEAT = 600.0
+
+
+class PowerError(Exception):
+    pass
 
 
 class PowerManager:
@@ -100,6 +105,18 @@ class PowerManager:
             return "would_shutdown" if self.shutdown_said else "idle"
 
         return await self.store.write(fn)
+
+    def wake(self) -> dict[str, Any]:
+        """Send the Wake-on-LAN magic packet to the PC (from this machine; it must be on the PC's network)."""
+        mac = self.cfg.power.pc_mac
+        if not mac:
+            raise PowerError("set power.pc_mac in argus.yaml first (the PC's wired network card: ipconfig /all)")
+        packet = b"\xff" * 6 + bytes.fromhex(mac.replace(":", "")) * 16
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            s.sendto(packet, (self.cfg.power.wol_broadcast, self.cfg.power.wol_port))
+        log.info("wake-on-lan sent", extra={"mac": mac})
+        return {"sent": True, "mac": mac}
 
     def status(self) -> dict[str, Any]:
         return {"mode": self.cfg.power.mode, "state": self.state, "idle_since": self.idle_since,

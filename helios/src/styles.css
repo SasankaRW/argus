@@ -271,3 +271,15 @@ main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .pfull { align-self: center; margin-top: 4px; }
 .psheet .insp { max-height: none; }
 .linkbtn { background: none; border: 0; padding: 0; color: var(--amber); font: inherit; cursor: pointer; }
+
+/* ---- Power */
+.powerpage { min-height: 420px; max-width: 760px; }
+.power { display: flex; flex-direction: column; gap: 10px; }
+.pwr-head { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+.pwr-head .muted { font-size: 12px; }
+.pwr-btns { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.pbtn { height: 44px; background: var(--raise); color: var(--tx); font-size: 13px; }
+.pbtn:disabled { opacity: .4; }
+.pbtn.danger:not(:disabled) { color: var(--bad); }
+.pwr-pending { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border: 1px solid var(--amber); border-radius: 10px; background: rgba(245, 165, 36, .08); font-size: 13px; }
+@media (max-width: 720px) { .pwr-btns { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

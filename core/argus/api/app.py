@@ -65,9 +65,10 @@ from .. import logview
 from ..approvals import ApprovalClosed, ApprovalError, ApprovalNotFound, BadToken
 from ..config import PRIORITY_INTERACTIVE
 from ..context import Argus
-from ..events import EventFilter, read_events
+from ..events import EventFilter, insert_event, read_events
 from ..jobs import InvalidTransition, Job, JobNotFound, JobState, LeaseLost, QueueFull, Step
 from ..outbox import PRIORITIES, add_message, ntfy_message
+from ..power import PowerError
 from ..shares import ShareError, ShareStore, kinds_of
 from ..triggers import BadSignature, TriggerError, UnknownTrigger
 from . import approval_page
@@ -948,7 +949,44 @@ def create_app(argus: Argus) -> FastAPI:
 
     @app.get("/power", dependencies=guarded)
     async def power() -> dict:
-        return argus.power.status()
+        """The power manager's view, whether the PC (a worker with desktop) is online, and recent power actions."""
+        needs = set(argus.cfg.power.pc_needs)
+        pcs = [w for w in await argus.registry.workers() if set(w["capabilities"]) & needs]
+        online = [w for w in pcs if w["state"] == "online"]
+        recent = [job_json(j) for j in await argus.jobs.list_jobs(None, 8, "power")]
+        pending = [j for j in recent if j["state"] in ("queued", "retry", "leased", "running")]
+        pc = (online or pcs or [None])[0]
+        return {**argus.power.status(), "pc_online": bool(online),
+                "pc": {k: pc.get(k) for k in ("id", "host", "state", "last_seen")} if pc else None,
+                "wol": bool(argus.cfg.power.pc_mac), "delay": argus.cfg.power.shutdown_delay_seconds,
+                "recent": recent, "pending": pending}
+
+    @app.post("/power/{action}", dependencies=guarded)
+    async def power_action(action: str) -> dict:
+        """The power buttons. wake: Wake-on-LAN from argusd. sleep / shutdown / restart / cancel: a job for the PC's
+        worker, ahead of everything else; cancel also drops a sleep or shutdown that has not started yet."""
+        if action == "wake":
+            try:
+                out = await asyncio.to_thread(argus.power.wake)
+            except PowerError as e:
+                raise HTTPException(status_code=422, detail=str(e)) from None
+            except OSError as e:
+                raise HTTPException(status_code=502, detail=f"could not send the wake packet: {e}") from None
+            await argus.store.write(lambda c: insert_event(c, time.time(), "power.wake_sent", src="helios",
+                                                           dst="power", data=out))
+            return out
+        if action not in ("sleep", "shutdown", "restart", "cancel"):
+            raise HTTPException(status_code=404, detail=f"no power action {action!r}")
+        dropped = []
+        if action == "cancel":
+            for j in await argus.jobs.list_jobs(None, 20, "power"):
+                if j.state.value in ("queued", "retry") and j.workflow in ("sleep", "shutdown", "restart"):
+                    await argus.jobs.cancel(j.id)
+                    dropped.append(j.id)
+        job_id, created = await argus.jobs.enqueue(
+            "power", action, {"delay": argus.cfg.power.shutdown_delay_seconds}, needs=["desktop"], priority=100,
+            dedupe_key=f"power:{action}", source="helios")
+        return {"id": job_id, "created": created, "dropped": dropped}
 
     @app.post("/jobs/{job_id}/wait", dependencies=guarded)
     async def wait(job_id: str, body: Wait) -> dict:

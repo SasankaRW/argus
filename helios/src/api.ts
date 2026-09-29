@@ -103,7 +103,10 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   if (init?.body) headers["Content-Type"] = "application/json";
   const r = await fetch(path, { ...init, headers: { ...headers, ...(init?.headers as Record<string, string>) } });
   if (r.status === 401) throw new AuthError("token");
-  if (!r.ok && r.status !== 503) throw new Error(`${path}: HTTP ${r.status}`);
+  if (!r.ok && r.status !== 503) {
+    const detail = await r.json().then((b) => (typeof b?.detail === "string" ? b.detail : null)).catch(() => null);
+    throw new Error(detail ?? `${path}: HTTP ${r.status}`);
+  }
   return (await r.json()) as T;
 }
 

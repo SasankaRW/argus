@@ -7,6 +7,7 @@ import { useArgus } from "./live";
 import { MapView, Selection } from "./MapView";
 import { LogsView } from "./LogsView";
 import { PhoneHome } from "./PhoneHome";
+import { PowerView } from "./PowerView";
 import { QueueView } from "./QueueView";
 import { RulesView } from "./RulesView";
 import { RunsView } from "./RunsView";
@@ -20,7 +21,7 @@ const NAV: { id: string; label: string; icon: string; soon?: string }[] = [
   { id: "logs", label: "Logs", icon: "M5 4h14v16H5zM8 8h8M8 12h8M8 16h5" },
   { id: "inbox", label: "Approvals", icon: "M4 13l2.5-8h11l2.5 8v6H4zM4 13h5l1.5 2h3l1.5-2h5", soon: "M3" },
   { id: "models", label: "Models", icon: "M12 3l8 4.5v9L12 21l-8-4.5v-9zM12 12l8-4.5M12 12v9M12 12L4 7.5", soon: "later" },
-  { id: "power", label: "Power", icon: "M12 3v8M7.5 6.5a7 7 0 1 0 9 0", soon: "MD" },
+  { id: "power", label: "Power", icon: "M12 3v8M7.5 6.5a7 7 0 1 0 9 0" },
   { id: "custom", label: "Customize", icon: "M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1M15 4v4M9 10v4M17 16v4", soon: "later" },
 ];
 
@@ -106,7 +107,7 @@ export function App() {
   const [flow, setFlow] = useState(true);
   const [relayout, setRelayout] = useState(0);
   const [triedLogin, setTriedLogin] = useState(false);
-  const parse = (h: string) => (["queue", "runs", "logs", "share"].includes(h) || h.startsWith("rules/") ? h : "map");
+  const parse = (h: string) => (["queue", "runs", "logs", "share", "power"].includes(h) || h.startsWith("rules/") ? h : "map");
   const [view, setView] = useState<string>(() => parse(location.hash.slice(1)));
   useEffect(() => {  // the share menu opens /helios/#share on a page that may already be open
     const on = () => setView(parse(location.hash.slice(1)));
@@ -178,7 +179,9 @@ export function App() {
         : view === "share" ? <ShareView onJob={(id) => { setSel({ type: "job", id }); go("runs"); }} onDone={() => go("map")} />
         : view === "logs" ? <LogsView /> : (
         <div className="mid">
-          {view === "queue" ? (
+          {view === "power" ? (
+            <PowerView events={a.events} onSelect={setSel} />
+          ) : view === "queue" ? (
             <QueueView events={a.events} onSelect={setSel} />
           ) : view === "runs" ? (
             <RunsView events={a.events} selected={sel?.type === "job" ? sel.id : null} onSelect={setSel} />

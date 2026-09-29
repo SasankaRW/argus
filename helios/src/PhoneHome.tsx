@@ -3,6 +3,7 @@ import { api, Approval, ArgusEvent, Job, Status } from "./api";
 import { ago, tone } from "./format";
 import { ApprovalCard } from "./Inspector";
 import type { Selection } from "./MapView";
+import { PowerControls } from "./PowerView";
 import { prio, useQueue, waitText, whyText } from "./QueueView";
 
 // The phone's Helios: what needs you, what runs, what's next, what just finished. The full dashboard is one tap away.
@@ -65,6 +66,11 @@ export function PhoneHome({ status, events, onSelect, onShare, onFull }: {
           </button>
         ))}
         {q && q.queued.length > 6 && <div className="tip">+ {q.queued.length - 6} more</div>}
+      </section>
+
+      <section className="pcard">
+        <h3>PC power</h3>
+        <PowerControls events={events} onSelect={onSelect} compact />
       </section>
 
       <section className="pcard">

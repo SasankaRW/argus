@@ -125,6 +125,14 @@ can be put back with **Undo** on the job's Changes (downloads-organizer also has
 If you used the old standalone Downloads script, remove its scheduled task first:
 `C:\Users\Sas\projects\downloads-organizer\uninstall-schedule.bat`.
 
+## PC power buttons
+
+Helios > **Power** (and the **PC power** card on the phone): **Sleep**, **Restart**, **Shut down** (waits
+`power.shutdown_delay_seconds`, 60 s, with a **Cancel** button) and **Wake**. They run on the PC's worker, ahead of
+any other job (a job already running finishes first). **Wake** sends Wake-on-LAN from the machine running argusd:
+set `power.pc_mac` (from `ipconfig /all`, the wired card) and turn on Wake-on-LAN in the BIOS and the network
+card. It is useful once argusd runs on the laptop; while argusd runs on the PC, shutting the PC down stops Argus too.
+
 ## Problems
 
 | Symptom | Fix |
