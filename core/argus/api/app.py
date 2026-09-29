@@ -33,6 +33,13 @@ Approvals (C8):
     GET  /a/{id}?t=<token>            the phone page behind the notification's Open button
     GET  /outbox                      recent outgoing messages and counts (token)
     POST /outbox/test                 send a test notification (token)
+
+Scheduler and triggers (C9):
+    GET  /schedules                   schedules with their next run (token)
+    POST /schedules/{id}/run          run a schedule now (token)
+    POST /triggers/file               {worker, trigger, path, sha256, size} from a worker's folder watcher (token)
+                                      -> {status: queued|duplicate, job_id}; 429 when the plugin's queue is full
+    POST /hooks/{name}                a signed webhook (no Argus token; the signature is the check)
 Errors: 404 unknown job, 409 lease lost or transition not allowed, 429 plugin queue full.
 """
 
@@ -56,6 +63,7 @@ from ..context import Argus
 from ..events import EventFilter, read_events
 from ..jobs import InvalidTransition, Job, JobNotFound, JobState, LeaseLost, QueueFull, Step
 from ..outbox import PRIORITIES, add_message, ntfy_message
+from ..triggers import BadSignature, TriggerError, UnknownTrigger
 from . import approval_page
 from .home import HOME_HTML
 
@@ -90,6 +98,8 @@ class SubmitJob(BaseModel):
     dedupe_key: str | None = None
     max_attempts: int | None = Field(None, ge=1, le=20)
     delay: float = Field(0, ge=0)
+    model: str | None = Field(None, max_length=100)  # groups GPU jobs by model (fewer swaps)
+    window: str | None = Field(None, max_length=40)  # only start inside this window (e.g. night)
 
 
 class RegisterWorker(BaseModel):
@@ -145,6 +155,14 @@ class TraceEvent(BaseModel):
     dst: str | None = Field(None, max_length=100)
     step: str | None = Field(None, max_length=100)
     data: dict[str, Any] | None = None
+
+
+class FileTrigger(BaseModel):
+    worker: str = Field(min_length=1, max_length=100)
+    trigger: str = Field(min_length=1, max_length=63)
+    path: str = Field(min_length=1, max_length=2000)
+    sha256: str = Field(min_length=64, max_length=64)
+    size: int = Field(ge=0)
 
 
 class AskApproval(BaseModel):
@@ -240,6 +258,18 @@ def create_app(argus: Argus) -> FastAPI:
     async def _approval_error(request: Request, exc: ApprovalError):
         return JSONResponse({"error": "invalid", "detail": str(exc)}, status_code=422)
 
+    @app.exception_handler(UnknownTrigger)
+    async def _no_trigger(request: Request, exc: UnknownTrigger):
+        return JSONResponse({"error": "not_found", "detail": str(exc)}, status_code=404)
+
+    @app.exception_handler(BadSignature)
+    async def _bad_sig(request: Request, exc: BadSignature):
+        return JSONResponse({"error": "bad_signature", "detail": str(exc)}, status_code=401)
+
+    @app.exception_handler(TriggerError)
+    async def _trigger_error(request: Request, exc: TriggerError):
+        return JSONResponse({"error": "invalid", "detail": str(exc)}, status_code=422)
+
     @app.exception_handler(QueueFull)
     async def _full(request: Request, exc: QueueFull):
         return JSONResponse({"error": "queue_full", "detail": str(exc)}, status_code=429)
@@ -282,9 +312,19 @@ def create_app(argus: Argus) -> FastAPI:
             return HTMLResponse("<p>Helios is not built into this copy of Argus. Run <code>.\\scripts\\dev.ps1 "
                                 "helios</code> or use <a href='/lite'>/lite</a>.</p>", status_code=404)
 
+    status_cache: dict[str, Any] = {"at": 0.0, "body": None}
+
     @app.get("/status")
     async def status() -> dict:
-        """What the home page shows. Public: counts and names only, no job contents."""
+        """What the home page shows. Public: counts and names only, no job contents. Cached for 2 s, since
+        every open page asks every few seconds and nobody needs a token to call it."""
+        if status_cache["body"] is not None and time.monotonic() - status_cache["at"] < 2.0:
+            return status_cache["body"]
+        body = await _status()
+        status_cache.update(at=time.monotonic(), body=body)
+        return body
+
+    async def _status() -> dict:
         h = argus.health()
         workers = await argus.registry.workers()
         m = await argus.registry.map()
@@ -314,6 +354,7 @@ def create_app(argus: Argus) -> FastAPI:
         job_id, created = await argus.jobs.enqueue(
             body.plugin, body.workflow, body.input, needs=body.needs, priority=body.priority,
             dedupe_key=body.dedupe_key, max_attempts=body.max_attempts, delay=body.delay,
+            model_group=body.model, window=body.window,
         )
         return {"id": job_id, "created": created}
 
@@ -426,7 +467,8 @@ def create_app(argus: Argus) -> FastAPI:
     async def register(body: RegisterWorker) -> dict:
         await argus.registry.register_worker(body.id, body.host, body.capabilities, body.version)
         return {"ok": True, "lease_seconds": argus.cfg.jobs.lease_seconds,
-                "heartbeat_seconds": argus.cfg.jobs.heartbeat_seconds, "models": argus.models.worker_config()}
+                "heartbeat_seconds": argus.cfg.jobs.heartbeat_seconds, "models": argus.models.worker_config(),
+                "folders": argus.triggers.folders_for(body.id, body.host)}
 
     @app.get("/workers", dependencies=guarded)
     async def workers() -> list[dict]:
@@ -437,7 +479,9 @@ def create_app(argus: Argus) -> FastAPI:
         await argus.registry.touch_worker(worker_id)
         deadline = time.monotonic() + body.wait
         while True:
-            job = await argus.jobs.claim(worker_id, body.capabilities, body.plugins)
+            job = None
+            if await argus.jobs.has_claimable():
+                job = await argus.jobs.claim(worker_id, body.capabilities, body.plugins)
             if job is not None:
                 return job_json(job, await argus.jobs.steps(job.id))
             if time.monotonic() >= deadline:
@@ -544,8 +588,12 @@ def create_app(argus: Argus) -> FastAPI:
             a = await argus.approvals.verify_link(approval_id, t)
         except (ApprovalNotFound, BadToken):
             return HTMLResponse(approval_page.invalid(), status_code=404)
-        return HTMLResponse(approval_page.render(a, t), headers={"Cache-Control": "no-store",
-                                                                 "Referrer-Policy": "no-referrer"})
+        return HTMLResponse(approval_page.render(a, t), headers={
+            "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
+            # only this page's own inline style and script, talking to this Argus
+            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';"
+                                       " connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none';"
+                                       " frame-ancestors 'none'"})
 
     @app.post("/outbox/test", dependencies=guarded)
     async def outbox_test() -> dict:
@@ -567,6 +615,29 @@ def create_app(argus: Argus) -> FastAPI:
     async def outbox(limit: int = 50) -> dict:
         return {**(await argus.outbox.stats()), "messages": await argus.outbox.recent(min(max(limit, 1), 500)),
                 **argus.outbox.health()}
+
+    # -------------------------------------------------------------- scheduler and triggers (C9)
+
+    @app.get("/schedules", dependencies=guarded)
+    async def schedules() -> list[dict]:
+        return await argus.scheduler.list()
+
+    @app.post("/schedules/{sid}/run", dependencies=guarded)
+    async def schedule_run(sid: str) -> dict:
+        job_id = await argus.scheduler.run_now(sid)
+        if job_id is None:
+            raise HTTPException(status_code=404, detail=f"no schedule {sid}")
+        return {"job_id": job_id}
+
+    @app.post("/triggers/file", dependencies=guarded)
+    async def file_trigger(body: FileTrigger) -> dict:
+        await argus.registry.touch_worker(body.worker)
+        return await argus.triggers.file(body.worker, body.trigger, body.path, body.sha256, body.size)
+
+    @app.post("/hooks/{name}")
+    async def webhook(name: str, request: Request) -> dict:
+        body = await request.body()
+        return await argus.triggers.webhook(name, request.headers, body)
 
     @app.post("/jobs/{job_id}/wait", dependencies=guarded)
     async def wait(job_id: str, body: Wait) -> dict:

@@ -10,7 +10,7 @@ export type Phase = "loading" | "login" | "ready" | "down";
 
 const MAX_EVENTS = 400;
 const PULSE_MS = 1400;
-const MAP_KINDS = /^(component\.added|edge\.added|worker\.(online|offline)|model\.breaker_\w+)$/;
+const MAP_KINDS = /^(component\.added|edge\.added|worker\.(online|offline)|model\.breaker_\w+|phone\.(online|offline))$/;
 const BAD = /(dead|failed|offline|timeout|error)/;
 const WARN = /(escalated|skipped|retry|requested|rejected|expired)/;
 const pulseTone = (k: string): Tone => (BAD.test(k) ? "bad" : WARN.test(k) ? "warn" : "flow");
@@ -27,6 +27,7 @@ export function useArgus() {
   const stream = useRef<EventStream | null>(null);
   const timers = useRef<{ map?: number; status?: number }>({});
   const pulseId = useRef(0);
+  const gen = useRef(0); // only the newest connect() may start a stream
 
   const loadStatus = useCallback(async () => {
     try { setStatus(await api<Status>("/status")); } catch { /* shown as offline by the stream */ }
@@ -75,7 +76,7 @@ export function useArgus() {
         if (!m) return m;
         let edges = m.edges;
         for (const e of evs) {
-          if (!e.from || !e.to || e.kind === "edge.added") continue;
+          if (!e.from || !e.to || e.kind === "edge.added" || e.seq <= m.seq) continue; // already in the snapshot
           edges = edges.map((x) => (x.src === e.from && x.dst === e.to ? { ...x, count: x.count + 1, last_kind: e.kind, last_seen: e.at } : x));
         }
         return edges === m.edges ? m : { ...m, edges };
@@ -92,12 +93,18 @@ export function useArgus() {
   }, [soon]);
 
   const connect = useCallback(async () => {
+    const my = ++gen.current;
     stream.current?.stop();
     try {
       const m = await loadMap();
+      if (my !== gen.current) return; // a newer connect (or an unmount) took over while /map loaded
       setAuthError(null);
       setPhase("ready");
-      const s = new EventStream(m.seq, { onEvents, onState: setConn, onReset: () => { loadMap().catch(() => {}); } });
+      const s = new EventStream(m.seq, {
+        onEvents, onState: setConn, onReset: () => { loadMap().catch(() => {}); },
+        // a refused stream is usually a changed token: find out, and show the login instead of "Connecting" forever
+        onRefused: () => { loadMap().catch((e) => { if (e instanceof AuthError) { stream.current?.stop(); setPhase("login"); } }); },
+      });
       stream.current = s;
       s.start();
       // show some history on first load
@@ -113,7 +120,8 @@ export function useArgus() {
         setPhase("login");
       } else {
         setPhase("down");
-        window.setTimeout(() => connect(), 3000);
+        const my = gen.current;
+        window.setTimeout(() => { if (my === gen.current) connect(); }, 3000);
       }
     }
   }, [loadMap, onEvents]);
@@ -122,7 +130,9 @@ export function useArgus() {
     loadStatus();
     connect();
     const iv = window.setInterval(loadStatus, 5000);
-    return () => { window.clearInterval(iv); stream.current?.stop(); };
+    // connect() may still be waiting for /map when this unmounts (React StrictMode does that in dev): bumping the
+    // generation stops it from starting a second stream afterwards
+    return () => { gen.current++; window.clearInterval(iv); stream.current?.stop(); };
   }, [connect, loadStatus]);
 
   return { phase, authError, setAuthError, status, map, events, pulses, active, conn, reconnect: connect };

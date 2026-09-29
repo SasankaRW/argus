@@ -71,3 +71,27 @@ def test_daemon_check_ok(tmp_path, capsys):
     assert code == 0
     assert "OK" in capsys.readouterr().out
     assert (tmp_path / "data" / "argus.db").exists()
+
+
+def test_env_with_bom_and_empty_token(tmp_path):
+    """Notepad saves .env with a BOM; an empty token means "not set" - and then only localhost is allowed."""
+    from argus.config import ConfigError, load_config
+
+    (tmp_path / "argus.yaml").write_text("logging:\n  file: null\n", encoding="utf-8")
+    (tmp_path / ".env").write_bytes(b"\xef\xbb\xbfARGUS_WORKER_TOKEN=tok-9f2k\n")  # UTF-8 BOM first
+    cfg = load_config(tmp_path / "argus.yaml")
+    assert cfg.secrets.worker_token == "tok-9f2k" and "tok-9f2k" not in repr(cfg)
+    (tmp_path / ".env").write_text("ARGUS_WORKER_TOKEN=\n", encoding="utf-8")
+    assert load_config(tmp_path / "argus.yaml").secrets.worker_token is None
+    (tmp_path / "argus.yaml").write_text("logging:\n  file: null\nserver:\n  host: 0.0.0.0\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="ARGUS_WORKER_TOKEN"):
+        load_config(tmp_path / "argus.yaml")
+
+
+def test_logs_hide_tokens_in_urls():
+    from argus.logs import redact
+
+    assert redact('"WebSocket /ws/events?since=31&token=abc123" [accepted]') == \
+        '"WebSocket /ws/events?since=31&token=***" [accepted]'
+    assert redact("POST /approvals/01AB/decide?t=f00d&answer=approve") == \
+        "POST /approvals/01AB/decide?t=***&answer=approve"

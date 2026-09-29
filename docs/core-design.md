@@ -2,7 +2,7 @@
 
 Sep 28, 2026 · @Sasanka
 
-**Version 0.7** · draft, becomes 1.0 when M1 starts · history at the end · all versions in the Argus Docs Index
+**Version 0.8** · draft, becomes 1.0 when M1 starts · history at the end · all versions in the Argus Docs Index
 
 ## Goals
 
@@ -187,12 +187,13 @@ Twelve steps, each about one evening session with Claude writing the code and yo
 
 After C12 the core is frozen as API version 1.0: later milestones add plugins and Helios views, and core changes only through a versioned, tested change.
 
-**Progress:** C1–C8 are built. C1–C7 are released (Argus `0.5.2`, repo `github.com/SasankaRW/argus`, private); C7 passed its gate on the PC (a real T1 → T2 escalation on the Qwen models). C8 is on the branch `feat/c8-approvals` for release as `0.6.0`: `ctx.approve()` parks the job without holding a worker and returns your answer when the step runs again (one approval per key, so a retried step never asks twice); signed one-time tokens in the phone buttons; a small phone page behind the Open button; reminders after 24 hours and expiry as "no" after 7 days; a transactional outbox with retries and backoff; ntfy for approvals, dead jobs and `ctx.notify()`; Approvals and ntfy boxes on the Helios map, with Approve / Reject in the inspector. Gate tests: phone Approve → job finished in under 1 s, and a crashed worker or argusd sends no duplicate notification; 173 tests pass. Next: C9, the scheduler and dispatcher.
+**Progress:** C1–C9 are built. C1–C8 are released as Argus `0.6.0` (repo `github.com/SasankaRW/argus`, private); since then the phone buttons go over Tailscale, with a push of waiting approvals when the phone reconnects. A code review on 2026-09-29 fixed about 30 issues (auth with a BOM-saved `.env`, tokens in logs, a Claude timeout hanging a worker on Windows, approvals using up retries, queue starvation, durable commits). C9 (not yet on the PC): cron schedules in argus.yaml (local time, catch up once after downtime, merged while a run is still queued, Run now in Helios); a night window; folder triggers watched by the worker on the folder's machine (a file counts once it stops changing; files are remembered by content, so copies and re-downloads are merged); signed webhooks (timestamped HMAC, or GitHub's signature); priorities (interactive 90, resumed 80, scheduled 50, batch 20); one job per plugin at a time by default; one GPU job at a time, grouped by model. Gate tests: 100 mixed jobs over two models run with at most 2 model swaps, and a flood of 500 files is merged and held to the plugin's queue limit; 201 tests pass. Next: C10, the plugin host and the simulated power manager.
 
 ## Document history
 
 | Version | Date | Change |
 | --- | --- | --- |
+| 0.8 | 2026-09-29 | C8 released as 0.6.0; code review fixes; C9 (scheduler, triggers, dispatcher) built |
 | 0.7 | 2026-09-28 | C7 released (0.5.x); C8 (approvals, outbox, ntfy) built |
 | 0.6 | 2026-09-28 | C7 (models, tiers, escalation, breakers, claude -p) built; real-model check pending |
 | 0.5 | 2026-09-28 | C6 (Helios v0 live map) built and tested in Argus 0.4.0 |

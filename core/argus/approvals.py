@@ -93,6 +93,28 @@ def summarize(type_: str, fields: dict, items: list[dict]) -> dict[str, Any]:
     return out
 
 
+def _edited(key: str, old: Any, new: Any) -> Any:
+    """An edited field keeps its type; an edited amount must be a valid amount (and is formatted in code)."""
+    if key == "amount":
+        m = money(new)
+        if m is None:
+            raise ApprovalError(f"amount: {new!r} is not a valid amount")
+        return fmt_money(m) if isinstance(old, str) else float(m)
+    if isinstance(old, bool):
+        return str(new).strip().lower() in ("1", "true", "yes", "y") if isinstance(new, str) else bool(new)
+    if isinstance(old, int) and not isinstance(new, bool):
+        try:
+            return int(str(new).replace(",", "").strip())
+        except ValueError:
+            raise ApprovalError(f"{key}: {new!r} is not a whole number") from None
+    if isinstance(old, float):
+        try:
+            return float(str(new).replace(",", "").strip())
+        except ValueError:
+            raise ApprovalError(f"{key}: {new!r} is not a number") from None
+    return new if isinstance(new, (str, int, float, bool)) or new is None else str(new)
+
+
 def _decode(r: sqlite3.Row) -> dict[str, Any]:
     d = dict(r)
     d["payload"] = json.loads(d["payload"])
@@ -189,11 +211,14 @@ class Approvals:
             # The buttons post to the reply topic on the ntfy server, which the phone can always reach; Argus reads
             # it from there. So they work with or without Tailscale.
             url = f"{self.cfg.ntfy.url.rstrip('/')}/{reply}"
+            # A server behind a login needs a (write-only) token on the taps: NTFY_REPLY_WRITE_TOKEN.
+            wt = self.cfg.secrets.ntfy_reply_write_token
+            extra = {"headers": {"Authorization": f"Bearer {wt}"}} if wt else {}
             actions += [
                 {"action": "http", "label": ok_label, "url": url, "method": "POST",
-                 "body": self.reply_body(a["id"], "approve"), "clear": True},
+                 "body": self.reply_body(a["id"], "approve"), "clear": True, **extra},
                 {"action": "http", "label": "Reject", "url": url, "method": "POST",
-                 "body": self.reply_body(a["id"], "reject"), "clear": True},
+                 "body": self.reply_body(a["id"], "reject"), "clear": True, **extra},
             ]
         elif links:
             actions += [
@@ -202,6 +227,8 @@ class Approvals:
             ]
         if links:
             actions.append({"action": "view", "label": "Open", "url": links["page"]})
+            if not reply:
+                lines.append("Approve / Reject need Tailscale.")
         if not actions:
             lines.append("Decide in Helios.")
         title = f"{'Reminder: ' if reminder else ''}{a['plugin']}: {a['title']}"
@@ -217,6 +244,8 @@ class Approvals:
         if type_ not in TYPES:
             raise ApprovalError(f"type must be one of {', '.join(TYPES)}")
         fields, items, summary = fields or {}, items or [], summary or []
+        if link is not None and not link.startswith(("http://", "https://")):
+            raise ApprovalError("link must be an http(s) address")
         payload = {"fields": fields, "items": items, "summary": summary, "link": link,
                    **summarize(type_, fields, items)}
         raw = _dumps(payload)
@@ -270,8 +299,9 @@ class Approvals:
             if row["state"] != "pending":
                 raise ApprovalClosed(row["state"])
             if row["expires_at"] <= now:
+                # too late: it counts as "no" (kept, not rolled back) and the job carries on
                 self._expire(conn, now, row)
-                raise ApprovalClosed("expired")
+                return _decode(conn.execute("SELECT * FROM approvals WHERE id = ?", (approval_id,)).fetchone())
             a = _decode(row)
             final = None
             if answer == "approve":
@@ -280,7 +310,7 @@ class Approvals:
                     unknown = set(fields) - set(final)
                     if unknown:
                         raise ApprovalError(f"unknown fields: {', '.join(sorted(unknown))}")
-                    final.update(fields)
+                    final.update({k: _edited(k, final[k], v) for k, v in fields.items()})
             state = "approved" if answer == "approve" else "rejected"
             conn.execute(
                 "UPDATE approvals SET state = ?, answer = ?, decided_by = ?, decided_at = ?, token_hash = NULL,"

@@ -141,12 +141,19 @@ def main(argv: list[str] | None = None) -> int:
         if args.no_push or not has_remote():
             print("Not pushed (no GitHub remote yet, or --no-push).")
             return 0
-        run("git", "push", "origin", "main", env={"ARGUS_RELEASE": "1"})
-        run("git", "push", "origin", tag)
+        try:
+            run("git", "push", "origin", "main", env={"ARGUS_RELEASE": "1"})
+            run("git", "push", "origin", tag)
+        except ReleaseError as e:
+            raise ReleaseError(
+                f"{e}\n  The release commit and tag exist here but are not on GitHub. When the network is back:\n"
+                f"    $env:ARGUS_RELEASE=1; git push origin main; git push origin {tag}\n"
+                f"  or undo it:  git tag -d {tag}; git reset --hard HEAD~1") from None
         print("Pushed main and the tag.")
         if shutil.which("gh"):
             r = subprocess.run(["gh", "release", "create", tag, "--title", f"Argus {new}", "--notes-file", "-"],
-                               cwd=ROOT, input=notes, text=True, capture_output=True)
+                               cwd=ROOT, input=notes, text=True, capture_output=True, encoding="utf-8",
+                               errors="replace")
             print("GitHub release created." if r.returncode == 0 else f"GitHub release skipped: {r.stderr.strip()}")
         print(f"\nDone: Argus {new}.")
         return 0

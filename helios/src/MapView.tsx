@@ -6,13 +6,14 @@ import {
 } from "@xyflow/react";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ArgusMap, MapNode } from "./api";
-import { layout, loadPins, NODE_H, NODE_W, Pos, savePins } from "./layout";
+import { ColumnLabel, layout, loadPins, NODE_H, NODE_W, Pos, Route, splinePath, savePins } from "./layout";
 import type { Pulse } from "./live";
+import { ago } from "./format";
 
 export type Selection = { type: "node"; id: string } | { type: "edge"; src: string; dst: string } | { type: "job"; id: string } | null;
 
 type BoxData = { n: MapNode; hot: boolean; fresh: boolean; selected: boolean };
-type LineData = { count: number; pulses: (Pulse & { back: boolean })[]; flow: boolean; selected: boolean; hot: boolean; tone: string };
+type LineData = { route?: Route; count: number; pulses: (Pulse & { back: boolean })[]; flow: boolean; selected: boolean; hot: boolean; tone: string };
 
 const KIND_LABEL: Record<string, string> = { core: "core", worker: "worker", plugin: "plugin", model: "model", app: "app", service: "service" };
 
@@ -25,8 +26,15 @@ function sub(n: MapNode): string {
     return [j.active ? `${j.active} running` : "", j.queued ? `${j.queued} queued` : "",
       j.waiting ? `${j.waiting} waiting` : ""].filter(Boolean).join(" · ");
   }
+  if (n.id === "phone") {
+    const m = n.meta as { online?: boolean | null; since?: number | null; device?: string };
+    if (m.online === true) return `online · ${m.device ?? "tailscale"}`;
+    if (m.online === false) return `offline${m.since ? ` · ${ago(m.since)}` : ""}`;
+    return "checking…";
+  }
   if (n.id === "approvals") return n.pending ? `${n.pending} waiting for you` : "nothing to decide";
-  if (n.id === "ntfy") return n.failed ? `${n.failed} not delivered` : n.unsent ? `${n.unsent} sending` : "phone · all sent";
+  if (n.id === "scheduler") return "cron · triggers";
+  if (n.id === "ntfy") return n.failed ? `${n.failed} not delivered` : n.unsent ? `${n.unsent} sending` : "all sent";
   if (n.kind === "model") {
     const st = n.state === "open" ? "paused" : n.state === "half_open" ? "trying again" : "ready";
     const calls = (n as MapNode & { calls?: number }).calls ?? 0;
@@ -58,6 +66,7 @@ function dotColor(n: MapNode, hot: boolean): string {
   if (n.kind === "core") return "var(--amber)";
   if (n.kind === "model") return n.state === "half_open" ? "var(--amber)" : "var(--violet)";
   if (n.kind === "plugin") return (n.jobs?.active ?? 0) > 0 ? "var(--flow)" : (n.jobs?.waiting ?? 0) > 0 ? "var(--amber)" : "var(--ok)";
+  if (n.id === "phone") return n.meta?.online === true ? "var(--ok)" : n.meta?.online === false ? "var(--bad)" : "var(--tx3)";
   if (n.id === "approvals") return n.pending ? "var(--amber)" : "var(--ok)";
   if (n.id === "ntfy") return n.failed ? "var(--bad)" : "var(--ok)";
   return "var(--tx3)";
@@ -94,8 +103,13 @@ function Dot({ path, tone, back }: { path: string; tone: string; back: boolean }
 }
 
 const Line = memo(function Line(p: EdgeProps<Edge<LineData>>) {
-  const [path] = getBezierPath({ sourceX: p.sourceX, sourceY: p.sourceY, targetX: p.targetX, targetY: p.targetY, sourcePosition: p.sourcePosition, targetPosition: p.targetPosition });
   const d = p.data!;
+  // ELK's route when the boxes are where the layout put them; a plain curve once you drag one away
+  const r = d.route;
+  const fits = r && r.length >= 2 && Math.abs(r[0].x - p.sourceX) < 3 && Math.abs(r[0].y - p.sourceY) < 3
+    && Math.abs(r[r.length - 1].x - p.targetX) < 3 && Math.abs(r[r.length - 1].y - p.targetY) < 3;
+  const path = fits ? splinePath(r!)
+    : getBezierPath({ sourceX: p.sourceX, sourceY: p.sourceY, targetX: p.targetX, targetY: p.targetY, sourcePosition: p.sourcePosition, targetPosition: p.targetPosition })[0];
   const width = Math.min(1.2 + Math.log2(1 + d.count) * 0.35, 3.6);
   const cls = `line${d.hot ? (d.tone === "bad" ? " bad" : d.tone === "warn" ? " warn" : " on") : ""}${d.selected ? " sel" : ""}`;
   return (
@@ -106,7 +120,12 @@ const Line = memo(function Line(p: EdgeProps<Edge<LineData>>) {
   );
 });
 
-const nodeTypes = { box: Box };
+// A plain heading above a column; never takes clicks.
+const Heading = memo(function Heading({ data }: NodeProps<Node<{ label: ColumnLabel }>>) {
+  return <span className="col-h">{data.label.text}</span>;
+});
+
+const nodeTypes = { box: Box, heading: Heading };
 const edgeTypes = { line: Line };
 
 type Props = {
@@ -121,11 +140,14 @@ type Props = {
 
 function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal }: Props) {
   const [positions, setPositions] = useState<Record<string, Pos>>({});
+  const [labels, setLabels] = useState<ColumnLabel[]>([]);
+  const [routes, setRoutes] = useState<Record<string, Route>>({});
   const [pins, setPins] = useState<Record<string, Pos>>(() => loadPins());
-  const [nodes, setNodes, onNodesChange] = useNodesState<Node<BoxData>>([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges] = useEdgesState<Edge<LineData>>([]);
   const [now, setNow] = useState(Date.now());
   const rf = useReactFlow();
+  const coarse = useMemo(() => typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches, []);
   const userMoved = useRef(false); // once you pan or zoom, the map stops re-fitting itself
   const wrap = useRef<HTMLDivElement>(null);
   const fit = (duration = 300) => rf.fitView({ padding: 0.12, maxZoom: 1.1, duration });
@@ -138,7 +160,7 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal 
   );
   useEffect(() => {
     let cancelled = false;
-    layout(map.nodes, lines).then((p) => { if (!cancelled) setPositions(p); });
+    layout(map.nodes, lines).then((r) => { if (!cancelled) { setPositions(r.pos); setLabels(r.labels); setRoutes(r.routes); } });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shapeKey]);
@@ -165,11 +187,15 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // "hot" fades 1.6 s after the last message
+  // "hot" fades 1.6 s after the last message: re-render once when the newest glow is due to fade, instead of
+  // ticking all day (an idle map then costs nothing, which matters on the phone)
   useEffect(() => {
-    const iv = window.setInterval(() => setNow(Date.now()), 400);
-    return () => window.clearInterval(iv);
-  }, []);
+    const last = Math.max(0, ...Object.values(active));
+    const left = last + 1600 - Date.now();
+    if (left <= 0) return;
+    const t = window.setTimeout(() => setNow(Date.now()), left + 30);
+    return () => window.clearTimeout(t);
+  }, [active, now]);
 
   const oldest = useMemo(() => Math.min(...map.nodes.map((n) => n.first_seen)), [map.nodes]);
 
@@ -177,7 +203,11 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal 
     if (!Object.keys(positions).length) return;
     setNodes((prev) => {
       const dragging = new Set(prev.filter((x) => x.dragging).map((x) => x.id));
-      return map.nodes.map((n) => {
+      const bg: Node[] = labels.map((l) => ({
+        id: `h:${l.id}`, type: "heading", position: { x: l.x, y: l.y }, data: { label: l },
+        draggable: false, selectable: false, focusable: false, className: "heading-node",
+      }));
+      return [...bg, ...map.nodes.map((n): Node => {
         const pos = pins[n.id] ?? positions[n.id] ?? { x: 0, y: 0 };
         const hot = now - (active[n.id] ?? 0) < 1600;
         const fresh = n.first_seen - oldest > 3600 && Date.now() / 1000 - n.first_seen < 7 * 86400;
@@ -192,9 +222,9 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal 
           draggable: true,
           selectable: false,
         };
-      });
+      })];
     });
-  }, [map.nodes, positions, pins, active, now, selection, oldest, setNodes]);
+  }, [map.nodes, positions, labels, pins, active, now, selection, oldest, setNodes]);
 
   // Boxes in the same column (the model tiers) connect top to bottom instead of side to side.
   const stacked = (a: string, b: string) => {
@@ -219,6 +249,7 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal 
           type: "line",
           selectable: false,
           data: {
+            route: routes[`${e.src}>${e.dst}`],
             count: e.count,
             pulses: live,
             flow,
@@ -230,7 +261,7 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal 
       }),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lines, pulses, flow, selection, now, setEdges, positions, pins]);
+  }, [lines, pulses, flow, selection, now, setEdges, positions, pins, routes]);
 
   return (
     <div ref={wrap} style={{ width: "100%", height: "100%" }}>
@@ -245,10 +276,14 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal 
         setPins(next);
         savePins(next);
       }}
-      onNodeClick={(_, node) => onSelect({ type: "node", id: node.id })}
+      onNodeClick={(_, node) => { if (node.type === "box") onSelect({ type: "node", id: node.id }); }}
       onEdgeClick={(_, edge) => onSelect({ type: "edge", src: edge.source, dst: edge.target })}
       onPaneClick={() => onSelect(null)}
       onMoveStart={(e) => { if (e) userMoved.current = true; }}
+      // on a touch screen one finger scrolls the page and a tap only selects; pinch still zooms the map
+      panOnDrag={!coarse}
+      nodesDraggable={!coarse}
+      preventScrolling={!coarse}
       minZoom={0.3}
       maxZoom={2}
       proOptions={{ hideAttribution: true }}

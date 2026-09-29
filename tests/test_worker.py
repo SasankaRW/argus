@@ -228,13 +228,16 @@ def test_unknown_workflow_goes_dead(tmp_path):
 
 def test_wait_then_resume_skips_finished_steps(tmp_path):
     reg = WorkflowRegistry()
-    runs = {"prepare": 0}
+    runs = {"prepare": 0, "pay": 0}
 
     @workflow("approvals", "pay", registry=reg)
     def pay(ctx):
+        runs["pay"] += 1
         ctx.step("prepare", lambda: runs.__setitem__("prepare", runs["prepare"] + 1) or "ready")
-        if not ctx.input.get("approved") and ctx.attempt == 1:
+        if not ctx.input.get("approved") and runs["pay"] == 1:
+            assert ctx.attempt == 1
             ctx.wait("needs approval")
+        assert ctx.attempt == 1  # waiting did not use up an attempt
         return ctx.step("pay", lambda: "paid")
 
     argus = make(tmp_path).open()

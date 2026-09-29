@@ -278,3 +278,31 @@ def test_cannot_succeed_a_queued_job(jobs):
             await jobs.succeed(job_id, W)
 
     run(go())
+
+
+def test_claim_is_not_starved_by_jobs_this_worker_cannot_run(jobs):
+    async def go():
+        for _ in range(250):
+            await jobs.enqueue(f"gpu{_ % 3}", "big", {}, needs=["gpu"], priority=90)
+        low, _ = await jobs.enqueue("cpu", "small", {}, priority=10)
+        got = await jobs.claim("laptop", ["cpu"])
+        other = await jobs.claim("laptop", ["gpu"], plugins=["cpu"])
+        return low, got, other
+
+    low, got, other = run(go())
+    assert got is not None and got.id == low
+    assert other is None  # plugin filter applies in SQL
+
+
+def test_rerun_with_an_active_duplicate_is_refused(jobs):
+    from argus.jobs import InvalidTransition
+
+    async def go():
+        a, _ = await jobs.enqueue("p", "w", {}, dedupe_key="file-1", max_attempts=1)
+        await jobs.claim("w1", [])
+        await jobs.fail(a, "w1", "boom")
+        await jobs.enqueue("p", "w", {}, dedupe_key="file-1")
+        await jobs.rerun(a)
+
+    with pytest.raises(InvalidTransition, match="dedupe"):
+        run(go())

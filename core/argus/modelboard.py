@@ -92,12 +92,21 @@ class ModelBoard:
         def fn(conn: sqlite3.Connection) -> Permit:
             now = self.clock()
             row = self._row(conn, tier, now)
+            # Half open lets exactly one trial call through; the others wait until it reports (or its time
+            # runs out, in case that worker died mid-call).
+            trial = (self.cfg.claude.timeout_seconds if provider == "claude" else self.cfg.ollama.timeout_seconds) + 30
             if row["state"] == "open":
                 if row["opened_until"] and row["opened_until"] > now:
                     return Permit(False, "breaker open", round(row["opened_until"] - now, 1))
-                conn.execute("UPDATE model_state SET state = 'half_open', updated_at = ? WHERE tier = ?", (now, tier))
+                conn.execute("UPDATE model_state SET state = 'half_open', opened_until = ?, updated_at = ?"
+                             " WHERE tier = ?", (now + trial, now, tier))
                 insert_event(conn, now, "model.breaker_half_open", job_id=job_id, src=component_id(tier),
                              data={"tier": tier})
+            elif row["state"] == "half_open":
+                if row["opened_until"] and row["opened_until"] > now:
+                    return Permit(False, "trial call in progress", round(row["opened_until"] - now, 1))
+                conn.execute("UPDATE model_state SET opened_until = ?, updated_at = ? WHERE tier = ?",
+                             (now + trial, now, tier))
             if provider == "claude":
                 cap = self.cfg.claude.calls_per_day
                 day = self.day()

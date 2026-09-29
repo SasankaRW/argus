@@ -112,10 +112,32 @@ function Wait-Up([string]$Url, [int]$Seconds, [string]$What) {
 }
 
 function Start-Window([string]$Title, [string]$Module) {
-    # Own console window, so its log stays visible; the pid is kept so "down" can stop it.
+    # Own console window, so its log stays visible; the process is recorded so "down" can stop it.
     $Cmd = "`$Host.UI.RawUI.WindowTitle = '$Title'; & '$Py' -m $Module"
-    $P = Start-Process powershell -PassThru -WorkingDirectory $Root -ArgumentList @("-NoExit", "-NoProfile", "-Command", $Cmd)
-    $P.Id
+    Start-Process powershell -PassThru -WorkingDirectory $Root -ArgumentList @("-NoExit", "-NoProfile", "-Command", $Cmd)
+}
+
+# What "up" started: pid plus start time, because Windows reuses pids quickly. A record only counts when both
+# still match, so "down" never kills an unrelated program and "up" never trusts a stale entry.
+function Proc-Record($P) { @{ pid = $P.Id; started = $P.StartTime.ToUniversalTime().ToString("o") } }
+
+function Load-Up {
+    $R = @{}
+    if (Test-Path $UpFile) {
+        try { (Get-Content $UpFile -Raw | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $R[$_.Name] = $_.Value } } catch { }
+    }
+    $R
+}
+
+function Save-Up($R) {
+    if ($R.Count) { $R | ConvertTo-Json | Set-Content $UpFile } elseif (Test-Path $UpFile) { Remove-Item $UpFile }
+}
+
+function Live-Proc($Rec) {
+    if (-not $Rec -or -not ($Rec.PSObject.Properties.Name -contains "pid")) { return $null }
+    $P = Get-Process -Id $Rec.pid -ErrorAction SilentlyContinue
+    if ($P -and $P.StartTime.ToUniversalTime().ToString("o") -eq $Rec.started) { return $P }
+    return $null
 }
 
 function Token {
@@ -130,13 +152,12 @@ function Current-Branch { (git rev-parse --abbrev-ref HEAD).Trim() }
 switch ($Command) {
     "up" {
         Need-Venv
-        $Pids = @{}
-        $Rec = @{}
-        if (Test-Path $UpFile) { (Get-Content $UpFile | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $Rec[$_.Name] = $_.Value } }
+        $Rec = Load-Up
         if (Is-Up "$OllamaUrl/api/version") { Write-Host "[ok] Ollama already running" }
         elseif (Get-Command ollama -ErrorAction SilentlyContinue) {
             Write-Host "Starting Ollama ..."
-            $Pids.ollama = (Start-Process ollama -ArgumentList "serve" -WindowStyle Minimized -PassThru).Id
+            $Rec.ollama = Proc-Record (Start-Process ollama -ArgumentList "serve" -WindowStyle Minimized -PassThru)
+            Save-Up $Rec
             Wait-Up "$OllamaUrl/api/version" 30 "Ollama"
             Write-Host "[ok] Ollama"
         }
@@ -145,25 +166,24 @@ switch ($Command) {
         if (Is-Up "$ArgusUrl/health") { Write-Host "[ok] argusd already running" }
         else {
             Write-Host "Starting argusd ..."
-            $Pids.argusd = Start-Window "Argus - argusd" "argus"
+            $Rec.argusd = Proc-Record (Start-Window "Argus - argusd" "argus")
+            Save-Up $Rec  # recorded at once, so "down" can stop it even if the wait below fails
             Wait-Up "$ArgusUrl/health" 30 "argusd"
             Write-Host "[ok] argusd on $ArgusUrl"
         }
 
         # Judge the worker by its window, not by /status: after a restart argusd still lists the last
         # worker as online until its heartbeat times out, which is not a running worker.
-        if ($Rec.worker -and (Get-Process -Id $Rec.worker -ErrorAction SilentlyContinue)) { Write-Host "[ok] worker already running" }
+        if (Live-Proc $Rec.worker) { Write-Host "[ok] worker already running" }
         else {
             Write-Host "Starting a worker ..."
-            $Pids.worker = Start-Window "Argus - worker" "argus.worker.cli"
+            $W = Start-Window "Argus - worker" "argus.worker.cli"
+            $Rec.worker = Proc-Record $W
+            Save-Up $Rec
             Start-Sleep -Seconds 3
-            if (Get-Process -Id $Pids.worker -ErrorAction SilentlyContinue) { Write-Host "[ok] worker started (window 'Argus - worker')" }
+            if (Get-Process -Id $W.Id -ErrorAction SilentlyContinue) { Write-Host "[ok] worker started (window 'Argus - worker')" }
             else { throw "The worker window closed straight away. Run .\scripts\dev.ps1 worker to see the error." }
         }
-
-        # Remember what we started (merged with an earlier "up") so "down" stops only those.
-        foreach ($K in $Pids.Keys) { $Rec[$K] = $Pids[$K] }
-        $Rec | ConvertTo-Json | Set-Content $UpFile
 
         $T = Token
         Start-Process ($(if ($T) { "$ArgusUrl/?token=$T" } else { $ArgusUrl }))
@@ -172,16 +192,17 @@ switch ($Command) {
     "down" {
         $Names = @("worker", "argusd")
         if ($Arg -eq "all") { $Names += "ollama" }
-        $Left = @{}
-        if (Test-Path $UpFile) { (Get-Content $UpFile | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $Left[$_.Name] = $_.Value } }
+        $Left = Load-Up
         if ($Left.Count -eq 0) { Write-Host "Nothing started by 'up' is recorded. Close the windows yourself." }
         foreach ($N in $Names) {
             if (-not $Left.ContainsKey($N)) { continue }
+            $P = Live-Proc $Left[$N]
             # /T also stops the python process running inside the window
-            if ((Quiet { taskkill /PID $Left[$N] /T /F }) -eq 0) { Write-Host "[ok] stopped $N" } else { Write-Host "[--] $N was not running" }
+            if ($P -and (Quiet { taskkill /PID $P.Id /T /F }) -eq 0) { Write-Host "[ok] stopped $N" }
+            else { Write-Host "[--] $N was not running" }
             $Left.Remove($N)
         }
-        if ($Left.Count) { $Left | ConvertTo-Json | Set-Content $UpFile } elseif (Test-Path $UpFile) { Remove-Item $UpFile }
+        Save-Up $Left
         if ($Arg -ne "all" -and (Is-Up "$OllamaUrl/api/version")) { Write-Host "Ollama keeps running (use 'down all' to stop it too)." }
     }
     "setup" {
@@ -316,14 +337,28 @@ switch ($Command) {
         Need-Gh
         $B = Current-Branch
         if ($B -eq "main") { throw "Run this on the pull request's branch." }
+        if (git status --porcelain) { throw "You have uncommitted changes. Commit them, run .\scripts\dev.ps1 pr, then merge." }
+        # Merge exactly what CI tested: local commits made after "pr" would otherwise be lost with the branch.
+        Quiet { git fetch origin $B } | Out-Null
+        if ((git rev-parse HEAD).Trim() -ne (git rev-parse "origin/$B").Trim()) {
+            throw "This branch has commits GitHub has not seen. Run .\scripts\dev.ps1 pr first, then merge."
+        }
         Write-Host "Waiting for CI on $B ..."
+        # Right after "pr" GitHub may not have registered the checks yet; wait for them to appear.
+        for ($i = 0; $i -lt 12; $i++) {
+            $Old = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+            $J = gh pr checks $B --json name 2>$null
+            $ErrorActionPreference = $Old
+            if ($J -and @($J | ConvertFrom-Json).Count -gt 0) { break }
+            Start-Sleep -Seconds 5
+        }
         gh pr checks $B --watch --fail-fast --interval 10
         if ($LASTEXITCODE -ne 0) { throw "CI is not green. Fix it, commit, run .\scripts\dev.ps1 pr, then merge again." }
         gh pr merge $B --squash --delete-branch
         if ($LASTEXITCODE -ne 0) { throw "Merge failed" }
         GitOk switch main
         GitOk pull --ff-only --quiet
-        Write-Host "Merged into main. Release when ready: .\scripts\dev.ps1 release minor"
+        Write-Host "Merged into main. (Releases happen at milestones: .\scripts\dev.ps1 release minor)"
     }
     "sync" {
         Ensure-Hooks
