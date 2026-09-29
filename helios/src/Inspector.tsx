@@ -189,6 +189,45 @@ function Schedules({ onSelect }: { onSelect: (s: Selection) => void }) {
   );
 }
 
+type PluginInfo = { id: string; version: string; live: boolean; runs_on: string; description: string;
+  triggers: { manual?: { workflow: string; label: string }; schedule?: { cron: string }; folder_watch?: { paths: string[] } }[] };
+
+// A plugin's box: dry-run or live, what starts it, and its manual buttons.
+function PluginControls({ id, onSelect }: { id: string; onSelect: (s: Selection) => void }) {
+  const [p, setP] = useState<PluginInfo | null | undefined>(undefined);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    api<{ plugins: PluginInfo[] }>("/plugins").then((r) => setP(r.plugins.find((x) => x.id === id) ?? null)).catch(() => setP(null));
+  }, [id]);
+  if (p === undefined) return null;
+  if (p === null) return <div className="tip">Not loaded from the plugins folder (built in, or its manifest has an error).</div>;
+  const starts = p.triggers.map((t) => t.schedule ? `cron ${t.schedule.cron}` : t.folder_watch ? `new files in ${t.folder_watch.paths.join(", ")}`
+    : t.manual ? `button: ${t.manual.label}` : "webhook");
+  return (
+    <>
+      <KV k="Mode" v={p.live ? <span className="ok">live</span> : <span className="warn">dry-run (changes nothing)</span>} />
+      <KV k="Version" v={p.version} />
+      <KV k="Runs on" v={p.runs_on} />
+      <KV k="Started by" v={starts.join(" · ")} />
+      {p.description && <div className="tip">{p.description}</div>}
+      {!p.live && <div className="tip">To let it change things, add <code>{p.id}</code> under <code>plugins.live</code> in argus.yaml.</div>}
+      <div className="appr-actions">
+        {p.triggers.filter((t) => t.manual).map((t) => (
+          <button key={t.manual!.workflow} type="button" className="btn" disabled={busy !== null} onClick={async () => {
+            setBusy(t.manual!.workflow); setErr(null);
+            try {
+              const r = await api<{ id: string }>(`/plugins/${p.id}/run`, { method: "POST", body: JSON.stringify({ workflow: t.manual!.workflow }) });
+              onSelect({ type: "job", id: r.id });
+            } catch (e) { setErr(String(e)); } finally { setBusy(null); }
+          }}>{t.manual!.label}</button>
+        ))}
+      </div>
+      {err && <div className="tip bad">{err}</div>}
+    </>
+  );
+}
+
 function NodePanel({ id, map, status, events, onSelect }: { id: string } & Omit<Props, "sel">) {
   const n = map.nodes.find((x) => x.id === id);
   const evs = useHistory(`n:${id}`, `component=${encodeURIComponent(id)}`, events, (e) => e.from === id || e.to === id);
@@ -225,6 +264,7 @@ function NodePanel({ id, map, status, events, onSelect }: { id: string } & Omit<
             <KV k="Running" v={n.jobs?.active ?? 0} />
             <KV k="Queued" v={n.jobs?.queued ?? 0} />
             <KV k="Waiting" v={n.jobs?.waiting ?? 0} />
+            <PluginControls id={n.id} onSelect={onSelect} />
           </>
         )}
         {n.id === "phone" && (

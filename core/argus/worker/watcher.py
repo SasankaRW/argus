@@ -45,7 +45,7 @@ class FolderWatcher(threading.Thread):
         self.client = client
         self.worker_id = worker_id
         self.t = trigger
-        self.root = Path(trigger["path"])
+        self.root = Path(os.path.expandvars(os.path.expanduser(trigger["path"])))  # "~/Downloads" works
         self.poll = poll
         self.clock = clock
         self._stop = threading.Event()
