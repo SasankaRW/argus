@@ -55,6 +55,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+import yaml
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -164,6 +165,10 @@ class NewShare(BaseModel):
 class SendShare(BaseModel):
     plugin: str
     workflow: str
+
+
+class RulesText(BaseModel):
+    text: str = Field(max_length=200_000)
 
 
 class Fix(BaseModel):
@@ -457,6 +462,57 @@ def create_app(argus: Argus) -> FastAPI:
             needs=p.manifest.job_needs(), priority=PRIORITY_INTERACTIVE, dedupe_key=f"fix:{event_id}",
             source="helios")
         return {"id": job_id2, "created": created}
+
+    # -------------------------------------------------------------- plugin rules (read and edit in Helios)
+
+    def rules_of(pid: str):
+        p = argus.plugin_host.plugins.get(pid)
+        if p is None or p.manifest.helios.rules is None:
+            raise HTTPException(status_code=404, detail=f"{pid} has no editable rules")
+        return p, p.path / p.manifest.helios.rules.file
+
+    async def state_get(pid: str, key: str):
+        def fn(conn):
+            row = conn.execute("SELECT value FROM plugin_state WHERE plugin = ? AND key = ?", (pid, key)).fetchone()
+            return json.loads(row[0]) if row and row[0] is not None else None
+        return await argus.store.read(fn)
+
+    async def state_set(pid: str, key: str, value) -> None:
+        def fn(conn):
+            now = time.time()
+            conn.execute("INSERT INTO plugin_state (plugin, key, value, created_at, updated_at) VALUES (?,?,?,?,?)"
+                         " ON CONFLICT(plugin, key) DO UPDATE SET value = excluded.value,"
+                         " updated_at = excluded.updated_at", (pid, key, json.dumps(value), now, now))
+        await argus.store.write(fn)
+
+    @app.get("/plugins/{pid}/rules", dependencies=guarded)
+    async def get_rules(pid: str) -> dict:
+        p, f = rules_of(pid)
+        default = f.read_text(encoding="utf-8") if f.exists() else ""
+        mine = await state_get(pid, "rules")
+        return {"label": p.manifest.helios.rules.label, "file": f.name, "text": mine or default,  # type: ignore
+                "default": default, "custom": bool(mine), "learned": await state_get(pid, "learned")}
+
+    @app.put("/plugins/{pid}/rules", dependencies=guarded)
+    async def put_rules(pid: str, body: RulesText) -> dict:
+        """Save your version. Checked here for YAML; the plugin checks the meaning at its next job."""
+        rules_of(pid)
+        try:
+            parsed = yaml.safe_load(body.text)
+        except yaml.YAMLError as e:
+            mark = getattr(e, "problem_mark", None)
+            where = f" (line {mark.line + 1})" if mark else ""
+            raise HTTPException(status_code=422, detail=f"not valid YAML{where}: {getattr(e, 'problem', e)}") from None
+        if not isinstance(parsed, dict):
+            raise HTTPException(status_code=422, detail="the rules must be sections like  name: ...")
+        await state_set(pid, "rules", body.text)
+        return {"ok": True}
+
+    @app.delete("/plugins/{pid}/rules", dependencies=guarded)
+    async def reset_rules(pid: str) -> dict:
+        rules_of(pid)
+        await state_set(pid, "rules", None)
+        return {"ok": True}
 
     # -------------------------------------------------------------- share (the phone's share menu)
 

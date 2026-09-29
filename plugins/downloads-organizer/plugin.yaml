@@ -10,6 +10,7 @@ triggers:
   - folder_watch: {workflow: file, paths: ["~/Downloads"], stable_for: 2m}
   - schedule: {workflow: sort, cron: "30 3 * * *"}      # nightly sweep for anything left over
   - manual: {workflow: sort, label: Sort Downloads now}
+  - manual: {workflow: tidy, label: Tidy folders}         # merges Pictures into Images etc. (rules: merge)
 
 workflows: [file, sort, undo, take]   # undo: {"from": where it is now, "to": where it was}
 
@@ -30,4 +31,5 @@ share:                    # Helios > Share (the phone's share menu): saved to Do
 
 helios:
   node: {label: Downloads, group: files}
-  wrong: {workflow: correct, label: Wrong folder}   # fixes the file and keeps it as an example
+  wrong: {workflow: correct, label: Wrong folder}
+  rules: {file: rules.yaml, label: Sorting rules}          # shown and edited in Helios   # fixes the file and keeps it as an example

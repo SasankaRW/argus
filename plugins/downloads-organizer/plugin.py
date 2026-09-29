@@ -32,8 +32,65 @@ from argus.models import EscalationExhausted
 from argus.worker import Context, PermanentError, workflow
 
 PLUGIN = "downloads-organizer"
-RULES = yaml.safe_load((Path(__file__).parent / "rules.yaml").read_text(encoding="utf-8"))
+DEFAULT_RULES_TEXT = (Path(__file__).parent / "rules.yaml").read_text(encoding="utf-8")
+
+
+def check_rules(r: object) -> dict:
+    """The rules, checked, or PermanentError saying what to fix (shown on the job in Helios)."""
+    def bad(msg: str):
+        raise PermanentError(f"sorting rules: {msg} (fix them in Helios: Downloads box > Edit rules)")
+
+    if not isinstance(r, dict):
+        bad("expected sections like categories:, guidance:, examples:")
+    cats = r.get("categories")
+    if not isinstance(cats, dict) or not cats or not all(isinstance(k, str) and k.strip() for k in cats):
+        bad("categories: needs at least one entry like  Documents: PDFs, Word files, ...")
+    for k in cats:
+        if SAFE_NAME.search(k) or k != k.strip():
+            bad(f"category {k!r} can't be a folder name")
+    for sect in ("aliases", "merge", "examples"):
+        m = r.get(sect) or {}
+        if not isinstance(m, dict):
+            bad(f"{sect}: should be a list of  name: Category")
+        wrong = [f"{k} -> {v}" for k, v in m.items() if v not in cats]
+        if wrong:
+            bad(f"{sect}: {', '.join(wrong[:3])} - the target must be one of the categories")
+    if not isinstance(r.get("guidance") or [], list):
+        bad("guidance: should be a list of lines starting with -")
+    for sect in ("extension_fallback", "by_extension"):
+        fb = r.get(sect) or {}
+        if not isinstance(fb, dict) or any(k not in cats or not isinstance(v, list) for k, v in fb.items()):
+            bad(f"{sect}: should be  Category: [.ext, .ext]  with real categories")
+    dests = r.get("destinations") or {}
+    if not isinstance(dests, dict) or any(k not in cats or not isinstance(v, str) or not v.strip()
+                                          for k, v in dests.items()):
+        bad("destinations: should be  Category: folder  (e.g. Videos: ~/Videos) with real categories")
+    for k in (r.get("merge") or {}):
+        if k in cats:
+            bad(f"merge: {k} is itself a category")
+    return r
+
+
+SAFE_NAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+RULES: dict = check_rules(yaml.safe_load(DEFAULT_RULES_TEXT))
 CATEGORIES: dict[str, str] = RULES["categories"]
+
+
+def activate(ctx: Context) -> str:
+    """Use the rules saved in Helios, if any, else rules.yaml. Called at the start of every job, so an edit
+    counts from the next job on. Returns where they came from."""
+    global RULES, CATEGORIES
+    text = ctx.store.get("rules") if ctx.store is not None else None
+    if text:
+        try:
+            r = yaml.safe_load(text)
+        except yaml.YAMLError as e:
+            raise PermanentError(f"sorting rules are not valid YAML: {str(e)[:200]}") from None
+        RULES, source = check_rules(r), "Helios"
+    else:
+        RULES, source = check_rules(yaml.safe_load(DEFAULT_RULES_TEXT)), "rules.yaml"
+    CATEGORIES = RULES["categories"]
+    return source
 
 SKIP_EXT = {".crdownload", ".part", ".partial", ".tmp", ".download", ".!ut", ".opdownload"}
 SKIP_NAMES = {"desktop.ini", "thumbs.db", ".ds_store"}
@@ -122,6 +179,14 @@ def normalise(cat: str | None) -> str | None:
     return None
 
 
+def by_type(ext: str) -> str | None:
+    """rules: by_extension - file types that always go to one category, decided in code (no model)."""
+    for cat, exts in (RULES.get("by_extension") or {}).items():
+        if ext.lower() in [e.lower() for e in exts] and cat in CATEGORIES:
+            return cat
+    return None
+
+
 def by_extension(ext: str) -> str | None:
     for cat, exts in (RULES.get("extension_fallback") or {}).items():
         if ext in exts and cat in CATEGORIES:
@@ -141,7 +206,8 @@ LEARNED_MAX = 50  # corrections kept as examples (newest win)
 
 def playbook(learned: dict[str, str] | None = None) -> str:
     """The instructions, with rules.yaml's examples plus the corrections you made with the Wrong button."""
-    examples = {**(RULES.get("examples") or {}), **(learned or {})}
+    mine = {f: c for f, c in (learned or {}).items() if c in CATEGORIES}  # a category since removed: left out
+    examples = {**(RULES.get("examples") or {}), **mine}
     return ("Sort a download into exactly one category.\n\nCATEGORIES (choose one, spelled exactly):\n"
             + "\n".join(f"- {k}: {v}" for k, v in CATEGORIES.items())
             + "\n\nRULES:\n" + "\n".join(f"- {g}" for g in RULES.get("guidance") or [])
@@ -201,13 +267,20 @@ def candidates(ctx: Context, root: Path, min_age: float) -> list[dict]:
     return out
 
 
+def folder_for(root: Path, cat: str) -> Path:
+    """Where a category's files go: Downloads/<category>, or the folder set under destinations: (e.g. Videos in
+    your own Videos folder)."""
+    dest = (RULES.get("destinations") or {}).get(cat)
+    return Path(os.path.expandvars(os.path.expanduser(str(dest)))) if dest else root / cat
+
+
 def folder_index(ctx: Context, root: Path) -> dict[str, tuple[str, str]]:
     """Subfolders already inside the category folders: Projects/DeepLense -> 'deeplense'."""
     idx: dict[str, tuple[str, str]] = {}
     if not ctx.config.get("match_existing_folders", True):
         return idx
     for cat in CATEGORIES:
-        d = root / cat
+        d = folder_for(root, cat)
         if not ctx.files.exists(d) or not ctx.files.is_dir(d):
             continue
         for sub in ctx.files.list(d):
@@ -245,9 +318,16 @@ def plan_groups(ctx: Context, root: Path, groups: list[dict], limit: int) -> dic
         if len(moves) >= limit:
             note = f"hit max_files_per_run ({limit}); the rest waits for the next run"
             break
+        types = {by_type(f["ext"]) for f in ready}
         hit = match_existing(idx, grp["key"])
         tier = None
-        if hit:
+        if len(types) == 1 and None not in types:  # a video is a video: straight to Videos, no guessing
+            cat = types.pop()
+            dest = folder_for(root, cat)
+            reason = f"file type ({', '.join(sorted({f['ext'] for f in ready}))})"
+            if grp["label"] and len(grp["members"]) >= int(ctx.config.get("min_group_size", 2)):
+                dest = dest / grp["label"]
+        elif hit:
             cat, dest = hit[0], Path(hit[1])
             reason = f"goes with existing {cat}/{os.path.basename(hit[1])}"
         else:
@@ -256,13 +336,14 @@ def plan_groups(ctx: Context, root: Path, groups: list[dict], limit: int) -> dic
             if cat is None:
                 skipped += [{"name": f["name"], "reason": reason} for f in ready]
                 continue
-            dest = root / cat
+            dest = folder_for(root, cat)
             if grp["label"] and len(grp["members"]) >= min_group:
                 dest = dest / grp["label"]
                 reason = f"{reason} (grouped: {len(grp['members'])} files share a name)"
         for f in ready:
             moves.append({"src": f["path"], "dst": str(dest / f["name"]), "name": f["name"], "category": cat,
-                          "folder": os.path.relpath(dest, root), "reason": reason, "tier": tier})
+                          "folder": os.path.relpath(dest, root) if _inside(dest, root) else str(dest),
+                          "reason": reason, "tier": tier})
     return {"moves": moves, "skipped": skipped, "note": note}
 
 
@@ -285,6 +366,7 @@ def apply(ctx: Context, plan: dict) -> dict:
 @workflow(PLUGIN, "sort")
 def sort(ctx: Context):
     """Sweep the whole Downloads root."""
+    activate(ctx)
     root = downloads(ctx)
 
     def make_plan():
@@ -295,6 +377,14 @@ def sort(ctx: Context):
     return ctx.step("move", apply, ctx, plan)
 
 
+def _inside(p: str | Path, root: str | Path) -> bool:
+    try:
+        Path(os.path.realpath(p)).relative_to(os.path.realpath(root))
+        return True
+    except ValueError:
+        return False
+
+
 def _same(a: str | Path, b: str | Path) -> bool:
     return os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
 
@@ -302,6 +392,7 @@ def _same(a: str | Path, b: str | Path) -> bool:
 @workflow(PLUGIN, "file")
 def file(ctx: Context):
     """One finished download (from the folder watch): it and its settled siblings."""
+    activate(ctx)
     root = downloads(ctx)
     path = str(ctx.input.get("path") or "")
     if not path:
@@ -339,14 +430,17 @@ def undo(ctx: Context):
 def correct(ctx: Context):
     """The Wrong button: input {"from": where the file is now, "value": the right category}. Moves it there (keeping
     its group subfolder) and remembers the answer as an example for the models."""
+    activate(ctx)
     src, value = str(ctx.input.get("from") or ""), normalise(str(ctx.input.get("value") or ""))
     if value is None:
         raise PermanentError(f"{ctx.input.get('value')!r} is not a category ({', '.join(CATEGORIES)})")
     if not os.path.exists(src):
         raise PermanentError(f"{src} is no longer there")
     root = downloads(ctx)
-    parts = Path(os.path.relpath(os.path.dirname(src), root)).parts
-    dest = root / value / (parts[1] if len(parts) >= 2 and parts[0] != ".." else "") / os.path.basename(src)
+    parent = Path(os.path.dirname(src))
+    cat_dirs = {os.path.normcase(str(folder_for(root, c))) for c in CATEGORIES}
+    sub = parent.name if os.path.normcase(str(parent.parent)) in cat_dirs else ""  # keep its group subfolder
+    dest = folder_for(root, value) / sub / os.path.basename(src)
     moved = ctx.step("move", ctx.files.move, src, str(dest))
 
     def learn():
@@ -369,6 +463,7 @@ def _title_name(text: str, fallback: str) -> str:
 def take(ctx: Context):
     """Something shared from the phone: files, a link (saved as a .url shortcut) or text (a .txt). Saved to the
     Downloads root, then sorted straight away like any other download."""
+    activate(ctx)
     root = downloads(ctx)
     inp = ctx.input
 
@@ -402,3 +497,66 @@ def take(ctx: Context):
 
     plan = ctx.step("plan", make_plan)
     return {"saved": saved, **ctx.step("move", apply, ctx, plan)}
+
+
+@workflow(PLUGIN, "tidy")
+def tidy(ctx: Context):
+    """Fold second names into the real category folders (rules: merge), e.g. Pictures into Images: everything
+    inside moves over (never overwriting), then the empty folder goes. Every move can be undone."""
+    source = activate(ctx)
+    root = downloads(ctx)
+
+    def plan():
+        out = []
+        for src, dst in (RULES.get("merge") or {}).items():
+            d = root / src
+            if ctx.files.exists(d) and ctx.files.is_dir(d) and not _same(d, folder_for(root, dst)):
+                out.append({"from": str(d), "to": str(folder_for(root, dst)), "items": ctx.files.list(d)})
+        for cat in (RULES.get("destinations") or {}):  # a category that now lives elsewhere: bring its old folder
+            d = root / cat
+            if ctx.files.exists(d) and ctx.files.is_dir(d) and not _same(d, folder_for(root, cat)):
+                out.append({"from": str(d), "to": str(folder_for(root, cat)), "items": ctx.files.list(d)})
+        return out
+
+    def misplaced():
+        """Files whose type has a fixed category (by_extension) sitting in another category's folder, e.g. a
+        video in Audio or Misc: -> [{from, to}], keeping a group subfolder's name."""
+        out = []
+        for cat in CATEGORIES:
+            base = folder_for(root, cat)
+            if not ctx.files.exists(base) or not ctx.files.is_dir(base):
+                continue
+            for p in ctx.files.list(base):
+                inner = ctx.files.list(p) if ctx.files.is_dir(p) else [p]
+                for f in inner:
+                    want = by_type(os.path.splitext(f)[1].lower())
+                    if want and want != cat and not ctx.files.is_dir(f):
+                        sub = os.path.basename(p) if f != p else ""
+                        out.append({"from": f, "to": str(folder_for(root, want) / sub / os.path.basename(f))})
+        return out
+
+    merges = ctx.step("plan", plan)
+
+    def run():
+        done = []
+        for m in merges:
+            for item in m["items"]:
+                if os.path.exists(item):
+                    ctx.files.move(item, os.path.join(m["to"], os.path.basename(item)))
+            removed = ctx.files.remove_empty_dir(m["from"])
+            done.append({"folder": os.path.basename(m["from"]), "into": m["to"] if not _inside(m["to"], root)
+                         else os.path.basename(m["to"]),
+                         "moved": len(m["items"]), "removed": removed})
+        return done
+
+    done = ctx.step("merge", run)
+    strays = ctx.step("find misplaced", misplaced)  # after the merge: a video that was in Media is in Audio now
+
+    def fix():
+        return [{"file": os.path.basename(m["from"]), "to": os.path.relpath(ctx.files.move(m["from"], m["to"]), root)}
+                for m in strays if os.path.exists(m["from"])]
+
+    moved = ctx.step("move misplaced", fix)
+    ctx.emit("tidied", folders=len(done), files=len(moved), dry_run=ctx.dry_run)
+    return {"merged": done, "misplaced": moved, "rules": source, "dry_run": ctx.dry_run,
+            "note": None if done or moved else "nothing to tidy"}

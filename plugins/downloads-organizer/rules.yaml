@@ -1,11 +1,12 @@
-# How downloads are sorted. Edit freely: the worker reads this file when it loads the plugin (restart the worker
-# after a change). The main tuning knob is `guidance`: add a line when it gets something wrong.
+# How downloads are sorted: the defaults. Edit them in Helios (Downloads box > Edit rules); your version is kept by
+# Argus and used from the next sort on, no restart. The main tuning knob is `guidance`: add a line when it gets
+# something wrong. One folder per kind: add a category here, never a second name for the same kind.
 
 categories:
   Documents: PDFs, Word/Excel/PowerPoint files, ebooks, text notes, invoices, reports, papers, CVs
   Images: photos, screenshots, icons, wallpapers, logos, design exports (png, jpg, webp, svg, psd, ai)
   Videos: video files and screen recordings (mp4, mkv, mov, avi, webm)
-  Media: "audio files: music, podcasts, voice notes, samples (mp3, wav, flac, m4a, ogg)"
+  Audio: "audio files: music, podcasts, voice notes, samples (mp3, wav, flac, m4a, ogg)"
   Archives: compressed bundles that are not installers (zip, rar, 7z, tar, gz) - fonts packs, icon packs, asset bundles
   Installers: software setup files and app packages (exe, msi, dmg, appx, apk, deb, iso of software)
   Projects: source code, notebooks, datasets, repo exports, model weights, anything tied to a coding or research project
@@ -13,7 +14,22 @@ categories:
   Private: bank statements, ID scans, payslips, medical documents, contracts, anything personal or sensitive
   Misc: anything that does not clearly fit another category
 
-aliases: {Miscellaneous: Misc, Pictures: Images, Audio: Media, Music: Media, Code: Projects, Software: Installers}
+# Other names a model may answer with, mapped to the real folder.
+aliases: {Miscellaneous: Misc, Pictures: Images, Photos: Images, Media: Audio, Music: Audio, Code: Projects,
+          Software: Installers}
+
+# File types that always go to one category, decided in code - no model, no guessing. Tidy folders also moves
+# such files out of the wrong folder (a video in Audio -> Videos).
+by_extension:
+  Videos: [.mp4, .mkv, .mov, .avi, .webm, .flv, .wmv, .m4v]
+  Audio: [.mp3, .wav, .flac, .m4a, .aac, .ogg, .wma]
+
+# Optional: a category kept outside Downloads, e.g.  destinations: {Videos: ~/Videos}. By default every
+# category is a folder inside Downloads. (A folder outside Downloads must also be allowed in plugin.yaml.)
+destinations: {}
+
+# Folders to fold into the real ones with "Tidy folders" (their files move over, the empty folder goes).
+merge: {Pictures: Images, Photos: Images, Media: Audio, Music: Audio, Miscellaneous: Misc}
 
 guidance:
   - Source code, scripts, notebooks, datasets, model weights and repo/zip exports of a codebase go to Projects - never to Documents or Archives.
@@ -37,7 +53,7 @@ extension_fallback:
   Documents: [.pdf, .doc, .docx, .odt, .rtf, .txt, .md, .xls, .xlsx, .ods, .ppt, .pptx, .odp, .epub, .mobi, .djvu]
   Images: [.png, .jpg, .jpeg, .gif, .bmp, .webp, .svg, .ico, .psd, .ai, .heic, .tif, .tiff, .xcf]
   Videos: [.mp4, .mkv, .mov, .avi, .webm, .flv, .wmv, .m4v]
-  Media: [.mp3, .wav, .flac, .m4a, .aac, .ogg, .wma, .mid]
+  Audio: [.mp3, .wav, .flac, .m4a, .aac, .ogg, .wma, .mid]
   Archives: [.zip, .rar, .7z, .tar, .gz, .bz2, .xz, .zst, .tgz]
   Installers: [.exe, .msi, .appx, .msix, .apk, .deb, .rpm, .dmg, .pkg]
   Projects: [.py, .js, .ts, .jsx, .tsx, .java, .c, .cpp, .h, .cs, .go, .rs, .rb, .php, .sh, .ipynb, .csv, .tsv, .json,

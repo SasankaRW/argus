@@ -234,3 +234,79 @@ def test_share_rules(tmp_path, monkeypatch):
         with pytest.raises(ApiError) as e:
             cl.get("/shares/..%2F..%2Fetc/files/passwd")
         assert e.value.status == 404
+
+
+def test_rules_edited_in_helios_apply_to_the_next_job(tmp_path, monkeypatch):
+    argus, d = setup(tmp_path, monkeypatch, live=True)
+    (d / "Pictures").mkdir()
+    (d / "Pictures" / "cat.jpg").write_text("meow")
+    (d / "Images").mkdir()
+    (d / "Images" / "cat.jpg").write_text("another cat")  # a clash: the moved one becomes "cat (1).jpg"
+    replies = {"qwen2.5-coder:7b": [{"category": "Books", "reason": "lecture notes"}]}
+    with FakeOllama(replies) as ol, Server(argus.open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        r = cl.get(f"/plugins/{dorg.PLUGIN}/rules")
+        assert r["custom"] is False and "categories:" in r["text"] and r["label"] == "Sorting rules"
+        # broken YAML never gets saved
+        with pytest.raises(ApiError) as e:
+            cl.call("PUT", f"/plugins/{dorg.PLUGIN}/rules", {"text": "categories: [oops"})
+        assert e.value.status == 422 and "line" in str(e.value.body)
+
+        def run(workflow: str, **inp) -> dict:
+            job = cl.post(f"/plugins/{dorg.PLUGIN}/run", {"workflow": workflow, "input": inp})
+            assert w.run_once(wait=2)
+            return wait_for(lambda: (j := cl.get(f"/jobs/{job['id']}"))["state"] in ("succeeded", "dead") and j)
+
+        # a category that doesn't exist in rules.yaml: the model's "Books" is accepted once the rules have it
+        cl.call("PUT", f"/plugins/{dorg.PLUGIN}/rules", {"text": r["text"].replace(
+            "categories:\n", "categories:\n  Books: lecture notes, ebooks, papers\n")})
+        job = run("sort")
+        assert job["state"] == "succeeded", job["error"]
+        assert "Books" in ol.requests[0]["messages"][0]["content"]
+        assert (d / "Books" / "lecture" / "lecture_07.pdf").exists()
+        # rules that make no sense stop the job with a message that says what to fix
+        cl.call("PUT", f"/plugins/{dorg.PLUGIN}/rules", {"text": "categories:\n  Docs: x\nmerge: {Pictures: Nope}\n"})
+        bad = run("sort")
+        assert bad["state"] == "dead" and "merge: Pictures -> Nope" in bad["error"]
+        # back to the defaults, then tidy: Pictures folds into Images
+        cl.call("DELETE", f"/plugins/{dorg.PLUGIN}/rules")
+        assert cl.get(f"/plugins/{dorg.PLUGIN}/rules")["custom"] is False
+        tidy = run("tidy")
+        assert tidy["state"] == "succeeded", tidy["error"]
+        assert tidy["result"]["merged"] == [{"folder": "Pictures", "into": "Images", "moved": 1, "removed": True}]
+    assert not (d / "Pictures").exists()
+    assert sorted(p.name for p in (d / "Images").iterdir()) == ["cat (1).jpg", "cat.jpg"]
+
+
+def test_videos_always_go_to_videos(tmp_path, monkeypatch):
+    """By file type, in code: no model call. Tidy folders also moves videos out of the wrong folders."""
+    argus, d = setup(tmp_path, monkeypatch, live=True)
+    for f in d.iterdir():  # only the video this time
+        if f.is_file():
+            f.unlink()
+    (d / "holiday-2026.mp4").write_text("v")
+    os.utime(d / "holiday-2026.mp4", (OLD, OLD))
+    (d / "Media").mkdir()
+    (d / "Media" / "old clip.mkv").write_text("o")  # Media folds into Audio, then the video leaves Audio
+    (d / "Media" / "song.mp3").write_text("s")
+    (d / "Misc").mkdir()
+    (d / "Misc" / "screen recording.webm").write_text("w")
+    with FakeOllama({"qwen2.5-coder:7b": [{"category": "Misc", "reason": "?"}]}) as ol, Server(argus.open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        results = {}
+        for wf in ("sort", "tidy"):
+            job = cl.post(f"/plugins/{dorg.PLUGIN}/run", {"workflow": wf})
+            assert w.run_once(wait=2)
+            done = wait_for(lambda jid=job["id"]: (j := cl.get(f"/jobs/{jid}"))["state"] in ("succeeded", "dead") and j)
+            assert done["state"] == "succeeded", done["error"]
+            results[wf] = done["result"]
+        assert not ol.requests  # no model needed
+    assert sorted(p.name for p in (d / "Videos").iterdir()) == ["holiday-2026.mp4", "old clip.mkv",
+                                                                "screen recording.webm"]
+    assert sorted(p.name for p in (d / "Audio").iterdir()) == ["song.mp3"] and not (d / "Media").exists()
+    assert results["sort"]["moved"][0]["category"] == "Videos"
+    assert len(results["tidy"]["misplaced"]) == 2
