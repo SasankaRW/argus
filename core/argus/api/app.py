@@ -496,7 +496,11 @@ def create_app(argus: Argus) -> FastAPI:
             if await argus.jobs.has_claimable():
                 job = await argus.jobs.claim(worker_id, body.capabilities, body.plugins)
             if job is not None:
-                return job_json(job, await argus.jobs.steps(job.id))
+                out = job_json(job, await argus.jobs.steps(job.id))
+                p = argus.plugin_host.plugins.get(job.plugin)
+                if p is not None:  # current settings (live, config): argusd may have restarted since register
+                    out["plugin_info"] = p.info()
+                return out
             if time.monotonic() >= deadline:
                 return Response(status_code=204)
             await asyncio.sleep(CLAIM_POLL)

@@ -211,3 +211,19 @@ def test_power_would_wake_then_would_shut_down_after_idle(store, jobs, clock):
     # new PC work starts a new stretch
     run(jobs.enqueue("tidy", "sort", needs=["desktop"]))
     assert run(pm.tick()) == "busy" and pm.idle_since is None
+
+
+def test_worker_follows_live_switch_without_registering_again(tmp_path, monkeypatch):
+    """argusd restarted with the plugin now live: the worker (registered while it was dry-run) must move files."""
+    argus, inbox, out = setup(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    with Server(argus.open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "w-plugins", watch_folders=False)
+        w.register()
+        assert w.plugins["tidy"].dry_run
+        argus.plugin_host.plugins["tidy"].live = True  # as after a restart with plugins.live: [tidy]
+        job = cl.post("/jobs", {"plugin": "tidy", "workflow": "sort", "input": {}})
+        assert w.run_once(wait=2)
+        done = wait_for(lambda: (j := cl.get(f"/jobs/{job['id']}"))["state"] == "succeeded" and j)
+    assert done["result"]["dry_run"] is False and list(inbox.iterdir()) == []

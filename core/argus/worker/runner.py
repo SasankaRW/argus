@@ -218,6 +218,9 @@ class Worker:
                              chain=self.models_cfg.get("chain") or sorted(self.providers),
                              attempts_per_tier=self.models_cfg.get("attempts_per_tier", 2),
                              source=job["plugin"])
+        info = job.get("plugin_info")
+        if info and info["id"] in self.plugins:  # argusd's settings now (dry-run or live, config)
+            self.plugins[info["id"]] = LoadedPlugin(info)
         plugin = self.plugins.get(job["plugin"])
         if plugin is not None:
             self._attach(ctx, plugin, job_id)
