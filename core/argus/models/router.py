@@ -126,18 +126,18 @@ class Router:
             if prev is not None:
                 self.board.event("model.escalated", prev.lower(), comp,
                                  {"from_tier": prev, "to_tier": tier, "reason": _clip(advice or "", 200)})
-            permit = self.board.permit(tier)
-            if not permit.get("allowed"):
-                trail.append({"tier": tier, "skipped": permit.get("reason")})
-                self.board.event("model.skipped", self.source, comp, {"tier": tier, "reason": permit.get("reason")})
-                prev = tier
-                continue
-
             self.current_tier = tier
             messages = [{"role": "user", "content": task}]
             if advice:
                 messages[0]["content"] += f"\n\nA smaller model tried this first and failed:\n{advice}"
             for attempt in range(1, tries + 1):
+                # a permit per call: the breaker may have opened meanwhile, and each Claude call costs budget
+                permit = self.board.permit(tier)
+                if not permit.get("allowed"):
+                    trail.append({"tier": tier, "attempt": attempt, "skipped": permit.get("reason")})
+                    self.board.event("model.skipped", self.source, comp,
+                                     {"tier": tier, "reason": permit.get("reason")})
+                    break
                 self.board.event("model.request", self.source, comp, {"tier": tier, "attempt": attempt})
                 t0 = self.clock()
                 try:

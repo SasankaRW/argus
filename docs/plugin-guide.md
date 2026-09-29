@@ -2,7 +2,7 @@
 
 Sep 28, 2026 · @Sasanka
 
-**Version 0.4** · draft (plugin API 1.0 draft) · history at the end · all versions in the Argus Docs Index
+**Version 0.5** · draft (plugin API 1.0 draft) · history at the end · all versions in the Argus Docs Index
 
 The reference for adding features to Argus. Keep it updated whenever the plugin API changes or a plugin is added.
 
@@ -247,20 +247,34 @@ Copy this list into the plugin's README and tick it off.
 
 ## Plugin catalogue
 
-One row per plugin, grouped by build order. Update the Status column as plugins move stage.
+One row per plugin, in build order: wave 1 first. Each wave uses what the one before built (folder triggers, then the Cashly connector, then schedules). Update the Status column as plugins move stage.
 
-| Plugin | Kind | Runs on | Models | Needs you | Status |
-| --- | --- | --- | --- | --- | --- |
-| downloads-organizer | workflow | desktop | T0, T1 | moves in dry-run first | port from existing script (first plugin) |
-| screenshot-renamer | workflow | desktop | T1 (+ vision fallback) | no, undo available | planned |
-| cashly | connector | laptop | none | n/a | planned |
-| bill-filer | workflow | desktop | T0, T1 | entry per bill | planned |
-| bank-sms | trigger + workflow | laptop, GPU for T1 | T0, T1 | entry below 0.80 confidence | planned |
-| duplicate-finder | workflow | desktop | none | batch | planned |
-| tracker | connector | laptop | none | n/a | planned |
-| invoice-builder | workflow | laptop, GPU for T2 | T2 | draft | planned (needs hours per client in Tracker) |
-| research-agent | workflow | desktop | T1, T2, T3 | review of accepted features | port from existing scaffold |
-| daily-digest | workflow | desktop | T1, T2 | no | port from existing script |
+| Wave | Plugin | What it does | Runs on | Models | Needs you | Status |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 Files | downloads-organizer | sorts Downloads as files land, undo in Helios | desktop | T0, T1 | moves in dry-run first | port from existing script (first plugin) |
+| 1 Files | bill-filer | new PDF bill: vendor, amount, due date; renames and files it; reminder before due | desktop | T0, T1 | entry per bill | planned |
+| 1 Files | screenshot-renamer | gives screenshots descriptive names | desktop | T1 (+ vision fallback) | no, undo available | planned |
+| 1 Files | duplicate-finder | weekly duplicates, one batch approval, Recycle Bin | desktop | none | batch | planned |
+| 2 Money | cashly | connector to Cashly | laptop | none | n/a | planned |
+| 2 Money | bank-sms | forwarded bank SMS to a categorised Cashly entry, amount read by code | laptop, GPU for T1 | T0, T1 | entry below 0.80 confidence | planned |
+| 2 Money | receipt-capture | receipt photo from the phone to a Cashly entry plus the stored photo | laptop, PC for OCR | T1 | entry | planned |
+| 2 Money | invoice-builder | monthly draft invoice PDF from hours and closed issues; totals in code | laptop, GPU for T2 | T2 | draft | planned (needs hours per client in Tracker) |
+| 3 Day | tracker | connector to the issue tracker | laptop | none | n/a | planned |
+| 3 Day | morning-brief | 7 am notification: spending, bills due, failed jobs, digest highlights | laptop | T1 | no | planned |
+| 3 Day | daily-digest | SearXNG + Discord digest, retried on failure, visible in Helios | desktop | T1, T2 | no | port from existing script |
+| 3 Day | voice-to-task | phone voice note, Whisper on the PC, task in the tracker | desktop | T1 | no | planned |
+| 3 Day | weekly-review | Sunday plan: what slipped, top 3 next week, spending notes | laptop | T3 | no | planned |
+| 4 Lab | model-scout | new Ollama models that fit 12 GB, run on your test sets overnight | desktop | T1, T2 | no | planned |
+| 4 Lab | backup-checker | nightly backup of the Argus database and apps to the PC, restore proven | laptop | none | no | planned |
+| 4 Lab | code-review | T2 first pass on PRs; Claude only on tagged PRs | laptop, GPU for T2 | T2, T3 | no | planned |
+| 4 Lab | llmclip | clipboard hotkey actions run through Argus's models | desktop | T1, T2 | no | planned |
+| 4 Lab | research-agent | nightly research runs, Claude advises | desktop | T1, T2, T3 | review of accepted features | port from existing scaffold |
+| 5 Later | paper-radar | weekly new arXiv papers on deepfake detection and audio-video work, 3-line summaries | desktop | T1, T2 | no | planned |
+| 5 Later | ctf-coach | one picoCTF or crackmes challenge a week at your level, hints without spoilers | laptop | T2, T3 | no | planned |
+| 5 Later | docker-health | checks Docker Desktop, WSL and containers; says what failed | desktop | T1 | no | planned |
+| 5 Later | power-cut-resume | after a power cut: what was interrupted and what resumed, in one message | laptop | none | no | planned |
+| 5 Later | utility-tracker | CEB and water bills over time; flags a jump over 30% | laptop | T0, T1 | no | planned (reuses bill-filer) |
+| 5 Later | budget-nudge | mid-month alert when a category runs ahead of budget; maths in code | laptop | T1 (wording only) | no | planned (needs cashly) |
 
 ## Plugin API changelog
 
@@ -275,6 +289,7 @@ The plugin API version is what `argus_api` in each manifest refers to. Minor ver
 
 | Version | Date | Change |
 | --- | --- | --- |
+| 0.5 | 2026-09-29 | Plugin catalogue in five waves (files, money, day, lab, later): 24 plugins with what each does |
 | 0.4 | 2026-09-28 | ctx.approve (Decision, three card types) and ctx.notify match the built API (C8) |
 | 0.3 | 2026-09-28 | ctx.llm and ctx.claude match the built API (schema + check, escalation, last\_answer) |
 | 0.2 | 2026-09-28 | Security rules for plugin authors |

@@ -50,7 +50,7 @@ def setup(store, clock, cfg=None):
     from argus.jobs import JobStore
 
     cfg = cfg or cfg_with()
-    jobs = JobStore(store, JobsConfig(), clock=clock)
+    jobs = JobStore(store, JobsConfig(plugin_concurrency=50), clock=clock)
     ap = Approvals(store, jobs, cfg, clock=clock)
     run(ap.start())
     return jobs, ap, cfg
@@ -194,7 +194,7 @@ def test_decide_resumes_the_waiting_job_ahead_of_others(store, clock):
         return d, job
 
     d, job = run(go())
-    assert d["state"] == "approved" and d["answer"] == {"vendor": "CEB", "amount": "12"}
+    assert d["state"] == "approved" and d["answer"] == {"vendor": "CEB", "amount": "12.00"}
     assert d["decided_by"] == "phone"
     assert job.state is JobState.QUEUED and job.priority == 80 and job.wait_reason is None
 
@@ -572,3 +572,80 @@ def test_phone_watch_is_off_in_ntfy_mode_or_without_a_phone(store, clock):
     assert PhoneWatch(store, cfg, ap, None).enabled
     cfg.approvals.buttons = "ntfy"
     assert not PhoneWatch(store, cfg, ap, None).enabled
+
+
+# ------------------------------------------------------------------ review fixes
+
+
+def test_edits_keep_types_and_amounts_are_checked(store, clock):
+    from argus.approvals import ApprovalError
+
+    jobs, ap, _ = setup(store, clock)
+
+    async def go():
+        jid = await _leased(jobs)
+        a, _ = await ap.request(jid, "w1", "k", "entry", "bill",
+                                fields={"amount": "4,250.00", "units": 3, "rate": 1.5, "paid": False, "note": "x"})
+        with pytest.raises(ApprovalError, match="not a valid amount"):
+            await ap.decide(a["id"], "approve", fields={"amount": "4,25O"})
+        with pytest.raises(ApprovalError, match="whole number"):
+            await ap.decide(a["id"], "approve", fields={"units": "three"})
+        return await ap.decide(a["id"], "approve",
+                               fields={"amount": "4300", "units": "4", "rate": "2.25", "paid": "yes", "note": "ok"})
+
+    d = run(go())
+    assert d["answer"] == {"amount": "4,300.00", "units": 4, "rate": 2.25, "paid": True, "note": "ok"}
+
+
+def test_late_answer_counts_as_expired_and_sticks(store, clock):
+    cfg = cfg_with()
+    cfg.approvals.expire_hours = 1
+    jobs, ap, _ = setup(store, clock, cfg)
+
+    async def go():
+        jid = await _leased(jobs)
+        a, _ = await ap.request(jid, "w1", "k", "entry", "bill", fields={"x": 1})
+        await jobs.wait(jid, "w1", f"approval:{a['id']}")
+        clock.advance(2 * 3600)
+        d = await ap.decide(a["id"], "approve", token=ap.token(a["id"]))
+        return jid, d, await ap.get(a["id"])
+
+    jid, d, stored = run(go())
+    assert d["state"] == "expired" and stored["state"] == "expired"  # not rolled back
+    assert run(jobs.get(jid)).state is JobState.QUEUED
+
+
+def test_cancelled_job_closes_its_approvals_and_bad_links_are_refused(store, clock):
+    from argus.approvals import ApprovalError
+
+    jobs, ap, _ = setup(store, clock)
+
+    async def go():
+        jid = await _leased(jobs)
+        with pytest.raises(ApprovalError, match="http"):
+            await ap.request(jid, "w1", "k0", "draft", "doc", link="javascript:alert(1)")
+        a, _ = await ap.request(jid, "w1", "k", "entry", "bill", fields={"x": 1})
+        await jobs.wait(jid, "w1", f"approval:{a['id']}")
+        await jobs.cancel(jid)
+        return await ap.get(a["id"]), await ap.push_waiting("d")
+
+    a, pushed = run(go())
+    assert a["state"] == "expired" and a["decided_by"] == "job ended" and pushed == 0
+
+
+def test_approvals_do_not_use_up_attempts(store, clock):
+    jobs, ap, _ = setup(store, clock)
+
+    async def go():
+        jid, _ = await jobs.enqueue("demo", "approval", {}, max_attempts=2)
+        for i in range(3):  # three approvals in a row
+            await jobs.claim("w1", [])
+            await jobs.start(jid, "w1")
+            a, _ = await ap.request(jid, "w1", f"k{i}", "entry", "t", fields={"x": 1})
+            await jobs.wait(jid, "w1", f"approval:{a['id']}")
+            await ap.decide(a["id"], "approve")
+        await jobs.claim("w1", [])
+        return await jobs.fail(jid, "w1", "network blip")
+
+    job = run(go())
+    assert job.state is JobState.RETRY and job.attempt == 1

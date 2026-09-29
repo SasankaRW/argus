@@ -5,11 +5,20 @@ from __future__ import annotations
 import json
 import logging
 import logging.handlers
+import re
 import sys
 import time
 from pathlib import Path
 
 _RESERVED = set(logging.LogRecord("", 0, "", 0, "", (), None).__dict__) | {"message", "asctime", "color_message"}
+
+
+# Tokens travel in some URLs (the WebSocket's ?token=, the phone page's ?t=); uvicorn logs those URLs.
+_SECRET_IN_URL = re.compile(r"([?&](?:token|t)=)[^&\s\"']+")
+
+
+def redact(text: str) -> str:
+    return _SECRET_IN_URL.sub(r"\1***", text)
 
 
 class JsonFormatter(logging.Formatter):
@@ -19,7 +28,7 @@ class JsonFormatter(logging.Formatter):
             + f".{int(record.msecs):03d}Z",
             "level": record.levelname.lower(),
             "logger": record.name,
-            "msg": record.getMessage(),
+            "msg": redact(record.getMessage()),
         }
         for key, value in record.__dict__.items():
             if key not in _RESERVED and not key.startswith("_"):

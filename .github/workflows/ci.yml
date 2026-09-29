@@ -32,6 +32,13 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
+      - name: The committed Helios build matches the source
+        run: |
+          if [ -n "$(git status --porcelain -- ../core/argus/helios_dist)" ]; then
+            git status --short -- ../core/argus/helios_dist
+            echo "helios_dist is out of date: run .\scripts\dev.ps1 helios and commit the result."
+            exit 1
+          fi
   ci-ok:
     # The one check GitHub requires before merging: everything above passed.
     if: always()

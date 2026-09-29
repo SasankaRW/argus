@@ -43,7 +43,7 @@ def _connect(path: Path, *, readonly: bool = False) -> sqlite3.Connection:
     conn.execute("PRAGMA busy_timeout = 10000")
     conn.execute("PRAGMA foreign_keys = ON")
     if not readonly:
-        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.execute("PRAGMA synchronous = FULL")  # the laptop has no battery: a commit must survive a power cut
     return conn
 
 
@@ -93,10 +93,19 @@ class Store:
     def close(self) -> None:
         if self._writer is None:
             return
+        writer = self._writer
+        self._writer = None  # new submits are refused from here on
         self._write_q.put(None)
-        self._writer.join(timeout=10)
-        self._writer = None
-        if self._writer_conn is not None:
+        writer.join(timeout=10)
+        # anything queued behind the stop signal gets an error instead of waiting forever
+        while True:
+            try:
+                item = self._write_q.get_nowait()
+            except queue.Empty:
+                break
+            if item is not None and item[1].set_running_or_notify_cancel():
+                item[1].set_exception(StoreError("store closed"))
+        if self._writer_conn is not None and not writer.is_alive():
             self._writer_conn.close()
             self._writer_conn = None
         with self._read_lock:

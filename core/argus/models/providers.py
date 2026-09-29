@@ -10,9 +10,11 @@ not answer (these trip circuit breakers); a reply that turns out to be wrong is 
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
+import signal
 import subprocess
 import time
 import urllib.error
@@ -104,16 +106,20 @@ class ClaudeProvider:
     def available(self) -> bool:
         return bool(self.command) and (shutil.which(self.command[0]) is not None or os.path.exists(self.command[0]))
 
-    def argv(self, system: str) -> list[str]:
+    def argv(self) -> list[str]:
         # Resolve the program (on Windows `claude` is claude.cmd, which needs its full path to start).
+        # Nothing from the playbook or the input goes on the command line: on Windows cmd.exe would cut it at the
+        # first newline and could read & | % in it as commands. All text goes through stdin.
         program = shutil.which(self.command[0]) or self.command[0]
-        argv = [program, *self.command[1:], *self.args, "--append-system-prompt", system]
+        argv = [program, *self.command[1:], *self.args]
         if self.model:
             argv += ["--model", self.model]
         return argv
 
     def chat(self, system: str, messages: list[dict[str, str]], schema: dict | None = None) -> Reply:
         prompt = "\n\n".join(m["content"] for m in messages if m["role"] == "user")
+        if system:
+            prompt = f"{system}\n\n---\n\n{prompt}"
         if schema is not None:
             prompt += ("\n\nAnswer with only a JSON object matching this JSON schema, no other text:\n"
                        + json.dumps(schema))
@@ -121,21 +127,54 @@ class ClaudeProvider:
             raise ModelUnavailable(f"{self.command[0]!r} not found (is Claude Code installed?)")
         t0 = time.perf_counter()
         try:
-            r = subprocess.run(self.argv(system), input=prompt, capture_output=True, text=True,
-                               timeout=self.timeout, encoding="utf-8", errors="replace")
+            code, stdout, stderr = run_with_timeout(self.argv(), prompt, self.timeout)
         except subprocess.TimeoutExpired:
             raise ModelTimeout(f"claude gave no answer within {self.timeout:g} s") from None
         except OSError as e:
             raise ModelUnavailable(f"could not run claude: {e}") from None
         latency = (time.perf_counter() - t0) * 1000
         try:
-            out = json.loads(r.stdout)
+            out = json.loads(stdout)
         except ValueError:
-            raise ModelUnavailable(f"claude exited {r.returncode}: {(r.stderr or r.stdout).strip()[:300]}") from None
+            raise ModelUnavailable(f"claude exited {code}: {(stderr or stdout).strip()[:300]}") from None
         if out.get("is_error") or out.get("subtype", "success") != "success":
             raise ModelUnavailable(f"claude reported an error: {str(out.get('result') or out)[:300]}")
         meta = {k: out[k] for k in ("total_cost_usd", "duration_ms", "num_turns", "session_id") if k in out}
         return Reply(str(out.get("result", "")), latency, meta)
+
+
+def run_with_timeout(argv: list[str], stdin: str, timeout: float) -> tuple[int, str, str]:
+    """Run a program with a hard timeout that also ends its children.
+
+    On Windows `claude` is claude.cmd -> cmd.exe -> node: killing only cmd.exe would leave node holding the pipes
+    and the worker waiting forever, so the whole tree is ended (taskkill /T). On Linux it gets its own process
+    group, which is killed as a whole.
+    """
+    kw: dict[str, Any] = {"stdin": subprocess.PIPE, "stdout": subprocess.PIPE, "stderr": subprocess.PIPE,
+                          "text": True, "encoding": "utf-8", "errors": "replace"}
+    if os.name == "nt":
+        kw["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kw["start_new_session"] = True
+    p = subprocess.Popen(argv, **kw)
+    try:
+        out, err = p.communicate(stdin, timeout=timeout)
+        return p.returncode, out, err
+    except subprocess.TimeoutExpired:
+        _kill_tree(p)
+        with contextlib.suppress(Exception):
+            p.communicate(timeout=5)
+        raise
+
+
+def _kill_tree(p: subprocess.Popen) -> None:
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)], capture_output=True, timeout=10, check=False)
+    else:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(p.pid, signal.SIGKILL)
+    with contextlib.suppress(Exception):
+        p.kill()
 
 
 def _is_timeout(e: BaseException) -> bool:

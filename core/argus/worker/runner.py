@@ -18,6 +18,7 @@ from typing import Any
 from .. import __version__
 from ..models import Router, build_providers
 from .client import ApiError, ArgusClient, LeaseLostError, Unreachable
+from .watcher import start_watchers
 from .workflows import REGISTRY, Context, PermanentError, WaitSignal, WorkflowRegistry
 
 log = logging.getLogger("argus.worker")
@@ -104,7 +105,7 @@ class _Heartbeat(threading.Thread):
 class Worker:
     def __init__(self, client: ArgusClient, worker_id: str | None = None, *, capabilities: list[str] | None = None,
                  registry: WorkflowRegistry | None = None, host: str | None = None, claim_wait: float = 10.0,
-                 ollama_url: str | None = None, providers: dict | None = None):
+                 ollama_url: str | None = None, providers: dict | None = None, watch_folders: bool = True):
         self.client = client
         self.registry = registry or REGISTRY
         self.host = host or socket.gethostname()
@@ -119,6 +120,8 @@ class Worker:
         self.stopping = threading.Event()
         self.jobs_done = 0
         self.busy = False  # True while a job runs
+        self.watch_folders = watch_folders
+        self.watchers: list = []  # folder watchers for this worker's folder triggers
 
     # -------------------------------------------------------------- lifecycle
 
@@ -128,6 +131,11 @@ class Worker:
         self.models_cfg = info.get("models") or {}
         if not self._fixed_providers:
             self.providers = build_providers(self.models_cfg, ollama_url=self.ollama_url)
+        folders = info.get("folders") or []
+        if self.watch_folders and [w.t for w in self.watchers] != folders:
+            for w in self.watchers:
+                w.stop()
+            self.watchers = start_watchers(self.client, self.id, folders)
         log.info("worker registered", extra={"worker": self.id, "capabilities": self.capabilities,
                                              "plugins": self.registry.plugins})
 
@@ -176,7 +184,8 @@ class Worker:
             return "lost"
 
         if wf is None:
-            self.client.fail(job_id, self.id, f"unknown workflow {job['plugin']}.{job['workflow']}", False)
+            why = f"unknown workflow {job['plugin']}.{job['workflow']}"
+            self._report(jlog, lambda: self.client.fail(job_id, self.id, why, False))
             jlog.error("unknown workflow")
             return "dead"
 
@@ -223,3 +232,7 @@ class Worker:
             fn()
         except LeaseLostError:
             jlog.warning("lease lost while reporting")
+        except (Unreachable, ApiError) as e:
+            # Argus is restarting or refused it: the lease runs out and the job is retried from its last step.
+            # The worker keeps running instead of exiting.
+            jlog.warning("could not report the job's outcome; argus will retry it", extra={"error": str(e)})

@@ -93,6 +93,14 @@ class ClaudeConfig(_Strict):
     calls_per_day: int = Field(30, ge=0, le=10000)
 
 
+# Job priorities (higher runs first): interactive work, then jobs resuming after an approval, then scheduled
+# work, then night batches. Within a priority, oldest first.
+PRIORITY_INTERACTIVE = 90
+PRIORITY_RESUMED = 80
+PRIORITY_SCHEDULED = 50
+PRIORITY_BATCH = 20
+
+
 class JobsConfig(_Strict):
     lease_seconds: int = Field(60, ge=5, le=3600)
     heartbeat_seconds: int = Field(15, ge=1, le=600)
@@ -100,6 +108,11 @@ class JobsConfig(_Strict):
     backoff_seconds: list[int] = Field(default_factory=lambda: [10, 60, 600])
     watchdog_interval_seconds: float = Field(5, gt=0, le=300)
     plugin_queue_limit: int = Field(100, ge=1)
+    plugin_concurrency: int = Field(1, ge=1, le=64)  # jobs of one plugin running at once (backpressure)
+    concurrency: dict[str, int] = Field(default_factory=dict)  # per-plugin overrides, e.g. {demo: 4}
+
+    def limit_for(self, plugin: str) -> int:
+        return self.concurrency.get(plugin, self.plugin_concurrency)
 
     @field_validator("backoff_seconds")
     @classmethod
@@ -147,6 +160,62 @@ class ApprovalsConfig(_Strict):
         return v.rstrip("/")
 
 
+def _check_cron(v: str) -> str:
+    from .cron import CronError, parse
+
+    try:
+        parse(v)
+    except CronError as e:
+        raise ValueError(str(e)) from None
+    return v
+
+
+class _JobSpec(_Strict):
+    """What a schedule or trigger enqueues."""
+
+    plugin: str = Field(min_length=1, max_length=100)
+    workflow: str = Field(min_length=1, max_length=100)
+    input: dict = Field(default_factory=dict)
+    needs: list[str] = Field(default_factory=list)
+    priority: int = Field(PRIORITY_SCHEDULED, ge=0, le=100)
+    model: str | None = None  # the model the job mostly uses: GPU jobs are grouped by it (fewer model swaps)
+    window: str | None = None  # a name from `windows`: the job only starts inside that window
+
+
+class ScheduleConfig(_JobSpec):
+    id: str = Field(pattern=r"^[a-z0-9][a-z0-9_.-]{0,62}$")
+    cron: str  # "0 7 * * *", "@daily", "*/15 * * * *" (local time)
+    enabled: bool = True
+
+    @field_validator("cron")
+    @classmethod
+    def _cron_ok(cls, v: str) -> str:
+        return _check_cron(v)
+
+
+class FolderTrigger(_JobSpec):
+    name: str = Field(pattern=r"^[a-z0-9][a-z0-9_.-]{0,62}$")
+    path: str  # on the worker's machine
+    worker: str  # the worker (id or host) that watches it
+    patterns: list[str] = Field(default_factory=lambda: ["*"])
+    ignore: list[str] = Field(default_factory=lambda: ["*.crdownload", "*.part", "*.tmp", "~$*", ".*"])
+    settle_seconds: float = Field(120, ge=0, le=3600)  # unchanged this long before it counts as finished
+    recursive: bool = False
+    priority: int = Field(PRIORITY_SCHEDULED, ge=0, le=100)
+
+
+class WebhookTrigger(_JobSpec):
+    name: str = Field(pattern=r"^[a-z0-9][a-z0-9_.-]{0,62}$")
+    secret_env: str  # the .env variable holding this hook's secret (never the secret itself)
+    style: Literal["argus", "github"] = "argus"
+    priority: int = Field(PRIORITY_INTERACTIVE, ge=0, le=100)
+
+
+class TriggersConfig(_Strict):
+    folders: list[FolderTrigger] = Field(default_factory=list)
+    webhooks: list[WebhookTrigger] = Field(default_factory=list)
+
+
 class PowerConfig(_Strict):
     mode: Literal["simulated", "real"] = "simulated"
 
@@ -160,11 +229,13 @@ class Secrets(BaseModel):
     """Values from .env and the environment. Never logged."""
 
     model_config = ConfigDict(extra="ignore")
-    admin_password: str | None = None
-    worker_token: str | None = None
-    ntfy_topic: str | None = None
-    ntfy_token: str | None = None  # only for a private ntfy server with access control
-    ntfy_reply_topic: str | None = None  # optional; derived from the topic when unset
+    admin_password: str | None = Field(None, repr=False)
+    worker_token: str | None = Field(None, repr=False)
+    ntfy_topic: str | None = Field(None, repr=False)
+    ntfy_token: str | None = Field(None, repr=False)  # only for a private ntfy server with access control
+    ntfy_reply_topic: str | None = Field(None, repr=False)  # optional; derived from the topic when unset
+    ntfy_reply_write_token: str | None = Field(None, repr=False)  # ntfy mode with a login: write-only token
+    webhooks: dict[str, str] = Field(default_factory=dict, repr=False)  # hook name -> its secret
 
 
 class Config(_Strict):
@@ -179,8 +250,30 @@ class Config(_Strict):
     events: EventsConfig = Field(default_factory=EventsConfig)
     ntfy: NtfyConfig = Field(default_factory=NtfyConfig)
     approvals: ApprovalsConfig = Field(default_factory=ApprovalsConfig)
+    windows: dict[str, str] = Field(default_factory=lambda: {"night": "01:00-06:00"})
+    schedules: list[ScheduleConfig] = Field(default_factory=list)
+    triggers: TriggersConfig = Field(default_factory=TriggersConfig)
     power: PowerConfig = Field(default_factory=PowerConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
+
+    def model_post_init(self, _ctx) -> None:
+        from .cron import CronError, parse_window
+
+        for name, text in self.windows.items():
+            try:
+                parse_window(text)
+            except CronError as e:
+                raise ValueError(f"windows.{name}: {e}") from None
+        specs = [*self.schedules, *self.triggers.folders, *self.triggers.webhooks]
+        for spec in specs:
+            if spec.window and spec.window not in self.windows:
+                raise ValueError(f"window {spec.window!r} is not defined under windows")
+        for kind, items in (("schedule", [s.id for s in self.schedules]),
+                            ("folder trigger", [f.name for f in self.triggers.folders]),
+                            ("webhook", [w.name for w in self.triggers.webhooks])):
+            dup = {x for x in items if items.count(x) > 1}
+            if dup:
+                raise ValueError(f"{kind} names must be unique: {', '.join(sorted(dup))}")
 
     # Filled in by load_config, not read from YAML.
     base_dir: Path = Field(default=Path("."), exclude=True)
@@ -203,7 +296,7 @@ def parse_env_file(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     if not path.exists():
         return values
-    for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    for lineno, raw in enumerate(path.read_text(encoding="utf-8-sig").splitlines(), start=1):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
@@ -234,7 +327,7 @@ def load_config(path: str | os.PathLike | None = None) -> Config:
             "  Copy argus.example.yaml to argus.yaml, or set ARGUS_CONFIG to its path."
         )
     try:
-        raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+        raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8-sig")) or {}
     except yaml.YAMLError as e:
         raise ConfigError(f"Config file {cfg_path} is not valid YAML:\n  {e}") from e
     if not isinstance(raw, dict):
@@ -249,10 +342,25 @@ def load_config(path: str | os.PathLike | None = None) -> Config:
     env = parse_env_file(cfg_path.parent / ".env")
     env.update({k: v for k, v in os.environ.items() if k.startswith(("ARGUS_", "NTFY_"))})
     cfg.secrets = Secrets(
-        admin_password=env.get("ARGUS_ADMIN_PASSWORD"),
-        worker_token=env.get("ARGUS_WORKER_TOKEN"),
+        admin_password=env.get("ARGUS_ADMIN_PASSWORD") or None,
+        worker_token=env.get("ARGUS_WORKER_TOKEN") or None,  # an empty value means "not set"
         ntfy_topic=env.get("NTFY_TOPIC") or None,
         ntfy_token=env.get("NTFY_TOKEN") or None,
         ntfy_reply_topic=env.get("NTFY_REPLY_TOPIC") or None,
+        ntfy_reply_write_token=env.get("NTFY_REPLY_WRITE_TOKEN") or None,
     )
+    missing = []
+    for hook in cfg.triggers.webhooks:
+        secret = env.get(hook.secret_env) or os.environ.get(hook.secret_env)
+        if not secret or len(secret) < 16:
+            missing.append(hook.secret_env)
+        else:
+            cfg.secrets.webhooks[hook.name] = secret
+    if missing:
+        raise ConfigError("Webhook secrets missing or shorter than 16 characters in .env: " + ", ".join(missing))
+    if not cfg.secrets.worker_token and cfg.server.host not in ("127.0.0.1", "localhost", "::1"):
+        raise ConfigError(
+            f"server.host is {cfg.server.host}, but ARGUS_WORKER_TOKEN is not set in .env.\n"
+            "  Argus refuses to serve its API beyond this computer without a token."
+        )
     return cfg

@@ -61,12 +61,13 @@ async function status(){
 }
 function time(t){const d=new Date(t*1000);return d.toLocaleTimeString([], {hour12:false})+"."+String(d.getMilliseconds()).padStart(3,"0");}
 function detail(e){const d=e.data||{};const bits=[];for(const k of ["workflow","from","attempt","reason","idx","tier","error","host"]){if(d[k]!==undefined&&d[k]!==null)bits.push(k+"="+(typeof d[k]==="object"?JSON.stringify(d[k]):d[k]));}return bits.join(" ");}
+function esc(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
 function tone(k){return /succeeded|online|added/.test(k)?"ok":/dead|failed|offline/.test(k)?"bad":/^step\./.test(k)?"info":"";}
 function add(events,fresh){
   for(const e of events){lastSeq=e.seq;rows.unshift({e,fresh});}
   rows=rows.slice(0,40);
-  $("ev").innerHTML=rows.map(({e,fresh})=>`<tr class="${fresh?"new":""}"><td class="m">${time(e.at)}</td><td class="k ${tone(e.kind)}">${e.kind}</td>`+
-    `<td>${e.from||""}${e.to?" → "+e.to:""}</td><td class="m">${e.job_id?e.job_id.slice(-6):""}${e.step?" · "+e.step:""}</td><td class="w">${detail(e)}</td></tr>`).join("")
+  $("ev").innerHTML=rows.map(({e,fresh})=>`<tr class="${fresh?"new":""}"><td class="m">${time(e.at)}</td><td class="k ${tone(e.kind)}">${esc(e.kind)}</td>`+
+    `<td>${esc(e.from)}${e.to?" → "+esc(e.to):""}</td><td class="m">${esc(e.job_id?e.job_id.slice(-6):"")}${e.step?" · "+esc(e.step):""}</td><td class="w">${esc(detail(e))}</td></tr>`).join("")
     ||'<tr><td class="m">no events yet</td></tr>';
   rows.forEach(r=>r.fresh=false);
 }

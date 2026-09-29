@@ -14,7 +14,7 @@
 # ...change code, commit...
 .\scripts\dev.ps1 pr                   # push the branch and open a pull request
 .\scripts\dev.ps1 merge                # after CI is green: squash-merge, back to main
-.\scripts\dev.ps1 release minor        # when ready: tests, version bump, changelog, tag, GitHub release
+.\scripts\dev.ps1 release minor        # at a milestone only: tests, version bump, changelog, tag, GitHub release
 ```
 
 `.\scripts\dev.ps1 sync` brings `main` up to date. A local Git hook (`.githooks/pre-push`) refuses direct

@@ -16,7 +16,7 @@ function getElk(): Promise<ElkApi> {
 const PINS_KEY = "helios.pins";
 
 export type Pos = { x: number; y: number };
-// ELK's route for a line: start, bends, end. Drawn as-is, so lines go around boxes instead of through them.
+// ELK's route for a line: start, control points, end. Drawn as a curve that goes around boxes.
 export type Route = Pos[];
 // A plain heading above a column (no box around it).
 export type ColumnLabel = { id: string; text: string; x: number; y: number };
@@ -51,7 +51,8 @@ export async function layout(nodes: MapNode[], edges: MapEdge[]):
       "elk.algorithm": "layered",
       "elk.direction": "RIGHT",
       "elk.partitioning.activate": "true",
-      "elk.edgeRouting": "ORTHOGONAL",
+      "elk.edgeRouting": "SPLINES",
+      "elk.layered.edgeRouting.splines.mode": "CONSERVATIVE",
       "elk.layered.spacing.nodeNodeBetweenLayers": "56",
       "elk.layered.spacing.edgeNodeBetweenLayers": "14",
       "elk.layered.spacing.edgeEdgeBetweenLayers": "8",
@@ -95,18 +96,25 @@ export async function layout(nodes: MapNode[], edges: MapEdge[]):
   return { pos, labels, routes };
 }
 
-// An orthogonal route as an SVG path with softly rounded corners.
-export function roundedPath(pts: Route, r = 8): string {
+// ELK's spline route as an SVG path: its bend points are the control points of cubic Bezier pieces.
+// If the count does not fit that shape, fall back to a smooth curve through the points.
+export function splinePath(pts: Route): string {
   if (pts.length < 2) return "";
-  let d = `M ${pts[0].x} ${pts[0].y}`;
-  for (let i = 1; i < pts.length - 1; i++) {
-    const a = pts[i - 1], b = pts[i], c = pts[i + 1];
-    const d1 = Math.hypot(b.x - a.x, b.y - a.y), d2 = Math.hypot(c.x - b.x, c.y - b.y);
-    const k = Math.min(r, d1 / 2, d2 / 2);
-    const p1 = { x: b.x + ((a.x - b.x) / (d1 || 1)) * k, y: b.y + ((a.y - b.y) / (d1 || 1)) * k };
-    const p2 = { x: b.x + ((c.x - b.x) / (d2 || 1)) * k, y: b.y + ((c.y - b.y) / (d2 || 1)) * k };
-    d += ` L ${p1.x} ${p1.y} Q ${b.x} ${b.y} ${p2.x} ${p2.y}`;
+  const [s, ...rest] = pts;
+  let d = `M ${s.x} ${s.y}`;
+  if (rest.length % 3 === 0) {
+    for (let i = 0; i < rest.length; i += 3) {
+      const [a, b, c] = rest.slice(i, i + 3);
+      d += ` C ${a.x} ${a.y} ${b.x} ${b.y} ${c.x} ${c.y}`;
+    }
+    return d;
   }
-  const z = pts[pts.length - 1];
-  return d + ` L ${z.x} ${z.y}`;
+  // Catmull-Rom through the points, as cubic Beziers
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[Math.max(0, i - 1)], p1 = pts[i], p2 = pts[i + 1], p3 = pts[Math.min(pts.length - 1, i + 2)];
+    const c1 = { x: p1.x + (p2.x - p0.x) / 6, y: p1.y + (p2.y - p0.y) / 6 };
+    const c2 = { x: p2.x - (p3.x - p1.x) / 6, y: p2.y - (p3.y - p1.y) / 6 };
+    d += ` C ${c1.x} ${c1.y} ${c2.x} ${c2.y} ${p2.x} ${p2.y}`;
+  }
+  return d;
 }

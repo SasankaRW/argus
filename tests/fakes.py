@@ -95,7 +95,8 @@ def fake_claude(tmp: Path, mode: str = "ok", result: str = DEFAULT_RESULT) -> li
         import json, sys, time, pathlib
         here = pathlib.Path(__file__).parent
         (here / "claude_argv.json").write_text(json.dumps(sys.argv[1:]))
-        (here / "claude_stdin.txt").write_text(sys.stdin.read())
+        sys.stdin.reconfigure(encoding="utf-8")
+        (here / "claude_stdin.txt").write_text(sys.stdin.read(), encoding="utf-8")
         mode = {mode!r}
         if mode == "hang":
             time.sleep(10)

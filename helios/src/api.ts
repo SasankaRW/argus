@@ -111,6 +111,7 @@ type StreamHandlers = {
   onEvents: (evs: ArgusEvent[], replay: boolean) => void;
   onState: (s: "connecting" | "live" | "offline") => void;
   onReset: () => void;
+  onRefused?: () => void; // closed before it ever opened (e.g. a wrong token): the caller checks why
 };
 
 // One WebSocket that never loses an event: on reconnect it asks for everything after the last seq it saw.
@@ -136,7 +137,8 @@ export class EventStream {
     if (t) q.set("token", t);
     const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/events?${q}`);
     this.ws = ws;
-    ws.onopen = () => { this.retry = 800; this.h.onState("live"); };
+    let opened = false;
+    ws.onopen = () => { opened = true; this.retry = 800; this.h.onState("live"); };
     ws.onmessage = (m) => {
       const msg = JSON.parse(m.data);
       if (msg.type === "events") {
@@ -149,6 +151,7 @@ export class EventStream {
     };
     ws.onclose = () => {
       if (this.closed) return;
+      if (!opened) this.h.onRefused?.();
       this.h.onState("offline");
       this.timer = window.setTimeout(() => this.open(), this.retry);
       this.retry = Math.min(this.retry * 2, 10_000);

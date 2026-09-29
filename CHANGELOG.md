@@ -5,9 +5,54 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Map lines are curves again,** routed around the boxes (ELK splines) instead of right angles.
+- **Review fixes (29 Sep):**
+  - Security: `.env` saved with a BOM (Notepad) no longer turns auth off; an empty `ARGUS_WORKER_TOKEN` counts as
+    unset, and argusd refuses to listen beyond localhost without one; secrets are hidden from config printouts;
+    tokens in URLs are masked in logs; `/lite` escapes event text; the phone page only links to http(s) and sends a
+    strict Content-Security-Policy; approval links must be http(s).
+  - Jobs: a worker is never starved by a pile of jobs it cannot run (no top-200 cut; plugin filter in SQL);
+    waiting for an approval no longer uses up a retry attempt; Re-run with an active duplicate answers 409 instead
+    of 500; cancelling or dead-lettering a job closes its pending approvals; idle long-polls only read.
+  - Durability: SQLite commits with `synchronous=FULL` (the laptop has no battery); writes queued during shutdown
+    fail cleanly instead of hanging.
+  - Models: Claude gets its playbook through stdin, never the Windows command line; a Claude timeout ends the whole
+    process tree (claude.cmd -> node) so a worker can't hang; every call needs its own permit (retries count
+    against the Claude cap); a half-open breaker lets exactly one trial call through.
+  - Worker: an argusd outage while reporting no longer stops the worker.
+  - Approvals: edited fields keep their type and an edited amount must be valid (formatted in code); a late
+    answer counts as expired and sticks; ntfy mode can carry a write-only token (`NTFY_REPLY_WRITE_TOKEN`).
+  - Helios: a changed token shows the login instead of "Connecting" forever; line counts are no longer counted
+    twice after a refresh; the map re-renders only while something glows (idle costs nothing); on a phone one
+    finger scrolls the page and taps don't drag boxes; the inspector scrolls into view on narrow screens; line
+    history looks further back; dev-server proxy covers /models, /approvals, /outbox.
+  - Tooling: `up`/`down` check pid and start time (Windows reuses pids) and record each start at once; `merge`
+    refuses when local commits aren't on GitHub and waits for checks to appear; CI fails when `helios_dist` is
+    stale; `release` prints recovery steps if the push fails; README and CONTRIBUTING match the workflow.
+  - Indexes on events by component and jobs by date (migration 0005); `/status` cached for 2 s.
+  - 188 tests.
+- **Plugin Guide 0.5:** the plugin plan in five waves (24 plugins).
+
+Core step C9: scheduler, triggers and dispatcher.
+
+- **Schedules:** cron jobs under `schedules:` in argus.yaml (`0 7 * * *`, `@daily`; local time). After downtime a
+  schedule runs once, not once per missed slot; a run still queued is merged with the next. Helios' Scheduler box
+  lists them with the next run and a Run now button (`GET /schedules`, `POST /schedules/{id}/run`).
+- **Windows:** `windows: {night: "01:00-06:00"}`; a job or schedule with `window: night` only starts inside it.
+- **Folder triggers:** `triggers.folders` names a folder on a worker's machine; that worker watches it and reports
+  each file once it has stopped changing (`settle_seconds`), skipping temporary downloads. Files are remembered by
+  content, so copies, re-downloads and restarts never process a file twice; when the plugin's queue is full the
+  watcher holds the rest back and offers them later (`POST /triggers/file`).
+- **Webhooks:** `POST /hooks/<name>`, signed with the hook's secret from .env: a timestamped HMAC (replays refused)
+  or GitHub's `X-Hub-Signature-256`. Retried deliveries are merged.
+- **Dispatcher:** priorities (interactive 90, resumed after approval 80, scheduled 50, batch 20); one job per plugin
+  at a time by default (`jobs.plugin_concurrency`, per-plugin `jobs.concurrency`); one GPU job at a time, and GPU
+  jobs for the model already loaded go first, so Ollama swaps models rarely (`model` on a job or schedule).
+- Database migration 0006. Core Design 0.8. 201 tests, including the gate: 100 mixed jobs with at most 2 model
+  swaps, and a flood of 500 files merged and limited.
 - **Devices in their own column:** the PC's worker, the phone and apps always sit in the first column of the
   Helios map under a plain "Devices" heading; the rest is laid out by traffic as before, models last. Lines follow
-  ELK's routes around the boxes (straight runs, rounded corners) instead of cutting across them, and the map is
+  ELK's routes around the boxes instead of cutting across them, and the map is
   more compact. A box you drag gets a plain curve until Auto layout.
 - **Phone on the map:** a Phone box shows online / offline (green / red) and since when, like the PC's worker.
 - **Approval notifications say "Approve / Reject need Tailscale"** when the buttons go over Tailscale.

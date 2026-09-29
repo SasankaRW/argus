@@ -12,22 +12,24 @@ Design documents (versions tracked in the Argus Docs Index):
 ## Status
 
 The version is in `VERSION`; what changed is in `CHANGELOG.md`. Core steps done: C1 skeleton, C2 store, C3 jobs, C4 workers,
-C5 live events, C6 Helios live map, C7 models and escalation.
+C5 live events, C6 Helios live map, C7 models and escalation, C8 approvals, outbox and ntfy, C9 scheduler,
+triggers and dispatcher.
 
 ## Run it on Windows (PC, development)
 
 ```powershell
 cd G:\Projects\argus
-.\scripts\dev.ps1 setup     # creates .venv, installs Argus + dev tools, copies example config
-.\scripts\dev.ps1 test      # runs the test suite
-.\scripts\dev.ps1 check     # validates argus.yaml and the database
-.\scripts\dev.ps1 run       # starts argusd on http://127.0.0.1:8600
-.\scripts\dev.ps1 worker    # (second window) starts a worker with the demo plugin
-.\scripts\dev.ps1 events    # (third window) watches events live
-.\scripts\dev.ps1 demo      # (fourth window) submits a demo job
+.\scripts\dev.ps1 setup     # once: creates .venv, installs Argus + dev tools, copies example config
+.\scripts\dev.ps1 up        # starts Ollama, argusd and a worker, then opens Helios (or double-click scripts\up.cmd)
+.\scripts\dev.ps1 down      # stops what "up" started ("down all" also stops Ollama)
 ```
 
-Then open http://127.0.0.1:8600 for Helios, the live map (`/lite` is the small status page).
+Trying things out: `demo` (a small job), `classify` (a model job with an escalation), `approval` (a pretend bill
+that waits for you), `ntfy` (a test notification), `models` (checks Ollama and Claude). `test` runs the tests;
+`run` and `worker` start the parts by hand. Helios is at http://127.0.0.1:8600 (`/lite` is the small status page).
+
+Phone: set `NTFY_TOPIC` in `.env` (a long random name) and subscribe to it in the ntfy app. Approve / Reject on
+the phone go over Tailscale: set `approvals.public_url` and `approvals.phone` in `argus.yaml`.
 
 ## Layout
 
@@ -40,6 +42,10 @@ core/argus/        the argusd package
   worker/          argus-worker: client, workflow runner, demo plugin
   models/          Ollama and Claude providers, tier router (checks, escalation), doctor
   modelboard.py    circuit breakers and the daily Claude budget, shared by all workers
+  approvals.py     approvals: signed one-time phone tokens, reminders, expiry
+  outbox.py        messages that leave Argus (ntfy), sent exactly once with retries
+  presence.py      phone on Tailscale: push waiting approvals when it comes back
+  relay.py         optional: approval buttons through an ntfy reply topic
   registry.py      workers, components and edges (the Helios map)
   events.py        event log, edges, live stream hub, retention
   tail.py          argus-events: live events in the terminal
@@ -59,5 +65,6 @@ scripts/           dev helpers
 - Argus uses `MAJOR.MINOR.PATCH` in `VERSION`; every release has a `CHANGELOG.md` entry, a Git tag `vX.Y.Z`
   and a GitHub release. Database schema changes are numbered migrations; Argus refuses a newer database.
 - Work goes on a branch, into a pull request, and is squash-merged when CI is green; `main` is protected.
-  Releases are one command: `.\scripts\dev.ps1 release minor`. Details: [CONTRIBUTING.md](CONTRIBUTING.md).
+  Releases happen at milestones, not after every merge: `.\scripts\dev.ps1 release minor`. Details:
+  [CONTRIBUTING.md](CONTRIBUTING.md).
 - Design docs are versioned in [docs/](docs/README.md).

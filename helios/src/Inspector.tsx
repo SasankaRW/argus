@@ -1,6 +1,6 @@
 // Inspector: details for whatever is selected on the map or in the event list.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, Approval, ArgusEvent, ArgusMap, Job, Status } from "./api";
 import { ago, clock, pretty, shortId, tone, uptime } from "./format";
 import type { Selection } from "./MapView";
@@ -43,7 +43,7 @@ function useHistory(key: string, query: string, live: ArgusEvent[], keep: (e: Ar
   useEffect(() => {
     let off = false;
     setHist([]);
-    api<{ events: ArgusEvent[] }>(`/events?newest=true&limit=60&${query}`)
+    api<{ events: ArgusEvent[] }>(`/events?newest=true&${query.includes("limit=") ? "" : "limit=60&"}${query}`)
       .then((r) => { if (!off) setHist(r.events.filter(keep)); })
       .catch(() => {});
     return () => { off = true; };
@@ -144,6 +144,51 @@ function PendingApprovals({ events, onSelect }: { events: ArgusEvent[]; onSelect
   );
 }
 
+type Schedule = { id: string; plugin: string; workflow: string; cron: string; enabled: boolean;
+  next_run_at: number | null; last_run_at: number | null; last_job_id: string | null; spec: { window?: string | null } };
+
+function when(t: number | null): string {
+  if (!t) return "—";
+  const s = t - Date.now() / 1000;
+  if (s < 0) return ago(t);
+  if (s < 3600) return `in ${Math.round(s / 60)} min`;
+  if (s < 86400) return `in ${(s / 3600).toFixed(1)} h`;
+  return new Date(t * 1000).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+// The scheduler's box: every schedule, when it runs next, and a Run now button.
+function Schedules({ onSelect }: { onSelect: (s: Selection) => void }) {
+  const [list, setList] = useState<Schedule[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const load = () => api<Schedule[]>("/schedules").then(setList).catch(() => setList([]));
+  useEffect(() => { load(); }, []);
+  if (!list) return <div className="tip">Loading…</div>;
+  if (!list.length) return <div className="tip">No schedules yet. Add them under <code>schedules:</code> in argus.yaml.</div>;
+  return (
+    <>
+      {list.map((s) => (
+        <div key={s.id} className="appr">
+          <div className="appr-h"><b>{s.id}</b><span className="pill mono">{s.cron}</span></div>
+          <div className="tip">{s.plugin}.{s.workflow}{s.spec?.window ? ` · ${s.spec.window} window` : ""}{s.enabled ? "" : " · off"}</div>
+          <KV k="Next" v={s.enabled ? when(s.next_run_at) : "off"} />
+          <KV k="Last" v={s.last_job_id
+            ? <button type="button" className="btn" onClick={() => onSelect({ type: "job", id: s.last_job_id! })}>{when(s.last_run_at)}</button>
+            : "never"} />
+          <div className="appr-actions">
+            <button type="button" className="btn" disabled={busy === s.id} onClick={async () => {
+              setBusy(s.id);
+              try {
+                const r = await api<{ job_id: string }>(`/schedules/${s.id}/run`, { method: "POST" });
+                onSelect({ type: "job", id: r.job_id });
+              } finally { setBusy(null); load(); }
+            }}>Run now</button>
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}
+
 function NodePanel({ id, map, status, events, onSelect }: { id: string } & Omit<Props, "sel">) {
   const n = map.nodes.find((x) => x.id === id);
   const evs = useHistory(`n:${id}`, `component=${encodeURIComponent(id)}`, events, (e) => e.from === id || e.to === id);
@@ -198,6 +243,7 @@ function NodePanel({ id, map, status, events, onSelect }: { id: string } & Omit<
             <KV k="Not delivered" v={<span className={n.failed ? "bad" : ""}>{n.failed ?? 0}</span>} />
           </>
         )}
+        {n.id === "scheduler" && (<><div className="sect">Schedules</div><Schedules onSelect={onSelect} /></>)}
         {n.id === "approvals" && (<><div className="sect">Waiting for you</div><PendingApprovals events={events} onSelect={onSelect} /></>)}
         <KV k="First seen" v={ago(n.first_seen)} />
         <KV k="Lines" v={lines.length ? lines.map((l) => (l.src === id ? `→ ${l.dst}` : `← ${l.src}`)).join(", ") : "none yet"} />
@@ -246,7 +292,7 @@ function EdgePanel({ src, dst, map, events, onSelect }: { src: string; dst: stri
     first_seen: Math.min(...both.map((x) => x.first_seen)),
     last: both.reduce((a, x) => (x.last_seen > a.last_seen ? x : a)),
   } : null;
-  const evs = useHistory(`e:${src}>${dst}`, `component=${encodeURIComponent(src)}`, events,
+  const evs = useHistory(`e:${src}>${dst}`, `component=${encodeURIComponent(src)}&limit=400`, events,
     (x) => (x.from === src && x.to === dst) || (x.from === dst && x.to === src));
   return (
     <>
@@ -274,7 +320,7 @@ function JobPanel({ id, events, onSelect }: { id: string; events: ArgusEvent[]; 
   const [err, setErr] = useState<string | null>(null);
   const lastSeq = events.filter((e) => e.job_id === id).map((e) => e.seq).pop() ?? 0;
   useEffect(() => {
-    api<Job>(`/jobs/${id}`).then(setJob).catch((e) => setErr(String(e)));
+    api<Job>(`/jobs/${id}`).then((j) => { setJob(j); setErr(null); }).catch((e) => setErr(String(e)));
   }, [id, lastSeq]); // refresh whenever this job moves
   if (err) return <div className="ib"><div className="tip">Could not load job: {err}</div></div>;
   if (!job) return <div className="ib"><div className="tip">Loading…</div></div>;
@@ -343,8 +389,13 @@ function Overview({ map, status }: { map: ArgusMap; status: Status | null }) {
 
 export function Inspector(p: Props) {
   const s = p.sel;
+  const ref = useRef<HTMLElement>(null);
+  // On a narrow screen the inspector sits below the map: bring it into view when something is picked.
+  useEffect(() => {
+    if (s && window.innerWidth < 900) ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [s]);
   return (
-    <section className="panel insp" aria-label="Inspector">
+    <section ref={ref} className="panel insp" aria-label="Inspector">
       {!s && <Overview map={p.map} status={p.status} />}
       {s?.type === "node" && <NodePanel key={s.id} id={s.id} {...p} />}
       {s?.type === "edge" && <EdgePanel key={`${s.src}>${s.dst}`} src={s.src} dst={s.dst} {...p} />}

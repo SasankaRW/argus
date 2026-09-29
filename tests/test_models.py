@@ -96,8 +96,9 @@ def test_claude_provider_runs_with_tools_off(tmp_path):
     assert json.loads(r.text) == {"category": "Documents", "reason": "claude"}
     argv = json.loads((tmp_path / "claude_argv.json").read_text())
     assert "-p" in argv and argv[argv.index("--disallowedTools") + 1] == "*"
-    assert argv[argv.index("--output-format") + 1] == "json" and "--append-system-prompt" in argv
-    assert "classify lecture_07.pdf" in (tmp_path / "claude_stdin.txt").read_text()
+    assert argv[argv.index("--output-format") + 1] == "json" and "--append-system-prompt" not in argv
+    stdin = (tmp_path / "claude_stdin.txt").read_text(encoding="utf-8")
+    assert stdin.startswith("be brief") and "classify lecture_07.pdf" in stdin  # the playbook goes via stdin
     with pytest.raises(ModelTimeout):
         hung = ClaudeProvider(fake_claude(tmp_path, "hang"), cfg.args, timeout=0.5)
         hung.chat("s", [{"role": "user", "content": "x"}])
@@ -153,7 +154,7 @@ def test_router_moves_on_when_a_tier_hangs_errors_or_is_refused():
     with FakeOllama({"t2": [GOOD]}) as ol:
         b = FakeBoard(deny={"T1": "breaker open"})
         ans = Router(providers(ol), b, chain=["T1", "T2"]).ask("sort", "x", schema=Placement)
-        assert ans.tier == "T2" and ans.trail[0] == {"tier": "T1", "skipped": "breaker open"}
+        assert ans.tier == "T2" and ans.trail[0] == {"tier": "T1", "attempt": 1, "skipped": "breaker open"}
         assert not any(r["model"] == "t1" for r in ol.requests)
 
 
@@ -338,3 +339,31 @@ def test_doctor_reports_setup(tmp_path, capsys):
         out = capsys.readouterr().out
         assert "[ok] T1 answered valid JSON" in out and "ollama pull qwen2.5-coder:14b" in out
         assert "[ok] real call with tools off" in out and "1 problem(s)" in out
+
+
+def test_claude_timeout_ends_the_whole_process_tree(tmp_path):
+    """claude.cmd starts node: a timeout must end the child too, or its open pipes keep the worker waiting."""
+    import subprocess as sp
+    import sys
+
+    from argus.models.providers import run_with_timeout
+
+    script = tmp_path / "parent.py"
+    script.write_text("import subprocess, sys, time\n"
+                      "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+                      "time.sleep(30)\n", encoding="utf-8")
+    t0 = time.perf_counter()
+    with pytest.raises(sp.TimeoutExpired):
+        run_with_timeout([sys.executable, str(script)], "", 0.5)
+    assert time.perf_counter() - t0 < 8
+
+
+def test_router_asks_for_a_permit_per_call():
+    """Each call to a tier needs its own permit, so a retry counts against the Claude cap too."""
+    with FakeOllama({"t1": [WRONG, GOOD]}) as ol:
+        b = FakeBoard()
+        calls = []
+        orig = b.permit
+        b.permit = lambda tier: calls.append(tier) or orig(tier)
+        Router(providers(ol), b, chain=["T1"]).ask("sort", "x", schema=Placement, check=check)
+        assert calls == ["T1", "T1"]

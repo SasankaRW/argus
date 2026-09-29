@@ -16,6 +16,8 @@ from .outbox import Outbox, add_message
 from .presence import PhoneWatch
 from .registry import Registry
 from .relay import ReplyRelay
+from .scheduler import Scheduler
+from .triggers import Triggers
 
 log = logging.getLogger("argus")
 
@@ -25,20 +27,22 @@ class Argus:
         self.cfg = cfg
         self.version = __version__
         self.store = Store(cfg.db_path)
-        self.jobs = JobStore(self.store, cfg.jobs)
+        self.jobs = JobStore(self.store, cfg.jobs, windows=cfg.windows)
         self.registry = Registry(self.store)
         self.models = ModelBoard(self.store, cfg)
         self.outbox = Outbox(self.store, cfg)
         self.approvals = Approvals(self.store, self.jobs, cfg)
         self.relay = ReplyRelay(self.store, cfg, self.approvals, self.outbox)
         self.phone = PhoneWatch(self.store, cfg, self.approvals, self.outbox)
+        self.scheduler = Scheduler(self.store, self.jobs, cfg)
+        self.triggers = Triggers(self.store, self.jobs, cfg)
         self.hub = EventHub(self.store, queue_size=cfg.events.stream_queue)
         stale_after = cfg.jobs.heartbeat_seconds * 4
         self.watchdog = Watchdog(
             self.jobs,
             cfg.jobs.watchdog_interval_seconds,
             extra=[lambda: self.registry.mark_stale_workers(stale_after), self.prune_events,
-                   self.approval_tick],
+                   self.approval_tick, self.scheduler.tick],
         )
         self.started_at: float | None = None
         self._next_prune = 0.0
@@ -55,6 +59,7 @@ class Argus:
         await self.registry.component("argus", "core", "Argus", group, {"version": self.version})
         await self.models.register()
         await self.approvals.start()
+        await self.scheduler.sync()
         await self.outbox.start()
         self.relay.start()
         await self.phone.start()

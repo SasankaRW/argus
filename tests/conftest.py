@@ -45,7 +45,8 @@ def clock() -> FakeClock:
 
 @pytest.fixture
 def jobs(store: Store, clock: FakeClock) -> JobStore:
-    cfg = JobsConfig(lease_seconds=60, max_attempts=3, backoff_seconds=[10, 60, 600], plugin_queue_limit=100)
+    cfg = JobsConfig(lease_seconds=60, max_attempts=3, backoff_seconds=[10, 60, 600], plugin_queue_limit=100,
+                     plugin_concurrency=50)
     return JobStore(store, cfg, clock=clock)
 
 

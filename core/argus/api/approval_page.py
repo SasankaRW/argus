@@ -72,7 +72,7 @@ def render(a: dict[str, Any], token: str) -> str:
         if p.get("amount"):
             body.insert(0, f"<div class='big'>{_e(p['amount'])}</div>")
         body.append("<table>" + "".join(rows) + "</table>")
-    if p.get("link"):
+    if p.get("link") and str(p["link"]).startswith(("http://", "https://")):
         body.append(f"<p><a href='{_e(p['link'])}' rel='noreferrer'>Open the file</a></p>")
 
     if pending:

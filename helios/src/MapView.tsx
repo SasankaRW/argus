@@ -6,7 +6,7 @@ import {
 } from "@xyflow/react";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ArgusMap, MapNode } from "./api";
-import { ColumnLabel, layout, loadPins, NODE_H, NODE_W, Pos, roundedPath, Route, savePins } from "./layout";
+import { ColumnLabel, layout, loadPins, NODE_H, NODE_W, Pos, Route, splinePath, savePins } from "./layout";
 import type { Pulse } from "./live";
 import { ago } from "./format";
 
@@ -33,6 +33,7 @@ function sub(n: MapNode): string {
     return "checking…";
   }
   if (n.id === "approvals") return n.pending ? `${n.pending} waiting for you` : "nothing to decide";
+  if (n.id === "scheduler") return "cron · triggers";
   if (n.id === "ntfy") return n.failed ? `${n.failed} not delivered` : n.unsent ? `${n.unsent} sending` : "all sent";
   if (n.kind === "model") {
     const st = n.state === "open" ? "paused" : n.state === "half_open" ? "trying again" : "ready";
@@ -107,7 +108,7 @@ const Line = memo(function Line(p: EdgeProps<Edge<LineData>>) {
   const r = d.route;
   const fits = r && r.length >= 2 && Math.abs(r[0].x - p.sourceX) < 3 && Math.abs(r[0].y - p.sourceY) < 3
     && Math.abs(r[r.length - 1].x - p.targetX) < 3 && Math.abs(r[r.length - 1].y - p.targetY) < 3;
-  const path = fits ? roundedPath(r!)
+  const path = fits ? splinePath(r!)
     : getBezierPath({ sourceX: p.sourceX, sourceY: p.sourceY, targetX: p.targetX, targetY: p.targetY, sourcePosition: p.sourcePosition, targetPosition: p.targetPosition })[0];
   const width = Math.min(1.2 + Math.log2(1 + d.count) * 0.35, 3.6);
   const cls = `line${d.hot ? (d.tone === "bad" ? " bad" : d.tone === "warn" ? " warn" : " on") : ""}${d.selected ? " sel" : ""}`;
@@ -146,6 +147,7 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal 
   const [edges, setEdges] = useEdgesState<Edge<LineData>>([]);
   const [now, setNow] = useState(Date.now());
   const rf = useReactFlow();
+  const coarse = useMemo(() => typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches, []);
   const userMoved = useRef(false); // once you pan or zoom, the map stops re-fitting itself
   const wrap = useRef<HTMLDivElement>(null);
   const fit = (duration = 300) => rf.fitView({ padding: 0.12, maxZoom: 1.1, duration });
@@ -185,11 +187,15 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // "hot" fades 1.6 s after the last message
+  // "hot" fades 1.6 s after the last message: re-render once when the newest glow is due to fade, instead of
+  // ticking all day (an idle map then costs nothing, which matters on the phone)
   useEffect(() => {
-    const iv = window.setInterval(() => setNow(Date.now()), 400);
-    return () => window.clearInterval(iv);
-  }, []);
+    const last = Math.max(0, ...Object.values(active));
+    const left = last + 1600 - Date.now();
+    if (left <= 0) return;
+    const t = window.setTimeout(() => setNow(Date.now()), left + 30);
+    return () => window.clearTimeout(t);
+  }, [active, now]);
 
   const oldest = useMemo(() => Math.min(...map.nodes.map((n) => n.first_seen)), [map.nodes]);
 
@@ -274,6 +280,10 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal 
       onEdgeClick={(_, edge) => onSelect({ type: "edge", src: edge.source, dst: edge.target })}
       onPaneClick={() => onSelect(null)}
       onMoveStart={(e) => { if (e) userMoved.current = true; }}
+      // on a touch screen one finger scrolls the page and a tap only selects; pinch still zooms the map
+      panOnDrag={!coarse}
+      nodesDraggable={!coarse}
+      preventScrolling={!coarse}
       minZoom={0.3}
       maxZoom={2}
       proOptions={{ hideAttribution: true }}

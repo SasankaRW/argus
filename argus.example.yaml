@@ -42,7 +42,9 @@ jobs:
   max_attempts: 3
   backoff_seconds: [10, 60, 600]
   watchdog_interval_seconds: 5
-  plugin_queue_limit: 100
+  plugin_queue_limit: 100  # jobs of one plugin waiting or running at most; more are refused (back-pressure)
+  plugin_concurrency: 1    # jobs of one plugin running at once
+  concurrency: {}          # per-plugin exceptions, e.g. {demo: 4}
 
 events:
   retention_days: 90       # older events are deleted; the map's edges are kept
@@ -60,6 +62,39 @@ approvals:
   back_online_cooldown_minutes: 15
   remind_hours: 24         # one reminder if nobody decided
   expire_hours: 168        # then it counts as "no" and the job carries on
+
+windows:                   # named time ranges (local time); a job with window: night only starts inside it
+  night: "01:00-06:00"
+
+schedules: []              # cron jobs, e.g.
+#  - id: morning-brief
+#    plugin: brief
+#    workflow: send
+#    cron: "0 7 * * *"      # minute hour day month weekday; also @hourly @daily @weekly
+#    priority: 50
+#  - id: model-scout
+#    plugin: scout
+#    workflow: run
+#    cron: "@daily"
+#    window: night          # queued daily, starts in the night window
+#    needs: [gpu]
+#    model: qwen2.5-coder:14b   # GPU jobs are grouped by model so Ollama swaps rarely
+
+triggers:
+  folders: []              # a worker watches a folder on its machine, e.g.
+#    - name: downloads
+#      plugin: organizer
+#      workflow: sort
+#      worker: SasPC        # worker id or host name
+#      path: C:/Users/Sas/Downloads
+#      patterns: ["*"]
+#      settle_seconds: 120  # unchanged this long = finished downloading
+  webhooks: []             # signed POST /hooks/<name>, e.g.
+#    - name: github
+#      plugin: review
+#      workflow: pr
+#      secret_env: GITHUB_HOOK_SECRET   # the secret itself goes in .env
+#      style: github
 
 power:
   mode: simulated          # simulated on the PC, real on the laptop
