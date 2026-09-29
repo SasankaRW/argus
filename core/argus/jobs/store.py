@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..config import JobsConfig
-from ..cron import in_window
+from ..cron import in_window, window_opens
 from ..db import Store
 from ..events import insert_event
 from ..ids import new_id
@@ -588,6 +588,57 @@ class JobStore:
             sql = "SELECT * FROM jobs" + (" WHERE " + " AND ".join(where) if where else "")
             rows = conn.execute(sql + " ORDER BY created_at DESC LIMIT ?", (*args, limit))
             return [Job.from_row(r) for r in rows.fetchall()]
+
+        return await self.store.read(fn)
+
+    async def queue(self, workers: list[dict[str, Any]]) -> dict[str, Any]:
+        """What Argus is doing and what waits, in the order it will run, each with the reason it waits.
+
+        `workers`: the registered workers (state, capabilities), to tell "no worker can run this" apart."""
+        online = [set(w.get("capabilities") or []) for w in workers if w.get("state") == "online"]
+
+        def fn(conn: sqlite3.Connection) -> dict[str, Any]:
+            now = self.clock()
+            rows = [Job.from_row(r) for r in conn.execute(
+                "SELECT * FROM jobs WHERE state IN ('queued','retry','leased','running','waiting')"
+                " ORDER BY priority DESC, CASE WHEN model_group = ? THEN 0 ELSE 1 END, model_group, created_at, id",
+                (self.gpu_model,)).fetchall()]
+            steps = {r["job_id"]: r["name"] for r in conn.execute(
+                "SELECT job_id, name FROM steps WHERE state = 'running'").fetchall()}
+            active = [j for j in rows if j.state.value in ("leased", "running")]
+            running_by_plugin: dict[str, int] = {}
+            for j in active:
+                running_by_plugin[j.plugin] = running_by_plugin.get(j.plugin, 0) + 1
+            gpu_busy = any("gpu" in j.needs for j in active)
+
+            def brief(j: Job) -> dict[str, Any]:
+                return {"id": j.id, "plugin": j.plugin, "workflow": j.workflow, "state": j.state.value,
+                        "priority": j.priority, "attempt": j.attempt, "max_attempts": j.max_attempts,
+                        "created_at": j.created_at, "updated_at": j.updated_at, "needs": list(j.needs),
+                        "model": j.model_group, "window": j.run_window}
+
+            running = [{**brief(j), "worker": j.lease_owner, "step": steps.get(j.id), "since": j.updated_at}
+                       for j in active]
+            waiting = [{**brief(j), "reason": j.wait_reason} for j in rows if j.state.value == "waiting"]
+            queued = []
+            for j in rows:
+                if j.state.value not in ("queued", "retry"):
+                    continue
+                why, until = "next", None
+                if j.run_after > now:
+                    why, until = ("retry" if j.state.value == "retry" else "later"), j.run_after
+                elif j.run_window and j.run_window in self.windows and not in_window(self.windows[j.run_window], now):
+                    why, until = "window", window_opens(self.windows[j.run_window], now)
+                elif not any(set(j.needs) <= caps for caps in online):
+                    why = "no_worker"
+                elif running_by_plugin.get(j.plugin, 0) >= self.cfg.limit_for(j.plugin):
+                    why = "plugin_busy"
+                elif "gpu" in j.needs and gpu_busy:
+                    why = "gpu_busy"
+                queued.append({**brief(j), "position": len(queued) + 1, "why": why, "until": until,
+                               "error": j.error if j.state.value == "retry" else None})
+            return {"running": running, "queued": queued, "waiting": waiting, "gpu_model": self.gpu_model,
+                    "workers_online": len(online)}
 
         return await self.store.read(fn)
 

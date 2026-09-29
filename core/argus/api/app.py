@@ -400,6 +400,11 @@ def create_app(argus: Argus) -> FastAPI:
                         before: float | None = None) -> list[dict]:
         return [job_json(j) for j in await argus.jobs.list_jobs(state, min(max(limit, 1), 500), plugin, before)]
 
+    @app.get("/queue", dependencies=guarded)
+    async def queue() -> dict:
+        """Running, waiting for you, and queued in the order they will run, each with why it waits."""
+        return await argus.jobs.queue(await argus.registry.workers())
+
     @app.get("/jobs/counts", dependencies=guarded)
     async def job_counts() -> dict:
         return await argus.jobs.counts()

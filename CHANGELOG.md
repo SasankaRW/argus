@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Helios Queue page:** what runs now (worker, step, time), what waits for you, and what runs next in order, each with the reason it waits (after the running job of the same plugin, GPU busy, night window opens at, no worker online, retry in); Cancel on each queued job. `GET /queue`.
+- **Simple phone view:** on a phone Helios opens to one clean screen: status, a big "Send something to Argus" button, approvals that need you, Now, Up next and Just finished. Tap any job for details; "Open the full dashboard" switches to the full view (remembered).
 - downloads-organizer: videos always go to Downloads\Videos and audio to Downloads\Audio, decided by file type in code (rules `by_extension:`), no model; Tidy folders also moves such files out of the wrong folders. Optional `destinations:` keeps a category outside Downloads.
 - **screenshot-renamer names the window in front, not the background:** the vision model goes first (it sees which window the screenshot is about), with the text near the middle as a hint. Every word of a name must be on screen in the front window or be a plain describing word (folder, error, login page); made-up words or words from other windows are sent back, and if nothing passes the name stays as it is.
 - **downloads-organizer: one folder per kind.** Media is now Audio; "Tidy folders" folds Pictures into Images, Media and Music into Audio, Miscellaneous into Misc (each move can be undone).
