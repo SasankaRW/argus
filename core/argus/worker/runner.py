@@ -256,7 +256,7 @@ class Worker:
 
         def trace(kind: str, data: dict) -> None:
             try:
-                client.trace(job_id, wid, kind, src=pid, dst=kind.split(".")[0], step=ctx._step, data=data)
+                client.trace(job_id, wid, kind, src=pid, dst=None, step=ctx._step, data=data)
             except (Unreachable, ApiError) as e:  # the undo log is best effort; the change itself stands
                 log.warning("could not record a plugin event", extra={"kind": kind, "error": str(e)})
 
