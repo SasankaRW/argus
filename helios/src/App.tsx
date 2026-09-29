@@ -6,6 +6,7 @@ import { Inspector } from "./Inspector";
 import { useArgus } from "./live";
 import { MapView, Selection } from "./MapView";
 import { LogsView } from "./LogsView";
+import { RulesView } from "./RulesView";
 import { RunsView } from "./RunsView";
 import { ShareView } from "./ShareView";
 
@@ -89,9 +90,10 @@ export function App() {
   const [flow, setFlow] = useState(true);
   const [relayout, setRelayout] = useState(0);
   const [triedLogin, setTriedLogin] = useState(false);
-  const [view, setView] = useState<string>(() => (["#runs", "#logs", "#share"].includes(location.hash) ? location.hash.slice(1) : "map"));
+  const parse = (h: string) => (["runs", "logs", "share"].includes(h) || h.startsWith("rules/") ? h : "map");
+  const [view, setView] = useState<string>(() => parse(location.hash.slice(1)));
   useEffect(() => {  // the share menu opens /helios/#share on a page that may already be open
-    const on = () => { const h = location.hash.slice(1); setView(["runs", "logs", "share"].includes(h) ? h : "map"); };
+    const on = () => setView(parse(location.hash.slice(1)));
     window.addEventListener("hashchange", on);
     return () => window.removeEventListener("hashchange", on);
   }, []);
@@ -120,7 +122,7 @@ export function App() {
 
       <nav className="rail" aria-label="Helios sections">
         {NAV.map((n) => (
-          <button key={n.id} type="button" className="nav" aria-current={n.id === view ? "page" : undefined} disabled={!!n.soon} onClick={() => go(n.id)} title={n.soon ? `Arrives in ${n.soon}` : undefined}>
+          <button key={n.id} type="button" className="nav" aria-current={n.id === view.split("/")[0] ? "page" : undefined} disabled={!!n.soon} onClick={() => go(n.id)} title={n.soon ? `Arrives in ${n.soon}` : undefined}>
             <Icon d={n.icon} /><span>{n.label}</span>{n.soon && <span className="soon mono">{n.soon}</span>}
           </button>
         ))}
@@ -133,8 +135,9 @@ export function App() {
       </nav>
 
       <main>
-        {view !== "share" && <Kpis status={st} />}
-        {view === "share" ? <ShareView onJob={(id) => { setSel({ type: "job", id }); go("runs"); }} onDone={() => go("map")} />
+        {view !== "share" && !view.startsWith("rules/") && <Kpis status={st} />}
+        {view.startsWith("rules/") ? <RulesView plugin={decodeURIComponent(view.slice(6))} onBack={() => history.back()} />
+        : view === "share" ? <ShareView onJob={(id) => { setSel({ type: "job", id }); go("runs"); }} onDone={() => go("map")} />
         : view === "logs" ? <LogsView /> : (
         <div className="mid">
           {view === "runs" ? (
@@ -168,7 +171,7 @@ export function App() {
           {a.map && <Inspector sel={sel} map={a.map} status={st} events={a.events} onSelect={setSel} />}
         </div>
         )}
-        {view !== "logs" && view !== "share" && <EventsPanel events={a.events} conn={a.conn} onSelect={setSel} />}
+        {view !== "logs" && view !== "share" && !view.startsWith("rules/") && <EventsPanel events={a.events} conn={a.conn} onSelect={setSel} />}
       </main>
     </div>
   );

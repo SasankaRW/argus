@@ -32,8 +32,60 @@ from argus.models import EscalationExhausted
 from argus.worker import Context, PermanentError, workflow
 
 PLUGIN = "downloads-organizer"
-RULES = yaml.safe_load((Path(__file__).parent / "rules.yaml").read_text(encoding="utf-8"))
+DEFAULT_RULES_TEXT = (Path(__file__).parent / "rules.yaml").read_text(encoding="utf-8")
+
+
+def check_rules(r: object) -> dict:
+    """The rules, checked, or PermanentError saying what to fix (shown on the job in Helios)."""
+    def bad(msg: str):
+        raise PermanentError(f"sorting rules: {msg} (fix them in Helios: Downloads box > Edit rules)")
+
+    if not isinstance(r, dict):
+        bad("expected sections like categories:, guidance:, examples:")
+    cats = r.get("categories")
+    if not isinstance(cats, dict) or not cats or not all(isinstance(k, str) and k.strip() for k in cats):
+        bad("categories: needs at least one entry like  Documents: PDFs, Word files, ...")
+    for k in cats:
+        if SAFE_NAME.search(k) or k != k.strip():
+            bad(f"category {k!r} can't be a folder name")
+    for sect in ("aliases", "merge", "examples"):
+        m = r.get(sect) or {}
+        if not isinstance(m, dict):
+            bad(f"{sect}: should be a list of  name: Category")
+        wrong = [f"{k} -> {v}" for k, v in m.items() if v not in cats]
+        if wrong:
+            bad(f"{sect}: {', '.join(wrong[:3])} - the target must be one of the categories")
+    if not isinstance(r.get("guidance") or [], list):
+        bad("guidance: should be a list of lines starting with -")
+    fb = r.get("extension_fallback") or {}
+    if not isinstance(fb, dict) or any(k not in cats or not isinstance(v, list) for k, v in fb.items()):
+        bad("extension_fallback: should be  Category: [.ext, .ext]  with real categories")
+    for k in (r.get("merge") or {}):
+        if k in cats:
+            bad(f"merge: {k} is itself a category")
+    return r
+
+
+SAFE_NAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+RULES: dict = check_rules(yaml.safe_load(DEFAULT_RULES_TEXT))
 CATEGORIES: dict[str, str] = RULES["categories"]
+
+
+def activate(ctx: Context) -> str:
+    """Use the rules saved in Helios, if any, else rules.yaml. Called at the start of every job, so an edit
+    counts from the next job on. Returns where they came from."""
+    global RULES, CATEGORIES
+    text = ctx.store.get("rules") if ctx.store is not None else None
+    if text:
+        try:
+            r = yaml.safe_load(text)
+        except yaml.YAMLError as e:
+            raise PermanentError(f"sorting rules are not valid YAML: {str(e)[:200]}") from None
+        RULES, source = check_rules(r), "Helios"
+    else:
+        RULES, source = check_rules(yaml.safe_load(DEFAULT_RULES_TEXT)), "rules.yaml"
+    CATEGORIES = RULES["categories"]
+    return source
 
 SKIP_EXT = {".crdownload", ".part", ".partial", ".tmp", ".download", ".!ut", ".opdownload"}
 SKIP_NAMES = {"desktop.ini", "thumbs.db", ".ds_store"}
@@ -141,7 +193,8 @@ LEARNED_MAX = 50  # corrections kept as examples (newest win)
 
 def playbook(learned: dict[str, str] | None = None) -> str:
     """The instructions, with rules.yaml's examples plus the corrections you made with the Wrong button."""
-    examples = {**(RULES.get("examples") or {}), **(learned or {})}
+    mine = {f: c for f, c in (learned or {}).items() if c in CATEGORIES}  # a category since removed: left out
+    examples = {**(RULES.get("examples") or {}), **mine}
     return ("Sort a download into exactly one category.\n\nCATEGORIES (choose one, spelled exactly):\n"
             + "\n".join(f"- {k}: {v}" for k, v in CATEGORIES.items())
             + "\n\nRULES:\n" + "\n".join(f"- {g}" for g in RULES.get("guidance") or [])
@@ -285,6 +338,7 @@ def apply(ctx: Context, plan: dict) -> dict:
 @workflow(PLUGIN, "sort")
 def sort(ctx: Context):
     """Sweep the whole Downloads root."""
+    activate(ctx)
     root = downloads(ctx)
 
     def make_plan():
@@ -302,6 +356,7 @@ def _same(a: str | Path, b: str | Path) -> bool:
 @workflow(PLUGIN, "file")
 def file(ctx: Context):
     """One finished download (from the folder watch): it and its settled siblings."""
+    activate(ctx)
     root = downloads(ctx)
     path = str(ctx.input.get("path") or "")
     if not path:
@@ -339,6 +394,7 @@ def undo(ctx: Context):
 def correct(ctx: Context):
     """The Wrong button: input {"from": where the file is now, "value": the right category}. Moves it there (keeping
     its group subfolder) and remembers the answer as an example for the models."""
+    activate(ctx)
     src, value = str(ctx.input.get("from") or ""), normalise(str(ctx.input.get("value") or ""))
     if value is None:
         raise PermanentError(f"{ctx.input.get('value')!r} is not a category ({', '.join(CATEGORIES)})")
@@ -369,6 +425,7 @@ def _title_name(text: str, fallback: str) -> str:
 def take(ctx: Context):
     """Something shared from the phone: files, a link (saved as a .url shortcut) or text (a .txt). Saved to the
     Downloads root, then sorted straight away like any other download."""
+    activate(ctx)
     root = downloads(ctx)
     inp = ctx.input
 
@@ -402,3 +459,37 @@ def take(ctx: Context):
 
     plan = ctx.step("plan", make_plan)
     return {"saved": saved, **ctx.step("move", apply, ctx, plan)}
+
+
+@workflow(PLUGIN, "tidy")
+def tidy(ctx: Context):
+    """Fold second names into the real category folders (rules: merge), e.g. Pictures into Images: everything
+    inside moves over (never overwriting), then the empty folder goes. Every move can be undone."""
+    source = activate(ctx)
+    root = downloads(ctx)
+
+    def plan():
+        out = []
+        for src, dst in (RULES.get("merge") or {}).items():
+            d = root / src
+            if ctx.files.exists(d) and ctx.files.is_dir(d) and not _same(d, root / dst):
+                out.append({"from": str(d), "to": str(root / dst), "items": ctx.files.list(d)})
+        return out
+
+    merges = ctx.step("plan", plan)
+
+    def run():
+        done = []
+        for m in merges:
+            for item in m["items"]:
+                if os.path.exists(item):
+                    ctx.files.move(item, os.path.join(m["to"], os.path.basename(item)))
+            removed = ctx.files.remove_empty_dir(m["from"])
+            done.append({"folder": os.path.basename(m["from"]), "into": os.path.basename(m["to"]),
+                         "moved": len(m["items"]), "removed": removed})
+        return done
+
+    done = ctx.step("merge", run)
+    ctx.emit("tidied", folders=len(done), dry_run=ctx.dry_run)
+    return {"merged": done, "rules": source, "dry_run": ctx.dry_run,
+            "note": None if done else "nothing to tidy: no folders named in merge:"}

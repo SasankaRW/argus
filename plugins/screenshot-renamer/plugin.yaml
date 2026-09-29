@@ -19,11 +19,12 @@ permissions:
     read: ["~/Pictures/Screenshots", "~/OneDrive/Pictures/Screenshots", "~/Desktop", "~/OneDrive/Desktop"]
     write: ["~/Pictures/Screenshots", "~/OneDrive/Pictures/Screenshots", "~/Desktop", "~/OneDrive/Desktop"]
     delete: none
-  models: [T1, V1]           # text read from the picture -> T1 (T2 if needed); no readable text -> V1 looks at it
+  models: [T1, V1]           # V1 looks at the picture (text on screen checks it); no V1 -> T1 names it from the text
   claude_calls_per_day: 0
 
 config:
   max_per_sweep: {type: int, default: 30, label: Screenshots per sweep at most}
+  prefer: {type: choice, choices: [vision, text], default: vision, label: Try first (vision sees which window is in front)}
   vision_max_side: {type: int, default: 1280, label: Longest side sent to the vision model (pixels)}
 
 helios:

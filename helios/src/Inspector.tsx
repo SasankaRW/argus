@@ -189,7 +189,7 @@ function Schedules({ onSelect }: { onSelect: (s: Selection) => void }) {
   );
 }
 
-type PluginInfo = { id: string; version: string; live: boolean; runs_on: string; description: string;
+type PluginInfo = { id: string; version: string; live: boolean; runs_on: string; description: string; rules: string | null;
   triggers: { manual?: { workflow: string; label: string }; schedule?: { cron: string }; folder_watch?: { paths: string[] } }[] };
 
 // A plugin's box: dry-run or live, what starts it, and its manual buttons.
@@ -213,6 +213,7 @@ function PluginControls({ id, onSelect }: { id: string; onSelect: (s: Selection)
       {p.description && <div className="tip">{p.description}</div>}
       {!p.live && <div className="tip">To let it change things, add <code>{p.id}</code> under <code>plugins.live</code> in argus.yaml.</div>}
       <div className="appr-actions">
+        {p.rules && <button type="button" className="btn" onClick={() => { location.hash = `rules/${encodeURIComponent(p.id)}`; }}>Edit {p.rules.toLowerCase()}</button>}
         {p.triggers.filter((t) => t.manual).map((t) => (
           <button key={t.manual!.workflow} type="button" className="btn" disabled={busy !== null} onClick={async () => {
             setBusy(t.manual!.workflow); setErr(null);

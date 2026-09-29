@@ -154,9 +154,17 @@ class WrongButton(_M):
     label: str = "Wrong"
 
 
+class RulesFile(_M):
+    """A YAML file of rules (in the plugin folder) that you can read and edit in Helios. Your edited copy is kept
+    by argusd (plugin state `rules`); the plugin reads it at the start of each job, falling back to the file."""
+    file: str = Field("rules.yaml", pattern=r"^[A-Za-z0-9_.-]+\.ya?ml$")
+    label: str = "Rules"
+
+
 class HeliosInfo(_M):
     node: HeliosNode = Field(default_factory=HeliosNode)
     wrong: WrongButton | None = None
+    rules: RulesFile | None = None
 
 
 class Manifest(_M):
@@ -225,7 +233,8 @@ class Plugin(BaseModel):
                 "workflows": m.all_workflows(), "permissions": m.permissions.model_dump(), "config": self.config,
                 "triggers": [t.model_dump(exclude_none=True) for t in m.triggers],
                 "wrong": m.helios.wrong.model_dump() if m.helios.wrong else None,
-                "share": [t.model_dump() for t in m.share]}
+                "share": [t.model_dump() for t in m.share],
+                "rules": m.helios.rules.label if m.helios.rules else None}
 
 
 # ------------------------------------------------------------------ loading

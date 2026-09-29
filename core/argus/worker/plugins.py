@@ -140,6 +140,16 @@ class Files:
             shutil.move(str(s), str(target))
         return str(target)
 
+    def remove_empty_dir(self, path: str | Path) -> bool:
+        """Remove a folder only if it is empty (nothing is lost, so write permission is enough)."""
+        p = self._check(path, True)
+        if not p.is_dir() or any(p.iterdir()) and not self.dry_run:
+            return False
+        self._trace("file.removed_dir", {"path": str(p), "dry_run": self.dry_run})
+        if not self.dry_run:
+            p.rmdir()
+        return True
+
     def recycle(self, path: str | Path) -> None:
         """Send a file to the Recycle Bin: restorable, never a permanent delete."""
         if self.delete != "recycle_bin":
