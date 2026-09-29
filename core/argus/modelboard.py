@@ -45,6 +45,7 @@ class ModelBoard:
         self.store = store
         self.cfg = cfg
         self.clock = clock
+        self.plugin_caps: dict[str, int] = {}  # plugin -> claude_calls_per_day from its manifest
 
     def day(self) -> str:
         return time.strftime("%Y-%m-%d", time.localtime(self.clock()))
@@ -107,6 +108,16 @@ class ModelBoard:
                     return Permit(False, "trial call in progress", round(row["opened_until"] - now, 1))
                 conn.execute("UPDATE model_state SET opened_until = ?, updated_at = ? WHERE tier = ?",
                              (now + trial, now, tier))
+            pkey = None
+            if provider == "claude" and job_id:
+                job = conn.execute("SELECT plugin FROM jobs WHERE id = ?", (job_id,)).fetchone()
+                pcap = self.plugin_caps.get(job["plugin"]) if job else None
+                if pcap is not None:
+                    pkey = f"{CLAUDE_BUDGET}:{job['plugin']}"
+                    row = conn.execute("SELECT used FROM budget WHERE day = ? AND key = ?",
+                                       (self.day(), pkey)).fetchone()
+                    if (row[0] if row else 0) >= pcap:
+                        return Permit(False, f"plugin's daily Claude calls used up ({pcap})")
             if provider == "claude":
                 cap = self.cfg.claude.calls_per_day
                 day = self.day()
@@ -115,11 +126,13 @@ class ModelBoard:
                 used = used[0] if used else 0
                 if used >= cap:
                     return Permit(False, f"daily Claude cap reached ({cap})")
-                conn.execute(
-                    "INSERT INTO budget (day, key, used, created_at, updated_at) VALUES (?, ?, 1, ?, ?)"
-                    " ON CONFLICT(day, key) DO UPDATE SET used = used + 1, updated_at = excluded.updated_at",
-                    (day, CLAUDE_BUDGET, now, now),
-                )
+                for key in (CLAUDE_BUDGET, pkey):
+                    if key:
+                        conn.execute(
+                            "INSERT INTO budget (day, key, used, created_at, updated_at) VALUES (?, ?, 1, ?, ?)"
+                            " ON CONFLICT(day, key) DO UPDATE SET used = used + 1, updated_at = excluded.updated_at",
+                            (day, key, now, now),
+                        )
             return Permit(True)
 
         return await self.store.write(fn)

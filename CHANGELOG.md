@@ -5,6 +5,15 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Plugins as folders (C10):** a plugin is `plugins/<id>/plugin.yaml` + `plugin.py`. argusd checks manifests
+  (bad ones are listed under `GET /plugins`, never fatal), wires their triggers (schedules, folder watches,
+  webhooks, Run now) and applies a per-plugin Claude cap. Workers load the plugins they can run (`--cap desktop
+  --cap gpu`, or `ARGUS_WORKER_CAPS`); each job's `ctx` only reaches the manifest's folders, hosts, secrets and
+  model tiers (`PermissionDenied` otherwise). New plugins run in dry-run until listed under `plugins.live`; every
+  file change is an event; moves never overwrite; deletes go to the Recycle Bin.
+- **Power manager (simulated):** logs `power.would_wake` when GPU/desktop work waits with no PC worker, and
+  `power.would_shutdown` after `power.idle_minutes` (20) without PC work. Its state shows on the Helios map.
+- Fixed a rare hang on shutdown in the event stream and outbox (Python 3.11 `wait_for` cancel race).
 - **Map lines are curves again,** routed around the boxes (ELK splines) instead of right angles.
 - **Review fixes (29 Sep):**
   - Security: `.env` saved with a BOM (Notepad) no longer turns auth off; an empty `ARGUS_WORKER_TOKEN` counts as

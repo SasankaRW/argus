@@ -52,9 +52,10 @@ class Triggers:
 
     # -------------------------------------------------------------- folders
 
-    def folders_for(self, worker_id: str, host: str) -> list[dict[str, Any]]:
-        """The folder triggers a worker should watch (matched by worker id or host name)."""
-        me = {worker_id.lower(), host.lower()}
+    def folders_for(self, worker_id: str, host: str, capabilities: list[str] | None = None) -> list[dict[str, Any]]:
+        """The folder triggers a worker should watch: matched by worker id or host name, or "@<capability>"
+        (plugins use "@desktop": any worker on the PC)."""
+        me = {worker_id.lower(), host.lower(), "@any", *(f"@{c.lower()}" for c in capabilities or [])}
         return [{"name": f.name, "path": f.path, "patterns": f.patterns, "ignore": f.ignore,
                  "settle_seconds": f.settle_seconds, "recursive": f.recursive}
                 for f in self.cfg.triggers.folders if f.worker.lower() in me]
@@ -101,7 +102,7 @@ class Triggers:
 
     def verify(self, name: str, headers: Mapping[str, str], body: bytes) -> WebhookTrigger:
         h = self._hook(name)
-        secret = self.cfg.secrets.webhooks.get(name)
+        secret = self.cfg.secrets.webhooks.get(name) or self.cfg.secrets.env.get(h.secret_env)
         if not secret:
             raise BadSignature("this webhook has no secret configured")
         lower = {k.lower(): v for k, v in headers.items()}

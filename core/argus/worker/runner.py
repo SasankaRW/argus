@@ -18,6 +18,8 @@ from typing import Any
 from .. import __version__
 from ..models import Router, build_providers
 from .client import ApiError, ArgusClient, LeaseLostError, Unreachable
+from .plugins import Files, Http, LoadedPlugin, Secrets, Store
+from .plugins import load as load_plugins
 from .watcher import start_watchers
 from .workflows import REGISTRY, Context, PermanentError, WaitSignal, WorkflowRegistry
 
@@ -122,6 +124,9 @@ class Worker:
         self.busy = False  # True while a job runs
         self.watch_folders = watch_folders
         self.watchers: list = []  # folder watchers for this worker's folder triggers
+        self.plugins: dict[str, LoadedPlugin] = {}  # plugins loaded from their folders, by id
+        self.plugin_errors: dict[str, str] = {}
+        self.path_rules: dict[str, list[str]] = {}
 
     # -------------------------------------------------------------- lifecycle
 
@@ -131,6 +136,8 @@ class Worker:
         self.models_cfg = info.get("models") or {}
         if not self._fixed_providers:
             self.providers = build_providers(self.models_cfg, ollama_url=self.ollama_url)
+        self.path_rules = info.get("paths") or {}
+        self._load_plugins(info.get("plugins") or [])
         folders = info.get("folders") or []
         if self.watch_folders and [w.t for w in self.watchers] != folders:
             for w in self.watchers:
@@ -138,6 +145,20 @@ class Worker:
             self.watchers = start_watchers(self.client, self.id, folders)
         log.info("worker registered", extra={"worker": self.id, "capabilities": self.capabilities,
                                              "plugins": self.registry.plugins})
+
+    def _load_plugins(self, infos: list[dict[str, Any]]) -> None:
+        """Import new plugins; refresh the settings (live, config, permissions) of ones already loaded."""
+        new = [i for i in infos if i["id"] not in self.plugins]
+        for i in infos:
+            if i["id"] in self.plugins:
+                self.plugins[i["id"]] = LoadedPlugin(i)
+        if new:
+            loaded, errors = load_plugins(new, self.registry)
+            self.plugins.update(loaded)
+            self.plugin_errors.update(errors)
+            for pid, err in errors.items():
+                log.error("plugin not loaded", extra={"plugin": pid, "error": err})
+        self.capabilities = sorted(set(self.capabilities) | set(self.registry.needs))
 
     def run_forever(self, max_jobs: int | None = None) -> None:
         self.register()
@@ -197,6 +218,9 @@ class Worker:
                              chain=self.models_cfg.get("chain") or sorted(self.providers),
                              attempts_per_tier=self.models_cfg.get("attempts_per_tier", 2),
                              source=job["plugin"])
+        plugin = self.plugins.get(job["plugin"])
+        if plugin is not None:
+            self._attach(ctx, plugin, job_id)
         jlog.info("job started", extra={"attempt": job.get("attempt"), "checkpoints": len(ctx._done)})
         try:
             result = wf.fn(ctx)
@@ -225,6 +249,30 @@ class Worker:
             return "failed"
         finally:
             beat.stop()
+
+    def _attach(self, ctx: Context, plugin: LoadedPlugin, job_id: str) -> None:
+        """Give the job the services its manifest allows, and nothing more."""
+        client, wid, pid = self.client, self.id, plugin.id
+
+        def trace(kind: str, data: dict) -> None:
+            try:
+                client.trace(job_id, wid, kind, src=pid, dst=kind.split(".")[0], step=ctx._step, data=data)
+            except (Unreachable, ApiError) as e:  # the undo log is best effort; the change itself stands
+                log.warning("could not record a plugin event", extra={"kind": kind, "error": str(e)})
+
+        perms = plugin.perms
+        ctx.plugin = plugin
+        ctx.config = dict(plugin.config)
+        ctx.dry_run = plugin.dry_run
+        ctx.files = Files(pid, perms.get("files") or {}, self.path_rules, plugin.dry_run, trace)
+        ctx.http = Http(pid, perms.get("network") or [], trace)
+        ctx.secrets = Secrets(pid, perms.get("secrets") or [])
+        ctx.store = Store(client, pid)
+        ctx.emit = lambda name, **data: trace(f"plugin.{name}", data)
+        if ctx._router is not None:  # start at the lowest tier the manifest lists; higher ones by escalation
+            chain = list(ctx._router.chain)
+            starts = [chain.index(t) for t in perms.get("models") or [] if t in chain]
+            ctx._allowed_tiers = chain[min(starts):] if starts else []
 
     @staticmethod
     def _report(jlog: logging.LoggerAdapter, fn) -> None:
