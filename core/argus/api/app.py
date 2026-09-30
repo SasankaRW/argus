@@ -931,6 +931,8 @@ def create_app(argus: Argus) -> FastAPI:
                                                      ari_state(c, "done", text))[0])
             return {"conv": conv, "turn": tid, "reply": text, "action": action, "pending": pending}
 
+        if ari_mod.BRIEF.match(text):  # "good morning": the morning brief, spoken
+            return await reply(await argus.spoken_brief())
         actions = ask_mod.catalog(argus.plugin_host)
         m = ari_mod.REMEMBER.match(text)
         if m and not ari_mod.parse_when(text, time.time()):  # "remember that ..." (not "remind me at ...")

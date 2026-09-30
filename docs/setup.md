@@ -206,7 +206,11 @@ other screens (the phone) shows the same pill at the top of the page.
 ## What Argus tells you by itself
 
 - **Morning brief** (`brief.at`, 07:00): overnight results, failures, what waits for you, today's schedules, the
-  backup, the PC and Docker, yesterday's Claude calls. `POST /brief` sends one now to try it.
+  backup, the PC and Docker, yesterday's Claude calls. `POST /brief` sends one now to try it. With
+  `brief.weather: Colombo` (or Helios > Settings) today's forecast comes first (Open-Meteo: free, no key; only the
+  town and its coordinates leave the machine). Say **"good morning"** to Ari (or "brief me", "what's my day look
+  like?") and Ari says it: the weather, what waits for you, what failed overnight, the first thing on today's
+  schedule.
 - **Evening summary** (`summary.at`, 20:00, a quiet notification): today's jobs, about how much time they saved
   you, what failed or waits; on Sundays the week's total too. `POST /summary` sends one now.
 - **Time saved**: each plugin estimates the minutes a job saved you (moving a file ~20 s, naming a screenshot

@@ -283,6 +283,11 @@ def add_schedule(conn: sqlite3.Connection, now: float, when: When, action: str, 
     return {"id": sid, "cron": when.cron, "next_run_at": nxt, "label": label}
 
 
+# "good morning" (and "brief me", "what's my day look like?"): the morning brief, spoken
+BRIEF = re.compile(r"^\s*(?:(?:good\s+)?morning(?:[,\s]+ari)?|brief\s+me"
+                   r"|what'?s\s+(?:on\s+)?(?:my|the)\s+day(?:\s+look\s+like)?"
+                   r"|how'?s\s+my\s+day(?:\s+looking)?)\s*[.!?]*\s*$", re.I)
+
 # ------------------------------------------------------------------ what you asked Ari to remember
 
 REMEMBER = re.compile(r"^\s*(?:please\s+)?(?:remember|note|keep in mind|don'?t forget)\s+(?:that\s+)?(?P<fact>.{3,})$",
