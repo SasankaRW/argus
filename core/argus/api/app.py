@@ -74,6 +74,7 @@ from ..ids import new_id
 from ..jobs import InvalidTransition, Job, JobNotFound, JobState, LeaseLost, QueueFull, Step
 from ..outbox import PRIORITIES, add_message, ntfy_message
 from ..power import PowerError
+from ..presence import describe_phone
 from ..shares import ShareError, ShareStore, kinds_of
 from ..triggers import BadSignature, TriggerError, UnknownTrigger
 from ..voice import Voice, VoiceUnavailable
@@ -517,6 +518,10 @@ def create_app(argus: Argus) -> FastAPI:
         """Plain words -> an answer and at most one suggested action (never done without POST /ask/do).
         Common asks are answered at once from data (rules); the rest go to a model as a job (poll its result)."""
         actions = ask_mod.catalog(argus.plugin_host)
+        if ask_mod.PHONE.search(body.text.lower()):
+            where = await phone_where()
+            return {"via": "rules", "reply": f"{where['text']} Ring it?", "action": "phone:ring",
+                    "label": "Ring my phone"}
         snap = await ask_mod.snapshot(argus)
         hit = ask_mod.rules(body.text, actions, snap)
         labels = {a["id"]: a["label"] for a in actions}
@@ -533,6 +538,8 @@ def create_app(argus: Argus) -> FastAPI:
         return await do_action(body.action)
 
     async def do_action(a: str) -> dict:
+        if a == "phone:ring":
+            return {"phone": await ring_phone()}
         if a.startswith("show:"):
             return {"view": a[5:]}
         if a.startswith("power:"):
@@ -546,6 +553,44 @@ def create_app(argus: Argus) -> FastAPI:
                                                        priority=PRIORITY_INTERACTIVE, source="helios")
             return {"job_id": job_id, "created": created}
         raise HTTPException(status_code=404, detail=f"unknown action {a!r}")
+
+    # -------------------------------------------------------------- find my phone
+
+    async def ring_phone() -> dict:
+        """Three urgent notifications, 20 s apart: loud even on silent if ntfy may override Do Not Disturb."""
+        if not argus.outbox.senders.get("ntfy") or not argus.outbox.senders["ntfy"].enabled:
+            raise HTTPException(status_code=409, detail="ntfy is off: set NTFY_TOPIC in .env")
+
+        def fn(conn):
+            now = time.time()
+            for i in range(3):
+                add_message(conn, now, "ntfy", ntfy_message("Here I am!", "Argus is ringing your phone.",
+                                                            priority="urgent", tags=["rotating_light", "iphone"]),
+                            dedupe_key=f"ring:{int(now)}:{i}", send_at=now + 20 * i)
+            insert_event(conn, now, "phone.ring", src="helios", dst="phone")
+
+        await argus.store.write(fn)
+        argus.outbox.poke()
+        return {"ringing": True, "times": 3}
+
+    async def phone_where() -> dict:
+        if not argus.cfg.approvals.phone:
+            return {"info": None, "text": "Set approvals.phone in argus.yaml (the phone's Tailscale name) and I can "
+                                          "tell where it is."}
+        try:
+            info = await argus.phone.info()
+        except Exception as e:  # Tailscale not running here
+            return {"info": None, "text": f"I can't read Tailscale right now ({str(e)[:80]}).", }
+        return {"info": info, "text": describe_phone(info)}
+
+    @app.get("/phone", dependencies=guarded)
+    async def get_phone() -> dict:
+        """Where the phone is as far as Tailscale knows (online, home or away, last seen)."""
+        return await phone_where()
+
+    @app.post("/phone/ring", dependencies=guarded)
+    async def post_phone_ring() -> dict:
+        return await ring_phone()
 
     # -------------------------------------------------------------- Ari (talk to Argus)
 
@@ -584,7 +629,7 @@ def create_app(argus: Argus) -> FastAPI:
                     return {"conv": conv, "reply": reply}
             else:
                 out = await do_action(q["action"])
-            reply = "Done." if "view" not in out else f"Opening {out['view']}."
+            reply = f"Opening {out['view']}." if "view" in out else "Ringing it now." if "phone" in out else "Done."
         await argus.store.write(lambda c: ari_mod.add_turn(c, conv, "ari", reply))
         return {"conv": conv, "reply": reply, **out}
 
@@ -617,6 +662,10 @@ def create_app(argus: Argus) -> FastAPI:
             return await reply(f"{when.say[0].upper()}{when.say[1:]}, I'll {label}. Shall I set that up?",
                                pending={"kind": "schedule", "action": action, "cron": when.cron, "once": when.once,
                                         "say": when.say, "label": label})
+        if ask_mod.PHONE.search(text.lower()):  # "where's my phone?": where Tailscale sees it, and ring it?
+            where = await phone_where()
+            return await reply(f"{where['text']} Want me to ring it?", "phone:ring",
+                               {"kind": "action", "action": "phone:ring"})
         snap = await ask_mod.snapshot(argus)
         hit = ask_mod.rules(text, actions, snap)
         if hit is not None:

@@ -137,6 +137,9 @@ class NtfyConfig(_Strict):
     timeout_seconds: float = Field(10, gt=0, le=120)
     max_attempts: int = Field(8, ge=1, le=50)  # then the message is marked failed (and shown in Helios)
     reply_retry_seconds: float = Field(5, gt=0, le=300)  # wait before reconnecting to the reply topic
+    # Quiet by default: a plugin's ordinary messages (ctx.notify with priority min/low/default) wait for the evening
+    # summary. Approvals, failures, reminders, warnings and high/urgent messages always come at once.
+    quiet: bool = True
 
 
 class ApprovalsConfig(_Strict):

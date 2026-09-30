@@ -98,6 +98,12 @@ def compose_summary(conn: sqlite3.Connection, now: float) -> tuple[str, str]:
     waiting = conn.execute("SELECT COUNT(*) FROM approvals WHERE state = 'pending'").fetchone()[0]
     if waiting:
         lines.append(f"{waiting} waiting for you.")
+    held = conn.execute("SELECT id, plugin, title FROM held_notes WHERE told_at IS NULL ORDER BY created_at"
+                        ).fetchall()
+    if held:
+        lines.append("Also: " + "; ".join(f"{r['title']}" for r in held[:8]) + ("…" if len(held) > 8 else "") + ".")
+        conn.execute(f"UPDATE held_notes SET told_at = ? WHERE id IN ({','.join('?' * len(held))})",
+                     (now, *[r["id"] for r in held]))
     if datetime.fromtimestamp(now).weekday() == 6:  # Sunday: the week too
         week = time_saved(conn, now, 7)
         lines.append(f"This week: about {week['text']} saved.")

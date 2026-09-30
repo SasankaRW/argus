@@ -181,6 +181,13 @@ off, the browser hears you. Other voices: https://rhasspy.github.io/piper-sample
   WSL and Docker every 30 minutes while the PC is on (it never wakes the PC for it) and tells the phone when a
   container stops, reports unhealthy, or Docker stops answering, and again when it's fine.
 
+## Find my phone
+
+Ask Ari "where's my phone?" (or Helios > Power > Your phone): where Tailscale sees it (online at home on the same
+Wi-Fi, online away, or offline and when it was last online), then **Ring my phone** sends three urgent
+notifications 20 s apart. To hear them on silent: ntfy app > your topic > Notification settings > allow
+"Override Do Not Disturb" for urgent messages. Needs `approvals.phone` (the phone's Tailscale name).
+
 ## PC power buttons
 
 Helios > **Power** (and the **PC power** card on the phone): **Sleep**, **Restart**, **Shut down** (waits

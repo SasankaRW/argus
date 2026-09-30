@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Quiet by default** (`ntfy.quiet`, on): a plugin's ordinary messages (`ctx.notify` with priority min/low/default) no longer buzz the phone; they come together in the evening summary ("Also: …"). Approvals, failures, reminders, warnings and high/urgent messages still come at once. Migration 0010.
+- **Find my phone:** "where's my phone?" to Ari or Ask Argus says where Tailscale sees it (online at home on the same Wi-Fi, online away, or offline and when last seen) and offers to ring it: three urgent notifications 20 s apart. Helios > Power > Your phone; `GET /phone`, `POST /phone/ring`.
 - **Claude usage meter and login check:** Helios's top bar shows Claude calls used today of the daily cap (and how many are left when few are). Every half hour each worker runs `claude auth status` (free, no call) and tells argusd; a failed call that asks for a login counts too. When Claude is logged out, the phone hears it once (with what to do) and Helios shows "Claude logged out". `POST /workers/{id}/claude`; `GET /models` has `claude.logged_in`.
 - **Time saved:** plugins estimate what each job saved you (`ctx.saved(seconds)`; downloads-organizer ~20 s per file, screenshot-renamer ~30 s per name, duplicate-finder a minute plus ~10 s per file). Helios shows this week's total as a "Saved you" tile and a card on the phone; `GET /time-saved?days=7`. Counted once per job even when retried. Migration 0009.
 - **Evening summary** at `summary.at` (20:00, a quiet notification): today's jobs by plugin, the time they saved, what failed or waits; on Sundays the week's total. `POST /summary` sends one now.

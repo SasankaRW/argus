@@ -105,6 +105,31 @@ export function PowerView({ events, onSelect }: { events: ArgusEvent[]; onSelect
     <section className="panel powerpage" aria-label="Power">
       <div className="ph"><span className="pt">Power</span><span className="muted">the PC: wake, sleep, restart, shut down</span></div>
       <div className="qbody"><PowerControls events={events} onSelect={onSelect} /></div>
+      <div className="qbody"><div className="sect">Your phone</div><FindPhone /></div>
     </section>
+  );
+}
+
+// Where Tailscale sees the phone, and a loud ring to find it.
+function FindPhone() {
+  const [where, setWhere] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const look = () => api<{ text: string }>("/phone").then((r) => setWhere(r.text)).catch((e) => setWhere(String(e)));
+  useEffect(() => { look(); }, []);
+  const ring = async () => {
+    setBusy(true); setMsg(null);
+    try { await api("/phone/ring", { method: "POST" }); setMsg("Ringing: three loud notifications, 20 s apart."); }
+    catch (e) { setMsg(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  };
+  return (
+    <div className="findphone">
+      <p>{where ?? "Looking…"}</p>
+      <div className="appr-actions">
+        <button type="button" className="primary" disabled={busy} onClick={ring}>Ring my phone</button>
+        <button type="button" className="btn" onClick={look}>Look again</button>
+      </div>
+      {msg && <div className="tip">{msg}</div>}
+    </div>
   );
 }

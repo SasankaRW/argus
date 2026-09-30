@@ -384,13 +384,16 @@ def test_approve_from_the_phone_resumes_the_job_in_under_a_second(tmp_path):
             # the parse step ran once; the approve step ran twice (asked, then answered); one approval only
             assert [s["name"] for s in job["steps"]] == ["parse", "approve", "file"]
             assert len(cl.get(f"/approvals?job={jid}")) == 1
-            wait_for(lambda: len(ntfy.messages) == 3)
-            assert {m["title"] for m in ntfy.messages[1:]} == {"Approved: CEB bill", "Filed: CEB bill"}
+            wait_for(lambda: len(ntfy.messages) == 2)
+            assert ntfy.messages[1]["title"] == "Approved: CEB bill"
+            # the plugin's ordinary "Filed" message waits for the evening summary (quiet by default)
+            held = run(argus.store.read(lambda c: [r[0] for r in c.execute("SELECT title FROM held_notes")]))
+            assert held == ["Filed: CEB bill"]
 
             # tapping Reject afterwards changes nothing and says so; the direct link (Tailscale) is one-time too
             ntfy.tap(msg["actions"][1])
-            wait_for(lambda: len(ntfy.messages) == 4)
-            assert ntfy.messages[3]["title"] == "Already approved: CEB bill"
+            wait_for(lambda: len(ntfy.messages) == 3)
+            assert ntfy.messages[2]["title"] == "Already approved: CEB bill"
             assert cl.get(f"/approvals?job={jid}")[0]["state"] == "approved"
             aid = cl.get(f"/approvals?job={jid}")[0]["id"]
             direct = {"url": f"http://127.0.0.1:1/approvals/{aid}/decide?t={argus.approvals.token(aid)}&answer=reject"}
@@ -398,10 +401,10 @@ def test_approve_from_the_phone_resumes_the_job_in_under_a_second(tmp_path):
             wrong = {"url": f"http://127.0.0.1:1/approvals/{aid}/decide?t={'0' * 40}&answer=reject"}
             assert phone_tap(wrong, srv.url)[0] in (403, 409)
             assert cl.post("/outbox/test")["queued"]
-            wait_for(lambda: len(ntfy.messages) == 5)
-            assert ntfy.messages[4]["title"] == "Argus test"
+            wait_for(lambda: len(ntfy.messages) == 4)
+            assert ntfy.messages[3]["title"] == "Argus test"
             box = cl.get("/outbox")
-            assert box["counts"]["sent"] == 5 and box["ntfy"] is True
+            assert box["counts"]["sent"] == 4 and box["ntfy"] is True
             assert cl.get("/health")["replies"]["handled"] == 1
             evs = [e["kind"] for e in cl.get(f"/jobs/{jid}/events")]
             assert "approval.requested" in evs and "approval.approved" in evs and "outbox.sent" in evs

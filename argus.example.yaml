@@ -72,6 +72,7 @@ events:
 
 ntfy:
   url: https://ntfy.sh     # phone notifications; the topic is NTFY_TOPIC in .env (keep it hard to guess)
+  quiet: true              # ordinary plugin messages wait for the evening summary; approvals, failures, warnings don't
 
 approvals:
   buttons: tailscale       # tailscale: Approve / Reject go straight to Argus (phone must be on Tailscale)

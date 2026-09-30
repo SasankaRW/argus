@@ -22,6 +22,8 @@ QUESTIONS = {
     "failures": re.compile(r"\b(fail\w*|dead|errors?|broken|went wrong)\b"),
     "power": re.compile(r"\b(pc|computer) (on|off|awake|asleep|status)\b|\bis the pc\b"),
 }
+PHONE = re.compile(r"\b(where'?s|where is|find|ring|locate|lost|can'?t find)\b.*\b(my )?(phone|mobile|pixel)\b|"
+                   r"\b(phone|mobile)\b.*\b(where|ring|find|lost)\b")
 VIEWS = {"queue": "Queue", "runs": "Runs", "logs": "Logs", "power": "Power", "share": "Share", "map": "Live map"}
 POWER = {"sleep": "Put the PC to sleep", "shutdown": "Shut the PC down", "restart": "Restart the PC",
          "wake": "Wake the PC", "cancel": "Cancel a pending shutdown"}
@@ -44,6 +46,7 @@ def catalog(plugin_host) -> list[dict[str, Any]]:
                             "about": f"{p.manifest.name}: {p.manifest.description}"[:200]})
     for a, label in POWER.items():
         out.append({"id": f"power:{a}", "label": label, "about": "PC power"})
+    out.append({"id": "phone:ring", "label": "Ring my phone", "about": "find the phone: a loud notification"})
     for v, label in VIEWS.items():
         out.append({"id": f"show:{v}", "label": f"Open {label}", "about": "a Helios page"})
     return out

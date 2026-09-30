@@ -152,3 +152,19 @@ def test_time_saved_counts_each_job_once_and_the_evening_summary(tmp_path):
     assert "Today: 2 jobs done" in text and "Saved you about 12 min today" in text
     a.store.close()
 
+
+
+def test_held_messages_come_with_the_evening_summary_once(tmp_path):
+    from argus.daily import compose_summary
+
+    a = make(tmp_path).open()
+    now = ts(20)
+
+    def fn(c):
+        c.execute("INSERT INTO held_notes (plugin, title, text, created_at) VALUES ('demo', 'Filed: CEB bill', '', ?)",
+                  (now - 100,))
+        return compose_summary(c, now)[1], compose_summary(c, now + 60)[1]
+
+    first, second = run(a.store.write(fn))
+    assert "Also: Filed: CEB bill." in first and "Filed" not in second
+    a.store.close()

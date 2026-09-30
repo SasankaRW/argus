@@ -215,10 +215,22 @@ class Argus:
         """ctx.notify(): queue an ntfy message for a job the worker holds. The key makes a retried step's
         message a no-op. Returns True if it was queued now."""
 
+        quiet = self.cfg.ntfy.quiet and self.cfg.summary.enabled and \
+            int(message.get("priority") or 3) <= 3  # ntfy: 1 min, 2 low, 3 default, 4 high, 5 urgent
+
         def fn(conn) -> bool:
             now = time.time()
             job = self.jobs._get(conn, job_id)
             self.jobs._check_lease(job, worker, now)
+            if quiet:  # waits for the evening summary
+                cur = conn.execute("INSERT OR IGNORE INTO held_notes (job_id, plugin, title, text, dedupe_key,"
+                                   " created_at) VALUES (?,?,?,?,?,?)",
+                                   (job_id, job.plugin, str(message.get("title") or "")[:200],
+                                    str(message.get("message") or "")[:1000], f"notify:{key}", now))
+                if cur.rowcount:
+                    insert_event(conn, now, "notify.held", job_id=job_id, src=job.plugin, dst="argus",
+                                 data={"title": message.get("title")})
+                return False
             oid = add_message(conn, now, "ntfy", message, dedupe_key=f"notify:{key}", job_id=job_id)
             if oid is not None:
                 insert_event(conn, now, "notify.queued", job_id=job_id, src=job.plugin, dst="argus",

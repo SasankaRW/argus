@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 import shutil
 import subprocess
 import time
@@ -41,6 +42,44 @@ def phone_online(status: dict[str, Any], name: str) -> bool | None:
         if want in (host, dns) or dns.split(".")[0] == want:
             return bool(peer.get("Online"))
     return None
+
+
+PRIVATE = re.compile(r"^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|\[?fd|\[?fe80)")
+
+
+def phone_info(status: dict[str, Any], name: str) -> dict[str, Any] | None:
+    """Where the phone is, as far as Tailscale can tell: online, last seen, and home or away (a direct connection
+    over a home-network address means it is on the same Wi-Fi as this machine). None: no such device."""
+    want = name.lower().rstrip(".")
+    for peer in (status.get("Peer") or {}).values():
+        host = str(peer.get("HostName", "")).lower()
+        dns = str(peer.get("DNSName", "")).lower().rstrip(".")
+        if want not in (host, dns) and dns.split(".")[0] != want:
+            continue
+        online = bool(peer.get("Online"))
+        addr = str(peer.get("CurAddr") or "")
+        if not online:
+            where = "unknown"
+        elif addr and PRIVATE.match(addr):
+            where = "home"
+        else:
+            where = "away"
+        last = str(peer.get("LastSeen") or "")
+        return {"device": peer.get("HostName") or name, "online": online, "where": where,
+                "last_seen": None if last.startswith("0001") else last or None,
+                "via": "direct" if addr else (f"relay {peer.get('Relay')}" if peer.get("Relay") else None)}
+    return None
+
+
+def describe_phone(info: dict[str, Any] | None) -> str:
+    if info is None:
+        return "I can't see your phone on Tailscale (check approvals.phone in argus.yaml)."
+    if info["online"]:
+        return {"home": "Your phone is online and at home (on the same Wi-Fi as the PC).",
+                "away": "Your phone is online but not at home (not on the home Wi-Fi)."}.get(
+            info["where"], "Your phone is online.")
+    seen = f" It was last online {info['last_seen'][:16].replace('T', ' ')} UTC." if info.get("last_seen") else ""
+    return "Your phone is offline on Tailscale (off, asleep with no data, or Tailscale is off)." + seen
 
 
 class PhoneWatch:
@@ -107,6 +146,10 @@ class PhoneWatch:
         if r.returncode != 0:
             raise RuntimeError(f"tailscale status failed: {r.stderr.strip()[:200]}")
         return json.loads(r.stdout)
+
+    async def info(self) -> dict[str, Any] | None:
+        """Where the phone is now (a fresh look at Tailscale)."""
+        return phone_info(await asyncio.to_thread(self._status), self.cfg.approvals.phone or "")
 
     async def check(self) -> str:
         """One look. Returns what happened: online, offline, back (pushed), unknown."""
