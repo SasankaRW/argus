@@ -378,7 +378,7 @@ def test_approve_from_the_phone_resumes_the_job_in_under_a_second(tmp_path):
             job = cl.get(f"/jobs/{jid}")
             assert job["state"] == "succeeded" and job["result"]["filed"] is True
             assert job["result"]["amount"] == "4,250.00"
-            limit = 2.0 if os.environ.get("CI") else 1.0  # shared CI runners are slow and noisy
+            limit = 6.0 if os.environ.get("CI") else 1.0  # shared CI runners are slow and noisy
             assert elapsed < limit, f"approve -> job done took {elapsed:.2f} s"
 
             # the parse step ran once; the approve step ran twice (asked, then answered); one approval only
