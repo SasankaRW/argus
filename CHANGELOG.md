@@ -5,6 +5,9 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Helios **Inbox** (`#inbox`, nav badge): approvals, lessons from the nightly review, and Ari's open questions in one list, newest first. Review, approve or answer each one right there. The "awaiting input" details links on the home tiles open it. `GET /inbox`.
+- Helios **Settings** (`#settings`): Argus's own settings (quiet phone, brief and summary times, approval reminders, Claude's daily cap, nightly review, power mode and idle time, backups, Ari's pill) change right away and are kept over argus.yaml. "↺" goes back to the argus.yaml value, and a bad value is refused with the reason. `GET/PUT /argus-settings`.
+- Helios **Models** (`#models`): each tier's state, calls per day over the week, Claude's daily cap and login, calls and hand-ups per plugin, and the models pulled in Ollama. `GET /models/usage`, `GET /models/ollama`.
 - New plugin **routines**: named chains of Ari's tools ("work mode" = open VS Code and Chrome, volume 20). Ari tools run_routine, list_routines, save_routine and delete_routine (saving or deleting asks you first and shows the steps). Stops at the first step that fails and says which.
 - New plugin **notes**: "note: ..." goes into ~/Documents/notes/YYYY-MM-DD.md, time-stamped, only ever added to. Ari tools add_note, find_notes, recent_notes.
 - New plugin **homelab**: every hour, disk space, GPU temperature and memory, Ollama models, the newest Argus backup, and Tailscale devices. Problems go to the evening summary, once a day each. Ari tool lab_status.

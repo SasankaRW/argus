@@ -52,6 +52,7 @@ import json
 import mimetypes
 import re
 import time
+import urllib.request
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
@@ -65,6 +66,7 @@ from pydantic import BaseModel, Field
 from .. import ari as ari_mod
 from .. import ask as ask_mod
 from .. import daily, guidance, logview
+from .. import settings as settings_mod
 from ..approvals import ApprovalClosed, ApprovalError, ApprovalNotFound, BadToken
 from ..config import PRIORITY_INTERACTIVE
 from ..context import Argus
@@ -1436,6 +1438,84 @@ def create_app(argus: Argus) -> FastAPI:
     @app.get("/models", dependencies=guarded)
     async def models() -> dict:
         return await argus.models.snapshot()
+
+    @app.get("/models/usage", dependencies=guarded)
+    async def models_usage(days: int = Query(7, ge=1, le=90)) -> dict:
+        """Model calls per tier per day, and per plugin: calls and how often a local model had to hand up."""
+        since = time.time() - days * 86400
+
+        def fn(c):
+            daily_rows = c.execute(
+                "SELECT date(at, 'unixepoch', 'localtime') AS day, to_component AS tier, COUNT(*) AS n FROM events"
+                " WHERE kind = 'model.request' AND at >= ? GROUP BY day, tier ORDER BY day", (since,)).fetchall()
+            per = c.execute(
+                "SELECT COALESCE(j.plugin, e.from_component) AS plugin,"
+                " SUM(e.kind = 'model.request') AS calls, SUM(e.kind = 'model.escalated') AS escalations"
+                " FROM events e LEFT JOIN jobs j ON j.id = e.job_id"
+                " WHERE e.kind IN ('model.request', 'model.escalated') AND e.at >= ?"
+                " GROUP BY 1 ORDER BY calls DESC", (since,)).fetchall()
+            return {"days": days, "daily": [dict(r) for r in daily_rows], "plugins": [dict(r) for r in per]}
+
+        return await argus.store.read(fn)
+
+    @app.get("/models/ollama", dependencies=guarded)
+    async def models_ollama() -> dict:
+        """The models pulled in Ollama (as argusd sees it; on the laptop the PC's Ollama may be out of reach)."""
+        def fetch():
+            with urllib.request.urlopen(argus.cfg.ollama.url.rstrip("/") + "/api/tags", timeout=3) as r:
+                return json.loads(r.read())
+
+        try:
+            tags = await asyncio.to_thread(fetch)
+        except Exception as e:  # Ollama off or on another machine
+            return {"reachable": False, "error": str(e)[:200], "models": []}
+        return {"reachable": True, "models": [
+            {"name": m.get("name"), "size_gb": round((m.get("size") or 0) / 1e9, 1),
+             "family": (m.get("details") or {}).get("family"),
+             "params": (m.get("details") or {}).get("parameter_size")}
+            for m in tags.get("models", [])]}
+
+    # -------------------------------------------------------------- Argus's own settings (Helios > Settings)
+
+    @app.get("/argus-settings", dependencies=guarded)
+    async def argus_settings() -> dict:
+        over = await argus.store.read(settings_mod.load)
+        return {"settings": settings_mod.listing(argus.cfg, argus.base_settings, over)}
+
+    @app.put("/argus-settings", dependencies=guarded)
+    async def argus_settings_change(body: dict[str, Any]) -> dict:
+        """{setting: value} changes it now and keeps it; {setting: null} goes back to argus.yaml."""
+        try:
+            await argus.change_settings(body)
+        except settings_mod.SettingError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from None
+        return await argus_settings()
+
+    # -------------------------------------------------------------- the inbox: everything waiting for you
+
+    @app.get("/inbox", dependencies=guarded)
+    async def inbox() -> dict:
+        """Approvals, lessons the nightly review proposes, and Ari's open questions, newest first."""
+        approvals = await argus.approvals.list("pending", limit=100)
+
+        def fn(c):
+            lessons = [dict(r) for r in c.execute(
+                "SELECT l.id, l.playbook, l.text, l.evals, l.created_at, p.plugin, p.name FROM lessons l"
+                " LEFT JOIN playbooks p ON p.key = l.playbook WHERE l.state = 'proposed' ORDER BY l.created_at DESC")]
+            return lessons, ari_mod.open_questions(c, time.time() - 7 * 86400)
+
+        lessons, questions = await argus.store.read(fn)
+        items = [{"kind": "approval", "id": a["id"], "title": a["title"], "plugin": a.get("plugin"),
+                  "type": a.get("type"), "at": a["created_at"]} for a in approvals]
+        items += [{"kind": "lesson", "id": x["id"], "title": f"A lesson for {x.get('name') or x['playbook']}",
+                   "text": x["text"],
+                   "plugin": x.get("plugin"), "evals": json.loads(x["evals"]) if x.get("evals") else None,
+                   "at": x["created_at"]} for x in lessons]
+        items += [{"kind": "question", "id": q["conv"], "title": q["text"] or "Ari asks", "chat": q["title"],
+                   "plugin": "ari", "at": q["at"]} for q in questions]
+        items.sort(key=lambda x: -x["at"])
+        return {"items": items, "counts": {k: sum(1 for i in items if i["kind"] == k)
+                                           for k in ("approval", "lesson", "question")}}
 
     @app.post("/models/{tier}/permit", dependencies=guarded)
     async def model_permit(tier: str, body: ModelCall) -> dict:
