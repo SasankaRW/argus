@@ -251,7 +251,7 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal,
       return [...bg, ...map.nodes.map((n): Node => {
         const pos = pins[n.id] ?? positions[n.id] ?? { x: 0, y: 0 };
         const hot = now - (active[n.id] ?? 0) < 1600;
-        const fresh = n.first_seen - oldest > 3600 && Date.now() / 1000 - n.first_seen < 7 * 86400;
+        const fresh = n.first_seen - oldest > 3600 && Date.now() / 1000 - n.first_seen < 86400;  // added today, not at setup
         const old = prev.find((x) => x.id === n.id);
         return {
           id: n.id,

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, setToken, Status, useTimeSaved } from "./api";
+import { api, setToken, Status } from "./api";
 import { AriView } from "./AriView";
 import { AskBox } from "./AskBox";
 import { EventsPanel } from "./EventsPanel";
@@ -72,7 +72,6 @@ function Clock() {
 }
 
 function Kpis({ status, hud = false }: { status: Status | null; hud?: boolean }) {
-  const saved = useTimeSaved();
   const j = status?.jobs ?? {};
   const running = (j.leased ?? 0) + (j.running ?? 0);
   const queued = (j.queued ?? 0) + (j.retry ?? 0);
@@ -83,8 +82,6 @@ function Kpis({ status, hud = false }: { status: Status | null; hud?: boolean })
     ["ok", j.succeeded ?? 0, "succeeded, all time", "var(--ok)"],
     ["dead", j.dead ?? 0, "failed after retries", (j.dead ?? 0) ? "var(--bad)" : "var(--tx3)"],
     ["workers", status ? `${online}/${status.workers.length}` : "…", status ? `${status.workers.length - online} offline` : "", online ? "var(--ok)" : "var(--bad)"],
-    ["saved", saved ? (saved.seconds ? saved.text : "—") : "…",
-      saved?.plugins[0] ? `this week · most by ${saved.plugins[0].plugin}` : "time saved this week", saved?.seconds ? "var(--ok)" : "var(--tx3)"],
   ];
   return (
     <section className={`kstrip${hud ? " float" : ""}`} aria-label="Jobs">
@@ -329,7 +326,9 @@ export function App() {
   return (
     <div className={`shell${wide ? " wide" : ""}${cmd ? " cmdmode" : ""}`}>
       {!cmd && <header className="top">
-        <div className="brand"><Logo /><b>helios</b>{st && <span className="crumb hide-sm">▸ {st.instance}@{st.host}</span>}</div>
+        <div className="brand" title={st ? `${st.instance}@${st.host}` : undefined}>
+          <Logo /><span className="who mono"><span className="tg">sas@argus</span><span className="dim">:~{root === "map" ? "" : `/${root}`}$</span></span>
+        </div>
         <AskBox onSelect={setSel} onView={(v) => go(v)} />
         {narrow && <button type="button" className="btn phone-back" onClick={() => setFullView(false)}>phone view</button>}
         <div className="status mono">
@@ -340,8 +339,8 @@ export function App() {
           <ClaudeChip />
           {st && <span className="seg-s hide-sm">v<b>{st.version}</b></span>}
           <span className="seg-s hide-sm"><Clock /></span>
-          {root === "map" && <LayoutSwitch layout={layout} onChange={setLayout} />}
         </div>
+        {root === "map" && <LayoutSwitch layout={layout} onChange={setLayout} />}
       </header>}
 
       {!cmd && <nav className="rail" aria-label="Helios sections">
@@ -382,7 +381,7 @@ export function App() {
               </aside>
             </div>
           )        ) : (
-        <div className="mid">
+        <div className={`mid${sel ? "" : " one"}`}>
           {view === "ari" ? (
             <AriView onSelect={setSel} onView={(v) => go(v)} />
           ) : view === "power" ? (
@@ -392,7 +391,7 @@ export function App() {
           ) : (
             <RunsView events={a.events} selected={sel?.type === "job" ? sel.id : null} onSelect={setSel} />
           )}
-          {a.map && <Inspector sel={sel} map={a.map} status={st} events={a.events} onSelect={setSel} />}
+          {a.map && sel && <Inspector sel={sel} map={a.map} status={st} events={a.events} onSelect={setSel} onClose={() => setSel(null)} />}
         </div>
         )}
         </div>

@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { api, ArgusEvent, Status, useTimeSaved } from "./api";
-import { tone } from "./format";
-import { Tile, useHomeData } from "./Phone";
+import { api, ArgusEvent, Status } from "./api";
+import { MiniLog, Tile, useHomeData } from "./Phone";
 
 // The PC's home screen has two layouts, switched in the header and remembered per browser:
 //   desk    - the live map as the main focus, terminal tiles in a column beside it (Phone.tsx's tiles)
@@ -30,8 +29,6 @@ export function LayoutSwitch({ layout, onChange }: { layout: Layout; onChange: (
 
 export const PAGES = ["ari", "plugins", "queue", "runs", "share", "power", "logs"];
 
-const mark = (k: string) => (k.endsWith("succeeded") ? "✓" : k.includes("escalated") ? "↑" : k.startsWith("approval") ? "?"
-  : k.includes("dead") || k.includes("failed") ? "✗" : "•");
 
 // Layout C's floating cards and command bar, drawn over the full-screen map.
 export function CommandLayer({ status, events, live, onView, onAsk, onInbox, onLayout, tools }: {
@@ -39,7 +36,6 @@ export function CommandLayer({ status, events, live, onView, onAsk, onInbox, onL
   onInbox: () => void; onLayout: (l: Layout) => void; tools: React.ReactNode;
 }) {
   const d = useHomeData(events);
-  const saved = useTimeSaved();
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const input = useRef<HTMLInputElement>(null);
@@ -73,7 +69,6 @@ export function CommandLayer({ status, events, live, onView, onAsk, onInbox, onL
     try { await api(`/approvals/${id}/decide`, { method: "POST", body: JSON.stringify({ answer, by: "helios" }) }); await d.reload(); }
     finally { setBusy(false); }
   };
-  const tail = events.filter((e) => /^(job\.(succeeded|dead|queued)|model\.escalated|approval\.|step\.failed)/.test(e.kind)).slice(-6).reverse();
   const ok = live && status?.status === "ok";
   return (
     <>
@@ -96,19 +91,14 @@ export function CommandLayer({ status, events, live, onView, onAsk, onInbox, onL
           </Tile>
         )}
         <Tile path="~/today" dot="var(--tg)" onOpen={() => onView("runs")}>
-          <div className="cmd-two">
-            <div><div className="big ok">{d.today}</div><div className="sub">jobs{d.failed ? ` · ${d.failed} failed` : ""}{d.running.length ? ` · ${d.running.length} run` : ""}</div></div>
-            <div><div className="big flow">{saved?.seconds ? saved.text.replace(/\s/g, "") : "—"}</div><div className="sub">saved this week</div></div>
-          </div>
+          <div className="big ok">{d.today}</div>
+          <div className="sub">jobs · {d.ok} ok{d.failed ? ` · ${d.failed} failed` : ""}{d.running.length ? ` · ${d.running.length} run` : ""}</div>
         </Tile>
       </div>
 
       <div className="cmd-col right">
-        <Tile path="~/tail -f" dot="var(--flow)" onOpen={() => onView("logs")}>
-          <div className="tail">
-            {tail.length === 0 && <div className="dim">quiet</div>}
-            {tail.map((e) => <div key={e.seq} className={tone(e.kind)}><span>{mark(e.kind)}</span> {(e.to ?? e.from ?? e.kind).replace(/-.*/, "")}</div>)}
-          </div>
+        <Tile path="~/logs" dot="var(--flow)" onOpen={() => onView("logs")}>
+          <MiniLog />
         </Tile>
       </div>
 
