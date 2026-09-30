@@ -62,12 +62,15 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from .. import ari as ari_mod
 from .. import ask as ask_mod
 from .. import logview
 from ..approvals import ApprovalClosed, ApprovalError, ApprovalNotFound, BadToken
 from ..config import PRIORITY_INTERACTIVE
 from ..context import Argus
+from ..cron import next_run
 from ..events import EventFilter, insert_event, read_events
+from ..ids import new_id
 from ..jobs import InvalidTransition, Job, JobNotFound, JobState, LeaseLost, QueueFull, Step
 from ..outbox import PRIORITIES, add_message, ntfy_message
 from ..power import PowerError
@@ -180,6 +183,19 @@ class Ask(BaseModel):
 
 class AskDo(BaseModel):
     action: str = Field(min_length=1, max_length=200)
+
+
+class AriSay(BaseModel):
+    text: str = Field(min_length=1, max_length=1000)
+    conv: str | None = Field(None, pattern=r"^[A-Za-z0-9_-]{1,40}$")
+
+
+class AriAnswer(BaseModel):
+    yes: bool
+
+
+class ScheduleEdit(BaseModel):
+    enabled: bool
 
 
 class Fix(BaseModel):
@@ -504,7 +520,9 @@ def create_app(argus: Argus) -> FastAPI:
     @app.post("/ask/do", dependencies=guarded)
     async def ask_do(body: AskDo) -> dict:
         """Do a suggested action (you tapped it)."""
-        a = body.action
+        return await do_action(body.action)
+
+    async def do_action(a: str) -> dict:
         if a.startswith("show:"):
             return {"view": a[5:]}
         if a.startswith("power:"):
@@ -518,6 +536,127 @@ def create_app(argus: Argus) -> FastAPI:
                                                        priority=PRIORITY_INTERACTIVE, source="helios")
             return {"job_id": job_id, "created": created}
         raise HTTPException(status_code=404, detail=f"unknown action {a!r}")
+
+    # -------------------------------------------------------------- Ari (talk to Argus)
+
+    def _schedule_spec(action: str) -> dict:
+        if action.startswith("remind:"):
+            return {"plugin": "argus", "workflow": "remind", "input": {"text": action[7:]}, "needs": [],
+                    "priority": 50}
+        if action.startswith("power:"):
+            return {"plugin": "power", "workflow": action[6:],
+                    "input": {"delay": argus.cfg.power.shutdown_delay_seconds}, "needs": ["desktop"], "priority": 100}
+        _, pid, wf = (action.split(":", 2) + ["", ""])[:3]
+        p = argus.plugin_host.plugins.get(pid)
+        if p is None:
+            raise HTTPException(status_code=404, detail=f"no plugin {pid}")
+        return {"plugin": pid, "workflow": wf, "input": {}, "needs": p.manifest.job_needs(), "priority": 50}
+
+    async def _answer(conv: str, q: dict, yes: bool) -> dict:
+        """You said yes or no to what Ari asked."""
+        await argus.store.write(lambda c: ari_mod.close_question(c, q["turn"]))
+        if not yes:
+            reply, out = "Okay, I won't.", {}
+        elif q["kind"] == "schedule":
+            when = ari_mod.When(q["cron"], q["once"], q["say"], "")
+            spec = _schedule_spec(q["action"])
+            label = f"{q['say']}: {q['label']}"
+            s = await argus.store.write(lambda c: ari_mod.add_schedule(c, time.time(), when, q["action"], label=label,
+                                                                       **spec))
+            reply, out = f"Done. {q['say'][0].upper()}{q['say'][1:]}, I'll {q['label']}.", {"schedule": s}
+        else:
+            if q["action"].startswith("power:") and q["action"] != "power:wake":
+                try:
+                    out = await do_action(q["action"])
+                except HTTPException as e:
+                    reply, out = f"I couldn't: {e.detail}.", {}
+                    await argus.store.write(lambda c: ari_mod.add_turn(c, conv, "ari", reply))
+                    return {"conv": conv, "reply": reply}
+            else:
+                out = await do_action(q["action"])
+            reply = "Done." if "view" not in out else f"Opening {out['view']}."
+        await argus.store.write(lambda c: ari_mod.add_turn(c, conv, "ari", reply))
+        return {"conv": conv, "reply": reply, **out}
+
+    @app.post("/ari", dependencies=guarded)
+    async def ari_say(body: AriSay) -> dict:
+        """Say something to Ari. Returns the reply at once, or a turn that fills in (poll GET /ari/{conv})."""
+        conv = body.conv or new_id().lower()
+        text = ari_mod.WAKE.sub("", body.text).strip() or body.text.strip()
+        q = await argus.store.read(lambda c: ari_mod.open_question(c, conv))
+        await argus.store.write(lambda c: ari_mod.add_turn(c, conv, "you", body.text.strip()))
+        if q and (ari_mod.YES.match(text) or ari_mod.NO.match(text)):
+            return await _answer(conv, q, bool(ari_mod.YES.match(text)))
+        if q:  # asked something else instead: the question lapses
+            await argus.store.write(lambda c: ari_mod.close_question(c, q["turn"]))
+
+        async def reply(text: str, action: str | None = None, pending: dict | None = None) -> dict:
+            tid = await argus.store.write(lambda c: ari_mod.add_turn(c, conv, "ari", text, action=action,
+                                                                     pending=pending))
+            return {"conv": conv, "turn": tid, "reply": text, "action": action, "pending": pending}
+
+        actions = ask_mod.catalog(argus.plugin_host)
+        when = ari_mod.parse_when(text, time.time())
+        if when is not None:
+            what = ari_mod.action_for(when.rest, actions)
+            if what is None:
+                return await reply(f"I got the time ({when.say}) but not what to do. Say it like \"sort downloads "
+                                   f"every morning at 7\" or \"remind me to call mum tomorrow at 5 pm\".")
+            action = what[0]
+            label = ari_mod.label_of(action, actions)
+            return await reply(f"{when.say[0].upper()}{when.say[1:]}, I'll {label}. Shall I set that up?",
+                               pending={"kind": "schedule", "action": action, "cron": when.cron, "once": when.once,
+                                        "say": when.say, "label": label})
+        snap = await ask_mod.snapshot(argus)
+        hit = ask_mod.rules(text, actions, snap)
+        if hit is not None:
+            act = hit.get("action")
+            if act and not act.startswith("show:"):  # something to do: wait for your yes
+                return await reply(hit["reply"], act, {"kind": "action", "action": act})
+            return await reply(hit["reply"], act)
+        hist = await argus.store.read(lambda c: ari_mod.history(c, conv))
+        job_id, _ = await argus.jobs.enqueue(
+            "ask", "ask", {"text": text, "actions": actions, "snapshot": snap, "history": hist[:-1],
+                           "persona": "ari"}, priority=PRIORITY_INTERACTIVE, source="helios")
+        tid = await argus.store.write(lambda c: ari_mod.add_turn(c, conv, "ari", None, job_id=job_id))
+        return {"conv": conv, "turn": tid, "job_id": job_id, "reply": None}
+
+    @app.get("/ari/{conv}", dependencies=guarded)
+    async def ari_conv(conv: str) -> dict:
+        """The conversation; a model's answer is filled in here once its job finished."""
+        rows = await argus.store.read(lambda c: ari_mod.turns(c, conv))
+        for t in rows:
+            if t["job_id"] and t["text"] is None:
+                try:
+                    j = await argus.jobs.get(t["job_id"])
+                except JobNotFound:
+                    j = None
+                if j is None or j.state.value in ("dead", "cancelled"):
+                    t["text"] = "Sorry, I couldn't answer that just now."
+                elif j.state.value == "succeeded":
+                    r = j.result or {}
+                    t["text"] = str(r.get("reply") or "…")
+                    t["action"] = r.get("action")
+                    if t["action"] and not str(t["action"]).startswith("show:"):
+                        t["pending"] = {"kind": "action", "action": t["action"]}
+                else:
+                    continue
+                await argus.store.write(lambda c, t=t: c.execute(
+                    "UPDATE ari_turns SET text = ?, action = ?, pending = ? WHERE id = ?",
+                    (t["text"], t["action"], json.dumps(t["pending"]) if t["pending"] else None, t["id"])))
+        labels = {a["id"]: a["label"] for a in ask_mod.catalog(argus.plugin_host)}
+        for t in rows:
+            t["label"] = labels.get(t["action"] or "")
+        return {"conv": conv, "turns": rows}
+
+    @app.post("/ari/{conv}/answer", dependencies=guarded)
+    async def ari_answer(conv: str, body: AriAnswer) -> dict:
+        """The Yes / No buttons under Ari's question."""
+        q = await argus.store.read(lambda c: ari_mod.open_question(c, conv))
+        if q is None:
+            raise HTTPException(status_code=409, detail="nothing to answer")
+        await argus.store.write(lambda c: ari_mod.add_turn(c, conv, "you", "Yes" if body.yes else "No"))
+        return await _answer(conv, q, body.yes)
 
     # -------------------------------------------------------------- plugin rules (read and edit in Helios)
 
@@ -964,6 +1103,29 @@ def create_app(argus: Argus) -> FastAPI:
     @app.get("/schedules", dependencies=guarded)
     async def schedules() -> list[dict]:
         return await argus.scheduler.list()
+
+    @app.patch("/schedules/{sid}", dependencies=guarded)
+    async def schedule_edit(sid: str, body: ScheduleEdit) -> dict:
+        """Pause or resume one of your schedules (the ones from argus.yaml and plugins follow their files)."""
+        def fn(c):
+            r = c.execute("SELECT owner, cron FROM schedules WHERE id = ?", (sid,)).fetchone()
+            if r is None or r["owner"] != "you":
+                return False
+            nxt = next_run(r["cron"], time.time()) if body.enabled else None
+            c.execute("UPDATE schedules SET enabled = ?, next_run_at = COALESCE(?, next_run_at), updated_at = ?"
+                      " WHERE id = ?", (int(body.enabled), nxt, time.time(), sid))
+            return True
+        if not await argus.store.write(fn):
+            raise HTTPException(status_code=404, detail=f"no schedule of yours called {sid}")
+        return {"ok": True}
+
+    @app.delete("/schedules/{sid}", dependencies=guarded)
+    async def schedule_delete(sid: str) -> dict:
+        n = await argus.store.write(lambda c: c.execute("DELETE FROM schedules WHERE id = ? AND owner = 'you'",
+                                                        (sid,)).rowcount)
+        if not n:
+            raise HTTPException(status_code=404, detail=f"no schedule of yours called {sid}")
+        return {"ok": True}
 
     @app.post("/schedules/{sid}/run", dependencies=guarded)
     async def schedule_run(sid: str) -> dict:

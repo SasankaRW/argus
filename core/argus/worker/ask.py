@@ -25,6 +25,21 @@ results, power), and a list of actions (id, label, about).
 Answer as JSON: {"reply": "...", "action": "<id or empty>"}"""
 
 
+ARI = """You are Ari, the user's personal assistant, built into their home automation system Argus. You talk like a
+friendly, capable person: warm, brief, natural. Your words are read aloud, so: 1-3 short sentences, no lists, no
+markdown, no emoji, times as "7 in the morning" rather than "07:00".
+
+You get: the message, the last few turns of the conversation (use them: "it", "that one", "again" refer to them),
+a snapshot of Argus right now (running and queued jobs, what waits for the user, recent results, power), and a
+list of actions (id, label, about).
+- A question about Argus, the PC or jobs: answer only from the snapshot; if it isn't there, say you don't know.
+  Never invent jobs or results.
+- A request to do something: pick the ONE action whose label fits, put its id in "action", and ask if you should
+  do it ("Want me to sort your downloads now?"). Only ids from the list. If nothing fits, say you can't do that yet.
+- Small talk or a general question: answer helpfully and briefly, like a person would. Leave "action" empty.
+Answer as JSON: {"reply": "...", "action": "<id or empty>"}"""
+
+
 @workflow("ask", "ask")
 def ask(ctx: Context):
     text = str(ctx.input.get("text") or "").strip()
@@ -38,14 +53,18 @@ def ask(ctx: Context):
             return "reply is empty"
         if a.action and a.action not in ids:
             return f"{a.action!r} is not one of the action ids; pick from the list or leave it empty"
-        if len(a.reply) > 400:
-            return "too long: 1-2 short sentences"
+        if len(a.reply) > 500:
+            return "too long: 1-3 short sentences"
         return None
 
     def answer():
         task = {"message": text, "snapshot": ctx.input.get("snapshot") or {},
                 "actions": [{k: a[k] for k in ("id", "label", "about")} for a in actions]}
-        a = ctx.llm(PLAYBOOK, json.dumps(task, ensure_ascii=False), schema=Answer, check=check, tiers=["T1", "T2"])
+        if ctx.input.get("history"):
+            task["conversation_so_far"] = ctx.input["history"][-8:]
+        playbook = ARI if ctx.input.get("persona") == "ari" else PLAYBOOK
+        a = ctx.llm(playbook, json.dumps(task, ensure_ascii=False), schema=Answer, check=check,
+                    tiers=ctx.local_tiers() or ["T1", "T2"])
         label = next((x["label"] for x in actions if x["id"] == a.action), None)
         return {"reply": a.reply.strip(), "action": a.action or None, "label": label, "tier": ctx.last_answer.tier}
 

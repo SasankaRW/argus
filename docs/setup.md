@@ -137,6 +137,18 @@ downloads", "what's running?", "anything waiting for me?", "shut down the PC". C
 anything else goes to T1 (T2 if needed), which answers from Argus's current state. A suggested action only runs
 when you tap **Do it**.
 
+## Ari
+
+Helios > **Ari** (and **Talk to Ari** on the phone): talk to Argus by typing or with the microphone. Ari answers
+(aloud if **Speak replies** is on), remembers the conversation, and asks before doing anything: say or tap **Yes**.
+
+- "What's running?", "anything waiting for me?", "sort my downloads", "shut down the PC".
+- A time makes a schedule, after your yes: "sort downloads every morning at 7", "every weekday at 9 name
+  screenshots", "remind me to call mum tomorrow at 5 pm" (a phone notification), "in 20 minutes remind me to check
+  the oven", "shut down the PC at 11 pm". They are listed under **Your schedules** (pause or delete there).
+- **"Hey Ari"**: tick it and, while Helios is open (on the PC, for example), say "Hey Ari, …". After Ari asks
+  "Shall I?", just say yes or no. The browser listens for the wake phrase (Chrome or Edge; allow the microphone).
+
 ## PC power buttons
 
 Helios > **Power** (and the **PC power** card on the phone): **Sleep**, **Restart**, **Shut down** (waits
