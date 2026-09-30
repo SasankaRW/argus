@@ -5,6 +5,9 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Phone: rebuilt from scratch as "terminal widgets". A `sas@argus:~$` header with an ONLINE badge, soft green and amber glows, and tiles that are small terminal windows: `~/ari` (Ari's last reply, an `› ask ari…` prompt and a mic button that opens Ari listening), `! awaiting input` (approve or reject right there, details in a bottom sheet), `~/jobs` today, `~/saved`, `~/running`, `~/pc` and a live `~/tail -f`. A floating pill tab bar (home, ari, plug, map, more), job details in a bottom sheet, plugins as a list with `cd ..` back, More as a directory listing.
+- The full dashboard on a phone has a "phone view" button to get back.
+- The folder watcher no longer floods the event log with `trigger.duplicate` when it re-reports the same files after a restart (a copy of a file somewhere else still shows).
 - Fix: Ari's replies never arrived (and so were never spoken) on a database that applied migration 0011 before `ari_turns.used` was added to it ("no such column: used"). Argus now adds such late columns when it opens the database.
 - Fix: "Hey Ari" failed on every clip when Whisper loaded on the GPU but CUDA's cuBLAS was missing ("cublas64_12.dll is not found"). Whisper now proves the GPU works on a moment of silence when it loads, and uses the CPU otherwise.
 - Ari's popup sits a little lower so its glow isn't cut off at the top of the screen.

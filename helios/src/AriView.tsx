@@ -130,6 +130,13 @@ export function AriView({ onSelect, onView, compact = false }: { onSelect: (s: S
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setListening(false); }
   };
 
+  useEffect(() => {  // the phone's mic button opens Ari listening
+    let go = false;
+    try { go = sessionStorage.getItem("ari.mic") === "1"; sessionStorage.removeItem("ari.mic"); } catch { /* private */ }
+    if (go) setTimeout(() => { mic(); }, 250);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const toggle = (k: string, v: boolean, set: (v: boolean) => void) => { set(v); setPref(k, v); };
   const mine = scheds.filter((s) => s.owner === "you");
   const last = [...turns].reverse().find((t) => t.role === "ari");

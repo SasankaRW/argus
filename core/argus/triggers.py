@@ -75,11 +75,14 @@ class Triggers:
 
         def fn(conn: sqlite3.Connection) -> dict[str, Any]:
             now = self.clock()
-            row = conn.execute("SELECT job_id FROM files_seen WHERE plugin = ? AND sha256 = ?",
+            row = conn.execute("SELECT job_id, path FROM files_seen WHERE plugin = ? AND sha256 = ?",
                                (f.plugin, sha256)).fetchone()
             if row is not None:
-                insert_event(conn, now, "trigger.duplicate", job_id=row["job_id"], src=worker, dst=f.plugin,
-                             data={"trigger": name, "path": path[-200:]})
+                # A copy somewhere else is worth an event; the same file offered again after a restart is not
+                # (the watcher re-reports every file it finds when it starts, which flooded the event log).
+                if row["path"] != path:
+                    insert_event(conn, now, "trigger.duplicate", job_id=row["job_id"], src=worker, dst=f.plugin,
+                                 data={"trigger": name, "path": path[-200:]})
                 return {"status": "duplicate", "job_id": row["job_id"]}
             job_id, _ = self.jobs.enqueue_in(
                 conn, now, f.plugin, f.workflow,
