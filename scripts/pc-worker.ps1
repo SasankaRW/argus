@@ -13,6 +13,7 @@ $Root = Split-Path -Parent $PSScriptRoot
 $Py = Join-Path $Root ".venv\Scripts\python.exe"
 $Task = "Argus PC worker"
 $OllamaTask = "Argus Ollama"
+$DesktopTask = "Argus desktop"
 
 switch ($Command) {
     "install" {
@@ -23,7 +24,7 @@ switch ($Command) {
         $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Days 0) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
         $Boot = New-ScheduledTaskTrigger -AtStartup
 
-        $Cmd = "`$env:ARGUS_URL='$Url'; `$env:ARGUS_OLLAMA_URL='http://127.0.0.1:11434'; Set-Location '$Root'; & '$Py' -m argus.supervisor --no-argusd"
+        $Cmd = "`$env:ARGUS_URL='$Url'; `$env:ARGUS_OLLAMA_URL='http://127.0.0.1:11434'; Set-Location '$Root'; & '$Py' -m argus.supervisor --no-argusd --no-session"
         $Act = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -WindowStyle Hidden -Command `"$Cmd`""
         Register-ScheduledTask -TaskName $Task -Action $Act -Trigger $Boot -Principal $Principal -Settings $Settings -Force | Out-Null
         Write-Host "[ok] '$Task' starts at boot (before anyone logs in) and connects to $Url"
@@ -35,12 +36,21 @@ switch ($Command) {
             Write-Host "[ok] '$OllamaTask' starts Ollama at boot"
         } else { Write-Host "[--] Ollama not found: install it (winget install Ollama.Ollama) and run install again" }
 
+        # Ari's PC tools (open apps, volume, ...) need your logged-in session: a second worker, at logon, visible
+        # to you only through what it opens.
+        $DCmd = "`$env:ARGUS_URL='$Url'; Set-Location '$Root'; & '$Py' -m argus.worker.cli --cap session --id desktop-$env:COMPUTERNAME --log-file logs/desktop.log"
+        $DAct = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -WindowStyle Hidden -Command `"$DCmd`""
+        $Logon = New-ScheduledTaskTrigger -AtLogOn -User $User
+        $DPrincipal = New-ScheduledTaskPrincipal -UserId $User -LogonType Interactive -RunLevel Limited
+        Register-ScheduledTask -TaskName $DesktopTask -Action $DAct -Trigger $Logon -Principal $DPrincipal -Settings $Settings -Force | Out-Null
+        Write-Host "[ok] '$DesktopTask' starts when you log in (Ari's PC tools: open apps, volume, ...)"
+
         Start-ScheduledTask -TaskName $Task
         Write-Host "Started. It shows up in Helios (on the laptop) within a minute. Logs: $Root\logs\worker.log"
         Write-Host "Also: BIOS Wake-on-LAN on, network card 'Wake on Magic Packet' on, Fast Startup off."
     }
     "remove" {
-        foreach ($T in @($Task, $OllamaTask)) {
+        foreach ($T in @($Task, $OllamaTask, $DesktopTask)) {
             if (Get-ScheduledTask -TaskName $T -ErrorAction SilentlyContinue) {
                 Stop-ScheduledTask -TaskName $T -ErrorAction SilentlyContinue
                 Unregister-ScheduledTask -TaskName $T -Confirm:$false
@@ -49,7 +59,7 @@ switch ($Command) {
         }
     }
     default {
-        foreach ($T in @($Task, $OllamaTask)) {
+        foreach ($T in @($Task, $OllamaTask, $DesktopTask)) {
             $S = Get-ScheduledTask -TaskName $T -ErrorAction SilentlyContinue
             if ($S) { Write-Host ("  {0,-18} {1}" -f $T, $S.State) } else { Write-Host ("  {0,-18} not installed" -f $T) }
         }

@@ -40,7 +40,7 @@ def _dumps(v: Any) -> str:
 
 
 def add_message(conn: sqlite3.Connection, now: float, kind: str, payload: dict[str, Any], *,
-                dedupe_key: str | None = None, job_id: str | None = None) -> str | None:
+                dedupe_key: str | None = None, job_id: str | None = None, send_at: float | None = None) -> str | None:
     """Queue a message. Call inside a Store write, in the same transaction as the change it reports.
 
     Returns the new row id, or None when a message with this dedupe_key was queued before."""
@@ -51,7 +51,7 @@ def add_message(conn: sqlite3.Connection, now: float, kind: str, payload: dict[s
     conn.execute(
         "INSERT INTO outbox (id, kind, dedupe_key, payload, state, next_try_at, job_id, created_at, updated_at)"
         " VALUES (?,?,?,?,'pending',?,?,?,?)",
-        (oid, kind, dedupe_key, _dumps(payload), now, job_id, now, now),
+        (oid, kind, dedupe_key, _dumps(payload), send_at or now, job_id, now, now),
     )
     return oid
 

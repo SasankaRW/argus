@@ -11,7 +11,7 @@ from . import __version__
 from .approvals import Approvals
 from .backup import Backups
 from .config import PRIORITY_BATCH, Config, ScheduleConfig
-from .daily import Marker, brief_due, compose_brief, last_health, resume_summary
+from .daily import Marker, brief_due, compose_brief, compose_summary, last_health, resume_summary
 from .db import Store
 from .events import EventHub, insert_event, prune_events
 from .jobs import JobStore, Watchdog
@@ -45,6 +45,7 @@ class Argus:
         self.power.jobs = self.jobs
         self.scheduler = Scheduler(self.store, self.jobs, cfg)
         self.scheduler.poke = self.outbox.poke
+        self.models.poke = self.outbox.poke
         self.triggers = Triggers(self.store, self.jobs, cfg)
         self.hub = EventHub(self.store, queue_size=cfg.events.stream_queue)
         stale_after = cfg.jobs.heartbeat_seconds * 4
@@ -59,6 +60,8 @@ class Argus:
         self.last_backup: dict | None = None
         self.marker = Marker(cfg.db_path.parent / "argus.running")
         self.brief_sent: str | None = None
+        self.summary_sent: str | None = None
+        self.guidance_sent: str | None = None
         self._next_touch = 0.0
         self.resumed: dict | None = None  # set at start when the last run ended abruptly
         self.started_at: float | None = None
@@ -81,6 +84,7 @@ class Argus:
             await self.resume_notice(stopped_at)
         self.plugin_host.load()  # adds the plugins' schedules and triggers before the scheduler reads them
         self._health_schedule()
+        await self.apply_plugin_settings()
         await self.register_plugins()
         self.models.plugin_caps = self.plugin_host.claude_caps()
         await self.scheduler.sync()
@@ -125,6 +129,48 @@ class Argus:
             day = brief_due(self.cfg.brief.at, now, self.brief_sent)
             if day:
                 await self.send_brief(day)
+        if self.cfg.guidance.enabled:
+            day = brief_due(self.cfg.guidance.at, now, self.guidance_sent, until_hour=23)
+            if day:
+                self.guidance_sent = day
+                await self.guidance_review()
+        if self.cfg.summary.enabled:
+            day = brief_due(self.cfg.summary.at, now, self.summary_sent, until_hour=23)
+            if day:
+                await self.send_summary(day)
+
+    async def guidance_review(self) -> dict:
+        """Queue the review of new mistakes (a job for a worker with Claude). Nothing to do: no job."""
+        from . import guidance
+
+        def fn(conn):
+            now = time.time()
+            items = guidance.review_inputs(conn, self.cfg.guidance.max_per_review)
+            if not items:
+                return None
+            guidance.mark_reviewed(conn, [s["id"] for it in items for s in it["mistakes"]], now)
+            jid, _ = self.jobs.enqueue_in(conn, now, "guidance", "review", {"playbooks": items}, needs=[],
+                                          priority=PRIORITY_BATCH, model_group="cloud", source="argus",
+                                          dedupe_key="guidance:review")
+            return {"job_id": jid, "playbooks": len(items)}
+
+        return await self.store.write(fn) or {"job_id": None, "playbooks": 0, "note": "nothing new to learn from"}
+
+    async def send_summary(self, day: str | None = None) -> dict:
+        """The evening summary to the phone (once per day; `POST /summary` sends one now)."""
+        def fn(conn):
+            now = time.time()
+            title, text = compose_summary(conn, now)
+            key = f"summary:{day}" if day else f"summary:now:{int(now)}"
+            oid = add_message(conn, now, "ntfy", ntfy_message(title, text, priority="low", tags=["crescent_moon"]),
+                              dedupe_key=key)
+            return {"title": title, "text": text, "queued": oid is not None}
+
+        out = await self.store.write(fn)
+        if day:
+            self.summary_sent = day
+        self.outbox.poke()
+        return out
 
     async def send_brief(self, day: str | None = None) -> dict:
         """The morning brief to the phone (once per day; `POST /brief` sends one now)."""
@@ -193,10 +239,22 @@ class Argus:
         """ctx.notify(): queue an ntfy message for a job the worker holds. The key makes a retried step's
         message a no-op. Returns True if it was queued now."""
 
+        quiet = self.cfg.ntfy.quiet and self.cfg.summary.enabled and \
+            int(message.get("priority") or 3) <= 3  # ntfy: 1 min, 2 low, 3 default, 4 high, 5 urgent
+
         def fn(conn) -> bool:
             now = time.time()
             job = self.jobs._get(conn, job_id)
             self.jobs._check_lease(job, worker, now)
+            if quiet:  # waits for the evening summary
+                cur = conn.execute("INSERT OR IGNORE INTO held_notes (job_id, plugin, title, text, dedupe_key,"
+                                   " created_at) VALUES (?,?,?,?,?,?)",
+                                   (job_id, job.plugin, str(message.get("title") or "")[:200],
+                                    str(message.get("message") or "")[:1000], f"notify:{key}", now))
+                if cur.rowcount:
+                    insert_event(conn, now, "notify.held", job_id=job_id, src=job.plugin, dst="argus",
+                                 data={"title": message.get("title")})
+                return False
             oid = add_message(conn, now, "ntfy", message, dedupe_key=f"notify:{key}", job_id=job_id)
             if oid is not None:
                 insert_event(conn, now, "notify.queued", job_id=job_id, src=job.plugin, dst="argus",
@@ -207,6 +265,18 @@ class Argus:
         if queued:
             self.outbox.poke()
         return queued
+
+    async def apply_plugin_settings(self) -> None:
+        """Your changes from Helios (live, settings) on top of argus.yaml."""
+        import json
+
+        def fn(conn):
+            return {r[0]: json.loads(r[1]) for r in conn.execute(
+                "SELECT plugin, value FROM plugin_state WHERE key = '_settings' AND value IS NOT NULL")}
+
+        saved = await self.store.read(fn)
+        for pid, p in self.plugin_host.plugins.items():
+            p.apply(saved.get(pid))
 
     async def register_plugins(self) -> None:
         from .registry import _upsert_component
@@ -246,8 +316,8 @@ class Argus:
         return n
 
     async def stop(self) -> None:
-        self.marker.stop()  # a clean stop: no "Argus is back" message next time
         await self.watchdog.stop()
+        await asyncio.to_thread(self.marker.stop)  # a clean stop: no "Argus is back" message next time
         await self.phone.stop()
         await self.relay.stop()
         await self.outbox.stop()

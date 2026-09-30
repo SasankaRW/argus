@@ -58,7 +58,8 @@ def test_natural_voice(tmp_path, monkeypatch):
 def test_no_voice_set_means_the_browser(tmp_path, monkeypatch):
     with Server(make(tmp_path, monkeypatch).open()) as srv:
         cl = client(srv.url)
-        assert cl.get("/ari-voice") == {"voice": False, "hearing": "browser", "whisper_ready": False}
+        assert cl.get("/ari-voice") == {"voice": False, "hearing": "browser", "whisper_ready": False,
+                                           "popup_here": False, "pill": "pulse"}
         with pytest.raises(ApiError) as e:
             cl.post("/ari-voice/say", {"text": "hi"})
         assert e.value.status == 409

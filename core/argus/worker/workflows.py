@@ -56,6 +56,10 @@ class PermanentError(Exception):
     """Raise from a workflow when retrying cannot help (bad input, missing file). The job goes to dead."""
 
 
+class ToolFailed(Exception):
+    """ctx.tool(): the tool ran and failed (the message says why)."""
+
+
 class WaitSignal(Exception):  # noqa: N818 - a signal, not an error
     """Raised by `ctx.wait()`. The job parks in `waiting` until someone resumes it."""
 
@@ -131,6 +135,10 @@ class StepReporter:
 
     def notify(self, body: dict) -> dict: ...
 
+    def tool(self, body: dict) -> dict: ...
+
+    def sample(self, body: dict) -> None: ...
+
     @property
     def lease_lost(self) -> bool: ...
 
@@ -162,11 +170,13 @@ class Context:
         self.http: Any = None
         self.secrets: Any = None
         self.store: Any = None
+        self.data_dir: Any = None  # a folder on this machine that only this plugin uses (its index, caches)
         self.emit: Callable[..., None] = lambda name, **data: None
         self._allowed_tiers: list[str] | None = None  # None: any tier
         self.shared: Callable[[str], bytes] | None = None  # a shared file's bytes, for jobs from Helios > Share
         self.shared_backup: Callable[[str], bytes] | None = None  # built-in backup copy only
         self._unsent: list = []  # plugin events waiting to be sent (set by the worker)
+        self._lessons: dict[str, str] = {}  # playbook key -> approved lessons (from argusd with the job)
         self._flush_trace: Callable[[], None] = lambda: None
 
     def _check_lease(self) -> None:
@@ -226,6 +236,10 @@ class Context:
                 raise PermissionDenied(f"{self.job.get('plugin')} may not use these models "
                                        "(permissions.models in plugin.yaml)")
         pics = [base64.b64encode(b).decode() for b in images] if images else None
+        original = playbook
+        key = self._playbook_key(original)
+        if key and self._lessons.get(key):  # approved lessons from the nightly review
+            playbook = f"{playbook}\n\nLessons from earlier mistakes (follow them):\n{self._lessons[key]}"
         try:
             ans = self._router.ask(playbook, input, schema=schema, check=check, chain=tiers, attempts=attempts,
                                    images=pics)
@@ -237,7 +251,28 @@ class Context:
             self._router.board.event("model.escalated", tried[-1].lower(), claude.lower(),
                                      {"from_tier": tried[-1], "to_tier": claude, "reason": "local models failed"})
             ans = self._ask_claude(playbook, input, schema, check, pics, _advice(e), e)
+        self._sample(original, schema, input, ans)
         return self._took(ans)
+
+    def _playbook_key(self, playbook: str) -> str | None:
+        if self.plugin is None:
+            return None
+        import hashlib
+
+        return f"{self.plugin.id}:{hashlib.sha1(playbook.encode()).hexdigest()[:12]}"
+
+    def _sample(self, playbook: str, schema: Any, input: Any, ans: Any) -> None:
+        """Keep this answer for the guidance loop (your verdicts, the nightly review). Best effort."""
+        if self.plugin is None or not hasattr(self._reporter, "sample"):
+            return
+        try:
+            js = schema if isinstance(schema, dict) else schema.model_json_schema() if schema is not None else None
+            value = ans.value.model_dump() if hasattr(ans.value, "model_dump") else ans.value
+            escalated = any(("rejected" in t or "error" in t) for t in ans.trail)
+            self._reporter.sample({"playbook": playbook, "schema": js, "input": input, "output": value,
+                                   "tier": ans.tier, "escalated": escalated})
+        except Exception as e:  # never fail a job over its sample
+            self.log.debug("sample not kept", extra={"error": str(e)[:200]})
 
     def _took(self, ans: Any) -> Any:
         order = list(self._router.chain) if self._router else []
@@ -248,14 +283,14 @@ class Context:
         return ans.value
 
     def _ask_claude(self, playbook: str, input: Any, schema: Any, check: Any, pics: list[str] | None,
-                    advice: str | None, before: EscalationExhausted | None = None) -> Any:
+                    advice: str | None, before: EscalationExhausted | None = None, web: bool = False) -> Any:
         claude = self._claude_tier()
         if claude is None:
             raise EscalationExhausted("Claude is not available on this worker (claude CLI not found)",
                                       before.trail if before else [])
         try:
             return self._router.ask(playbook, input, schema=schema, check=check,  # type: ignore[union-attr]
-                                    chain=[claude], attempts=1, images=pics, advice=advice)
+                                    chain=[claude], attempts=1, images=pics, advice=advice, web=web)
         except EscalationExhausted as e2:
             if before is None:
                 raise
@@ -274,12 +309,13 @@ class Context:
         return next((t for t, p in self._router.providers.items() if getattr(p, "kind", "") == "claude"), None)
 
     def claude(self, prompt: str, input: Any = "", *, schema: Any = None, check: Any = None,
-               images: list[bytes] | None = None, advice: str | None = None) -> Any:
-        """Ask Claude directly (one try, pictures too). Counts against the plugin's and the global daily cap."""
+               images: list[bytes] | None = None, advice: str | None = None, web: bool = False) -> Any:
+        """Ask Claude directly (one try, pictures too). Counts against the plugin's and the global daily cap.
+        `web`: Claude may search and read the web (and nothing else), for current things."""
         if self._router is None:
             raise RuntimeError("this worker has no model configuration (is it connected to argusd?)")
         pics = [base64.b64encode(b).decode() for b in images] if images else None
-        return self._took(self._ask_claude(prompt, input, schema, check, pics, advice))
+        return self._took(self._ask_claude(prompt, input, schema, check, pics, advice, web=web))
 
     def _key(self, what: str) -> str:
         if self._step_idx is None:
@@ -304,6 +340,37 @@ class Context:
             raise WaitSignal(f"approval:{a['id']}")
         return Decision(approved=a["state"] == "approved", state=a["state"], fields=a.get("answer") or {},
                         by=a.get("decided_by"), approval_id=a["id"])
+
+    def embed(self, texts: list[str], model: str = "nomic-embed-text") -> list[list[float]] | None:
+        """Vectors for search by meaning, from the local embedding model; None when it isn't available."""
+        prov = next((p for p in (self._router.providers.values() if self._router else [])
+                     if getattr(p, "kind", "") == "ollama" and hasattr(p, "embed")), None)
+        if prov is None or not texts:
+            return None
+        try:
+            return prov.embed(list(texts), model)
+        except Exception as e:  # not pulled, Ollama down: search falls back to words
+            self.log.warning("embeddings unavailable", extra={"error": str(e)[:200]})
+            return None
+
+    def tool(self, name: str, args: dict[str, Any] | None = None) -> Any:
+        """Use one of Ari's tools (GET /tools): a built-in one answers at once; a plugin's tool runs as its own job,
+        and this job waits (no worker held) until it is done, then this step runs again and gets the result.
+        Raises ToolFailed when the tool failed. Call it inside ctx.step."""
+        self._check_lease()
+        r = self._reporter.tool({"key": self._key("tool"), "name": name, "args": args or {}})
+        if r.get("state") == "pending":
+            raise WaitSignal(f"tool:{r['job']}")
+        if r.get("state") == "failed":
+            raise ToolFailed(r.get("error") or "the tool failed")
+        return r.get("result")
+
+    def saved(self, seconds: float, key: str | None = None) -> None:
+        """This job saved you about `seconds` of your time (Helios adds it up per week; the evening summary per
+        day). Counted once per job and `key` even if the job is retried; not in dry-run."""
+        if self.dry_run or seconds <= 0:
+            return
+        self.emit("saved", seconds=int(seconds), key=key or self._step or "job")
 
     def ask_me(self, title: str, fields: dict[str, Any], *, summary: list[str] | None = None,
                image: bytes | None = None) -> dict[str, Any] | None:

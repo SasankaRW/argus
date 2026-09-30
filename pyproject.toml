@@ -17,12 +17,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-timeout>=2.3", "httpx>=0.27", "ruff>=0.5"]
+dev = ["pytest>=8", "pytest-timeout>=2.3", "httpx>=0.27", "ruff>=0.5", "numpy>=1.24"]  # numpy: ari-listen tests
 # used by plugins when present: Recycle Bin deletes, image resizing, OCR (Tesseract itself is a separate install)
-plugins = ["send2trash>=1.8", "pillow>=10", "pytesseract>=0.3"]
+plugins = ["send2trash>=1.8", "pillow>=10", "pytesseract>=0.3", "pypdf>=4", "numpy>=1.24", "psutil>=5.9"]
 # Ari: a natural voice (Piper, where argusd runs) and hearing (Whisper, on the PC's worker)
 voice = ["piper-tts>=1.3"]
 hearing = ["faster-whisper>=1.0"]
+listen = ["faster-whisper>=1.0", "sounddevice>=0.4", "numpy>=1.24"]
+popup = ["PySide6>=6.6"]  # Ari's popup over the whole screen (python -m argus.ari_popup)
 
 [project.scripts]
 argusd = "argus.daemon:main"
@@ -42,7 +44,8 @@ argus = ["db/migrations/*.sql", "helios_dist/*", "helios_dist/**/*"]
 testpaths = ["tests"]
 pythonpath = ["core"]
 timeout = 120  # a hung test fails instead of hanging the run
-markers = ["brief: let the morning brief run (it depends on the clock)"]
+markers = ["brief: let the morning brief run (it depends on the clock)",
+           "nightly_backup: let the nightly backup run (it depends on the clock)"]
 
 [tool.ruff]
 line-length = 120

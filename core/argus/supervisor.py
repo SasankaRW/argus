@@ -53,6 +53,20 @@ def marker_path() -> Path:
         return ROOT / "data" / "argus.running"
 
 
+def ari_on(what: str) -> bool:
+    """ari.listen / ari.popup in argus.yaml."""
+    try:
+        from .config import load_config
+
+        return bool(getattr(load_config(ROOT / "argus.yaml").ari, what))
+    except Exception:
+        return False
+
+
+def listen_on() -> bool:
+    return ari_on("listen")
+
+
 class Child:
     def __init__(self, name: str, args: list[str], marker: Path | None = None):
         self.name, self.args, self.marker = name, args, marker
@@ -127,6 +141,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--interval", type=float, default=60, help="seconds between checks for new code")
     p.add_argument("--url", default="http://127.0.0.1:8600")
     p.add_argument("--no-worker", action="store_true", help="argusd only (the laptop, when the PC is the worker)")
+    p.add_argument("--no-session", action="store_true",
+                   help="the worker is not in your logged-in Windows session (started at boot): no PC-app tools")
     p.add_argument("--no-argusd", action="store_true",
                    help="the worker only (the PC after the move: set ARGUS_URL to the laptop, e.g. http://laptop:8600)")
     args = p.parse_args(argv)
@@ -135,9 +151,13 @@ def main(argv: list[str] | None = None) -> int:
     token = os.environ.get("ARGUS_WORKER_TOKEN") or env.get("ARGUS_WORKER_TOKEN")
 
     children = [] if args.no_argusd else [Child("argusd", ["-m", "argus"], marker_path())]
+    if not args.no_argusd and listen_on():  # "Hey Ari" on this PC's microphone
+        children.append(Child("ari-listen", ["-m", "argus.ari_listen", "--log-file", "logs/ari.log"]))
+    if not args.no_argusd and not args.no_session and ari_on("popup"):  # Ari's popup over the whole screen
+        children.append(Child("ari-popup", ["-m", "argus.ari_popup"]))
     if not args.no_worker:
-        children.append(Child("worker", ["-m", "argus.worker.cli", "--cap", "desktop", "--cap", "gpu",
-                                         "--log-file", "logs/worker.log"]))
+        caps = ["--cap", "desktop", "--cap", "gpu"] + ([] if args.no_session else ["--cap", "session"])
+        children.append(Child("worker", ["-m", "argus.worker.cli", *caps, "--log-file", "logs/worker.log"]))
     commit, deps = head(), deps_hash()
     log.info("supervising", extra={"commit": (commit or "?")[:10], "processes": [c.name for c in children]})
     for c in children:

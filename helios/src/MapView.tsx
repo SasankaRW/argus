@@ -2,7 +2,7 @@
 
 import {
   Background, BaseEdge, Controls, EdgeProps, getBezierPath, Handle, Node, NodeProps, Position, ReactFlow,
-  useEdgesState, useNodesState, useReactFlow, ReactFlowProvider, Edge,
+  useEdgesState, useInternalNode, useNodesState, useReactFlow, ReactFlowProvider, Edge,
 } from "@xyflow/react";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ArgusMap, MapNode } from "./api";
@@ -20,6 +20,11 @@ const KIND_LABEL: Record<string, string> = { core: "core", worker: "worker", plu
 function sub(n: MapNode): string {
   if (n.kind === "core") return `core${n.meta?.version ? ` · v${n.meta.version}` : ""}`;
   if (n.kind === "worker") return `${n.state ?? "unknown"}${n.group ? ` · ${n.group}` : ""}`;
+  if (n.id === PLUGINS) {
+    const j = n.jobs ?? { active: 0, queued: 0, waiting: 0 };
+    const busy = [j.active ? `${j.active} running` : "", j.queued ? `${j.queued} queued` : "", j.waiting ? `${j.waiting} waiting` : ""].filter(Boolean);
+    return busy.length ? `${n.meta.count} · ${busy.join(" · ")}` : `${n.meta.count} plugins · idle`;
+  }
   if (n.kind === "plugin") {
     const j = n.jobs ?? { active: 0, queued: 0, waiting: 0 };
     if (!j.active && !j.queued && !j.waiting) return "idle";
@@ -111,7 +116,24 @@ function Dot({ path, tone, back }: { path: string; tone: string; back: boolean }
   );
 }
 
-const Line = memo(function Line(p: EdgeProps<Edge<LineData>>) {
+// Where each handle sits on a box. Boxes have a fixed size, so line ends are worked out here instead of measured
+// on screen: measuring breaks when the map is shown turned sideways (the phone's full-screen map).
+const HANDLE: Record<string, [number, number, Position]> = {
+  "": [NODE_W, NODE_H / 2, Position.Right], in: [0, NODE_H / 2, Position.Left],
+  b: [NODE_W / 2, NODE_H, Position.Bottom], "t-out": [NODE_W / 2, 0, Position.Top],
+  t: [NODE_W / 2, 0, Position.Top], "b-in": [NODE_W / 2, NODE_H, Position.Bottom],
+};
+function useEnds(p: EdgeProps<Edge<LineData>>) {
+  const a = useInternalNode(p.source), b = useInternalNode(p.target);
+  if (!a || !b) return p;
+  const [sx, sy, sp] = HANDLE[p.sourceHandleId ?? ""] ?? HANDLE[""];
+  const [tx, ty, tp] = HANDLE[p.targetHandleId ?? "in"] ?? HANDLE.in;
+  const pa = a.internals.positionAbsolute, pb = b.internals.positionAbsolute;
+  return { ...p, sourceX: pa.x + sx, sourceY: pa.y + sy, targetX: pb.x + tx, targetY: pb.y + ty, sourcePosition: sp, targetPosition: tp };
+}
+
+const Line = memo(function Line(props: EdgeProps<Edge<LineData>>) {
+  const p = useEnds(props);
   const d = p.data!;
   // ELK's route when the boxes are where the layout put them; a plain curve once you drag one away
   const r = d.route;
@@ -300,17 +322,41 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal 
       elementsSelectable={false}
       colorMode="dark"
     >
-      <Background gap={22} size={1} color="#1a1f2a" />
-      <Controls showInteractive={false} position="bottom-right" onFitView={() => { userMoved.current = false; }} />
+      <Background gap={20} size={1.2} color="#1c2330" />
+      <Controls showInteractive={false} position="bottom-left" onFitView={() => { userMoved.current = false; }} />
     </ReactFlow>
     </div>
   );
 }
 
-export function MapView(p: Props) {
+// The map shows the main parts only: all plugins are one "Plugins" box (their own page has the details). Lines
+// and message dots to or from any plugin go to that box.
+export const PLUGINS = "plugins";
+export function mainParts(map: ArgusMap, pulses: Pulse[], active: Record<string, number>) {
+  const plug = new Set(map.nodes.filter((n) => n.kind === "plugin").map((n) => n.id));
+  if (!plug.size) return { map, pulses, active };
+  const to = (id: string) => (plug.has(id) ? PLUGINS : id);
+  const ps = map.nodes.filter((n) => plug.has(n.id));
+  const sum = (k: "active" | "queued" | "waiting") => ps.reduce((a, n) => a + (n.jobs?.[k] ?? 0), 0);
+  const group: MapNode = {
+    id: PLUGINS, kind: "plugin", label: "Plugins", group: null, first_seen: Math.min(...ps.map((n) => n.first_seen)),
+    meta: { count: ps.length }, jobs: { active: sum("active"), queued: sum("queued"), waiting: sum("waiting") },
+  };
+  const nodes = [...map.nodes.filter((n) => !plug.has(n.id)), group];
+  const edges = map.edges.map((e) => ({ ...e, src: to(e.src), dst: to(e.dst) })).filter((e) => e.src !== e.dst);
+  const act: Record<string, number> = {};
+  for (const [k, v] of Object.entries(active)) act[to(k)] = Math.max(act[to(k)] ?? 0, v);
+  const pl = pulses.map((x) => ({ ...x, src: to(x.src), dst: to(x.dst) })).filter((x) => x.src !== x.dst);
+  return { map: { ...map, nodes, edges }, pulses: pl, active: act };
+}
+
+export function MapView(p: Props & { onPlugins?: () => void }) {
+  const m = useMemo(() => mainParts(p.map, p.pulses, p.active), [p.map, p.pulses, p.active]);
+  const sel = p.selection?.type === "node" && p.selection.id === PLUGINS ? null : p.selection;
+  const onSelect = (s: Selection) => (s?.type === "node" && s.id === PLUGINS && p.onPlugins ? p.onPlugins() : p.onSelect(s));
   return (
     <ReactFlowProvider>
-      <Inner {...p} />
+      <Inner {...p} {...m} selection={sel} onSelect={onSelect} />
     </ReactFlowProvider>
   );
 }

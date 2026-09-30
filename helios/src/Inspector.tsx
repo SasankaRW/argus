@@ -11,6 +11,7 @@ type Props = {
   status: Status | null;
   events: ArgusEvent[];
   onSelect: (s: Selection) => void;
+  onClose?: () => void;  // shown as a drawer: the × also closes the overview
 };
 
 function KV({ k, v }: { k: string; v: React.ReactNode }) {
@@ -384,6 +385,56 @@ const whereTo = (c: { from: string | null; to: string | null }) => {
   return to.slice(i).join("/") || to.slice(-1)[0] || "";
 };
 
+type Sample = { id: number; tier: string | null; escalated: boolean; verdict: "correct" | "wrong" | null;
+  input: unknown; output: unknown; correction: unknown };
+
+// The model answers this job got, each with Correct / Wrong: correct ones become tests, wrong ones teach the
+// nightly review (Helios > Plugins > the plugin > Learning).
+function ModelAnswers({ id, tick }: { id: string; tick: number }) {
+  const [list, setList] = useState<Sample[]>([]);
+  const [fixing, setFixing] = useState<number | null>(null);
+  const [fix, setFix] = useState("");
+  const load = () => api<Sample[]>(`/jobs/${id}/samples`).then(setList).catch(() => setList([]));
+  useEffect(() => { load(); }, [id, tick]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (list.length === 0) return null;
+  const mark = async (s: Sample, verdict: Sample["verdict"], correction?: string) => {
+    await api(`/samples/${s.id}/verdict`, { method: "POST", body: JSON.stringify({ verdict, correction }) }).catch(() => {});
+    setFixing(null); setFix(""); load();
+  };
+  return (
+    <>
+      <div className="sect">Model answers</div>
+      {list.map((s) => (
+        <div key={s.id} className="sample">
+          <div className="sample-h">
+            <span className="mono muted">{s.tier ?? "?"}{s.escalated ? " · after a rejected answer" : ""}</span>
+            <span className="grow" />
+            {s.verdict ? (
+              <>
+                <span className={`pill ${s.verdict === "correct" ? "ok" : "bad"}`}>{s.verdict}</span>
+                <button type="button" className="linkbtn" onClick={() => mark(s, null)}>undo</button>
+              </>
+            ) : (
+              <>
+                <button type="button" className="btn" title="Right: keep it as a test" onClick={() => mark(s, "correct")}>Correct</button>
+                <button type="button" className="btn" title="Wrong: say what it should have been" onClick={() => { setFixing(s.id); setFix(""); }}>Wrong</button>
+              </>
+            )}
+          </div>
+          <pre className="code">{pretty(s.output)}</pre>
+          {s.verdict === "wrong" && s.correction != null && <div className="tip">Should have been: {pretty(s.correction)}</div>}
+          {fixing === s.id && (
+            <form className="sample-fix" onSubmit={(e) => { e.preventDefault(); mark(s, "wrong", fix.trim() || undefined); }}>
+              <input value={fix} onChange={(e) => setFix(e.target.value)} placeholder="What it should have been (optional)" aria-label="Correct answer" autoFocus />
+              <button type="submit" className="primary">Mark wrong</button>
+            </form>
+          )}
+        </div>
+      ))}
+    </>
+  );
+}
+
 // What a job changed on disk (the undo log), with an Undo button per move.
 function Changes({ id, plugin, tick, onSelect }: { id: string; plugin: string; tick: number; onSelect: (s: Selection) => void }) {
   const [list, setList] = useState<Change[] | null>(null);
@@ -493,6 +544,7 @@ function JobPanel({ id, events, onSelect }: { id: string; events: ArgusEvent[]; 
         ) : <div className="tip">No steps recorded.</div>}
         {job.error && (<><div className="sect">Error</div><pre className="code bad">{job.error}</pre></>)}
         <Changes id={id} plugin={job.plugin} tick={lastSeq + events.filter((e) => e.kind.startsWith("job.")).length} onSelect={onSelect} />
+        <ModelAnswers id={id} tick={job.state === "succeeded" ? 1 : 0} />
         {job.result !== null && job.result !== undefined && (<><div className="sect">Result</div><pre className="code">{pretty(job.result)}</pre></>)}
         <div className="sect">Input</div>
         <pre className="code">{pretty(job.input) || "{}"}</pre>
@@ -538,7 +590,7 @@ export function Inspector(p: Props) {
       {s?.type === "node" && <NodePanel key={s.id} id={s.id} {...p} />}
       {s?.type === "edge" && <EdgePanel key={`${s.src}>${s.dst}`} src={s.src} dst={s.dst} {...p} />}
       {s?.type === "job" && <JobPanel key={s.id} id={s.id} events={p.events} onSelect={p.onSelect} />}
-      {s && <button type="button" className="close" onClick={() => p.onSelect(null)} aria-label="Close">×</button>}
+      {(s || p.onClose) && <button type="button" className="close" onClick={() => (p.onClose ? p.onClose() : p.onSelect(null))} aria-label="Close">×</button>}
     </section>
   );
 }

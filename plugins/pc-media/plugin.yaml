@@ -1,0 +1,31 @@
+id: pc-media
+name: PC media
+version: 1.0.0
+kind: workflow
+argus_api: ">=1.0 <2.0"
+description: Lets Ari set the PC's volume and control music and videos (play/pause, next, previous).
+runs_on: desktop
+needs: [session]
+
+workflows: [volume, media]
+
+permissions:
+  files: {read: [], write: [], delete: none}
+  models: []
+
+ari:
+  tools:
+    - name: set_volume
+      description: Change the PC's volume (a level 0-100, or up, down, mute, unmute).
+      workflow: volume
+      input:
+        level: {type: integer, description: "0 to 100"}
+        change: {type: string, description: "up, down, mute or unmute"}
+    - name: media_control
+      description: Control what is playing on the PC (Spotify, YouTube, ...) - play/pause, next, previous, stop.
+      workflow: media
+      input: {action: {type: string, description: "play_pause, next, previous or stop"}}
+      required: [action]
+
+helios:
+  node: {label: PC media, group: pc}

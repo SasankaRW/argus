@@ -1,32 +1,34 @@
-import { useEffect, useRef, useState } from "react";
-import { setToken, Status } from "./api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api, setToken, Status, useTimeSaved } from "./api";
 import { AriView } from "./AriView";
 import { AskBox } from "./AskBox";
 import { EventsPanel } from "./EventsPanel";
 import { uptime } from "./format";
 import { Inspector } from "./Inspector";
 import { useArgus } from "./live";
-import { MapView, Selection } from "./MapView";
+import { mainParts, MapView, mergeEdges, Selection } from "./MapView";
 import { LogsView } from "./LogsView";
+import { MapFull } from "./MapFull";
 import { PhoneHome } from "./PhoneHome";
+import { PluginsView } from "./PluginsView";
 import { PowerView } from "./PowerView";
 import { QueueView } from "./QueueView";
 import { RulesView } from "./RulesView";
 import { RunsView } from "./RunsView";
 import { ShareView } from "./ShareView";
-import { pref, Speech, WakeListener } from "./voice";
+import { pref, setPref, setVoiceStatus, voiceStatus, VoiceStatus, WakeListener } from "./voice";
+import { AriPill } from "./AriPill";
+import { ariFromEvents, ariSet, ariTell } from "./ariState";
 
-const NAV: { id: string; label: string; icon: string; soon?: string }[] = [
+const NAV: { id: string; label: string; icon: string }[] = [
   { id: "map", label: "Live map", icon: "M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3zM9 3v15M15 6v15" },
   { id: "ari", label: "Ari", icon: "M4 5h16v11H9l-5 4zM8 10h.01M12 10h.01M16 10h.01" },
+  { id: "plugins", label: "Plugins", icon: "M9 3v4M15 3v4M6 7h12v5a6 6 0 0 1-12 0zM12 18v3" },
   { id: "queue", label: "Queue", icon: "M4 6h10M4 12h10M4 18h10M18 6l2 2-2 2M18 14l2 2-2 2" },
   { id: "runs", label: "Runs", icon: "M4 6h16M4 12h11M4 18h14" },
   { id: "share", label: "Share", icon: "M12 15V3M7 8l5-5 5 5M5 13v6h14v-6" },
-  { id: "logs", label: "Logs", icon: "M5 4h14v16H5zM8 8h8M8 12h8M8 16h5" },
-  { id: "inbox", label: "Approvals", icon: "M4 13l2.5-8h11l2.5 8v6H4zM4 13h5l1.5 2h3l1.5-2h5", soon: "M3" },
-  { id: "models", label: "Models", icon: "M12 3l8 4.5v9L12 21l-8-4.5v-9zM12 12l8-4.5M12 12v9M12 12L4 7.5", soon: "later" },
   { id: "power", label: "Power", icon: "M12 3v8M7.5 6.5a7 7 0 1 0 9 0" },
-  { id: "custom", label: "Customize", icon: "M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1M15 4v4M9 10v4M17 16v4", soon: "later" },
+  { id: "logs", label: "Logs", icon: "M5 4h14v16H5zM8 8h8M8 12h8M8 16h5" },
 ];
 
 function Icon({ d }: { d: string }) {
@@ -62,31 +64,69 @@ function useNarrow(): boolean {
 function Clock() {
   const [t, setT] = useState(new Date());
   useEffect(() => { const i = window.setInterval(() => setT(new Date()), 1000); return () => window.clearInterval(i); }, []);
-  return <span className="mono hide-sm">{t.toLocaleTimeString([], { hour12: false })}</span>;
+  return <b>{t.toLocaleTimeString([], { hour12: false })}</b>;
 }
 
-function Kpis({ status }: { status: Status | null }) {
+function Kpis({ status, hud = false }: { status: Status | null; hud?: boolean }) {
+  const saved = useTimeSaved();
   const j = status?.jobs ?? {};
   const running = (j.leased ?? 0) + (j.running ?? 0);
   const queued = (j.queued ?? 0) + (j.retry ?? 0);
   const online = status?.workers.filter((w) => w.state === "online").length ?? 0;
   const tiles: [string, string | number, string, string][] = [
-    ["Running", running, queued ? `${queued} queued` : "queue empty", running ? "var(--flow)" : "var(--tx3)"],
-    ["Waiting", j.waiting ?? 0, "for approval or a resume", (j.waiting ?? 0) ? "var(--amber)" : "var(--tx3)"],
-    ["Succeeded", j.succeeded ?? 0, "all time", "var(--ok)"],
-    ["Dead", j.dead ?? 0, "failed after retries", (j.dead ?? 0) ? "var(--bad)" : "var(--tx3)"],
-    ["Workers", online, status ? `${status.workers.length - online} offline` : "", online ? "var(--ok)" : "var(--bad)"],
+    ["run", running, queued ? `${queued} queued` : "queue empty", running ? "var(--flow)" : "var(--tx3)"],
+    ["wait", j.waiting ?? 0, "waiting for approval or a resume", (j.waiting ?? 0) ? "var(--amber)" : "var(--tx3)"],
+    ["ok", j.succeeded ?? 0, "succeeded, all time", "var(--ok)"],
+    ["dead", j.dead ?? 0, "failed after retries", (j.dead ?? 0) ? "var(--bad)" : "var(--tx3)"],
+    ["workers", status ? `${online}/${status.workers.length}` : "…", status ? `${status.workers.length - online} offline` : "", online ? "var(--ok)" : "var(--bad)"],
+    ["saved", saved ? (saved.seconds ? saved.text : "—") : "…",
+      saved?.plugins[0] ? `this week · most by ${saved.plugins[0].plugin}` : "time saved this week", saved?.seconds ? "var(--ok)" : "var(--tx3)"],
   ];
   return (
-    <section className="kpis" aria-label="Jobs">
+    <section className={`kstrip${hud ? " float" : ""}`} aria-label="Jobs">
       {tiles.map(([l, v, s, c]) => (
-        <div key={l} className="panel kpi">
-          <div className="l"><span className="dot" style={{ background: c }} />{l}</div>
-          <div className="v mono">{v}</div>
-          <div className="s">{s}</div>
+        <div key={l} className="kc" title={s}>
+          <span className="kl"><span className="dot" style={{ background: c }} />{l}</span>
+          <Num v={v} color={c === "var(--tx3)" ? undefined : c} />
+          {!hud && <span className="ks">{s}</span>}
         </div>
       ))}
     </section>
+  );
+}
+
+// A KPI value that flashes once when it changes.
+function Num({ v, color }: { v: string | number; color?: string }) {
+  const ref = useRef<HTMLElement>(null);
+  const prev = useRef(v);
+  useEffect(() => {
+    if (prev.current === v) return;
+    prev.current = v;
+    const el = ref.current;
+    if (el) { el.classList.remove("bump"); void el.offsetWidth; el.classList.add("bump"); }
+  }, [v]);
+  return <b ref={ref} className="mono" style={{ color }}>{v}</b>;
+}
+
+// Claude today: calls used of the daily cap, and whether the CLI is logged in (checked by the workers).
+function ClaudeChip() {
+  const [c, setC] = useState<{ calls_today: number; calls_per_day: number; logged_in: boolean | null } | null>(null);
+  useEffect(() => {
+    const load = () => api<{ claude: NonNullable<typeof c> }>("/models").then((m) => setC(m.claude)).catch(() => {});
+    load();
+    const id = setInterval(load, 60000);
+    return () => clearInterval(id);
+  }, []);
+  if (!c) return null;
+  if (c.logged_in === false) {
+    return <span className="seg-s claude-chip bad" title="Run `claude` on the PC and log in (/login)"><span className="dot" style={{ background: "var(--bad)" }} />claude logged out</span>;
+  }
+  const left = c.calls_per_day - c.calls_today;
+  return (
+    <span className="seg-s claude-chip hide-sm" title={`Claude calls today: ${c.calls_today} of ${c.calls_per_day}`}>
+      claude <b>{c.calls_today}/{c.calls_per_day}</b>
+      {left <= 3 && <span className={left <= 0 ? "bad" : "warn"}>{left <= 0 ? " · none left" : ` · ${left} left`}</span>}
+    </span>
   );
 }
 
@@ -110,8 +150,12 @@ export function App() {
   const [sel, setSel] = useState<Selection>(null);
   const [flow, setFlow] = useState(true);
   const [relayout, setRelayout] = useState(0);
+  const [info, setInfo] = useState(false);
+  const [bigMap, setBigMap] = useState(false);  // the phone's sideways full-screen map  // the map's inspector drawer with nothing selected (the overview)
+  const [wide, setWide] = useState(() => { try { return localStorage.getItem("helios.rail") === "wide"; } catch { return false; } });
+  const setWideRail = (v: boolean) => { setWide(v); try { localStorage.setItem("helios.rail", v ? "wide" : "icons"); } catch { /* private */ } };
   const [triedLogin, setTriedLogin] = useState(false);
-  const parse = (h: string) => (["queue", "runs", "logs", "share", "power", "ari"].includes(h) || h.startsWith("rules/") ? h : "map");
+  const parse = (h: string) => (["queue", "runs", "logs", "share", "power", "ari", "plugins"].includes(h) || h.startsWith("rules/") || h.startsWith("plugins/") ? h : "map");
   const [view, setView] = useState<string>(() => parse(location.hash.slice(1)));
   useEffect(() => {  // the share menu opens /helios/#share on a page that may already be open
     const on = () => setView(parse(location.hash.slice(1)));
@@ -125,27 +169,66 @@ export function App() {
   const go = (v: string) => { setView(v); history.replaceState(null, "", v === "map" ? location.pathname : `#${v}`); };
   const viewRef = useRef(view);
   viewRef.current = view;
-  const [heard, setHeard] = useState(false);
+  const [heard, setHeard] = useState<string | null>(null);
   useEffect(() => {  // "Hey Ari" while Helios is open (Ari > "Hey Ari" turns it on)
-    if (!Speech) return;
     let wl: WakeListener | null = null;
-    const sync = () => {
-      if (pref("wake", false) && !wl) {
-        wl = new WakeListener((text) => {
-          setHeard(false);
-          if (viewRef.current === "ari") window.dispatchEvent(new CustomEvent("ari-command", { detail: text }));
-          else { try { sessionStorage.setItem("ari.command", text); } catch { /* private */ } setView("ari"); history.replaceState(null, "", "#ari"); }
-        }, () => { setHeard(true); setTimeout(() => setHeard(false), 8000); });
-        wl.start();
-      } else if (!pref("wake", false) && wl) { wl.stop(); wl = null; }
+    let hide: ReturnType<typeof setTimeout> | undefined;
+    const badge = (msg: string | null, ms = 8000) => {
+      clearTimeout(hide); setHeard(msg); if (msg) hide = setTimeout(() => setHeard(null), ms);
     };
+    const sync = () => {
+      const want = pref("wake", false);
+      if (want && !wl) {
+        wl = new WakeListener({
+          onCommand: (text) => {
+            badge(null);
+            ariSet("thinking", text);
+            if (viewRef.current === "ari") window.dispatchEvent(new CustomEvent("ari-command", { detail: text }));
+            else { try { sessionStorage.setItem("ari.command", text); } catch { /* private */ } setView("ari"); history.replaceState(null, "", "#ari"); }
+          },
+          onWake: () => ariTell("listening"),
+          onError: (msg) => { badge(msg, 15000); setPref("wake", false); },
+        });
+        wl.start();
+      } else if (!want && wl) { wl.stop(); wl = null; }
+    };
+    const restart = () => { if (wl) { wl.stop(); wl = null; } sync(); };  // Whisper became (un)available
     const arm = () => wl?.arm();
-    sync();
+    api<VoiceStatus>("/ari-voice").then(setVoiceStatus).catch(() => {}).finally(sync);
     window.addEventListener("ari-pref", sync);
+    window.addEventListener("ari-status", restart);
     window.addEventListener("ari-arm", arm);
-    return () => { window.removeEventListener("ari-pref", sync); window.removeEventListener("ari-arm", arm); wl?.stop(); };
+    return () => {
+      window.removeEventListener("ari-pref", sync); window.removeEventListener("ari-status", restart);
+      window.removeEventListener("ari-arm", arm); wl?.stop(); clearTimeout(hide);
+    };
   }, []);
-  const heardBadge = heard ? <div className="ari-heard" role="status">Ari is listening…</div> : null;
+  // The Ari pill follows Ari from the event stream (answers from any screen, the PC's "Hey Ari"). On the PC that
+  // runs the Ari popup, the popup shows it over everything instead.
+  const seen = useRef(0);
+  useEffect(() => {
+    const fresh = a.events.filter((e) => e.seq > seen.current);
+    if (!fresh.length) return;
+    const first = seen.current === 0;
+    seen.current = fresh[fresh.length - 1].seq;
+    if (!first) ariFromEvents(fresh);  // not the replay of old events on load
+  }, [a.events]);
+  const [popupHere, setPopupHere] = useState(false);
+  useEffect(() => {
+    const on = () => setPopupHere(!!voiceStatus().popup_here);
+    const t = setInterval(() => api<VoiceStatus>("/ari-voice").then((v) => setPopupHere(!!v.popup_here)).catch(() => {}), 60000);
+    window.addEventListener("ari-status", on);
+    return () => { clearInterval(t); window.removeEventListener("ari-status", on); };
+  }, []);
+  const heardBadge = <>
+    {heard && <div className="ari-heard" role="status">{heard}</div>}
+    {!popupHere && <AriPill onOpen={() => go("ari")} />}
+  </>;
+  const closeMap = useCallback(() => setBigMap(false), []);
+  const mapFull = bigMap && a.map ? (
+    <MapFull map={a.map} pulses={a.pulses} active={a.active} status={a.status} events={a.events} onClose={closeMap}
+      onPlugins={() => { setBigMap(false); setFullView(true); go("plugins"); }} />
+  ) : null;
 
   if (a.phase === "login") return <Login bad={triedLogin} onDone={() => { setTriedLogin(true); a.reconnect(); }} />;
 
@@ -166,50 +249,95 @@ export function App() {
           <AriView onSelect={setSel} onView={(v) => (v === "share" ? go("share") : (setFullView(true), go(v)))} />
         ) : (
           <PhoneHome status={st} events={a.events} onSelect={setSel} onShare={() => go("share")} onFull={() => setFullView(true)}
-            onAri={() => go("ari")} onView={(v) => (v === "share" ? go("share") : (setFullView(true), go(v)))} />
+            onAri={() => go("ari")} onMap={() => setBigMap(true)} onView={(v) => (v === "share" ? go("share") : (setFullView(true), go(v)))} />
         )}
+        {mapFull}
         {heardBadge}
       </div>
     );
   }
+  const root = view.split("/")[0];
+  const main = a.map ? mainParts(a.map, [], {}).map : null;
+  const withKpis = ["queue", "runs", "power"].includes(root);
+  const withDock = !["logs", "share", "plugins", "rules"].includes(root);
+  const health = a.phase === "down" ? "unreachable" : ok ? "healthy" : a.conn === "live" ? "degraded" : "connecting";
   return (
-    <div className="shell">
+    <div className={`shell${wide ? " wide" : ""}`}>
       <header className="top">
-        <div className="brand"><Logo /><b>Helios</b></div>
+        <div className="brand"><Logo /><b>helios</b>{st && <span className="crumb hide-sm">▸ {st.instance}@{st.host}</span>}</div>
         <AskBox onSelect={setSel} onView={(v) => go(v)} />
-        <div className="status">
-          <span className="inline">
-            <span className="dot" style={{ background: a.phase === "down" ? "var(--bad)" : ok ? "var(--ok)" : "var(--amber)" }} />
-            <b>{a.phase === "down" ? "Argus unreachable" : ok ? "Argus healthy" : a.conn === "live" ? "Argus degraded" : "Connecting"}</b>
+        <div className="status mono">
+          <span className={`seg-s ${a.phase === "down" ? "bad" : ok ? "ok" : "warn"}`}>
+            <span className={`dot${ok ? " pulse" : ""}`} style={{ background: a.phase === "down" ? "var(--bad)" : ok ? "var(--ok)" : "var(--amber)" }} />{health}
           </span>
-          {st && <span className="hide-sm">{st.instance} on <b>{st.host}</b></span>}
-          {st && <span className="mono hide-sm">up <b>{uptime(st.uptime_seconds)}</b></span>}
-          <span className="sep hide-sm" />
-          {st && <span className="mono">v<b>{st.version}</b></span>}
-          <Clock />
+          {st && <span className="seg-s hide-sm">up <b>{uptime(st.uptime_seconds)}</b></span>}
+          <ClaudeChip />
+          {st && <span className="seg-s hide-sm">v<b>{st.version}</b></span>}
+          <span className="seg-s hide-sm"><Clock /></span>
         </div>
       </header>
 
       <nav className="rail" aria-label="Helios sections">
         {NAV.map((n) => (
-          <button key={n.id} type="button" className="nav" aria-current={n.id === view.split("/")[0] ? "page" : undefined} disabled={!!n.soon} onClick={() => go(n.id)} title={n.soon ? `Arrives in ${n.soon}` : undefined}>
-            <Icon d={n.icon} /><span>{n.label}</span>{n.soon && <span className="soon mono">{n.soon}</span>}
+          <button key={n.id} type="button" className="nav" title={n.label} aria-current={n.id === root ? "page" : undefined} onClick={() => go(n.id)}>
+            <Icon d={n.icon} /><span className="nl">{n.label}</span>
           </button>
         ))}
         <div className="foot">
-          <b><span className="dot" style={{ background: ok ? "var(--ok)" : "var(--amber)" }} />{ok ? "All systems live" : "Checking…"}</b>
-          {a.map ? `${a.map.nodes.length} boxes · ${a.map.edges.length} lines` : ""}
-          <br />
-          <a href="/lite">Lite page</a> · <a href="/docs">API</a>
-          {narrow && <><br /><button type="button" className="linkbtn" onClick={() => setFullView(false)}>Simple phone view</button></>}
+          <span className="nl">
+            <a href="/lite">lite</a> · <a href="/docs">api</a>
+            {narrow && <> · <button type="button" className="linkbtn" onClick={() => setFullView(false)}>phone</button></>}
+          </span>
+          <button type="button" className="nav" title={wide ? "Collapse the menu" : "Show labels"} onClick={() => setWideRail(!wide)} aria-pressed={wide}>
+            <Icon d={wide ? "M15 6l-6 6 6 6" : "M9 6l6 6-6 6"} /><span className="nl">Collapse</span>
+          </button>
         </div>
       </nav>
 
       <main>
-        {view !== "share" && !view.startsWith("rules/") && <Kpis status={st} />}
+        <div key={root} className={`page${root === "map" ? " stagepage" : ""}`}>
+        {withKpis && <Kpis status={st} />}
         {view.startsWith("rules/") ? <RulesView plugin={decodeURIComponent(view.slice(6))} onBack={() => history.back()} />
+        : root === "plugins" ? (
+          <PluginsView selected={view.includes("/") ? decodeURIComponent(view.split("/")[1]) : null}
+            onPick={(id) => go(id ? `plugins/${encodeURIComponent(id)}` : "plugins")}
+            onSelect={(s) => { setSel(s); go("runs"); }} />
+        )
         : view === "share" ? <ShareView onJob={(id) => { setSel({ type: "job", id }); go("runs"); }} onDone={() => go("map")} />
-        : view === "logs" ? <LogsView /> : (
+        : view === "logs" ? <LogsView />
+        : root === "map" ? (
+          <section className="stage" aria-label="Live map">
+            <div className="canvas">
+              {a.map && a.map.nodes.length > 0 ? (
+                <MapView map={a.map} pulses={a.pulses} active={a.active} selection={sel} onSelect={setSel} flow={flow} relayoutSignal={relayout} onPlugins={() => go("plugins")} />
+              ) : (
+                <div className="empty mono">{a.phase === "down" ? "$ waiting for argus…" : "$ loading the map…"}</div>
+              )}
+            </div>
+            <div className="hud hud-tl">
+              <div className="hud-title mono"><span className="pt">live map</span><span className="dim">{main ? `${main.nodes.length} parts · ${mergeEdges(main.edges).length} lines` : "loading…"}</span></div>
+              <Kpis status={st} hud />
+            </div>
+            <div className="hud hud-tr tools">
+              <button type="button" className="btn" aria-pressed={flow} onClick={() => setFlow(!flow)}>flow</button>
+              <button type="button" className="btn" onClick={() => setRelayout((x) => x + 1)}>auto layout</button>
+              {narrow && <button type="button" className="btn" onClick={() => setBigMap(true)}>full screen</button>}
+              <button type="button" className="btn" aria-pressed={info || !!sel} onClick={() => (sel || info ? (setSel(null), setInfo(false)) : setInfo(true))}>inspector</button>
+            </div>
+            <div className="hud hud-bl legend mono">
+              <span><i style={{ background: "var(--flow)" }} />message</span>
+              <span><i style={{ background: "var(--amber)" }} />escalation</span>
+              <span><i style={{ background: "var(--bad)" }} />failure</span>
+              <span><i className="thick" />busier line</span>
+              <span className="dim hide-sm">drag to arrange · click to inspect</span>
+            </div>
+            {a.map && (sel || info) && (
+              <aside className="drawer">
+                <Inspector sel={sel} map={a.map} status={st} events={a.events} onSelect={setSel} onClose={() => { setSel(null); setInfo(false); }} />
+              </aside>
+            )}
+          </section>
+        ) : (
         <div className="mid">
           {view === "ari" ? (
             <AriView onSelect={setSel} onView={(v) => go(v)} />
@@ -217,39 +345,16 @@ export function App() {
             <PowerView events={a.events} onSelect={setSel} />
           ) : view === "queue" ? (
             <QueueView events={a.events} onSelect={setSel} />
-          ) : view === "runs" ? (
-            <RunsView events={a.events} selected={sel?.type === "job" ? sel.id : null} onSelect={setSel} />
           ) : (
-          <section className="panel mappanel" aria-label="Live map">
-            <div className="ph">
-              <span className="pt">Live map</span>
-              <span className="muted">{a.map ? `${a.map.nodes.length} boxes · ${a.map.edges.length} lines` : "loading…"}</span>
-              <div className="tools">
-                <button type="button" className="btn" aria-pressed={flow} onClick={() => setFlow(!flow)}>Flow</button>
-                <button type="button" className="btn" onClick={() => setRelayout((x) => x + 1)}>Auto layout</button>
-              </div>
-            </div>
-            <div className="mapwrap">
-              {a.map && a.map.nodes.length > 0 ? (
-                <MapView map={a.map} pulses={a.pulses} active={a.active} selection={sel} onSelect={setSel} flow={flow} relayoutSignal={relayout} />
-              ) : (
-                <div className="empty">{a.phase === "down" ? "Waiting for Argus…" : "Loading the map…"}</div>
-              )}
-            </div>
-            <div className="legend">
-              <span><i style={{ background: "var(--flow)" }} />message</span>
-              <span><i style={{ background: "var(--amber)" }} />escalation</span>
-              <span><i style={{ background: "var(--bad)" }} />failure</span>
-              <span><i className="thick" />busier line</span>
-              <span className="right">Drag boxes to arrange · click to inspect</span>
-            </div>
-          </section>
+            <RunsView events={a.events} selected={sel?.type === "job" ? sel.id : null} onSelect={setSel} />
           )}
           {a.map && <Inspector sel={sel} map={a.map} status={st} events={a.events} onSelect={setSel} />}
         </div>
         )}
-        {view !== "logs" && view !== "share" && !view.startsWith("rules/") && <EventsPanel events={a.events} conn={a.conn} onSelect={setSel} />}
+        </div>
+        {withDock && <EventsPanel events={a.events} conn={a.conn} onSelect={setSel} />}
       </main>
+      {mapFull}
       {heardBadge}
     </div>
   );

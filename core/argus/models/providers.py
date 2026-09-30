@@ -87,6 +87,25 @@ class OllamaProvider:
                 if k in data}
         return Reply(text, latency, meta)
 
+    def embed(self, texts: list[str], model: str) -> list[list[float]]:
+        """Vectors for `texts` with an embedding model (e.g. nomic-embed-text), for search by meaning."""
+        body = {"model": model, "input": texts, "keep_alive": self.keep_alive, "truncate": True}
+        req = urllib.request.Request(f"{self.url}/api/embed", data=json.dumps(body).encode(), method="POST",
+                                     headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                data = json.loads(resp.read() or b"{}")
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                raise ModelUnavailable(f"{model} is not pulled on {self.url} (ollama pull {model})") from None
+            raise ModelUnavailable(f"Ollama HTTP {e.code}: {e.read().decode(errors='replace')[:200]}") from None
+        except (TimeoutError, OSError, ValueError) as e:
+            raise ModelUnavailable(f"Ollama not reachable at {self.url}: {e}") from None
+        vecs = data.get("embeddings")
+        if not isinstance(vecs, list) or len(vecs) != len(texts):
+            raise ModelUnavailable(f"Ollama: no embeddings ({str(data)[:200]})")
+        return vecs
+
     def list_models(self) -> list[str]:
         try:
             with urllib.request.urlopen(f"{self.url}/api/tags", timeout=min(self.timeout, 10)) as resp:
@@ -107,12 +126,19 @@ class ClaudeProvider:
     def available(self) -> bool:
         return bool(self.command) and (shutil.which(self.command[0]) is not None or os.path.exists(self.command[0]))
 
-    def argv(self, stream: bool = False) -> list[str]:
+    def argv(self, stream: bool = False, web: bool = False) -> list[str]:
         # Resolve the program (on Windows `claude` is claude.cmd, which needs its full path to start).
         # Nothing from the playbook or the input goes on the command line: on Windows cmd.exe would cut it at the
         # first newline and could read & | % in it as commands. All text goes through stdin.
         program = shutil.which(self.command[0]) or self.command[0]
         args = list(self.args)
+        if web:  # general questions that need the internet: web search and fetch only, nothing else
+            if "--disallowedTools" in args:
+                i = args.index("--disallowedTools")
+                del args[i:i + 2]
+            if "--max-turns" in args:
+                args[args.index("--max-turns") + 1] = "8"
+            args += ["--allowedTools", "WebSearch,WebFetch"]
         if stream:  # pictures: the message goes in as JSON (stream-json), the answer comes back as JSON lines
             if "--output-format" in args:
                 i = args.index("--output-format")
@@ -134,8 +160,25 @@ class ClaudeProvider:
             return "image/webp"
         return "image/jpeg"
 
-    def chat(self, system: str, messages: list[dict[str, Any]], schema: dict | None = None) -> Reply:
-        """Claude sees the pictures too (`images` on a message, base64), like the vision tier."""
+    def auth_status(self) -> tuple[bool | None, str]:
+        """(logged in?, detail) from `claude auth status` (no call, no cost). None: can't tell."""
+        if not self.available():
+            return None, "claude CLI not found"
+        program = shutil.which(self.command[0]) or self.command[0]
+        try:
+            p = subprocess.run([program, *self.command[1:], "auth", "status"], capture_output=True, text=True,
+                               timeout=30, stdin=subprocess.DEVNULL)
+            info = json.loads(p.stdout or "{}")
+        except (OSError, subprocess.TimeoutExpired, ValueError) as e:
+            return None, str(e)[:200]
+        if "loggedIn" not in info:
+            return None, (p.stderr or p.stdout)[:200]
+        return bool(info["loggedIn"]), str(info.get("authMethod") or "")
+
+    def chat(self, system: str, messages: list[dict[str, Any]], schema: dict | None = None, *,
+             web: bool = False) -> Reply:
+        """`web`: may search and read the web (for current things). Claude sees the pictures too (`images` on a
+        message, base64), like the vision tier."""
         images = [i for m in messages for i in (m.get("images") or [])]
         prompt = "\n\n".join(m["content"] for m in messages if m["role"] == "user")
         if system:
@@ -152,7 +195,7 @@ class ClaudeProvider:
                        for b in images] + [{"type": "text", "text": prompt}]
             stdin = json.dumps({"type": "user", "message": {"role": "user", "content": content}}) + "\n"
         try:
-            code, stdout, stderr = run_with_timeout(self.argv(stream=bool(images)), stdin, self.timeout)
+            code, stdout, stderr = run_with_timeout(self.argv(stream=bool(images), web=web), stdin, self.timeout)
         except subprocess.TimeoutExpired:
             raise ModelTimeout(f"claude gave no answer within {self.timeout:g} s") from None
         except OSError as e:

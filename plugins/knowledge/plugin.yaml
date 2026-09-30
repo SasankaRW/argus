@@ -1,0 +1,43 @@
+id: knowledge
+name: My files (for Ari)
+version: 1.0.0
+kind: workflow
+argus_api: ">=1.0 <2.0"
+description: Indexes your documents, notes and projects so Ari can answer from your own files first, and finds files by name.
+runs_on: desktop
+
+triggers:
+  - schedule: {workflow: index, cron: "15 2 * * *"}      # every night, only what changed
+  - manual: {workflow: index, label: Index my files now}
+
+workflows: [index, search, find]
+
+permissions:
+  files:
+    read: ["~/Documents", "~/Desktop", "~/Notes", "~/OneDrive/Documents", "G:/Projects",
+           "~/Downloads", "~/Pictures", "~/Videos", "~/Music"]
+    write: []
+    delete: none
+  models: []
+
+config:
+  folders: {type: list, default: ["~/Documents", "~/Desktop", "~/Notes", "G:/Projects"], label: Read these (contents)}
+  names_only: {type: list, default: ["~/Downloads", "~/Pictures", "~/Videos", "~/Music"], label: Only file names here}
+  max_file_mb: {type: int, default: 8, label: Skip bigger files (MB)}
+  embed_model: {type: text, default: "nomic-embed-text", label: "Ollama model for search by meaning (empty: words only)"}
+
+ari:
+  tools:
+    - name: search_my_files
+      description: Search the user's own documents, notes and projects by content; returns matching passages with file paths. Use this first for anything about the user's own things.
+      workflow: search
+      input: {query: {type: string, description: "what to look for, in a few words"}}
+      required: [query]
+    - name: find_file
+      description: Find files on the PC by name (documents, downloads, pictures, videos, music); returns paths.
+      workflow: find
+      input: {name: {type: string, description: "part of the file name"}}
+      required: [name]
+
+helios:
+  node: {label: My files, group: files}

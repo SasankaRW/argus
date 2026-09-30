@@ -1,0 +1,32 @@
+id: pc-keys
+name: PC keyboard
+version: 1.0.0
+kind: workflow
+argus_api: ">=1.0 <2.0"
+description: Lets Ari type text into the window in front and press keyboard shortcuts (always after you say yes).
+runs_on: desktop
+needs: [session]
+
+workflows: [type, keys]
+
+permissions:
+  files: {read: [], write: [], delete: none}
+  models: []
+
+ari:
+  tools:
+    - name: type_text
+      description: Type text into the window that is in front (like typing it on the keyboard).
+      workflow: type
+      input: {text: {type: string, description: the text to type}}
+      required: [text]
+      risky: true
+    - name: press_keys
+      description: Press a keyboard shortcut in the window in front (e.g. ctrl+s, ctrl+shift+t, alt+tab, enter, f5).
+      workflow: keys
+      input: {keys: {type: string, description: "keys joined with +, e.g. ctrl+s"}}
+      required: [keys]
+      risky: true
+
+helios:
+  node: {label: PC keyboard, group: pc}

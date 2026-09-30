@@ -355,6 +355,7 @@ def apply(ctx: Context, plan: dict) -> dict:
             continue
         done.append({"name": m["name"], "to": ctx.files.move(m["src"], m["dst"]), "category": m["category"]})
     ctx.emit("sorted", moved=len(done), skipped=len(plan["skipped"]), dry_run=ctx.dry_run)
+    ctx.saved(20 * len(done), key="moved")  # finding a folder and dragging a file there: ~20 s each
     if ctx.dry_run:  # say it plainly: nothing moved
         return {"mode": "dry-run: nothing was moved (add downloads-organizer to plugins.live to let it move files)",
                 "would_move": done, "skipped": plan["skipped"], "dry_run": True, "note": plan["note"]}
@@ -556,5 +557,6 @@ def tidy(ctx: Context):
 
     moved = ctx.step("move misplaced", fix)
     ctx.emit("tidied", folders=len(done), files=len(moved), dry_run=ctx.dry_run)
+    ctx.saved(10 * len(moved) + 30 * len(done), key="tidied")
     return {"merged": done, "misplaced": moved, "rules": source, "dry_run": ctx.dry_run,
             "note": None if done or moved else "nothing to tidy"}

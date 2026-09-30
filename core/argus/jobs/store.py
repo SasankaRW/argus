@@ -189,6 +189,10 @@ class JobStore:
             conn.execute("UPDATE approvals SET state = 'expired', token_hash = NULL, remind_at = NULL,"
                          " decided_by = 'job ended', decided_at = ?, updated_at = ?"
                          " WHERE job_id = ? AND state = 'pending'", (now, now, job.id))
+        if dst in (S.SUCCEEDED, S.DEAD, S.CANCELLED):  # a tool job Ari was waiting for: wake Ari's job up
+            parent = (job.input or {}).get("_parent") if isinstance(job.input, dict) else None
+            if parent:
+                self._wake_parent(conn, now, str(parent), job.id)
         if dst is S.DEAD:  # failures reach the phone at once (through the outbox, same transaction)
             add_message(conn, now, "ntfy", ntfy_message(
                 f"Job failed: {job.plugin}.{job.workflow}",
@@ -203,6 +207,14 @@ class JobStore:
             dst=job.plugin,
             data={"from": job.state.value, **(event_data or {})},
         )
+        if job.plugin == "ari" and job.workflow == "think" and dst in (S.SUCCEEDED, S.DEAD, S.CANCELLED):
+            # Ari's answer is ready: the Ari pill (Helios, the PC's popup) shows it
+            try:
+                reply = str((json.loads(fields.get("result") or "null") or {}).get("reply") or "")
+            except (ValueError, AttributeError):
+                reply = ""
+            self._event(conn, now, "ari.state", job, data={
+                "phase": "done", "text": (reply or "Sorry, I couldn't answer that just now.")[:300]})
         return self._get(conn, job.id)
 
     def _check_lease(self, job: Job, worker: str, now: float) -> None:
@@ -210,6 +222,22 @@ class JobStore:
             raise LeaseLost(f"job {job.id}: {worker} does not hold the lease (state {job.state})")
         if job.lease_until is not None and job.lease_until < now:
             raise LeaseLost(f"job {job.id}: lease expired")
+
+    def _wake_parent(self, conn: sqlite3.Connection, now: float, parent_id: str, child_id: str) -> None:
+        row = conn.execute("SELECT * FROM jobs WHERE id = ?", (parent_id,)).fetchone()
+        if row is None:
+            return
+        parent = Job.from_row(row)
+        if parent.state is S.WAITING and parent.wait_reason == f"tool:{child_id}":
+            self._move(conn, parent, S.QUEUED, now, wait_reason=None, run_after=now,
+                       priority=max(parent.priority, 80), event_data={"reason": "tool done", "tool_job": child_id})
+
+    async def check_holder(self, job_id: str, worker: str) -> None:
+        """LeaseLost unless `worker` holds `job_id` now."""
+        def fn(conn: sqlite3.Connection) -> None:
+            self._check_lease(self._get(conn, job_id), worker, self.clock())
+
+        await self.store.read(fn)
 
     def _backoff(self, attempt: int) -> float:
         seq = self.cfg.backoff_seconds
@@ -434,6 +462,11 @@ class JobStore:
             job = self._get(conn, job_id)
             self._check_lease(job, worker, now)
             insert_event(conn, now, kind, job_id=job_id, step=step, src=src, dst=dst, data=data)
+            if kind == "plugin.saved" and data:  # ctx.saved: the time this job saved you
+                secs = max(0, min(int(data.get("seconds") or 0), 86400))
+                conn.execute("INSERT OR REPLACE INTO time_saved (job_id, key, plugin, day, seconds, created_at)"
+                             " VALUES (?,?,?,?,?,?)", (job_id, str(data.get("key") or "job")[:100], job.plugin,
+                                                      time.strftime("%Y-%m-%d", time.localtime(now)), secs, now))
 
         await self.store.write(fn)
 
@@ -481,6 +514,14 @@ class JobStore:
                                       lease_owner=None, lease_until=None, run_after=now,
                                       attempt=max(job.attempt - 1, 0), priority=max(job.priority, 80),
                                       event_data={"reason": "approval decided"})
+            if reason.startswith("tool:"):
+                # The tool job ended before we got here? Then straight back to the queue.
+                row = conn.execute("SELECT state FROM jobs WHERE id = ?", (reason[5:],)).fetchone()
+                if row is not None and row["state"] in (S.SUCCEEDED.value, S.DEAD.value, S.CANCELLED.value):
+                    return self._move(conn, job, S.QUEUED, now, src_component=worker, wait_reason=None,
+                                      lease_owner=None, lease_until=None, run_after=now,
+                                      attempt=max(job.attempt - 1, 0), priority=max(job.priority, 80),
+                                      event_data={"reason": "tool done"})
             # Waiting is not failing: the claim that led here does not use up one of the job's attempts.
             return self._move(conn, job, S.WAITING, now, src_component=worker, wait_reason=reason,
                               lease_owner=None, lease_until=None, attempt=max(job.attempt - 1, 0),

@@ -54,7 +54,7 @@ import re
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
@@ -64,7 +64,7 @@ from pydantic import BaseModel, Field
 
 from .. import ari as ari_mod
 from .. import ask as ask_mod
-from .. import logview
+from .. import daily, guidance, logview
 from ..approvals import ApprovalClosed, ApprovalError, ApprovalNotFound, BadToken
 from ..config import PRIORITY_INTERACTIVE
 from ..context import Argus
@@ -74,10 +74,12 @@ from ..ids import new_id
 from ..jobs import InvalidTransition, Job, JobNotFound, JobState, LeaseLost, QueueFull, Step
 from ..outbox import PRIORITIES, add_message, ntfy_message
 from ..power import PowerError
+from ..presence import describe_phone
 from ..shares import ShareError, ShareStore, kinds_of
+from ..tools import Tool, ToolError, Tools
 from ..triggers import BadSignature, TriggerError, UnknownTrigger
 from ..voice import Voice, VoiceUnavailable
-from . import approval_page
+from . import approval_page, mcp
 from .home import HOME_HTML
 
 mimetypes.add_type("application/manifest+json", ".webmanifest")  # Helios as an installable app (share menu)
@@ -195,8 +197,51 @@ class AriAnswer(BaseModel):
     yes: bool
 
 
+class AriStateIn(BaseModel):
+    phase: Literal["idle", "listening", "thinking", "working", "speaking", "done"]
+    text: str = Field("", max_length=300)
+    by: str = Field("", max_length=40)
+
+
 class AriSpeak(BaseModel):
     text: str = Field(min_length=1, max_length=1000)
+
+
+class ToolCall(BaseModel):
+    worker: str
+    key: str = Field(min_length=1, max_length=200)
+    name: str = Field(min_length=1, max_length=60)
+    args: dict[str, Any] = Field(default_factory=dict)
+
+
+class SampleIn(BaseModel):
+    worker: str
+    playbook: str = Field(min_length=1, max_length=40_000)
+    schema_: dict[str, Any] | None = Field(None, alias="schema")
+    input: Any = None
+    output: Any = None
+    tier: str | None = None
+    escalated: bool = False
+
+
+class Verdict(BaseModel):
+    verdict: str | None = Field(None, pattern="^(correct|wrong)$")
+    correction: Any = None
+
+
+class LessonDecide(BaseModel):
+    approve: bool
+
+
+class PluginSettings(BaseModel):
+    live: bool | None = None  # None: back to argus.yaml's plugins.live
+    config: dict[str, Any] | None = None  # only the fields you changed; a null value resets that field
+    reset: bool = False  # forget all your changes
+
+
+class ClaudeAuth(BaseModel):
+    logged_in: bool
+    detail: str = Field("", max_length=300)
 
 
 class ScheduleEdit(BaseModel):
@@ -512,6 +557,10 @@ def create_app(argus: Argus) -> FastAPI:
         """Plain words -> an answer and at most one suggested action (never done without POST /ask/do).
         Common asks are answered at once from data (rules); the rest go to a model as a job (poll its result)."""
         actions = ask_mod.catalog(argus.plugin_host)
+        if ask_mod.PHONE.search(body.text.lower()):
+            where = await phone_where()
+            return {"via": "rules", "reply": f"{where['text']} Ring it?", "action": "phone:ring",
+                    "label": "Ring my phone"}
         snap = await ask_mod.snapshot(argus)
         hit = ask_mod.rules(body.text, actions, snap)
         labels = {a["id"]: a["label"] for a in actions}
@@ -522,12 +571,32 @@ def create_app(argus: Argus) -> FastAPI:
             priority=PRIORITY_INTERACTIVE, source="helios")
         return {"via": "model", "job_id": job_id}
 
+    async def mcp_auth(request: Request) -> bool:
+        return token_ok(request.headers.get("authorization"))
+
+    tools = Tools(argus, job_json)
+    app.state.tools = tools
+    mcp.register(app, argus, mcp_auth, tools)
+
+    @app.post("/jobs/{job_id}/tools", dependencies=guarded)
+    async def job_tool(job_id: str, body: ToolCall) -> dict:
+        """ctx.tool() from a worker: a built-in tool's answer now, or a plugin tool's child job (pending until done;
+        the calling job then waits and is resumed when the child ends)."""
+        return await tools.call_from_job(job_id, body.worker, body.key, body.name, body.args)
+
+    @app.get("/tools", dependencies=guarded)
+    async def list_tools() -> list[dict]:
+        """Everything Ari can use (built in and from plugins)."""
+        return [{**t.brief(), "plugin": t.plugin, "risky": t.risky} for t in tools.all().values() if t.for_ari]
+
     @app.post("/ask/do", dependencies=guarded)
     async def ask_do(body: AskDo) -> dict:
         """Do a suggested action (you tapped it)."""
         return await do_action(body.action)
 
     async def do_action(a: str) -> dict:
+        if a == "phone:ring":
+            return {"phone": await ring_phone()}
         if a.startswith("show:"):
             return {"view": a[5:]}
         if a.startswith("power:"):
@@ -541,6 +610,131 @@ def create_app(argus: Argus) -> FastAPI:
                                                        priority=PRIORITY_INTERACTIVE, source="helios")
             return {"job_id": job_id, "created": created}
         raise HTTPException(status_code=404, detail=f"unknown action {a!r}")
+
+    # -------------------------------------------------------------- find my phone
+
+    async def ring_phone() -> dict:
+        """Three urgent notifications, 20 s apart: loud even on silent if ntfy may override Do Not Disturb."""
+        if not argus.outbox.senders.get("ntfy") or not argus.outbox.senders["ntfy"].enabled:
+            raise HTTPException(status_code=409, detail="ntfy is off: set NTFY_TOPIC in .env")
+
+        def fn(conn):
+            now = time.time()
+            for i in range(3):
+                add_message(conn, now, "ntfy", ntfy_message("Here I am!", "Argus is ringing your phone.",
+                                                            priority="urgent", tags=["rotating_light", "iphone"]),
+                            dedupe_key=f"ring:{int(now)}:{i}", send_at=now + 20 * i)
+            insert_event(conn, now, "phone.ring", src="helios", dst="phone")
+
+        await argus.store.write(fn)
+        argus.outbox.poke()
+        return {"ringing": True, "times": 3}
+
+    async def phone_where() -> dict:
+        if not argus.cfg.approvals.phone:
+            return {"info": None, "text": "Set approvals.phone in argus.yaml (the phone's Tailscale name) and I can "
+                                          "tell where it is."}
+        try:
+            info = await argus.phone.info()
+        except Exception as e:  # Tailscale not running here
+            return {"info": None, "text": f"I can't read Tailscale right now ({str(e)[:80]}).", }
+        return {"info": info, "text": describe_phone(info)}
+
+    async def _where(_: dict) -> dict:
+        return await phone_where()
+
+    async def _ring(_: dict) -> dict:
+        return await ring_phone()
+
+    tools.builtin["where_is_my_phone"] = Tool("where_is_my_phone", "Where the user's phone is (Tailscale: online at "
+                                              "home, away, or offline and when last seen).", fn=_where)
+    tools.builtin["ring_phone"] = Tool("ring_phone", "Ring the user's phone loudly to find it.", fn=_ring)
+
+    # -------------------------------------------------------------- the guidance loop
+
+    @app.post("/jobs/{job_id}/samples", dependencies=guarded)
+    async def add_sample(job_id: str, body: SampleIn) -> dict:
+        """A model answer from a plugin's job (ctx.llm), kept for your verdict and the nightly review."""
+        job = await argus.jobs.get(job_id)
+        sid = await argus.store.write(lambda c: guidance.add_sample(
+            c, time.time(), job_id=job_id, plugin=job.plugin, playbook=body.playbook, schema=body.schema_,
+            input=body.input, output=body.output, tier=body.tier, escalated=body.escalated,
+            keep=argus.cfg.guidance.keep_samples))
+        return {"id": sid}
+
+    @app.get("/jobs/{job_id}/samples", dependencies=guarded)
+    async def job_samples(job_id: str) -> list[dict]:
+        return await argus.store.read(lambda c: [guidance.sample_json(r) for r in c.execute(
+            "SELECT * FROM samples WHERE job_id = ? ORDER BY id", (job_id,))])
+
+    @app.get("/guidance", dependencies=guarded)
+    async def guidance_overview(plugin: str | None = None) -> list[dict]:
+        """Per playbook: answers kept, escalations, your verdicts, lessons in force and waiting."""
+        return await argus.store.read(lambda c: guidance.overview(c, plugin))
+
+    @app.get("/guidance/{key}/samples", dependencies=guarded)
+    async def playbook_samples(key: str, verdict: str | None = None, limit: int = Query(50, ge=1, le=500)
+                               ) -> list[dict]:
+        where, args = "playbook = ?", [key]
+        if verdict in ("correct", "wrong"):
+            where, args = where + " AND verdict = ?", args + [verdict]
+        elif verdict == "none":
+            where += " AND verdict IS NULL"
+        return await argus.store.read(lambda c: [guidance.sample_json(r) for r in c.execute(
+            f"SELECT * FROM samples WHERE {where} ORDER BY id DESC LIMIT ?", (*args, limit))])
+
+    @app.post("/samples/{sample_id}/verdict", dependencies=guarded)
+    async def sample_verdict(sample_id: int, body: Verdict) -> dict:
+        """Correct (joins the eval set) or wrong (with what it should have been; the review learns from it)."""
+        if not await argus.store.write(lambda c: guidance.set_verdict(c, sample_id, body.verdict, body.correction)):
+            raise HTTPException(status_code=404, detail="no such answer")
+        return {"ok": True}
+
+    @app.post("/guidance/review", dependencies=guarded)
+    async def guidance_review() -> dict:
+        """Review now: Claude proposes lessons for playbooks with new mistakes; you approve them."""
+        return await argus.guidance_review()
+
+    @app.post("/lessons/{lesson_id}/decide", dependencies=guarded)
+    async def lesson_decide(lesson_id: int, body: LessonDecide) -> dict:
+        r = await argus.store.write(lambda c: guidance.decide(c, lesson_id, body.approve, time.time()))
+        if r is None:
+            raise HTTPException(status_code=409, detail="that lesson isn't waiting for a decision")
+        return r
+
+    @app.delete("/lessons/{lesson_id}", dependencies=guarded)
+    async def lesson_drop(lesson_id: int) -> dict:
+        """Stop using lessons that are in force (the playbook is used as written again)."""
+        if not await argus.store.write(lambda c: guidance.drop_active(c, lesson_id)):
+            raise HTTPException(status_code=404, detail="no such lessons in force")
+        return {"ok": True}
+
+    async def _propose(x: dict) -> dict:
+        lid = await argus.store.write(lambda c: guidance.propose(c, time.time(), str(x["key"]), str(x["text"]),
+                                                                 x.get("evals") or {}, x.get("job_id")))
+        return {"lesson": lid}
+
+    async def _decide(x: dict) -> dict:
+        r = await argus.store.write(lambda c: guidance.decide(c, int(x["lesson"]), bool(x["approve"]), time.time()))
+        return r or {"state": "already decided"}
+
+    tools.builtin["propose_lessons"] = Tool(
+        "propose_lessons", "(guidance loop) keep proposed lessons for a playbook",
+        {"key": {"type": "string"}, "text": {"type": "string"}, "evals": {"type": "object"},
+         "job_id": {"type": "string"}}, ["key", "text"], fn=_propose, for_ari=False, for_mcp=False)
+    tools.builtin["decide_lessons"] = Tool(
+        "decide_lessons", "(guidance loop) your answer to proposed lessons",
+        {"lesson": {"type": "integer"}, "approve": {"type": "boolean"}}, ["lesson", "approve"], fn=_decide,
+        for_ari=False, for_mcp=False)
+
+    @app.get("/phone", dependencies=guarded)
+    async def get_phone() -> dict:
+        """Where the phone is as far as Tailscale knows (online, home or away, last seen)."""
+        return await phone_where()
+
+    @app.post("/phone/ring", dependencies=guarded)
+    async def post_phone_ring() -> dict:
+        return await ring_phone()
 
     # -------------------------------------------------------------- Ari (talk to Argus)
 
@@ -562,6 +756,12 @@ def create_app(argus: Argus) -> FastAPI:
         await argus.store.write(lambda c: ari_mod.close_question(c, q["turn"]))
         if not yes:
             reply, out = "Okay, I won't.", {}
+        elif q["kind"] == "tool":
+            try:
+                res = await tools.run_now(q["name"], q.get("args") or {})
+                reply, out = "Done.", {"tool": q["name"], "result": res}
+            except ToolError as e:
+                reply, out = f"I couldn't: {e}.", {}
         elif q["kind"] == "schedule":
             when = ari_mod.When(q["cron"], q["once"], q["say"], "")
             spec = _schedule_spec(q["action"])
@@ -579,9 +779,27 @@ def create_app(argus: Argus) -> FastAPI:
                     return {"conv": conv, "reply": reply}
             else:
                 out = await do_action(q["action"])
-            reply = "Done." if "view" not in out else f"Opening {out['view']}."
-        await argus.store.write(lambda c: ari_mod.add_turn(c, conv, "ari", reply))
+            reply = f"Opening {out['view']}." if "view" in out else "Ringing it now." if "phone" in out else "Done."
+        await argus.store.write(lambda c: (ari_mod.add_turn(c, conv, "ari", reply), ari_state(c, "done", reply)))
         return {"conv": conv, "reply": reply, **out}
+
+    def ari_state(c, phase: str, text: str = "", job_id: str | None = None, by: str = "argus") -> None:
+        """What Ari is doing (event ari.state): the Ari pill in Helios and the PC's popup follow it."""
+        insert_event(c, time.time(), "ari.state", job_id=job_id, data={"phase": phase, "text": text[:300], "by": by})
+
+    overlays: dict[str, float] = {}  # host -> last ping from the PC's Ari popup
+
+    @app.post("/ari/state", dependencies=guarded)
+    async def ari_state_set(body: AriStateIn) -> dict:
+        """Report what Ari is doing where you are (listening, speaking) so every Ari pill shows it."""
+        await argus.store.write(lambda c: ari_state(c, body.phase, body.text, by=body.by or "client"))
+        return {"ok": True}
+
+    @app.post("/ari/popup", dependencies=guarded)
+    async def ari_popup_ping(request: Request) -> dict:
+        """The PC's Ari popup is running (sent every 30 s): Helios on that PC then leaves the pill to it."""
+        overlays[request.client.host if request.client else "?"] = time.time()
+        return {"ok": True}
 
     @app.post("/ari", dependencies=guarded)
     async def ari_say(body: AriSay) -> dict:
@@ -596,11 +814,16 @@ def create_app(argus: Argus) -> FastAPI:
             await argus.store.write(lambda c: ari_mod.close_question(c, q["turn"]))
 
         async def reply(text: str, action: str | None = None, pending: dict | None = None) -> dict:
-            tid = await argus.store.write(lambda c: ari_mod.add_turn(c, conv, "ari", text, action=action,
-                                                                     pending=pending))
+            tid = await argus.store.write(lambda c: (ari_mod.add_turn(c, conv, "ari", text, action=action,
+                                                                      pending=pending),
+                                                     ari_state(c, "done", text))[0])
             return {"conv": conv, "turn": tid, "reply": text, "action": action, "pending": pending}
 
         actions = ask_mod.catalog(argus.plugin_host)
+        m = ari_mod.REMEMBER.match(text)
+        if m and not ari_mod.parse_when(text, time.time()):  # "remember that ..." (not "remind me at ...")
+            await argus.store.write(lambda c: ari_mod.remember(c, m.group("fact")))
+            return await reply("Got it, I'll remember that.")
         when = ari_mod.parse_when(text, time.time())
         if when is not None:
             what = ari_mod.action_for(when.rest, actions)
@@ -612,6 +835,10 @@ def create_app(argus: Argus) -> FastAPI:
             return await reply(f"{when.say[0].upper()}{when.say[1:]}, I'll {label}. Shall I set that up?",
                                pending={"kind": "schedule", "action": action, "cron": when.cron, "once": when.once,
                                         "say": when.say, "label": label})
+        if ask_mod.PHONE.search(text.lower()):  # "where's my phone?": where Tailscale sees it, and ring it?
+            where = await phone_where()
+            return await reply(f"{where['text']} Want me to ring it?", "phone:ring",
+                               {"kind": "action", "action": "phone:ring"})
         snap = await ask_mod.snapshot(argus)
         hit = ask_mod.rules(text, actions, snap)
         if hit is not None:
@@ -620,11 +847,49 @@ def create_app(argus: Argus) -> FastAPI:
                 return await reply(hit["reply"], act, {"kind": "action", "action": act})
             return await reply(hit["reply"], act)
         hist = await argus.store.read(lambda c: ari_mod.history(c, conv))
+        known = await argus.store.read(lambda c: ari_mod.recall(c, text))
         job_id, _ = await argus.jobs.enqueue(
-            "ask", "ask", {"text": text, "actions": actions, "snapshot": snap, "history": hist[:-1],
-                           "persona": "ari"}, priority=PRIORITY_INTERACTIVE, source="helios")
-        tid = await argus.store.write(lambda c: ari_mod.add_turn(c, conv, "ari", None, job_id=job_id))
+            "ari", "think", {"text": text, "history": hist[:-1], "now": time.strftime("%A %d %B %Y, %H:%M"),
+                             "you_remember": known,
+                             "tools": [t.brief() for t in tools.all().values() if t.for_ari]},
+            priority=PRIORITY_INTERACTIVE, source="helios")
+        tid = await argus.store.write(lambda c: (ari_mod.add_turn(c, conv, "ari", None, job_id=job_id),
+                                                 ari_state(c, "thinking", text, job_id))[0])
         return {"conv": conv, "turn": tid, "job_id": job_id, "reply": None}
+
+    @app.get("/ari-memory", dependencies=guarded)
+    async def ari_memory() -> list[dict]:
+        """Everything you asked Ari to remember, newest first."""
+        return await argus.store.read(ari_mod.memories)
+
+    @app.delete("/ari-memory/{memory_id}", dependencies=guarded)
+    async def ari_forget(memory_id: int) -> dict:
+        if not await argus.store.write(lambda c: ari_mod.forget(c, memory_id)):
+            raise HTTPException(status_code=404, detail="no such memory")
+        return {"ok": True}
+
+    async def _remember(x: dict) -> dict:
+        mid = await argus.store.write(lambda c: ari_mod.remember(c, str(x["fact"])))
+        return {"remembered": x["fact"], "id": mid}
+
+    async def _recall(x: dict) -> list:
+        return await argus.store.read(lambda c: ari_mod.recall(c, str(x["query"]), 10))
+
+    async def _forget(x: dict) -> dict:
+        ok = await argus.store.write(lambda c: ari_mod.forget(c, int(x["id"])))
+        if not ok:
+            raise ToolError(f"no memory {x['id']}")
+        return {"forgotten": int(x["id"])}
+
+    tools.builtin["remember"] = Tool("remember", "Keep a fact the user asked you to remember (one short sentence).",
+                                     {"fact": {"type": "string", "description": "the fact, in the user's words"}},
+                                     ["fact"], fn=_remember)
+    tools.builtin["recall_memory"] = Tool("recall_memory", "Look up what the user asked you to remember earlier.",
+                                          {"query": {"type": "string", "description": "words to look for"}},
+                                          ["query"], fn=_recall)
+    tools.builtin["forget_memory"] = Tool("forget_memory", "Forget one remembered fact (its id from recall_memory).",
+                                          {"id": {"type": "integer", "description": "the memory's id"}}, ["id"],
+                                          fn=_forget)
 
     @app.get("/ari/{conv}", dependencies=guarded)
     async def ari_conv(conv: str) -> dict:
@@ -641,14 +906,19 @@ def create_app(argus: Argus) -> FastAPI:
                 elif j.state.value == "succeeded":
                     r = j.result or {}
                     t["text"] = str(r.get("reply") or "…")
+                    t["used"] = [{"tool": u.get("tool"), "ok": "error" not in u} for u in r.get("used") or []] + \
+                        ([{"tool": "web search", "ok": True}] if r.get("via") == "web" else [])
                     t["action"] = r.get("action")
-                    if t["action"] and not str(t["action"]).startswith("show:"):
+                    if r.get("pending"):  # a tool that asks first
+                        t["pending"] = r["pending"]
+                    elif t["action"] and not str(t["action"]).startswith("show:"):
                         t["pending"] = {"kind": "action", "action": t["action"]}
                 else:
                     continue
                 await argus.store.write(lambda c, t=t: c.execute(
-                    "UPDATE ari_turns SET text = ?, action = ?, pending = ? WHERE id = ?",
-                    (t["text"], t["action"], json.dumps(t["pending"]) if t["pending"] else None, t["id"])))
+                    "UPDATE ari_turns SET text = ?, action = ?, pending = ?, used = ? WHERE id = ?",
+                    (t["text"], t["action"], json.dumps(t["pending"]) if t["pending"] else None,
+                     json.dumps(t.get("used")) if t.get("used") else None, t["id"])))
         labels = {a["id"]: a["label"] for a in ask_mod.catalog(argus.plugin_host)}
         for t in rows:
             t["label"] = labels.get(t["action"] or "")
@@ -663,10 +933,12 @@ def create_app(argus: Argus) -> FastAPI:
         return any(w["state"] == "online" and "gpu" in w["capabilities"] for w in await argus.registry.workers())
 
     @app.get("/ari-voice", dependencies=guarded)
-    async def ari_voice() -> dict:
+    async def ari_voice(request: Request) -> dict:
         """What Helios can use: Piper here, Whisper on the PC (only while a GPU worker is online)."""
+        host = request.client.host if request.client else "?"
         return {"voice": voice.configured, "hearing": argus.cfg.ari.hearing,
-                "whisper_ready": argus.cfg.ari.hearing == "whisper" and await gpu_online()}
+                "whisper_ready": argus.cfg.ari.hearing == "whisper" and await gpu_online(),
+                "popup_here": time.time() - overlays.get(host, 0) < 75, "pill": argus.cfg.ari.pill}
 
     @app.post("/ari-voice/say", dependencies=guarded)
     async def ari_say_audio(body: AriSpeak) -> Response:
@@ -858,6 +1130,16 @@ def create_app(argus: Argus) -> FastAPI:
 
     # -------------------------------------------------------------- the morning brief
 
+    @app.post("/summary", dependencies=guarded)
+    async def summary_now() -> dict:
+        """Send the evening summary now (to try it)."""
+        return await argus.send_summary()
+
+    @app.get("/time-saved", dependencies=guarded)
+    async def get_time_saved(days: int = Query(7, ge=1, le=366)) -> dict:
+        """What the plugins saved you: total, per plugin, per day."""
+        return await argus.store.read(lambda c: daily.time_saved(c, time.time(), days))
+
     @app.post("/brief", dependencies=guarded)
     async def brief_now() -> dict:
         """Send the morning brief now (to try it)."""
@@ -1043,6 +1325,8 @@ def create_app(argus: Argus) -> FastAPI:
                 p = argus.plugin_host.plugins.get(job.plugin)
                 if p is not None:  # current settings (live, config): argusd may have restarted since register
                     out["plugin_info"] = p.info()
+                    out["plugin_info"]["lessons"] = await argus.store.read(
+                        lambda c, pid=job.plugin: guidance.active_lessons(c, pid))
                 return out
             if time.monotonic() >= deadline:
                 return Response(status_code=204)
@@ -1081,6 +1365,12 @@ def create_app(argus: Argus) -> FastAPI:
         return {"ok": True}
 
     # -------------------------------------------------------------- models (breakers, Claude budget)
+
+    @app.post("/workers/{worker_id}/claude", dependencies=guarded)
+    async def worker_claude(worker_id: str, body: ClaudeAuth) -> dict:
+        """A worker's `claude auth status`: the phone hears when Claude is logged out."""
+        await argus.models.auth_seen(body.logged_in, worker_id, body.detail)
+        return {"ok": True}
 
     @app.get("/models", dependencies=guarded)
     async def models() -> dict:
@@ -1227,6 +1517,79 @@ def create_app(argus: Argus) -> FastAPI:
     @app.get("/plugins", dependencies=guarded)
     async def plugins() -> dict:
         return argus.plugin_host.list()
+
+    def plugin_or_404(pid: str):
+        p = argus.plugin_host.plugins.get(pid)
+        if p is None:
+            raise HTTPException(status_code=404, detail=f"no plugin {pid}")
+        return p
+
+    @app.get("/plugins/{pid}", dependencies=guarded)
+    async def plugin_detail(pid: str) -> dict:
+        """Everything Helios's page for one plugin shows: what it is, its buttons and triggers, settings (with
+        where each value comes from), Ari's tools, recent runs, time saved, learning."""
+        p = plugin_or_404(pid)
+        m = p.manifest
+        saved = await state_get(pid, "_settings") or {}
+        mine = saved.get("config") or {}
+        settings = [{"name": k, "type": f.type, "label": f.label or k.replace("_", " "), "choices": f.choices,
+                     "default": f.default, "value": p.config.get(k),
+                     "source": "you" if k in mine else "argus.yaml" if (p.base_config or {}).get(k) != f.default
+                     else "default"} for k, f in m.config.items()]
+        scheds = [s for s in await argus.scheduler.list() if s["plugin"] == pid]
+        runs = [job_json(j) for j in await argus.jobs.list_jobs(None, 15, pid)]
+        week = await argus.store.read(lambda c: daily.time_saved(c, time.time(), 7))
+        learn = await argus.store.read(lambda c: guidance.overview(c, pid))
+        t = m.triggers
+        return {
+            "id": pid, "name": m.name, "version": m.version, "description": m.description, "runs_on": m.runs_on,
+            "needs": m.job_needs(), "live": p.live,
+            "live_from": "you" if saved.get("live") is not None else "argus.yaml",
+            "group": m.helios.node.group, "path": str(p.path),
+            "buttons": [{"workflow": x.manual.workflow, "label": x.manual.label} for x in t if x.manual],
+            "schedules": [{"id": s["id"], "cron": s["cron"], "workflow": s["workflow"], "enabled": s["enabled"],
+                           "next_run_at": s["next_run_at"], "last_run_at": s["last_run_at"]} for s in scheds],
+            "watches": [{"workflow": x.folder_watch.workflow, "paths": x.folder_watch.paths}
+                        for x in t if x.folder_watch],
+            "share": [x.model_dump() for x in m.share],
+            "tools": [{"name": x.name, "description": x.description, "risky": x.risky} for x in m.ari.tools],
+            "rules": m.helios.rules.label if m.helios.rules else None,
+            "wrong": m.helios.wrong.label if m.helios.wrong else None,
+            "permissions": m.permissions.model_dump(),
+            "settings": settings,
+            "runs": runs,
+            "saved": next((x for x in week["plugins"] if x["plugin"] == pid), {"seconds": 0, "jobs": 0}),
+            "learning": learn,
+        }
+
+    @app.put("/plugins/{pid}/settings", dependencies=guarded)
+    async def plugin_settings(pid: str, body: PluginSettings) -> dict:
+        """Change a plugin from Helios: live or dry-run, and its settings. Takes effect with the next job."""
+        from ..plugins import SettingError, check_setting
+
+        p = plugin_or_404(pid)
+        saved = {} if body.reset else dict(await state_get(pid, "_settings") or {})
+        if "live" in body.model_fields_set:
+            saved["live"] = body.live
+        if body.config:
+            mine = dict(saved.get("config") or {})
+            for k, v in body.config.items():
+                f = p.manifest.config.get(k)
+                if f is None:
+                    raise HTTPException(status_code=422, detail=f"{pid} has no setting {k!r}")
+                if v is None:
+                    mine.pop(k, None)
+                    continue
+                try:
+                    mine[k] = check_setting(f, k, v)
+                except SettingError as e:
+                    raise HTTPException(status_code=422, detail=str(e)) from None
+            saved["config"] = mine
+        await state_set(pid, "_settings", saved or None)
+        p.apply(saved)
+        await argus.store.write(lambda c: insert_event(c, time.time(), "plugin.settings", src="helios", dst=pid,
+                                                       data={"live": p.live, "changed": sorted(body.config or {})}))
+        return {"live": p.live, "config": p.config}
 
     @app.post("/plugins/{pid}/run", dependencies=guarded)
     async def plugin_run(pid: str, body: RunPlugin) -> dict:

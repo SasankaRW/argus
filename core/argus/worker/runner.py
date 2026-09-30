@@ -10,11 +10,13 @@ Safety rules:
 from __future__ import annotations
 
 import logging
+import os
 import socket
 import threading
 import time
 import traceback
 import urllib.parse
+from pathlib import Path
 from typing import Any
 
 from .. import __version__
@@ -24,6 +26,8 @@ from . import backup as _backup  # noqa: F401 - the PC's copy of the nightly bac
 from . import health as _health  # noqa: F401 - WSL and Docker on the PC
 from . import hear as _hear  # noqa: F401 - Ari's hearing (Whisper)
 from . import power as _power  # noqa: F401 - the built-in power buttons (sleep, shut down, ...)
+from . import review as _review  # noqa: F401 - the guidance loop's nightly review
+from . import think as _think  # noqa: F401 - Ari's thinking (tools, then an answer)
 from .client import ApiError, ArgusClient, LeaseLostError, Unreachable
 from .plugins import Files, Http, LoadedPlugin, Secrets, Store
 from .plugins import load as load_plugins
@@ -53,6 +57,15 @@ class _JobReporter:
 
     def notify(self, body: dict) -> dict:
         return self._call(lambda: self.client.notify(self.job_id, self.worker_id, body))
+
+    def sample(self, body: dict) -> None:
+        try:
+            self.client.post(f"/jobs/{self.job_id}/samples", {"worker": self.worker_id, **body})
+        except (Unreachable, ApiError):
+            pass
+
+    def tool(self, body: dict) -> dict:
+        return self._call(lambda: self.client.post(f"/jobs/{self.job_id}/tools", {"worker": self.worker_id, **body}))
 
     def _call(self, fn):
         try:
@@ -174,8 +187,28 @@ class Worker:
                 return
             self.run_once()
 
+    CLAUDE_CHECK_SECONDS = 1800.0
+    _claude_checked = 0.0
+
+    def check_claude(self, force: bool = False) -> None:
+        """Every half hour: is the Claude CLI on this machine logged in? (argusd tells the phone when it isn't.)"""
+        if not force and time.monotonic() - self._claude_checked < self.CLAUDE_CHECK_SECONDS:
+            return
+        self._claude_checked = time.monotonic()
+        claude = next((p for p in self.providers.values() if getattr(p, "kind", "") == "claude"), None)
+        if claude is None or not hasattr(claude, "auth_status"):
+            return
+        logged_in, detail = claude.auth_status()
+        if logged_in is None:
+            return
+        try:
+            self.client.post(f"/workers/{self.id}/claude", {"logged_in": logged_in, "detail": detail})
+        except (Unreachable, ApiError) as e:
+            log.warning("could not report the Claude login", extra={"error": str(e)})
+
     def run_once(self, wait: float | None = None) -> bool:
         """Claim and run at most one job. Returns True if a job was run."""
+        self.check_claude()
         try:
             job = self.client.claim(self.id, self.capabilities, self.registry.plugins,
                                     self.claim_wait if wait is None else wait)
@@ -312,11 +345,13 @@ class Worker:
         perms = plugin.perms
         ctx.plugin = plugin
         ctx.config = dict(plugin.config)
+        ctx._lessons = dict(plugin.info.get("lessons") or {})
         ctx.dry_run = plugin.dry_run
         ctx.files = Files(pid, perms.get("files") or {}, self.path_rules, plugin.dry_run, trace)
         ctx.http = Http(pid, perms.get("network") or [], trace)
         ctx.secrets = Secrets(pid, perms.get("secrets") or [])
         ctx.store = Store(client, pid)
+        ctx.data_dir = Path(os.environ.get("ARGUS_PLUGIN_DATA", "data/plugins")).resolve() / pid  # made on first use
         ctx.emit = lambda name, **data: trace(f"plugin.{name}", data)
         share = (ctx.input or {}).get("share")
         if share:  # something sent from the phone's share menu: its files come from argusd

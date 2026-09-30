@@ -299,6 +299,8 @@ def name(ctx: Context):
     if out.get("ask"):
         out = ctx.step("ask you", ask_you, ctx, path, out)
     ctx.emit("named", **{k: v for k, v in out.items() if k in ("renamed", "skipped")}, dry_run=ctx.dry_run)
+    if "renamed" in out:
+        ctx.saved(15 if out.get("how") == "you" else 30, key="named")  # opening it and typing a name: ~30 s
     return {**out, "dry_run": ctx.dry_run}
 
 
@@ -326,6 +328,7 @@ def sweep(ctx: Context):
         if r.get("ask"):
             results[i] = ctx.step(f"ask you {i}", ask_you, ctx, p, r)
     ctx.emit("named", renamed=sum(1 for r in results if "renamed" in r), dry_run=ctx.dry_run)
+    ctx.saved(sum(15 if r.get("how") == "you" else 30 for r in results if "renamed" in r), key="named")
     return {"results": results, "dry_run": ctx.dry_run}
 
 

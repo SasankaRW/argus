@@ -87,6 +87,7 @@ def test_stale_power_jobs_are_dropped_when_the_pc_is_off(tmp_path):
 
 # ------------------------------------------------------------------ backups
 
+@pytest.mark.nightly_backup
 def test_a_failed_backup_is_not_retried_every_tick(tmp_path, monkeypatch):
     a = make(tmp_path, "backup:\n  at: '00:00'\n").open()
     calls = []

@@ -1,0 +1,29 @@
+id: duplicate-finder
+name: Duplicate finder
+version: 1.0.0
+kind: workflow
+argus_api: ">=1.0 <2.0"
+description: Finds identical files (same content, any name) and, after you approve, sends the extra copies to the Recycle Bin.
+runs_on: desktop
+
+triggers:
+  - schedule: {workflow: scan, cron: "0 4 * * 0"}        # Sunday 4 am; you approve before anything is removed
+  - manual: {workflow: scan, label: Find duplicates}
+
+workflows: [scan]
+
+permissions:
+  files:
+    read: ["~/Downloads", "~/Pictures", "~/Documents", "~/Desktop", "~/Videos", "~/Music"]
+    write: ["~/Downloads", "~/Pictures", "~/Documents", "~/Desktop", "~/Videos", "~/Music"]
+    delete: recycle_bin      # never a permanent delete
+  models: []                 # no model: the content decides
+  claude_calls_per_day: 0
+
+config:
+  folders: {type: list, default: ["~/Downloads", "~/Pictures"], label: Folders to compare (together)}
+  min_size_kb: {type: int, default: 64, label: Ignore files smaller than (KB)}
+  max_groups: {type: int, default: 150, label: Duplicate sets per approval at most}
+
+helios:
+  node: {label: Duplicates, group: files}

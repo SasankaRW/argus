@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 // Talking to argusd: REST for snapshots, one WebSocket for everything live.
 
 export type ArgusEvent = {
@@ -26,6 +27,20 @@ export type MapNode = {
   failed?: number;
   implicit?: boolean;
 };
+
+export type TimeSaved = { seconds: number; text: string; plugins: { plugin: string; seconds: number; jobs: number }[] };
+
+// What the plugins saved you this week (refreshed every minute).
+export function useTimeSaved(): TimeSaved | null {
+  const [t, setT] = useState<TimeSaved | null>(null);
+  useEffect(() => {
+    const load = () => api<TimeSaved>("/time-saved?days=7").then(setT).catch(() => {});
+    load();
+    const id = setInterval(load, 60000);
+    return () => clearInterval(id);
+  }, []);
+  return t;
+}
 
 export type Approval = {
   id: string;

@@ -55,6 +55,17 @@ class FakeOllama:
                 if model not in outer.replies:
                     self._send(404, {"error": f"model '{model}' not found"})
                     return
+                if self.path == "/api/embed":  # words hashed into 64 numbers: same words, close vectors
+                    import hashlib
+
+                    def vec(t: str) -> list[float]:
+                        v = [0.0] * 64
+                        for w in t.lower().split():
+                            v[int(hashlib.md5(w.strip(".,!?").encode()).hexdigest(), 16) % 64] += 1.0
+                        return v
+
+                    self._send(200, {"model": model, "embeddings": [vec(t) for t in body["input"]]})
+                    return
                 queue = outer.replies[model]
                 what = queue.pop(0) if len(queue) > 1 else queue[0]
                 if what == "HANG":

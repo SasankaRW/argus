@@ -12,6 +12,7 @@ Bad answers (invalid JSON, failed checks) are not breaker failures: the model is
 
 from __future__ import annotations
 
+import re
 import sqlite3
 import time
 from collections.abc import Callable
@@ -21,9 +22,13 @@ from typing import Any
 from .config import Config
 from .db import Store
 from .events import insert_event
+from .outbox import add_message, ntfy_message
 from .registry import _upsert_component
 
 CLAUDE_BUDGET = "claude_calls"
+
+
+LOGGED_OUT = re.compile(r"/login|not logged in|log ?in again|invalid api key|authenticat|oauth token", re.I)
 
 
 def component_id(tier: str) -> str:
@@ -46,6 +51,30 @@ class ModelBoard:
         self.cfg = cfg
         self.clock = clock
         self.plugin_caps: dict[str, int] = {}  # plugin -> claude_calls_per_day from its manifest
+        # Is the Claude CLI logged in? From `claude auth status` on the workers, and from failed calls.
+        self.claude_auth: dict[str, Any] = {"logged_in": None, "checked_at": None, "worker": None, "detail": None}
+        self.poke: Callable[[], None] = lambda: None  # wakes the outbox (set by Argus)
+
+    def _auth(self, conn: sqlite3.Connection, now: float, logged_in: bool, worker: str | None,
+              detail: str | None) -> None:
+        """Record what we learned about the Claude login; tell the phone when it goes (once a day) and comes back."""
+        was = self.claude_auth.get("logged_in")
+        self.claude_auth = {"logged_in": logged_in, "checked_at": now, "worker": worker, "detail": detail}
+        if logged_in == was:
+            return
+        if not logged_in:
+            insert_event(conn, now, "claude.logged_out", src="claude", dst="argus", data={"worker": worker})
+            add_message(conn, now, "ntfy", ntfy_message(
+                "Claude is logged out",
+                f"On {worker or 'the PC'}: open a terminal, run `claude` and log in (/login). Until then plugins that "
+                "need Claude skip it and ask you instead.", priority="high", tags=["key"]),
+                dedupe_key=f"claude-logged-out:{self.day()}")
+            self.poke()
+        elif was is False:
+            insert_event(conn, now, "claude.logged_in", src="claude", dst="argus", data={"worker": worker})
+
+    async def auth_seen(self, logged_in: bool, worker: str | None = None, detail: str | None = None) -> None:
+        await self.store.write(lambda conn: self._auth(conn, self.clock(), logged_in, worker, (detail or "")[:300]))
 
     def day(self) -> str:
         return time.strftime("%Y-%m-%d", time.localtime(self.clock()))
@@ -155,6 +184,8 @@ class ModelBoard:
                     (latency_ms, now, tier),
                 )
             else:
+                if self.cfg.models.tiers[tier].provider == "claude" and LOGGED_OUT.search(error or ""):
+                    self._auth(conn, now, False, None, (error or "")[:300])
                 fails = row["consecutive_failures"] + 1
                 trip = row["state"] == "half_open" or fails >= m.breaker_failures
                 state = "open" if trip else row["state"]
@@ -196,7 +227,8 @@ class ModelBoard:
             return {
                 "tiers": tiers,
                 "chain": list(self.cfg.models.chain),
-                "claude": {"calls_today": used[0] if used else 0, "calls_per_day": self.cfg.claude.calls_per_day},
+                "claude": {"calls_today": used[0] if used else 0, "calls_per_day": self.cfg.claude.calls_per_day,
+                           "logged_in": self.claude_auth["logged_in"], "checked_at": self.claude_auth["checked_at"]},
             }
 
         return await self.store.read(fn)

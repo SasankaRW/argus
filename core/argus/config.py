@@ -137,6 +137,9 @@ class NtfyConfig(_Strict):
     timeout_seconds: float = Field(10, gt=0, le=120)
     max_attempts: int = Field(8, ge=1, le=50)  # then the message is marked failed (and shown in Helios)
     reply_retry_seconds: float = Field(5, gt=0, le=300)  # wait before reconnecting to the reply topic
+    # Quiet by default: a plugin's ordinary messages (ctx.notify with priority min/low/default) wait for the evening
+    # summary. Approvals, failures, reminders, warnings and high/urgent messages always come at once.
+    quiet: bool = True
 
 
 class ApprovalsConfig(_Strict):
@@ -266,11 +269,32 @@ class AriConfig(_Strict):
     # better with accents; the browser is used while the PC is off).
     hearing: Literal["browser", "whisper"] = "browser"
     whisper_model: str = "small.en"  # tiny.en, base.en, small.en, medium.en, large-v3 (bigger: better, slower)
+    # "Hey Ari" on the PC's microphone, no browser (python -m argus.ari_listen; `dev.ps1 up` starts it when on).
+    listen: bool = False
+    listen_wake_model: str = "tiny.en"  # listens for the wake phrase (small and fast; the command uses whisper_model)
+    # Ari's popup over the whole screen while Ari listens, thinks or talks (python -m argus.ari_popup; needs
+    # pip install -e .[popup]; `dev.ps1 up` starts it when on).
+    popup: bool = False
+    # The Ari pill's look: "pulse" (a soft light that breathes with the voice) or "comet" (a soft light travelling
+    # round the edge). Each browser can pick its own on the Ari page.
+    pill: Literal["pulse", "comet"] = "pulse"
+
+
+class GuidanceConfig(_Strict):
+    enabled: bool = True
+    at: str = Field("03:30", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")  # the nightly review (needs Claude)
+    keep_samples: int = Field(200, ge=10, le=5000)  # model answers kept per playbook (marked ones always stay)
+    max_per_review: int = Field(12, ge=1, le=50)  # mistakes shown to Claude per playbook
 
 
 class BriefConfig(_Strict):
     enabled: bool = True
     at: str = Field("07:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")  # local time: the phone gets the morning brief
+
+
+class SummaryConfig(_Strict):
+    enabled: bool = True
+    at: str = Field("20:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")  # the evening summary: today, time saved
 
 
 class HealthConfig(_Strict):
@@ -327,6 +351,8 @@ class Config(_Strict):
     share: ShareConfig = Field(default_factory=ShareConfig)
     ari: AriConfig = Field(default_factory=AriConfig)
     brief: BriefConfig = Field(default_factory=BriefConfig)
+    guidance: GuidanceConfig = Field(default_factory=GuidanceConfig)
+    summary: SummaryConfig = Field(default_factory=SummaryConfig)
     health: HealthConfig = Field(default_factory=HealthConfig)
     backup: BackupConfig = Field(default_factory=BackupConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)

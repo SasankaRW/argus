@@ -29,6 +29,7 @@ cd argus
 ollama pull qwen2.5-coder:7b                # T1: first try for text jobs
 ollama pull qwen2.5-coder:14b               # T2: when T1's answer fails the checks
 ollama pull qwen2.5vl:7b                    # V1: vision (screenshot-renamer)
+ollama pull nomic-embed-text                # search your files by meaning (Ari, "My files")
 ```
 
 They fit the 12 GB GPU one at a time; Ollama swaps them as needed.
@@ -118,6 +119,7 @@ Each plugin starts in dry-run: it shows what it would do (Runs page in Helios) a
 | --- | --- | --- |
 | downloads-organizer | T1, T2 | "Sort Downloads now" on its box |
 | screenshot-renamer | T1, V1 (Tesseract optional) | take a screenshot, or "Name screenshots now" |
+| duplicate-finder | nothing (no model) | "Find duplicates": one approval, then the extra copies go to the Recycle Bin |
 
 When the dry-run results look right, add the plugin to `plugins.live` and restart. Anything it moves or renames
 can be put back with **Undo** on the job's Changes (downloads-organizer also has **Wrong folder**).
@@ -163,18 +165,95 @@ ari:
   whisper_model: small.en
 ```
 
+**"Hey Ari" on the PC without a browser** (your microphone, nothing leaves the PC):
+
+```powershell
+pip install -e .[listen,voice]
+```
+
+```yaml
+ari:
+  listen: true            # dev.ps1 up starts it (logs\ari.log); or run: python -m argus.ari_listen
+  voice: data/voices/en_US-lessac-medium.onnx   # so Ari answers out loud (else the answer is only in Helios)
+```
+
+Say "Hey Ari, what's running?" or "Hey Ari" (a chime), then what you want. When Ari asks "Shall I?", just say yes
+or no. A small Whisper model (`ari.listen_wake_model`, tiny.en) listens for the wake phrase on the GPU; the command
+uses `ari.whisper_model`. Pick another microphone with `python -m argus.ari_listen --device <n>` (`python -m
+sounddevice` lists them).
+
 Whisper uses the GPU when CUDA 12 and cuDNN 9 are found, else the CPU (fine for short commands). While the PC is
 off, the browser hears you. Other voices: https://rhasspy.github.io/piper-samples/
+
+**Ari's popup over the whole screen** (like Siri: a glowing pill at the top of the screen while Ari listens,
+thinks, works or talks, over any app; tap it to open Ari in Helios):
+
+```powershell
+pip install -e .[popup]
+```
+
+```yaml
+ari:
+  popup: true             # dev.ps1 up starts it; or run: python -m argus.ari_popup
+```
+
+It follows Ari everywhere: "Hey Ari" on the PC, a question typed in Helios on the phone, the tool Ari is using, the
+answer. It never takes the keyboard. While it runs, Helios in a browser on the PC leaves the pill to it. Helios on
+other screens (the phone) shows the same pill at the top of the page.
 
 ## What Argus tells you by itself
 
 - **Morning brief** (`brief.at`, 07:00): overnight results, failures, what waits for you, today's schedules, the
   backup, the PC and Docker, yesterday's Claude calls. `POST /brief` sends one now to try it.
+- **Evening summary** (`summary.at`, 20:00, a quiet notification): today's jobs, about how much time they saved
+  you, what failed or waits; on Sundays the week's total too. `POST /summary` sends one now.
+- **Time saved**: each plugin estimates the minutes a job saved you (moving a file ~20 s, naming a screenshot
+  ~30 s, ...). Helios shows this week's total ("Saved you") and the phone view a card.
 - **After a power cut or crash**: "Argus is back": when it stopped, which jobs pick up from their last finished
   step, which missed schedules run now. (Not after `dev.ps1 down` or an update: only when it didn't stop cleanly.)
 - **PC health** (`health.enabled: true`, `health.containers: [eclaire-app, eclaire-db]`): the PC's worker looks at
   WSL and Docker every 30 minutes while the PC is on (it never wakes the PC for it) and tells the phone when a
   container stops, reports unhealthy, or Docker stops answering, and again when it's fine.
+
+## Ari: questions and things on the PC
+
+Ari answers anything now, and can use tools: Argus's own data (what ran, schedules, time saved, where your phone
+is) and whatever plugins offer (`ari: tools:` in their plugin.yaml). Your own things come first; general knowledge
+it answers itself; current things (news, weather, scores) go to Claude with web search (read only), within the
+daily cap.
+
+- **My files** (`knowledge`): "what did I write about the laptop server?", "find my invoice from October". It
+  indexes Documents, Desktop, Notes and G:\Projects (contents: text, Markdown, code, Word, PDF) every night at 2:15
+  (or "Index my files now"), and Downloads, Pictures, Videos, Music by file name only; the index stays on the PC.
+  For search by meaning too: `ollama pull nomic-embed-text` (without it, search is by words). Folders: Helios >
+  My files settings (`folders`, `names_only`). It only reads, so it works in dry-run.
+- **PC apps** (`pc-apps`): "open Spotify", "open my CV in Documents", "open youtube.com", "close Chrome" (asks first).
+- **PC media** (`pc-media`): "volume 30", "turn it down", "mute", "next song", "pause".
+- **PC windows** (`pc-windows`): "switch to VS Code", "show the desktop", "lock the PC", "take a screenshot".
+- **PC keyboard** (`pc-keys`): "type 'see you at 6' ", "press ctrl+s" in the window in front (always asks
+  first; never types passwords).
+- **PC status** (`pc-system`): "how's the PC doing?", "what's using my GPU?", "how much space is left on G?",
+  "what's on my clipboard?", "copy that to the clipboard" (asks first).
+
+They run in your logged-in Windows session (the worker `dev.ps1 up` starts has it; after the move to the laptop,
+`pc-worker.ps1 install` adds an "Argus desktop" task at logon). Like every plugin they start in dry-run: add them
+to `plugins.live` (`live: [downloads-organizer, pc-apps, pc-media, pc-windows, pc-system, pc-keys]`). Anything that closes, types or changes files
+asks you first.
+
+## Argus in Claude (MCP)
+
+`.\scripts\dev.ps1 mcp` adds Argus to Claude Code as an MCP server (`http://127.0.0.1:8600/mcp`, with your
+token). Then ask Claude Code things like "what did Argus do today?", "why did the last screenshot job fail?" or
+"sort my downloads". Tools: `argus_status`, `list_jobs`, `get_job`, `read_log`, `list_approvals`,
+`list_schedules`, `time_saved`, `list_buttons`, `run_button`, `ask_argus`. Claude can't approve anything, power
+the PC or touch files: approvals stay yours.
+
+## Find my phone
+
+Ask Ari "where's my phone?" (or Helios > Power > Your phone): where Tailscale sees it (online at home on the same
+Wi-Fi, online away, or offline and when it was last online), then **Ring my phone** sends three urgent
+notifications 20 s apart. To hear them on silent: ntfy app > your topic > Notification settings > allow
+"Override Do Not Disturb" for urgent messages. Needs `approvals.phone` (the phone's Tailscale name).
 
 ## PC power buttons
 
