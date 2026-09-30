@@ -11,7 +11,7 @@ from . import __version__
 from .approvals import Approvals
 from .backup import Backups
 from .config import PRIORITY_BATCH, Config, ScheduleConfig
-from .daily import Marker, brief_due, compose_brief, last_health, resume_summary
+from .daily import Marker, brief_due, compose_brief, compose_summary, last_health, resume_summary
 from .db import Store
 from .events import EventHub, insert_event, prune_events
 from .jobs import JobStore, Watchdog
@@ -59,6 +59,7 @@ class Argus:
         self.last_backup: dict | None = None
         self.marker = Marker(cfg.db_path.parent / "argus.running")
         self.brief_sent: str | None = None
+        self.summary_sent: str | None = None
         self._next_touch = 0.0
         self.resumed: dict | None = None  # set at start when the last run ended abruptly
         self.started_at: float | None = None
@@ -125,6 +126,26 @@ class Argus:
             day = brief_due(self.cfg.brief.at, now, self.brief_sent)
             if day:
                 await self.send_brief(day)
+        if self.cfg.summary.enabled:
+            day = brief_due(self.cfg.summary.at, now, self.summary_sent, until_hour=23)
+            if day:
+                await self.send_summary(day)
+
+    async def send_summary(self, day: str | None = None) -> dict:
+        """The evening summary to the phone (once per day; `POST /summary` sends one now)."""
+        def fn(conn):
+            now = time.time()
+            title, text = compose_summary(conn, now)
+            key = f"summary:{day}" if day else f"summary:now:{int(now)}"
+            oid = add_message(conn, now, "ntfy", ntfy_message(title, text, priority="low", tags=["crescent_moon"]),
+                              dedupe_key=key)
+            return {"title": title, "text": text, "queued": oid is not None}
+
+        out = await self.store.write(fn)
+        if day:
+            self.summary_sent = day
+        self.outbox.poke()
+        return out
 
     async def send_brief(self, day: str | None = None) -> dict:
         """The morning brief to the phone (once per day; `POST /brief` sends one now)."""

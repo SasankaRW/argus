@@ -171,6 +171,10 @@ off, the browser hears you. Other voices: https://rhasspy.github.io/piper-sample
 
 - **Morning brief** (`brief.at`, 07:00): overnight results, failures, what waits for you, today's schedules, the
   backup, the PC and Docker, yesterday's Claude calls. `POST /brief` sends one now to try it.
+- **Evening summary** (`summary.at`, 20:00, a quiet notification): today's jobs, about how much time they saved
+  you, what failed or waits; on Sundays the week's total too. `POST /summary` sends one now.
+- **Time saved**: each plugin estimates the minutes a job saved you (moving a file ~20 s, naming a screenshot
+  ~30 s, ...). Helios shows this week's total ("Saved you") and the phone view a card.
 - **After a power cut or crash**: "Argus is back": when it stopped, which jobs pick up from their last finished
   step, which missed schedules run now. (Not after `dev.ps1 down` or an update: only when it didn't stop cleanly.)
 - **PC health** (`health.enabled: true`, `health.containers: [eclaire-app, eclaire-db]`): the PC's worker looks at

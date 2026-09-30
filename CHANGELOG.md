@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Time saved:** plugins estimate what each job saved you (`ctx.saved(seconds)`; downloads-organizer ~20 s per file, screenshot-renamer ~30 s per name, duplicate-finder a minute plus ~10 s per file). Helios shows this week's total as a "Saved you" tile and a card on the phone; `GET /time-saved?days=7`. Counted once per job even when retried. Migration 0009.
+- **Evening summary** at `summary.at` (20:00, a quiet notification): today's jobs by plugin, the time they saved, what failed or waits; on Sundays the week's total. `POST /summary` sends one now.
 - **New plugin: duplicate-finder.** Finds files with identical content (same size, first 64 KB, then full SHA-256; names don't matter) in the folders you pick (Downloads and Pictures by default, compared together), keeps the best copy (outside Downloads, plain name, shallowest, oldest) and, after one batch approval, sends the extras to the Recycle Bin, checking each again right before. Sunday 4 am or "Find duplicates". Dry-run until listed in `plugins.live`.
 - `ctx.files.walk(folder)` (every file below a folder) and `ctx.files.sha256(path, limit=)` (read in pieces) for plugins.
 - Tests: the approve-from-the-phone timing check allows 6 s on shared CI runners (1 s locally).

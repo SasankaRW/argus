@@ -305,6 +305,13 @@ class Context:
         return Decision(approved=a["state"] == "approved", state=a["state"], fields=a.get("answer") or {},
                         by=a.get("decided_by"), approval_id=a["id"])
 
+    def saved(self, seconds: float, key: str | None = None) -> None:
+        """This job saved you about `seconds` of your time (Helios adds it up per week; the evening summary per
+        day). Counted once per job and `key` even if the job is retried; not in dry-run."""
+        if self.dry_run or seconds <= 0:
+            return
+        self.emit("saved", seconds=int(seconds), key=key or self._step or "job")
+
     def ask_me(self, title: str, fields: dict[str, Any], *, summary: list[str] | None = None,
                image: bytes | None = None) -> dict[str, Any] | None:
         """The last resort when neither the local models nor Claude could do it: ask you (Helios and the phone).

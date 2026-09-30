@@ -434,6 +434,11 @@ class JobStore:
             job = self._get(conn, job_id)
             self._check_lease(job, worker, now)
             insert_event(conn, now, kind, job_id=job_id, step=step, src=src, dst=dst, data=data)
+            if kind == "plugin.saved" and data:  # ctx.saved: the time this job saved you
+                secs = max(0, min(int(data.get("seconds") or 0), 86400))
+                conn.execute("INSERT OR REPLACE INTO time_saved (job_id, key, plugin, day, seconds, created_at)"
+                             " VALUES (?,?,?,?,?,?)", (job_id, str(data.get("key") or "job")[:100], job.plugin,
+                                                      time.strftime("%Y-%m-%d", time.localtime(now)), secs, now))
 
         await self.store.write(fn)
 

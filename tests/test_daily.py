@@ -128,3 +128,27 @@ def test_health_schedule_only_when_on(tmp_path):
     s = [x for x in run(a.scheduler.list()) if x["id"] == "argus-health"]
     assert s and s[0]["cron"] == "*/30 * * * *" and s[0]["spec"]["input"] == {"containers": ["eclaire-db"]}
     run(a.stop())
+
+
+def test_time_saved_counts_each_job_once_and_the_evening_summary(tmp_path):
+    from argus.daily import compose_summary, time_saved
+
+    a = make(tmp_path).open()
+    now = ts(20)
+    j1, _ = run(a.jobs.enqueue("downloads-organizer", "sort"))
+    j2, _ = run(a.jobs.enqueue("screenshot-renamer", "name"))
+
+    def fn(c):
+        day = "2026-09-30"
+        for job, key, secs in ((j1, "moved", 600), (j1, "moved", 600), (j2, "named", 90)):  # retried: same key
+            c.execute("INSERT OR REPLACE INTO time_saved VALUES (?,?,?,?,?,?)",
+                      (job, key, "downloads-organizer" if job == j1 else "screenshot-renamer", day, secs, now))
+        c.execute("UPDATE jobs SET state = 'succeeded', finished_at = ?", (now - 60,))
+        return time_saved(c, now, 7), compose_summary(c, now)
+
+    week, (title, text) = run(a.store.write(fn))
+    assert week["seconds"] == 690 and week["text"] == "12 min"
+    assert [p["plugin"] for p in week["plugins"]] == ["downloads-organizer", "screenshot-renamer"]
+    assert "Today: 2 jobs done" in text and "Saved you about 12 min today" in text
+    a.store.close()
+

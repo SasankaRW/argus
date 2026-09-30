@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, Approval, ArgusEvent, Job, Status } from "./api";
+import { api, Approval, ArgusEvent, Job, Status, useTimeSaved } from "./api";
 import { ago, tone } from "./format";
 import { AskBox } from "./AskBox";
 import { ApprovalCard } from "./Inspector";
@@ -13,6 +13,7 @@ export function PhoneHome({ status, events, onSelect, onShare, onFull, onView, o
   onView: (v: string) => void; onAri: () => void;
 }) {
   const q = useQueue(events);
+  const saved = useTimeSaved();
   const [pending, setPending] = useState<Approval[]>([]);
   const [recent, setRecent] = useState<Job[]>([]);
   const last = events.filter((e) => e.kind.startsWith("approval.") || e.kind.startsWith("job.")).map((e) => e.seq).pop() ?? 0;
@@ -76,6 +77,14 @@ export function PhoneHome({ status, events, onSelect, onShare, onFull, onView, o
         ))}
         {q && q.queued.length > 6 && <div className="tip">+ {q.queued.length - 6} more</div>}
       </section>
+
+      {saved && saved.seconds > 0 && (
+        <section className="pcard">
+          <h3>Saved you this week</h3>
+          <div className="psaved"><b>{saved.text}</b>
+            <span className="muted">{saved.plugins.slice(0, 3).map((p) => p.plugin).join(" · ")}</span></div>
+        </section>
+      )}
 
       <section className="pcard">
         <h3>PC power</h3>

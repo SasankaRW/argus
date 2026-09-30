@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, setToken, Status } from "./api";
+import { api, setToken, Status, useTimeSaved } from "./api";
 import { AriView } from "./AriView";
 import { AskBox } from "./AskBox";
 import { EventsPanel } from "./EventsPanel";
@@ -66,6 +66,7 @@ function Clock() {
 }
 
 function Kpis({ status }: { status: Status | null }) {
+  const saved = useTimeSaved();
   const j = status?.jobs ?? {};
   const running = (j.leased ?? 0) + (j.running ?? 0);
   const queued = (j.queued ?? 0) + (j.retry ?? 0);
@@ -76,6 +77,8 @@ function Kpis({ status }: { status: Status | null }) {
     ["Succeeded", j.succeeded ?? 0, "all time", "var(--ok)"],
     ["Dead", j.dead ?? 0, "failed after retries", (j.dead ?? 0) ? "var(--bad)" : "var(--tx3)"],
     ["Workers", online, status ? `${status.workers.length - online} offline` : "", online ? "var(--ok)" : "var(--bad)"],
+    ["Saved you", saved ? (saved.seconds ? saved.text : "—") : "…",
+      saved?.plugins[0] ? `this week · most by ${saved.plugins[0].plugin}` : "this week", saved?.seconds ? "var(--ok)" : "var(--tx3)"],
   ];
   return (
     <section className="kpis" aria-label="Jobs">

@@ -39,15 +39,69 @@ def _dur(s: float) -> str:
 
 # ------------------------------------------------------------------ morning brief
 
-def brief_due(at: str, now: float, sent_day: str | None) -> str | None:
-    """Today's date if the brief should go now (past `at`, before noon, not sent today), else None."""
+def brief_due(at: str, now: float, sent_day: str | None, until_hour: int = 12) -> str | None:
+    """Today's date if the message should go now (past `at`, before `until_hour`, not sent today), else None."""
     d = datetime.fromtimestamp(now)
     h, m = map(int, at.split(":"))
     slot = d.replace(hour=h, minute=m, second=0, microsecond=0)
     day = d.strftime("%Y-%m-%d")
-    if d < slot or sent_day == day or d > slot.replace(hour=max(12, h + 1), minute=0):
+    last = slot.replace(hour=min(23, max(until_hour, h + 1)), minute=59 if until_hour >= 23 else 0)
+    if d < slot or sent_day == day or d > last:
         return None
     return day
+
+
+# ------------------------------------------------------------------ time saved and the evening summary
+
+def fmt_minutes(seconds: float) -> str:
+    m = round(seconds / 60)
+    return "under a minute" if m < 1 else f"{m} min" if m < 60 else f"{m // 60} h {m % 60} min"
+
+
+def time_saved(conn: sqlite3.Connection, now: float, days: int = 7) -> dict[str, Any]:
+    """Time the plugins saved you over the last `days` days (today included): total, per plugin, per day."""
+    first = (datetime.fromtimestamp(now) - timedelta(days=days - 1)).strftime("%Y-%m-%d")
+    rows = conn.execute("SELECT plugin, day, SUM(seconds) AS s, COUNT(DISTINCT job_id) AS jobs FROM time_saved"
+                        " WHERE day >= ? GROUP BY plugin, day", (first,)).fetchall()
+    by_plugin: dict[str, dict[str, int]] = {}
+    by_day: dict[str, int] = {}
+    for r in rows:
+        p = by_plugin.setdefault(r["plugin"], {"seconds": 0, "jobs": 0})
+        p["seconds"] += r["s"]
+        p["jobs"] += r["jobs"]
+        by_day[r["day"]] = by_day.get(r["day"], 0) + r["s"]
+    total = sum(p["seconds"] for p in by_plugin.values())
+    return {"days": days, "since": first, "seconds": total, "text": fmt_minutes(total),
+            "plugins": sorted(({"plugin": k, **v} for k, v in by_plugin.items()), key=lambda x: -x["seconds"]),
+            "by_day": dict(sorted(by_day.items()))}
+
+
+def compose_summary(conn: sqlite3.Connection, now: float) -> tuple[str, str]:
+    """(title, text) of the evening summary: today's work, the time it saved, what failed or waits."""
+    start = datetime.fromtimestamp(now).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    done = conn.execute("SELECT plugin, COUNT(*) FROM jobs WHERE state = 'succeeded' AND finished_at >= ?"
+                        " AND plugin NOT IN ('ask', 'health', 'ari') GROUP BY plugin ORDER BY 2 DESC",
+                        (start,)).fetchall()
+    dead = conn.execute("SELECT plugin, workflow FROM jobs WHERE state = 'dead' AND finished_at >= ?",
+                        (start,)).fetchall()
+    today = time_saved(conn, now, 1)
+    lines = []
+    n = sum(r[1] for r in done)
+    lines.append(f"Today: {n} job{'s' if n != 1 else ''} done" + (
+        " (" + ", ".join(f"{r[0]} {r[1]}" for r in done[:4]) + ")." if done else "."))
+    if today["seconds"]:
+        lines.append(f"Saved you about {today['text']} today"
+                     + (" (" + ", ".join(f"{p['plugin']} {fmt_minutes(p['seconds'])}" for p in today["plugins"][:3])
+                        + ")." if len(today["plugins"]) > 1 else "."))
+    if dead:
+        lines.append(f"{len(dead)} failed: " + ", ".join(sorted({_name(r) for r in dead}))[:200] + ".")
+    waiting = conn.execute("SELECT COUNT(*) FROM approvals WHERE state = 'pending'").fetchone()[0]
+    if waiting:
+        lines.append(f"{waiting} waiting for you.")
+    if datetime.fromtimestamp(now).weekday() == 6:  # Sunday: the week too
+        week = time_saved(conn, now, 7)
+        lines.append(f"This week: about {week['text']} saved.")
+    return "Today with Argus", "\n".join(lines)
 
 
 def compose_brief(conn: sqlite3.Connection, now: float, *, last_backup: dict | None, pc_online: bool,

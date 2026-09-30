@@ -334,3 +334,6 @@ main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .srow.off .sl { color: var(--tx3); text-decoration: line-through; }
 .ari-heard { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 60; padding: 9px 16px; border-radius: 999px; background: var(--amber); color: #111; font-weight: 600; font-size: 13px; box-shadow: 0 8px 24px rgba(0, 0, 0, .4); }
 .pari { background: var(--raise); }
+
+.psaved { display: flex; flex-direction: column; gap: 2px; }
+.psaved b { font-size: 22px; }

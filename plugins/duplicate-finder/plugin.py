@@ -132,4 +132,5 @@ def scan(ctx: Context):
 
     done = ctx.step("remove", remove)
     ctx.emit("removed", count=done["removed"], freed=done["freed"])
+    ctx.saved(60 + 10 * done["removed"], key="removed")  # comparing files by hand: a minute, and ~10 s each
     return {**summary, **done}

@@ -76,6 +76,8 @@ def test_live_asks_then_recycles_the_extras(tmp_path, monkeypatch):
         wait_for(lambda: cl.get(f"/jobs/{job['id']}")["state"] == "queued")
         assert w.run_once(wait=2)
         done = wait_for(lambda: (j := cl.get(f"/jobs/{job['id']}"))["state"] in ("succeeded", "dead") and j)
+        saved = cl.get("/time-saved")
+    assert saved["seconds"] == 70 and saved["plugins"][0]["plugin"] == "duplicate-finder"  # ctx.saved, once
     assert done["state"] == "succeeded", done["error"]
     assert done["result"]["removed"] == 1 and done["result"]["skipped"] == ["~/Downloads/old/IMG_0001.jpg"]
     assert not (home / "Downloads/photo (1).jpg").exists() and (home / "Pictures/2026/photo.jpg").exists()

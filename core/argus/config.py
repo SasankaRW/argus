@@ -273,6 +273,11 @@ class BriefConfig(_Strict):
     at: str = Field("07:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")  # local time: the phone gets the morning brief
 
 
+class SummaryConfig(_Strict):
+    enabled: bool = True
+    at: str = Field("20:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")  # the evening summary: today, time saved
+
+
 class HealthConfig(_Strict):
     # The PC's worker checks WSL and Docker every `every_minutes` (while the PC is on; never wakes it) and tells the
     # phone when something changed: a container in `containers` stopped, one reports unhealthy, Docker is down.
@@ -327,6 +332,7 @@ class Config(_Strict):
     share: ShareConfig = Field(default_factory=ShareConfig)
     ari: AriConfig = Field(default_factory=AriConfig)
     brief: BriefConfig = Field(default_factory=BriefConfig)
+    summary: SummaryConfig = Field(default_factory=SummaryConfig)
     health: HealthConfig = Field(default_factory=HealthConfig)
     backup: BackupConfig = Field(default_factory=BackupConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)

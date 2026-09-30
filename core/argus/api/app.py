@@ -64,7 +64,7 @@ from pydantic import BaseModel, Field
 
 from .. import ari as ari_mod
 from .. import ask as ask_mod
-from .. import logview
+from .. import daily, logview
 from ..approvals import ApprovalClosed, ApprovalError, ApprovalNotFound, BadToken
 from ..config import PRIORITY_INTERACTIVE
 from ..context import Argus
@@ -857,6 +857,16 @@ def create_app(argus: Argus) -> FastAPI:
         return {"id": job_id, "created": created}
 
     # -------------------------------------------------------------- the morning brief
+
+    @app.post("/summary", dependencies=guarded)
+    async def summary_now() -> dict:
+        """Send the evening summary now (to try it)."""
+        return await argus.send_summary()
+
+    @app.get("/time-saved", dependencies=guarded)
+    async def get_time_saved(days: int = Query(7, ge=1, le=366)) -> dict:
+        """What the plugins saved you: total, per plugin, per day."""
+        return await argus.store.read(lambda c: daily.time_saved(c, time.time(), days))
 
     @app.post("/brief", dependencies=guarded)
     async def brief_now() -> dict:
