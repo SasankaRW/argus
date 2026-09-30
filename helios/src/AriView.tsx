@@ -207,6 +207,7 @@ export function AriView({ onSelect, onView, compact = false }: { onSelect: (s: S
           ))}
         </span>
         {vs.voice && <label title="Piper: Argus's own natural voice (off: the browser's voice)"><input type="checkbox" checked={piper} onChange={(e) => toggle("piper", e.target.checked, setPiper)} /> Natural voice</label>}
+        {vs.voice && piper && <VoicePick />}
         {vs.hearing === "whisper" && <span className="muted">{vs.whisper_ready ? "Whisper hears you" : "Whisper: the PC is off, the browser hears you"}</span>}
       </div>
       {!compact && (
@@ -237,5 +238,43 @@ export function AriView({ onSelect, onView, compact = false }: { onSelect: (s: S
         </div>
       )}
     </section>
+  );
+}
+
+type VoiceList = { current: string | null; speed: number; voices: { id: string; label: string; installed: boolean }[] };
+
+// Ari's voice and speed (Piper, in argusd): the pick is kept by Argus, so every screen and "Hey Ari" on the PC use it.
+function VoicePick() {
+  const [list, setList] = useState<VoiceList | null>(null);
+  const [voice, setVoice] = useState("");
+  const [speed, setSpeed] = useState(1);
+  const [note, setNote] = useState<string | null>(null);
+  useEffect(() => {
+    api<VoiceList>("/ari-voice/voices").then((l) => { setList(l); setVoice(l.current ?? ""); setSpeed(l.speed); }).catch(() => {});
+  }, []);
+  const save = async (v: string, sp: number): Promise<boolean> => {
+    const fresh = list?.voices.find((x) => x.id === v && !x.installed);
+    setNote(fresh ? "downloading the voice (~60 MB)…" : null);
+    try {
+      const l = await api<VoiceList>("/ari-voice/voice", { method: "PUT", body: JSON.stringify({ voice: v, speed: sp }) });
+      setList(l); setNote(null); return true;
+    } catch (e) { setNote(e instanceof Error ? e.message : "could not change the voice"); return false; }
+  };
+  const hear = async () => { if (await save(voice, speed)) await speak("Hi, I'm Ari. This is how I sound."); };
+  if (!list) return null;
+  return (
+    <span className="voice-pick" role="group" aria-label="Ari's voice">
+      Voice
+      <select value={voice} aria-label="Voice" onChange={(e) => { setVoice(e.target.value); save(e.target.value, speed); }}>
+        {list.voices.map((v) => <option key={v.id} value={v.id}>{v.label}{v.installed ? "" : " · download"}</option>)}
+      </select>
+      <label title="How fast Ari talks">speed
+        <input type="range" min={0.6} max={1.6} step={0.1} value={speed} aria-label="Speed"
+          onChange={(e) => setSpeed(Number(e.target.value))} onPointerUp={() => save(voice, speed)} onKeyUp={() => save(voice, speed)} />
+        <span className="mono">{speed.toFixed(1)}×</span>
+      </label>
+      <button type="button" className="btn" onClick={hear}>▶ hear it</button>
+      {note && <span className="muted">{note}</span>}
+    </span>
   );
 }

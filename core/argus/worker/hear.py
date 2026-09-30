@@ -43,8 +43,25 @@ def _prove(m) -> None:
     list(segments)
 
 
+def decode(audio: bytes):
+    """A recording from the browser (webm/ogg/wav) as 16 kHz mono float samples. Done here rather than by
+    faster-whisper, whose own decoder breaks with newer PyAV ("unexpected keyword argument 'metadata_errors'")."""
+    import av  # type: ignore[import-not-found]  # comes with faster-whisper
+    import numpy as np
+
+    chunks = []
+    with av.open(io.BytesIO(audio)) as c:
+        rs = av.AudioResampler(format="s16", layout="mono", rate=16000)
+        for frame in c.decode(audio=0):
+            chunks += [f.to_ndarray() for f in rs.resample(frame)]
+        chunks += [f.to_ndarray() for f in rs.resample(None)]
+    if not chunks:
+        return np.zeros(0, dtype=np.float32)
+    return np.concatenate([c.reshape(-1) for c in chunks]).astype(np.float32) / 32768.0
+
+
 def transcribe(audio: bytes, name: str) -> str:
-    segments, _info = model(name).transcribe(io.BytesIO(audio), language="en", beam_size=1, vad_filter=True,
+    segments, _info = model(name).transcribe(decode(audio), language="en", beam_size=1, vad_filter=True,
                                              condition_on_previous_text=False)
     return " ".join(s.text.strip() for s in segments).strip()
 

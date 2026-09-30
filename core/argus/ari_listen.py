@@ -121,6 +121,8 @@ class Listener:
         text = self.transcribe_wake(audio)
         rest = wake_rest(text)
         if rest is None:
+            if text.strip():
+                log.info("heard, no wake phrase", extra={"text": text.strip()[:80]})
             return None
         if len(rest.replace(" ", "")) > 2:
             return self._send(rest)
@@ -296,7 +298,21 @@ def main(argv: list[str] | None = None) -> int:
     log.info("listening for Hey Ari", extra={"device": device})
     print("Listening for \"Hey Ari\" (Ctrl+C to stop).", flush=True)
     try:
+        import sounddevice as sd  # type: ignore[import-not-found]
+
+        dev = sd.query_devices(device, "input")
+        log.info("microphone", extra={"name": dev.get("name"), "device": device})
+    except Exception as e:  # noqa: BLE001 - only for the log
+        log.warning("no microphone found", extra={"error": str(e)[:200]})
+    loudest, since = 0.0, time.monotonic()
+    try:
         for at, block in mic_blocks(device):
+            import numpy as np
+
+            loudest = max(loudest, float(np.sqrt(np.mean(np.square(block)))) if len(block) else 0.0)
+            if time.monotonic() - since > 60:  # once a minute: is the microphone hearing anything at all?
+                log.info("microphone level", extra={"loudest": round(loudest, 4), "background": round(seg.floor, 4)})
+                loudest, since = 0.0, time.monotonic()
             if at < quiet_until[0]:
                 seg = Segmenter(floor=seg.floor)  # forget a half-heard clip too
                 continue
