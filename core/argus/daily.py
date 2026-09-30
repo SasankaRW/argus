@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -104,9 +105,11 @@ class Marker:
 
     def __init__(self, path: Path):
         self.path = path
+        self._lock = threading.Lock()  # Windows: writing and removing it at the same moment fails (file in use)
 
     def start(self) -> float | None:
         """Write the marker; returns when the last run was last alive if it ended abruptly, else None."""
+        self._stopped = False
         was = None
         if self.path.exists():
             try:
@@ -118,14 +121,28 @@ class Marker:
 
     def touch(self) -> None:
         """Refreshed now and then, so the time of a power cut is known to within a minute."""
-        try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.path.write_text(json.dumps({"alive": time.time()}))
-        except OSError:
-            pass
+        with self._lock:
+            if self._stopped:
+                return
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                self.path.write_text(json.dumps({"alive": time.time()}))
+            except OSError:
+                pass
+
+    _stopped = False
 
     def stop(self) -> None:
-        self.path.unlink(missing_ok=True)
+        with self._lock:
+            self._stopped = True
+            for _ in range(20):  # an antivirus or indexer may hold it for a moment on Windows
+                try:
+                    self.path.unlink(missing_ok=True)
+                    return
+                except PermissionError:
+                    time.sleep(0.05)
+                except OSError:
+                    return
 
 
 def resume_summary(conn: sqlite3.Connection, now: float, stopped_at: float) -> tuple[str, str, dict[str, Any]]:

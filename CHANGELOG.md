@@ -5,6 +5,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Fixed (Windows): stopping argusd could fail with "file in use" when the running-marker was being refreshed at the same moment.
 - Tests: the nightly backup and the morning brief no longer start on their own during tests (they depend on the clock and made CI fail after 02:30 UTC).
 - **Fix: Ari's mic and "Hey Ari".** The mic button and the "Hey Ari" listener no longer fight over the microphone (the listener steps aside while you use the mic). When hearing fails, Ari now says why (microphone blocked, no microphone, the browser's speech service unreachable, nothing heard) instead of doing nothing, and "Hey Ari" turns itself off with the reason after repeated failures. The wake phrase is found anywhere in what was heard and in its usual mis-hearings ("Hey Harry", "OK Ari", "Hey, Ari."). With `ari.hearing: whisper`, "Hey Ari" also runs on Whisper on the PC (private, any browser, no Google).
 - **Morning brief:** at `brief.at` (07:00) the phone gets one message: overnight results and failures, what waits for you, today's schedules, the backup, the PC, Docker, yesterday's Claude calls. `POST /brief` sends one now.

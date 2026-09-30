@@ -246,8 +246,8 @@ class Argus:
         return n
 
     async def stop(self) -> None:
-        self.marker.stop()  # a clean stop: no "Argus is back" message next time
         await self.watchdog.stop()
+        await asyncio.to_thread(self.marker.stop)  # a clean stop: no "Argus is back" message next time
         await self.phone.stop()
         await self.relay.stop()
         await self.outbox.stop()
