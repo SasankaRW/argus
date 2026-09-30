@@ -269,6 +269,9 @@ class AriConfig(_Strict):
     # better with accents; the browser is used while the PC is off).
     hearing: Literal["browser", "whisper"] = "browser"
     whisper_model: str = "small.en"  # tiny.en, base.en, small.en, medium.en, large-v3 (bigger: better, slower)
+    # "Hey Ari" on the PC's microphone, no browser (python -m argus.ari_listen; `dev.ps1 up` starts it when on).
+    listen: bool = False
+    listen_wake_model: str = "tiny.en"  # listens for the wake phrase (small and fast; the command uses whisper_model)
 
 
 class BriefConfig(_Strict):

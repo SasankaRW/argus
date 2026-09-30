@@ -53,6 +53,15 @@ def marker_path() -> Path:
         return ROOT / "data" / "argus.running"
 
 
+def listen_on() -> bool:
+    try:
+        from .config import load_config
+
+        return load_config(ROOT / "argus.yaml").ari.listen
+    except Exception:
+        return False
+
+
 class Child:
     def __init__(self, name: str, args: list[str], marker: Path | None = None):
         self.name, self.args, self.marker = name, args, marker
@@ -135,6 +144,8 @@ def main(argv: list[str] | None = None) -> int:
     token = os.environ.get("ARGUS_WORKER_TOKEN") or env.get("ARGUS_WORKER_TOKEN")
 
     children = [] if args.no_argusd else [Child("argusd", ["-m", "argus"], marker_path())]
+    if not args.no_argusd and listen_on():  # "Hey Ari" on this PC's microphone
+        children.append(Child("ari-listen", ["-m", "argus.ari_listen", "--log-file", "logs/ari.log"]))
     if not args.no_worker:
         children.append(Child("worker", ["-m", "argus.worker.cli", "--cap", "desktop", "--cap", "gpu",
                                          "--log-file", "logs/worker.log"]))

@@ -164,6 +164,23 @@ ari:
   whisper_model: small.en
 ```
 
+**"Hey Ari" on the PC without a browser** (your microphone, nothing leaves the PC):
+
+```powershell
+pip install -e .[listen,voice]
+```
+
+```yaml
+ari:
+  listen: true            # dev.ps1 up starts it (logs\ari.log); or run: python -m argus.ari_listen
+  voice: data/voices/en_US-lessac-medium.onnx   # so Ari answers out loud (else the answer is only in Helios)
+```
+
+Say "Hey Ari, what's running?" or "Hey Ari" (a chime), then what you want. When Ari asks "Shall I?", just say yes
+or no. A small Whisper model (`ari.listen_wake_model`, tiny.en) listens for the wake phrase on the GPU; the command
+uses `ari.whisper_model`. Pick another microphone with `python -m argus.ari_listen --device <n>` (`python -m
+sounddevice` lists them).
+
 Whisper uses the GPU when CUDA 12 and cuDNN 9 are found, else the CPU (fine for short commands). While the PC is
 off, the browser hears you. Other voices: https://rhasspy.github.io/piper-samples/
 
