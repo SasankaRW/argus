@@ -5,6 +5,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- New Argus icon: the iris, a warm-to-blue gradient ring with a bright pupil (app icon, maskable icon, favicon, Helios header). It replaces the sun.
 - The phone app: Helios installs as **Argus** (More > install-app). It has a new icon, long-press shortcuts (Talk to Ari with the mic on, Inbox, Share, Map), opens instantly from its own copy, and says "can't reach argus" when the PC or Tailscale is off. The share menu works as before.
 - New Argus mark (app icon, maskable icon, favicon, Helios header): a glowing core with a fine corona and an orbit.
 - Ari's island: text in Inter (variable weight, optical sizing), lighter and smoother on Windows than Geist at medium weight; a thin 40 px clock.

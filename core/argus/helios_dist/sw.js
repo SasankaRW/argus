@@ -5,7 +5,7 @@
 //   answers and the kept one is used when it doesn't (then Helios says it can't reach Argus). Argus's data is never
 //   kept here: every API call goes to Argus.
 const SHARE = "helios-share";
-const SHELL = "helios-shell-v3";
+const SHELL = "helios-shell-v4";
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(SHELL).then((c) => c.addAll(["/helios/", "/helios/manifest.webmanifest", "/helios/icon-192.png", "/helios/favicon.png"])).catch(() => {}));
