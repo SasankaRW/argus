@@ -75,6 +75,7 @@ def test_builtin_then_plugin_tool_then_the_answer(tmp_path):
         first = json.loads(ol.requests[0]["messages"][1]["content"])
         assert first["you_remember"][0]["fact"] == "argus runs on the spare laptop soon"
         assert last["text"] == "Argus is fine, and I shouted HELLO."
+        assert last["used"] == [{"tool": "argus_status", "ok": True}, {"tool": "shout", "ok": True}]
         think = cl.get(f"/jobs/{r['job_id']}")
         names = [s["name"] for s in think["steps"]]
         assert names == ["think 1", "tool 1: argus_status", "think 2", "tool 2: shout", "think 3"]

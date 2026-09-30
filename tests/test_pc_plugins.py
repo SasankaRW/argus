@@ -75,3 +75,16 @@ def test_pc_status_reads_this_machine():
     s = system.status()
     assert 0 <= s["cpu_percent"] <= 100 and s["memory_total_gb"] > 0 and s["disks"]
     assert len(s["most_memory"]) >= 1
+
+
+keys = load("pc-keys")
+
+
+def test_shortcuts_parse_and_passwords_are_refused():
+    assert keys.parse_keys("ctrl+shift+t") == [0x11, 0x10, ord("T")]
+    assert keys.parse_keys("Alt + Tab") == [0x12, 0x09]
+    assert keys.parse_keys("f5") == [0x74]
+    for bad in ("ctrl+shift", "ctrl+banana", ""):
+        with pytest.raises(Exception):  # noqa: B017 - PermanentError from the plugin module
+            keys.parse_keys(bad)
+    assert keys.SECRET.search("my password is hunter2") and not keys.SECRET.search("Dear Sam, thanks!")

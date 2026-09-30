@@ -4,7 +4,8 @@ import type { Selection } from "./MapView";
 import { canSpeak, listen, pref, setPref, speak, Speech, stopSpeaking, voiceStatus, VoiceStatus } from "./voice";
 
 type Turn = { id: number; role: "you" | "ari"; text: string | null; action: string | null; label?: string | null;
-  pending: { kind: string; action: string } | null; job_id: string | null; created_at: number };
+  pending: { kind: string; action: string } | null; job_id: string | null; created_at: number;
+  used?: { tool: string; ok: boolean }[] | null };
 type Said = { conv: string; reply: string | null; job_id?: string; view?: string; power?: { id?: string };
   schedule?: { id: string } };
 type Schedule = { id: string; plugin: string; workflow: string; cron: string; enabled: boolean; next_run_at: number | null;
@@ -161,6 +162,9 @@ export function AriView({ onSelect, onView, compact = false }: { onSelect: (s: S
         {turns.map((t) => (
           <div key={t.id} className={`bubble ${t.role}`}>
             {t.text ?? <span className="typing" aria-label="Ari is thinking"><i /><i /><i /></span>}
+            {t.used && t.used.length > 0 && (
+              <div className="used">{t.used.map((u, i) => <span key={i} className={u.ok ? "" : "bad"}>{u.tool.replace(/_/g, " ")}</span>)}</div>
+            )}
           </div>
         ))}
         {open && (

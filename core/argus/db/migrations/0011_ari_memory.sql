@@ -18,3 +18,6 @@ CREATE TRIGGER ari_memory_au AFTER UPDATE ON ari_memory BEGIN
   INSERT INTO ari_memory_fts(ari_memory_fts, rowid, fact) VALUES ('delete', old.id, old.fact);
   INSERT INTO ari_memory_fts(rowid, fact) VALUES (new.id, new.fact);
 END;
+
+-- Which tools Ari used for an answer ("opened Spotify, set the volume"), shown under its reply in Helios.
+ALTER TABLE ari_turns ADD COLUMN used TEXT;

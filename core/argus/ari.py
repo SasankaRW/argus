@@ -232,6 +232,7 @@ def turns(conn: sqlite3.Connection, conv: str, limit: int = 200) -> list[dict[st
     for r in rows:
         d = dict(r)
         d["pending"] = json.loads(d["pending"]) if d["pending"] else None
+        d["used"] = json.loads(d["used"]) if d.get("used") else None
         out.append(d)
     return out
 

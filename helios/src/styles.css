@@ -339,3 +339,7 @@ main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .psaved b { font-size: 22px; }
 
 .claude-chip.bad { color: var(--bad); font-weight: 600; }
+
+.bubble .used { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.bubble .used span { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line2); color: var(--tx2); }
+.bubble .used span.bad { color: var(--bad); border-color: var(--bad); }

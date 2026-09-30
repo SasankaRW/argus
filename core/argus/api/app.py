@@ -778,6 +778,8 @@ def create_app(argus: Argus) -> FastAPI:
                 elif j.state.value == "succeeded":
                     r = j.result or {}
                     t["text"] = str(r.get("reply") or "…")
+                    t["used"] = [{"tool": u.get("tool"), "ok": "error" not in u} for u in r.get("used") or []] + \
+                        ([{"tool": "web search", "ok": True}] if r.get("via") == "web" else [])
                     t["action"] = r.get("action")
                     if r.get("pending"):  # a tool that asks first
                         t["pending"] = r["pending"]
@@ -786,8 +788,9 @@ def create_app(argus: Argus) -> FastAPI:
                 else:
                     continue
                 await argus.store.write(lambda c, t=t: c.execute(
-                    "UPDATE ari_turns SET text = ?, action = ?, pending = ? WHERE id = ?",
-                    (t["text"], t["action"], json.dumps(t["pending"]) if t["pending"] else None, t["id"])))
+                    "UPDATE ari_turns SET text = ?, action = ?, pending = ?, used = ? WHERE id = ?",
+                    (t["text"], t["action"], json.dumps(t["pending"]) if t["pending"] else None,
+                     json.dumps(t.get("used")) if t.get("used") else None, t["id"])))
         labels = {a["id"]: a["label"] for a in ask_mod.catalog(argus.plugin_host)}
         for t in rows:
             t["label"] = labels.get(t["action"] or "")

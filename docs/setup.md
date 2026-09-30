@@ -214,12 +214,14 @@ daily cap.
 - **PC apps** (`pc-apps`): "open Spotify", "open my CV in Documents", "open youtube.com", "close Chrome" (asks first).
 - **PC media** (`pc-media`): "volume 30", "turn it down", "mute", "next song", "pause".
 - **PC windows** (`pc-windows`): "switch to VS Code", "show the desktop", "lock the PC", "take a screenshot".
+- **PC keyboard** (`pc-keys`): "type 'see you at 6' ", "press ctrl+s" in the window in front (always asks
+  first; never types passwords).
 - **PC status** (`pc-system`): "how's the PC doing?", "what's using my GPU?", "how much space is left on G?",
   "what's on my clipboard?", "copy that to the clipboard" (asks first).
 
-Both run in your logged-in Windows session (the worker `dev.ps1 up` starts has it; after the move to the laptop,
+They run in your logged-in Windows session (the worker `dev.ps1 up` starts has it; after the move to the laptop,
 `pc-worker.ps1 install` adds an "Argus desktop" task at logon). Like every plugin they start in dry-run: add them
-to `plugins.live` (`live: [downloads-organizer, pc-apps, pc-media, pc-windows, pc-system]`). Anything that closes, types or changes files
+to `plugins.live` (`live: [downloads-organizer, pc-apps, pc-media, pc-windows, pc-system, pc-keys]`). Anything that closes, types or changes files
 asks you first.
 
 ## Argus in Claude (MCP)
