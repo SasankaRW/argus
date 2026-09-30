@@ -65,3 +65,14 @@ def _reset_logging():
         if h not in root.handlers:
             root.addHandler(h)
     root.setLevel(level)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_claude(monkeypatch):
+    """Tests never call the real claude CLI (it may be installed here); fake_claude scripts use a full path."""
+    import shutil
+
+    import argus.models.providers as prov
+
+    real = shutil.which
+    monkeypatch.setattr(prov.shutil, "which", lambda cmd, *a, **k: None if cmd == "claude" else real(cmd, *a, **k))

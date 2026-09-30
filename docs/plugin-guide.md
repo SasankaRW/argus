@@ -98,7 +98,7 @@ permissions:
     write: ["~/Documents/Bills"]
     delete: none                # none | recycle_bin (never permanent)
   models: [T0, T1]              # highest tier it may use; T2/T3 only via escalation
-  claude_calls_per_day: 0
+  claude_calls_per_day: 5       # optional; default claude.plugin_calls_per_day (10); 0 = never Claude
   network: []                   # hosts it may reach, empty = none
   uses: [cashly.add_entry]      # actions from connector plugins
 
@@ -173,7 +173,9 @@ def send_to_cashly(ctx, data):
 | `ctx` service | Use |
 | --- | --- |
 | `ctx.llm(playbook, input, schema=, check=, tiers=)` | model call, cheapest tier first. The reply is parsed as JSON, validated against the Pydantic `schema`, then `check(answer, input)` runs (return a reason to reject). A rejected answer is retried once with the reason, then escalated up the chain (T1 → T2 → T3) with the rejected answer as advice. Returns the answer; `ctx.last_answer` has the tier, attempts and trail. Built in Argus 0.5 (C7). |
-| `ctx.claude(prompt, input, schema=, check=)` | direct Claude call (tools off, one turn), counted against the daily cap. Built in C7. |
+| **When the local models can't** | for every plugin: if every tier `ctx.llm` tried fails and Claude wasn't among them (for example `tiers=["V1"]`), Claude gets one try with the same input, pictures and the local models' rejected answers, counted against the plugin's `claude_calls_per_day` (default `claude.plugin_calls_per_day`, 10) and the global cap. `claude_last=False` turns that off for one call (to try a cheaper route first). If Claude fails too, `EscalationExhausted`: skip the item or ask you with `ctx.ask_me`. `ctx.local_tiers()` is the chain without Claude. |
+| `ctx.claude(prompt, input, schema=, check=, images=, advice=)` | direct Claude call (tools off, one turn; it sees `images` too), counted against the plugin's and the global daily cap. |
+| `ctx.ask_me(title, fields, summary=, image=)` | the last resort: ask you to fill in `fields` (Helios and the phone; `image` is a small picture to decide by). Returns the fields as you approved them, or None if you rejected it. The job waits meanwhile, like `ctx.approve`; call it inside `ctx.step`. |
 | `ctx.files` | read, write, move, `recycle` inside declared paths only |
 | `ctx.approve(type, title, fields)` | ask you and park the job (no worker held) until you answer on the phone or in Helios; the step then runs again and gets a Decision: truthy when approved, .fields = the values as approved (edits included), .state = approved, rejected or expired. Types: entry (editable fields), batch (items; Argus adds up count and total), draft (summary + link). Call it inside ctx.step: a retried step gets the same approval back, never a second one. Built in Argus 0.6 (C8). |
 | `ctx.notify(title, text, priority=, tags=, link=)` | phone message through the outbox (ntfy): sent once even if the step runs again, retried if ntfy is down. Built in 0.6 (C8). |

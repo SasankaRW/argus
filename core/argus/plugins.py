@@ -113,7 +113,7 @@ class FilePerms(_M):
 class Permissions(_M):
     files: FilePerms = Field(default_factory=FilePerms)
     models: list[str] = Field(default_factory=lambda: ["T0"])  # the tiers it starts at; higher only by escalation
-    claude_calls_per_day: int = Field(0, ge=0, le=1000)
+    claude_calls_per_day: int | None = Field(None, ge=0, le=1000)  # None: claude.plugin_calls_per_day
     network: list[str] = Field(default_factory=list)  # host names it may call through ctx.http
     uses: list[str] = Field(default_factory=list)  # connector actions (later)
     secrets: list[str] = Field(default_factory=list)  # .env names it may read through ctx.secrets
@@ -333,7 +333,9 @@ class PluginHost:
         log.info("plugins loaded", extra={"plugins": sorted(self.plugins), "rejected": len(self.errors)})
 
     def claude_caps(self) -> dict[str, int]:
-        return {pid: p.manifest.permissions.claude_calls_per_day for pid, p in self.plugins.items()}
+        default = self.cfg.claude.plugin_calls_per_day
+        return {pid: default if p.manifest.permissions.claude_calls_per_day is None
+                else p.manifest.permissions.claude_calls_per_day for pid, p in self.plugins.items()}
 
     def needs_for(self, plugin: str) -> list[str]:
         p = self.plugins.get(plugin)

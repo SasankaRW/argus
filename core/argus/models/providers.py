@@ -10,6 +10,7 @@ not answer (these trip circuit breakers); a reply that turns out to be wrong is 
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import json
 import os
@@ -106,17 +107,36 @@ class ClaudeProvider:
     def available(self) -> bool:
         return bool(self.command) and (shutil.which(self.command[0]) is not None or os.path.exists(self.command[0]))
 
-    def argv(self) -> list[str]:
+    def argv(self, stream: bool = False) -> list[str]:
         # Resolve the program (on Windows `claude` is claude.cmd, which needs its full path to start).
         # Nothing from the playbook or the input goes on the command line: on Windows cmd.exe would cut it at the
         # first newline and could read & | % in it as commands. All text goes through stdin.
         program = shutil.which(self.command[0]) or self.command[0]
-        argv = [program, *self.command[1:], *self.args]
+        args = list(self.args)
+        if stream:  # pictures: the message goes in as JSON (stream-json), the answer comes back as JSON lines
+            if "--output-format" in args:
+                i = args.index("--output-format")
+                del args[i:i + 2]
+            args += ["--input-format", "stream-json", "--output-format", "stream-json", "--verbose"]
+        argv = [program, *self.command[1:], *args]
         if self.model:
             argv += ["--model", self.model]
         return argv
 
-    def chat(self, system: str, messages: list[dict[str, str]], schema: dict | None = None) -> Reply:
+    @staticmethod
+    def _media_type(b64: str) -> str:
+        head = base64.b64decode(b64[:24] + "=" * (-len(b64[:24]) % 4))
+        if head.startswith(b"\x89PNG"):
+            return "image/png"
+        if head.startswith(b"GIF8"):
+            return "image/gif"
+        if head[8:12] == b"WEBP":
+            return "image/webp"
+        return "image/jpeg"
+
+    def chat(self, system: str, messages: list[dict[str, Any]], schema: dict | None = None) -> Reply:
+        """Claude sees the pictures too (`images` on a message, base64), like the vision tier."""
+        images = [i for m in messages for i in (m.get("images") or [])]
         prompt = "\n\n".join(m["content"] for m in messages if m["role"] == "user")
         if system:
             prompt = f"{system}\n\n---\n\n{prompt}"
@@ -126,13 +146,21 @@ class ClaudeProvider:
         if not self.available():
             raise ModelUnavailable(f"{self.command[0]!r} not found (is Claude Code installed?)")
         t0 = time.perf_counter()
+        stdin = prompt
+        if images:
+            content = [{"type": "image", "source": {"type": "base64", "media_type": self._media_type(b), "data": b}}
+                       for b in images] + [{"type": "text", "text": prompt}]
+            stdin = json.dumps({"type": "user", "message": {"role": "user", "content": content}}) + "\n"
         try:
-            code, stdout, stderr = run_with_timeout(self.argv(), prompt, self.timeout)
+            code, stdout, stderr = run_with_timeout(self.argv(stream=bool(images)), stdin, self.timeout)
         except subprocess.TimeoutExpired:
             raise ModelTimeout(f"claude gave no answer within {self.timeout:g} s") from None
         except OSError as e:
             raise ModelUnavailable(f"could not run claude: {e}") from None
         latency = (time.perf_counter() - t0) * 1000
+        if images:  # JSON lines: the last "result" line is the answer
+            stdout = next((ln for ln in reversed(stdout.splitlines()) if '"type":"result"' in ln.replace(" ", "")),
+                          stdout)
         try:
             out = json.loads(stdout)
         except ValueError:

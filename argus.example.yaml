@@ -36,6 +36,7 @@ claude:
   command: [claude]        # the Claude Code CLI, logged in with your subscription
   timeout_seconds: 300
   calls_per_day: 30        # hard daily cap across all workers
+  plugin_calls_per_day: 10 # each plugin's share unless its plugin.yaml sets claude_calls_per_day (0 = never)
 
 jobs:
   lease_seconds: 60

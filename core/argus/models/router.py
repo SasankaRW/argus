@@ -105,8 +105,10 @@ class Router:
         self.current_tier: str | None = None  # the tier being tried right now (checks may look at it)
 
     def ask(self, playbook: str, input: Any, *, schema: type[BaseModel] | None = None, check: Check | None = None,
-            chain: list[str] | None = None, attempts: int | None = None, images: list[str] | None = None) -> Answer:
-        """`images`: base64-encoded pictures for a vision model (sent with the first message)."""
+            chain: list[str] | None = None, attempts: int | None = None, images: list[str] | None = None,
+            advice: str | None = None) -> Answer:
+        """`images`: base64-encoded pictures for a vision model (sent with the first message).
+        `advice`: what went wrong before (another chain already tried), handed to the first tier."""
         tiers = chain or self.chain
         tries = attempts or self.attempts
         json_schema = schema.model_json_schema() if schema is not None else None
@@ -115,7 +117,7 @@ class Router:
             system += "\n\nReply with only a JSON object that matches the given schema. No extra text."
         task = input if isinstance(input, str) else json.dumps(input, ensure_ascii=False, indent=2, default=str)
         trail: list[dict[str, Any]] = []
-        advice: str | None = None  # what the previous tier got wrong, handed up the chain
+        # advice: what the previous tier got wrong, handed up the chain
         prev: str | None = None
 
         for tier in tiers:

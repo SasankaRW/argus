@@ -121,16 +121,77 @@ def test_ranking_prefers_the_window_in_front():
     assert r["focus"][0] == "Downloads" and r["focus"][-1] == "Argus integration"
 
 
-def test_no_vision_model_keeps_the_name(tmp_path, monkeypatch):
-    argus, shots = setup(tmp_path, monkeypatch)
-    with FakeOllama({"qwen2.5-coder:7b": [{"words": "x"}]}) as ol, Server(argus.open()) as srv:  # V1 not pulled
+def _job(cl, shots):
+    return cl.post("/jobs", {"plugin": ssr.PLUGIN, "workflow": "name", "needs": ["desktop"],
+                             "input": {"path": str(shots / "Screenshot 2026-09-28 214501.png")}})
+
+
+def test_nobody_can_name_it_so_it_asks_you(tmp_path, monkeypatch):
+    argus, shots = setup(tmp_path, monkeypatch)  # no Claude tier, V1 not pulled
+    with FakeOllama({"qwen2.5-coder:7b": [{"words": "x"}]}) as ol, Server(argus.open()) as srv:
         cl = client(srv.url)
         w = Worker(cl, "pc", capabilities=["desktop"], ollama_url=ol.url, watch_folders=False)
         w.register()
         monkeypatch.setattr(sys.modules["argus_plugin_screenshot_renamer"], "read_screen", lambda data: {})
-        job = cl.post("/jobs", {"plugin": ssr.PLUGIN, "workflow": "name", "needs": ["desktop"],
-                                "input": {"path": str(shots / "Screenshot 2026-09-28 214501.png")}})
+        job = _job(cl, shots)
+        assert w.run_once(wait=2)
+        waiting = wait_for(lambda: (j := cl.get(f"/jobs/{job['id']}"))["state"] == "waiting" and j)
+        a = cl.get("/approvals?state=pending")[0]
+        assert a["title"] == "Name this screenshot" and a["payload"]["fields"] == {"name": ""}
+        assert a["payload"]["image"].startswith("data:image/png;base64,") and waiting
+        cl.post(f"/approvals/{a['id']}/decide", {"answer": "approve", "fields": {"name": "Cashly login page bug!"}})
+        wait_for(lambda: cl.get(f"/jobs/{job['id']}")["state"] == "queued")
         assert w.run_once(wait=2)
         done = wait_for(lambda: (j := cl.get(f"/jobs/{job['id']}"))["state"] in ("succeeded", "dead") and j)
-    assert done["state"] == "succeeded" and "qwen2.5vl" in done["result"]["skipped"]
+    assert done["state"] == "succeeded" and done["result"]["how"] == "you", done
+    assert (shots / "2026-09-28 cashly login page bug.png").exists()
+
+
+def test_reject_keeps_the_name(tmp_path, monkeypatch):
+    argus, shots = setup(tmp_path, monkeypatch)
+    with FakeOllama({}) as ol, Server(argus.open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        monkeypatch.setattr(sys.modules["argus_plugin_screenshot_renamer"], "read_screen", lambda data: {})
+        job = _job(cl, shots)
+        assert w.run_once(wait=2)
+        wait_for(lambda: cl.get(f"/jobs/{job['id']}")["state"] == "waiting")
+        a = cl.get("/approvals?state=pending")[0]
+        cl.post(f"/approvals/{a['id']}/decide", {"answer": "reject"})
+        wait_for(lambda: cl.get(f"/jobs/{job['id']}")["state"] == "queued")
+        assert w.run_once(wait=2)
+        done = wait_for(lambda: (j := cl.get(f"/jobs/{job['id']}"))["state"] in ("succeeded", "dead") and j)
+    assert done["result"]["skipped"] == "you left it as it is"
     assert (shots / "Screenshot 2026-09-28 214501.png").exists()
+
+
+def test_claude_names_it_from_the_picture_when_local_models_fail(tmp_path, monkeypatch):
+    from fakes import fake_claude
+
+    argus, shots = setup(tmp_path, monkeypatch)
+    cmd = fake_claude(tmp_path, result='{"main_window": "Cashly", "words": "cashly invoice export error"}')
+    y = (tmp_path / "argus.yaml").read_text().replace(
+        "  chain: [T1]\n", "    T3: {provider: claude}\n  chain: [T1, T3]\n")
+    y += f"claude:\n  command: {cmd!r}\n".replace("'", '"')
+    (tmp_path / "argus.yaml").write_text(y)
+    argus = Argus(load_config(tmp_path / "argus.yaml"))
+    replies = {"qwen2.5vl:7b": [{"words": "x"}] * 4, "qwen2.5-coder:7b": [{"words": "y"}] * 4}
+    with FakeOllama(replies) as ol, Server(argus.open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        monkeypatch.setattr(sys.modules["argus_plugin_screenshot_renamer"], "read_screen",
+                            lambda data: screen("Invoices export failed with an unknown error"))
+        job = _job(cl, shots)
+        assert w.run_once(wait=2)
+        done = wait_for(lambda: (j := cl.get(f"/jobs/{job['id']}"))["state"] in ("succeeded", "dead") and j)
+    assert done["state"] == "succeeded", done
+    assert done["result"]["how"] == "Claude (T3)"
+    assert (shots / "2026-09-28 cashly invoice export error.png").exists()
+    import json
+    argv = json.loads((tmp_path / "claude_argv.json").read_text())
+    assert "stream-json" in argv
+    msg = json.loads((tmp_path / "claude_stdin.txt").read_text())
+    assert msg["message"]["content"][0]["type"] == "image"
+    assert "could not name it" in msg["message"]["content"][-1]["text"]

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import html
 import json
+import re
 from typing import Any
 
 from ..approvals import fmt_money, money
@@ -71,7 +72,11 @@ def render(a: dict[str, Any], token: str) -> str:
             rows.append(f"<tr><td>{_e(k)}</td><td>{cell}</td></tr>")
         if p.get("amount"):
             body.insert(0, f"<div class='big'>{_e(p['amount'])}</div>")
+        body.append("".join(f"<p>{_e(x)}</p>" for x in p.get("summary") or []))
         body.append("<table>" + "".join(rows) + "</table>")
+    img = str(p.get("image") or "")
+    if re.fullmatch(r"data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+", img):
+        body.insert(0, f"<img src='{img}' alt='' style='max-width:100%;border-radius:8px'>")
     if p.get("link") and str(p["link"]).startswith(("http://", "https://")):
         body.append(f"<p><a href='{_e(p['link'])}' rel='noreferrer'>Open the file</a></p>")
 
