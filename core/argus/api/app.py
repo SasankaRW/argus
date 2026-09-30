@@ -693,6 +693,10 @@ def create_app(argus: Argus) -> FastAPI:
             return {"conv": conv, "turn": tid, "reply": text, "action": action, "pending": pending}
 
         actions = ask_mod.catalog(argus.plugin_host)
+        m = ari_mod.REMEMBER.match(text)
+        if m and not ari_mod.parse_when(text, time.time()):  # "remember that ..." (not "remind me at ...")
+            await argus.store.write(lambda c: ari_mod.remember(c, m.group("fact")))
+            return await reply("Got it, I'll remember that.")
         when = ari_mod.parse_when(text, time.time())
         if when is not None:
             what = ari_mod.action_for(when.rest, actions)
@@ -716,12 +720,48 @@ def create_app(argus: Argus) -> FastAPI:
                 return await reply(hit["reply"], act, {"kind": "action", "action": act})
             return await reply(hit["reply"], act)
         hist = await argus.store.read(lambda c: ari_mod.history(c, conv))
+        known = await argus.store.read(lambda c: ari_mod.recall(c, text))
         job_id, _ = await argus.jobs.enqueue(
             "ari", "think", {"text": text, "history": hist[:-1], "now": time.strftime("%A %d %B %Y, %H:%M"),
+                             "you_remember": known,
                              "tools": [t.brief() for t in tools.all().values() if t.for_ari]},
             priority=PRIORITY_INTERACTIVE, source="helios")
         tid = await argus.store.write(lambda c: ari_mod.add_turn(c, conv, "ari", None, job_id=job_id))
         return {"conv": conv, "turn": tid, "job_id": job_id, "reply": None}
+
+    @app.get("/ari-memory", dependencies=guarded)
+    async def ari_memory() -> list[dict]:
+        """Everything you asked Ari to remember, newest first."""
+        return await argus.store.read(ari_mod.memories)
+
+    @app.delete("/ari-memory/{memory_id}", dependencies=guarded)
+    async def ari_forget(memory_id: int) -> dict:
+        if not await argus.store.write(lambda c: ari_mod.forget(c, memory_id)):
+            raise HTTPException(status_code=404, detail="no such memory")
+        return {"ok": True}
+
+    async def _remember(x: dict) -> dict:
+        mid = await argus.store.write(lambda c: ari_mod.remember(c, str(x["fact"])))
+        return {"remembered": x["fact"], "id": mid}
+
+    async def _recall(x: dict) -> list:
+        return await argus.store.read(lambda c: ari_mod.recall(c, str(x["query"]), 10))
+
+    async def _forget(x: dict) -> dict:
+        ok = await argus.store.write(lambda c: ari_mod.forget(c, int(x["id"])))
+        if not ok:
+            raise ToolError(f"no memory {x['id']}")
+        return {"forgotten": int(x["id"])}
+
+    tools.builtin["remember"] = Tool("remember", "Keep a fact the user asked you to remember (one short sentence).",
+                                     {"fact": {"type": "string", "description": "the fact, in the user's words"}},
+                                     ["fact"], fn=_remember)
+    tools.builtin["recall_memory"] = Tool("recall_memory", "Look up what the user asked you to remember earlier.",
+                                          {"query": {"type": "string", "description": "words to look for"}},
+                                          ["query"], fn=_recall)
+    tools.builtin["forget_memory"] = Tool("forget_memory", "Forget one remembered fact (its id from recall_memory).",
+                                          {"id": {"type": "integer", "description": "the memory's id"}}, ["id"],
+                                          fn=_forget)
 
     @app.get("/ari/{conv}", dependencies=guarded)
     async def ari_conv(conv: str) -> dict:

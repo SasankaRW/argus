@@ -263,3 +263,45 @@ def add_schedule(conn: sqlite3.Connection, now: float, when: When, action: str, 
                  " updated_at, owner, label) VALUES (?,?,?,?,?,1,?,?,?,'you',?)",
                  (sid, plugin, workflow, when.cron, json.dumps(spec, sort_keys=True), nxt, now, now, label[:200]))
     return {"id": sid, "cron": when.cron, "next_run_at": nxt, "label": label}
+
+
+# ------------------------------------------------------------------ what you asked Ari to remember
+
+REMEMBER = re.compile(r"^\s*(?:please\s+)?(?:remember|note|keep in mind|don'?t forget)\s+(?:that\s+)?(?P<fact>.{3,})$",
+                      re.I)
+
+
+def remember(conn: sqlite3.Connection, fact: str) -> int:
+    fact = re.sub(r"\s+", " ", fact).strip().rstrip(".")[:500]
+    now = time.time()
+    row = conn.execute("SELECT id FROM ari_memory WHERE lower(fact) = lower(?)", (fact,)).fetchone()
+    if row:
+        conn.execute("UPDATE ari_memory SET updated_at = ? WHERE id = ?", (now, row[0]))
+        return int(row[0])
+    cur = conn.execute("INSERT INTO ari_memory (fact, created_at, updated_at) VALUES (?,?,?)", (fact, now, now))
+    return int(cur.lastrowid or 0)
+
+
+def recall(conn: sqlite3.Connection, query: str, k: int = 6) -> list[dict[str, Any]]:
+    """The facts that share words with `query`, best first."""
+    words = [w for w in re.findall(r"\w+", query.lower()) if len(w) > 2 and w not in _STOP][:12]
+    if not words:
+        return []
+    q = " OR ".join(f'"{w}"' for w in words)
+    rows = conn.execute("SELECT m.id, m.fact, m.updated_at FROM ari_memory_fts f JOIN ari_memory m ON m.id = f.rowid"
+                        " WHERE ari_memory_fts MATCH ? ORDER BY bm25(ari_memory_fts) LIMIT ?", (q, k)).fetchall()
+    return [{"id": r["id"], "fact": r["fact"],
+             "noted": time.strftime("%Y-%m-%d", time.localtime(r["updated_at"]))} for r in rows]
+
+
+def memories(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    return [{"id": r["id"], "fact": r["fact"], "noted": time.strftime("%Y-%m-%d", time.localtime(r["updated_at"]))}
+            for r in conn.execute("SELECT * FROM ari_memory ORDER BY updated_at DESC")]
+
+
+def forget(conn: sqlite3.Connection, memory_id: int) -> bool:
+    return conn.execute("DELETE FROM ari_memory WHERE id = ?", (int(memory_id),)).rowcount > 0
+
+
+_STOP = {"the", "and", "for", "you", "your", "what", "when", "where", "who", "how", "is", "are", "was", "my", "me",
+         "did", "does", "can", "about", "that", "this", "with", "have", "has", "tell", "please", "ari", "do"}

@@ -43,6 +43,8 @@ you already used for this message. Decide ONE next step and answer as JSON:
   {"need_web": true}                                    when the answer needs current information from the internet.
 
 How to decide:
+- "you_remember" holds facts the user asked you to remember that may matter here: use them first. If the user
+  asks you to remember something, use the remember tool; to forget something, recall_memory then forget_memory.
 - The user's own things (their files, notes, documents, projects, what Argus did, their schedules, their phone,
   their PC): use a tool first; never make up the user's data. If the tools find nothing, say so.
 - Doing things on the PC (open an app, a file or a site, volume, music, windows): use the tool. Several things
@@ -73,6 +75,7 @@ def think(ctx: Context):
         raise PermanentError("nothing said")
     tools = {t["name"]: t for t in ctx.input.get("tools") or []}
     base = {"message": text, "conversation_so_far": (ctx.input.get("history") or [])[-8:],
+            "you_remember": ctx.input.get("you_remember") or [],
             "now": ctx.input.get("now") or time.strftime("%A %d %B %Y, %H:%M"),
             "tools": list(tools.values())}
     done: list[dict[str, Any]] = []

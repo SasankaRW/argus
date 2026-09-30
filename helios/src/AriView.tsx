@@ -42,6 +42,9 @@ export function AriView({ onSelect, onView, compact = false }: { onSelect: (s: S
     return () => { window.removeEventListener("ari-status", st); window.removeEventListener("ari-pref", pr); };
   }, []);
   const [scheds, setScheds] = useState<Schedule[]>([]);
+  const [mem, setMem] = useState<{ id: number; fact: string; noted: string }[]>([]);
+  const loadMem = useCallback(() => { api<typeof mem>("/ari-memory").then(setMem).catch(() => {}); }, []);
+  useEffect(loadMem, [loadMem]);
   const spoken = useRef<Set<number>>(new Set());
   const end = useRef<HTMLDivElement>(null);
 
@@ -92,8 +95,9 @@ export function AriView({ onSelect, onView, compact = false }: { onSelect: (s: S
       const r = await api<Said>("/ari", { method: "POST", body: JSON.stringify({ text: q, conv }) });
       await load();
       after(r);
+      loadMem();
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
-  }, [conv, load, after]);
+  }, [conv, load, after, loadMem]);
 
   const answer = async (yes: boolean) => {
     setBusy(true); setErr(null); stopSpeaking();
@@ -191,6 +195,13 @@ export function AriView({ onSelect, onView, compact = false }: { onSelect: (s: S
               <span className="muted mono">{s.enabled ? `next ${when(s.next_run_at)}` : s.spec.once && s.last_run_at ? `done ${when(s.last_run_at)}` : "paused"}</span>
               {!(s.spec.once && s.last_run_at) && <button type="button" className="btn" onClick={() => editSched(s, s.enabled ? "pause" : "resume")}>{s.enabled ? "Pause" : "Resume"}</button>}
               <button type="button" className="btn" onClick={() => editSched(s, "delete")}>Delete</button>
+            </div>
+          ))}
+          <div className="sect">What I remember</div>
+          {mem.length === 0 ? <div className="tip">Nothing yet. Say "remember my car service is due in December".</div> : mem.map((m) => (
+            <div key={m.id} className="srow">
+              <span className="sl">{m.fact}</span><span className="muted mono">{m.noted}</span>
+              <button type="button" className="btn" onClick={() => api(`/ari-memory/${m.id}`, { method: "DELETE" }).then(loadMem).catch(() => {})}>Forget</button>
             </div>
           ))}
           {scheds.some((s) => s.owner !== "you") && (

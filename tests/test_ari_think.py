@@ -69,8 +69,11 @@ def test_builtin_then_plugin_tool_then_the_answer(tmp_path):
         w.register()
         tools = {t["name"]: t for t in cl.get("/tools")}
         assert tools["shout"]["plugin"] == "echo-tool" and tools["wipe"]["risky"] is True
+        cl.post("/ari", {"text": "remember that argus runs on the spare laptop soon"})
         r = cl.post("/ari", {"text": "how is argus, and shout hello"})
         last = settle(cl, w, r["conv"])
+        first = json.loads(ol.requests[0]["messages"][1]["content"])
+        assert first["you_remember"][0]["fact"] == "argus runs on the spare laptop soon"
         assert last["text"] == "Argus is fine, and I shouted HELLO."
         think = cl.get(f"/jobs/{r['job_id']}")
         names = [s["name"] for s in think["steps"]]

@@ -112,3 +112,25 @@ def test_actions_wait_for_yes_and_the_model_gets_the_conversation(tmp_path, monk
         assert "argus_status" in sent[1]["content"]  # the tools it may use
         y = cl.post("/ari", {"text": "yes", "conv": conv})
         assert y["reply"] == "Done." and y["tool"] == "run_button" and y["result"]["job_id"]
+
+
+def test_remember_recall_forget(tmp_path, monkeypatch):
+    from argus import ari
+
+    a = make(tmp_path, monkeypatch)
+    with Server(a.open()) as srv:
+        cl = client(srv.url)
+        r = cl.post("/ari", {"text": "Hey Ari, remember that my car service is due in December"})
+        assert r["reply"] == "Got it, I'll remember that."
+        cl.post("/ari", {"text": "note my laptop's IP is 192.168.1.40", "conv": r["conv"]})
+        cl.post("/ari", {"text": "remember that my car service is due in December", "conv": r["conv"]})  # again
+        mem = cl.get("/ari-memory")
+        assert [m["fact"] for m in mem] == ["my car service is due in December", "my laptop's IP is 192.168.1.40"]
+        # "remind me ..." is a schedule, not a memory
+        assert "Shall I set that up?" in cl.post("/ari", {"text": "remind me to call mum tomorrow at 5 pm"})["reply"]
+        got = run(a.store.read(lambda c: ari.recall(c, "when is my car service?")))
+        assert got and got[0]["fact"].startswith("my car service")
+        cl.call("DELETE", f"/ari-memory/{mem[0]['id']}")
+        assert len(cl.get("/ari-memory")) == 1
+        tools = {t["name"] for t in cl.get("/tools")}
+        assert {"remember", "recall_memory", "forget_memory"} <= tools
