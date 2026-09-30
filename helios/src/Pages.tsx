@@ -12,8 +12,9 @@ function ago(t: number) {
 
 // ---------------------------------------------------------------- Inbox: everything waiting for you
 
+type Score = { passed: number; total: number } | null;
 type InboxItem = { kind: "approval" | "lesson" | "question"; id: string | number; title: string; plugin?: string | null;
-  text?: string; chat?: string | null; evals?: { before?: number; after?: number } | null; at: number };
+  text?: string; chat?: string | null; evals?: { before?: Score; after?: Score } | null; at: number };
 export type InboxData = { items: InboxItem[]; counts: Record<string, number> };
 
 // How many things wait for you (the nav badge), refreshed when approvals, lessons or Ari change.
@@ -68,8 +69,8 @@ export function InboxView({ events, onOpenChat }: { events: ArgusEvent[]; onOpen
               {i.kind === "lesson" && (
                 <>
                   <pre className="ilesson">{i.text}</pre>
-                  {i.evals && (i.evals.before !== undefined || i.evals.after !== undefined) && (
-                    <div className="muted">tests: {fmtPct(i.evals.before)} before → {fmtPct(i.evals.after)} with this lesson</div>
+                  {i.evals?.after && (
+                    <div className="muted mono">tests: {fmtScore(i.evals.before)} now → {fmtScore(i.evals.after)} with these</div>
                   )}
                   <div className="iact">
                     <button type="button" className="primary" disabled={busy === key}
@@ -99,7 +100,7 @@ export function InboxView({ events, onOpenChat }: { events: ArgusEvent[]; onOpen
   );
 }
 
-function fmtPct(v?: number) { return v === undefined || v === null ? "—" : `${Math.round(v * 100)}%`; }
+function fmtScore(v?: Score) { return v ? `${v.passed}/${v.total}` : "—"; }
 
 // ---------------------------------------------------------------- Settings: Argus's own, over argus.yaml
 

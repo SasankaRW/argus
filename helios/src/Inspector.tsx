@@ -423,6 +423,7 @@ function ModelAnswers({ id, tick }: { id: string; tick: number }) {
           </div>
           <pre className="code">{pretty(s.output)}</pre>
           {s.verdict === "wrong" && s.correction != null && <div className="tip">Should have been: {pretty(s.correction)}</div>}
+          <TryAnother sample={s} />
           {fixing === s.id && (
             <form className="sample-fix" onSubmit={(e) => { e.preventDefault(); mark(s, "wrong", fix.trim() || undefined); }}>
               <input value={fix} onChange={(e) => setFix(e.target.value)} placeholder="What it should have been (optional)" aria-label="Correct answer" autoFocus />
@@ -432,6 +433,54 @@ function ModelAnswers({ id, tick }: { id: string; tick: number }) {
         </div>
       ))}
     </>
+  );
+}
+
+let tierList: Promise<string[]> | null = null;
+const tiersOnce = () => (tierList ??= api<{ tiers: { tier: string }[] }>("/models").then((m) => m.tiers.map((t) => t.tier)).catch(() => []));
+
+type Replayed = { tier: string; answer: unknown; error: string | null; same: boolean };
+
+// "Try with another model": the same question (same playbook and lessons) to another tier, answers side by side.
+function TryAnother({ sample }: { sample: Sample }) {
+  const [tiers, setTiers] = useState<string[]>([]);
+  const [tier, setTier] = useState("");
+  const [job, setJob] = useState<string | null>(null);
+  const [res, setRes] = useState<Replayed | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => { tiersOnce().then((t) => { const others = t.filter((x) => x !== sample.tier); setTiers(others); setTier(others[0] ?? ""); }); }, [sample.tier]);
+  useEffect(() => {
+    if (!job) return;
+    const t = setInterval(async () => {
+      const j = await api<{ state: string; result: Replayed | null; error: string | null }>(`/jobs/${job}`).catch(() => null);
+      if (!j || !["succeeded", "dead", "cancelled"].includes(j.state)) return;
+      setJob(null);
+      if (j.state === "succeeded" && j.result) setRes(j.result); else setErr((j.error ?? "it failed").split("\n")[0]);
+    }, 1500);
+    return () => clearInterval(t);
+  }, [job]);
+  if (!tiers.length) return null;
+  const go = async () => {
+    setErr(null); setRes(null);
+    try { setJob((await api<{ job_id: string }>(`/samples/${sample.id}/replay`, { method: "POST", body: JSON.stringify({ tier }) })).job_id); }
+    catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+  };
+  return (
+    <div className="try">
+      <div className="try-h">
+        <span className="muted">try with</span>
+        <select value={tier} onChange={(e) => setTier(e.target.value)} aria-label="Model tier">{tiers.map((t) => <option key={t} value={t}>{t}</option>)}</select>
+        <button type="button" className="btn" disabled={!!job} onClick={go}>{job ? "asking…" : "ask"}</button>
+      </div>
+      {err && <div className="tip bad">{err}</div>}
+      {res && (
+        <div className="try-cmp">
+          <div><span className="muted mono">{sample.tier ?? "kept"}</span><pre className="code">{pretty(sample.output)}</pre></div>
+          <div><span className="muted mono">{res.tier} · <span className={res.same ? "ok" : "warn"}>{res.error ? "failed" : res.same ? "same answer" : "different"}</span></span>
+            <pre className="code">{res.error ?? pretty(res.answer)}</pre></div>
+        </div>
+      )}
+    </div>
   );
 }
 

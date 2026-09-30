@@ -11,7 +11,7 @@ from . import __version__
 from . import settings as settings_mod
 from .approvals import Approvals
 from .backup import Backups
-from .config import PRIORITY_BATCH, Config, ScheduleConfig
+from .config import PRIORITY_BATCH, PRIORITY_INTERACTIVE, Config, ScheduleConfig
 from .daily import Marker, brief_due, compose_brief, compose_summary, last_health, resume_summary
 from .db import Store
 from .events import EventHub, insert_event, prune_events
@@ -189,6 +189,41 @@ class Argus:
             return {"job_id": jid, "playbooks": len(items)}
 
         return await self.store.write(fn) or {"job_id": None, "playbooks": 0, "note": "nothing new to learn from"}
+
+    async def queue_evals(self, key: str) -> dict:
+        """Replay a playbook's eval set now (job guidance.evals on the first local tier)."""
+        from . import guidance
+
+        def fn(conn):
+            pb = guidance.playbook_input(conn, key)
+            if pb is None:
+                return None
+            if not pb["evals"]:
+                return {"job_id": None, "note": "no tests yet: mark some answers Correct first"}
+            jid, _ = self.jobs.enqueue_in(conn, time.time(), "guidance", "evals", {"playbook": pb}, needs=[],
+                                          priority=PRIORITY_INTERACTIVE, source="helios",
+                                          dedupe_key=f"guidance:evals:{key}")
+            return {"job_id": jid, "tests": len(pb["evals"])}
+
+        return await self.store.write(fn)
+
+    async def queue_replay(self, sample_id: int, tier: str) -> dict | None:
+        """Ask another model tier the same question as a kept answer (job guidance.replay)."""
+        from . import guidance
+
+        def fn(conn):
+            s = conn.execute("SELECT * FROM samples WHERE id = ?", (sample_id,)).fetchone()
+            if s is None:
+                return None
+            pb = guidance.playbook_input(conn, s["playbook"])
+            inp = {"sample": guidance.sample_json(s), "tier": tier, "playbook": pb["playbook"],
+                   "schema": pb["schema"], "lessons": pb["lessons"]}
+            jid, _ = self.jobs.enqueue_in(conn, time.time(), "guidance", "replay", inp, needs=[],
+                                          priority=PRIORITY_INTERACTIVE, source="helios",
+                                          dedupe_key=f"guidance:replay:{sample_id}:{tier}")
+            return {"job_id": jid}
+
+        return await self.store.write(fn)
 
     async def send_summary(self, day: str | None = None) -> dict:
         """The evening summary to the phone (once per day; `POST /summary` sends one now)."""

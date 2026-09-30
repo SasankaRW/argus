@@ -922,3 +922,21 @@ main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .mrow2 { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 14px; padding: 6px 0; border-bottom: 1px solid var(--line); }
 .mrow2 > :first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 720px) { .setgrid { grid-template-columns: minmax(0, 1fr); } .setrow { flex-wrap: wrap; } }
+
+/* ---- Learning: tests and "try with another model" ---- */
+.tests { margin: 10px 0 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: #080b0d; display: flex; flex-direction: column; gap: 8px; }
+.tests-h { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12.5px; }
+.tests-h .grow { flex: 1; }
+.tests-h .primary { height: 30px; padding: 0 14px; font-size: 12.5px; }
+.sect-i { font: 500 12px var(--mono); color: var(--tx2); }
+.sect-i::first-letter { color: var(--tg, var(--ok)); }
+.evalruns { display: flex; flex-direction: row; align-items: flex-end; gap: 4px; height: 40px; }
+.evalruns i { display: block; width: 12px; border-radius: 3px 3px 1px 1px; background: var(--ok); }
+.evalruns i.warn { background: var(--amber); } .evalruns i.bad { background: var(--bad); }
+.test-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto; gap: 10px; align-items: center; font-size: 12px; padding: 4px 0; border-top: 1px solid var(--line); }
+.test-in, .test-out { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.try { margin-top: 6px; display: flex; flex-direction: column; gap: 6px; }
+.try-h { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.try-h select { height: 28px; padding: 0 8px; }
+.try-cmp { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.try-cmp pre { margin-top: 4px; }

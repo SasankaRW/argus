@@ -7,7 +7,11 @@ For each playbook in the job's input:
 2. The eval set (answers you marked correct, else ones the first tier got right) is replayed on the first local
    tier with the old lessons and with the new ones; an answer passes when it matches the kept one.
 3. You get the lessons with both scores (Helios and the phone). Approved: they are appended to that playbook for
-   that plugin from the next job on.
+   that plugin from the next job on. Lessons that pass fewer tests than the playbook does now are not offered at
+   all ("didn't help").
+
+Also here: guidance.evals ("Run tests now" on a playbook's Learning tab) and guidance.replay ("Try with another
+model" on one kept answer).
 """
 
 from __future__ import annotations
@@ -64,7 +68,7 @@ def score(ctx: Context, pb: dict[str, Any], lessons: str) -> dict[str, Any]:
             passed += 1
         else:
             failed.append(s["id"])
-    return {"passed": passed, "total": len(evals), "failed": failed[:10]}
+    return {"passed": passed, "total": len(evals), "failed": failed[:10], "tier": tiers[0] if tiers else None}
 
 
 @workflow("guidance", "review")
@@ -96,6 +100,14 @@ def review(ctx: Context):
         before = ctx.step(f"evals before {i + 1}", score, ctx, pb, pb["lessons"]) if pb["evals"] else None
         after = ctx.step(f"evals after {i + 1}", score, ctx, pb, lessons) if pb["evals"] else None
         evals = {"before": before, "after": after}
+        if before:
+            ctx.step(f"record {i + 1}", lambda pb=pb, before=before: ctx.tool(
+                "record_evals", {"key": pb["key"], "run": before, "why": "review", "job_id": ctx.job_id}))
+        if before and after and after["passed"] < before["passed"]:
+            out.append({"playbook": pb["name"], "plugin": pb["plugin"], "lessons": lessons, "evals": evals,
+                        "skipped": f"didn't help: {after['passed']}/{after['total']} tests with them, "
+                                   f"{before['passed']}/{before['total']} without"})
+            continue
         lid = ctx.step(f"keep {i + 1}", lambda pb=pb, lessons=lessons, evals=evals: ctx.tool(
             "propose_lessons", {"key": pb["key"], "text": lessons, "evals": evals, "job_id": ctx.job_id}))["lesson"]
 
@@ -113,3 +125,38 @@ def review(ctx: Context):
         out.append({"playbook": pb["name"], "plugin": pb["plugin"], "lessons": lessons, "evals": evals,
                     "approved": yes})
     return {"reviewed": out}
+
+
+@workflow("guidance", "evals")
+def evals(ctx: Context):
+    """Run a playbook's tests now: the eval set on the first local tier, with the lessons in force."""
+    pb = ctx.input.get("playbook") or {}
+    if not pb.get("evals"):
+        raise PermanentError("no tests yet: mark some answers Correct in Helios")
+    run = ctx.step("tests", score, ctx, pb, pb.get("lessons") or "")
+    ctx.step("record", lambda: ctx.tool("record_evals", {"key": pb["key"], "run": run, "why": "manual",
+                                                         "job_id": ctx.job_id}))
+    return run
+
+
+@workflow("guidance", "replay")
+def replay(ctx: Context):
+    """The same question to another tier (same playbook and lessons): both answers, and whether they agree."""
+    s = ctx.input.get("sample") or {}
+    tier = str(ctx.input.get("tier") or "")
+    if not s or not tier:
+        raise PermanentError("needs an answer and a tier")
+    inp = s["input"] if isinstance(s["input"], str) else json.dumps(s["input"], ensure_ascii=False)
+
+    def ask() -> dict[str, Any]:
+        try:
+            got = ctx.llm(with_lessons(ctx.input.get("playbook") or "", ctx.input.get("lessons") or ""), inp,
+                          schema=ctx.input.get("schema") or None, tiers=[tier], attempts=1, claude_last=False)
+            return {"answer": got, "error": None}
+        except EscalationExhausted as e:
+            return {"answer": None, "error": str(e)[:300]}
+
+    got = ctx.step(f"ask {tier}", ask)
+    kept = s["correction"] if s.get("verdict") == "correct" and s.get("correction") else s["output"]
+    return {"tier": tier, "answer": got["answer"], "error": got["error"], "kept_tier": s.get("tier"), "kept": kept,
+            "same": got["answer"] is not None and same(kept, got["answer"])}

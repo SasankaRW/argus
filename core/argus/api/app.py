@@ -232,6 +232,10 @@ class SampleIn(BaseModel):
     escalated: bool = False
 
 
+class Replay(BaseModel):
+    tier: str = Field(min_length=1, max_length=20)
+
+
 class Verdict(BaseModel):
     verdict: str | None = Field(None, pattern="^(correct|wrong)$")
     correction: Any = None
@@ -698,6 +702,34 @@ def create_app(argus: Argus) -> FastAPI:
             raise HTTPException(status_code=404, detail="no such answer")
         return {"ok": True}
 
+    @app.get("/guidance/{key}/evals", dependencies=guarded)
+    async def playbook_evals(key: str) -> dict:
+        """A playbook's tests (the eval set) and the history of test runs (pass rate)."""
+        def fn(c):
+            return {"tests": [guidance.sample_json(r) for r in guidance.eval_samples(c, key)],
+                    "runs": guidance.runs(c, key)}
+
+        return await argus.store.read(fn)
+
+    @app.post("/guidance/{key}/evals", dependencies=guarded)
+    async def playbook_evals_run(key: str) -> dict:
+        """Run the tests now (the first local tier, with the lessons in force)."""
+        r = await argus.queue_evals(key)
+        if r is None:
+            raise HTTPException(status_code=404, detail="no such playbook")
+        return r
+
+    @app.post("/samples/{sample_id}/replay", dependencies=guarded)
+    async def sample_replay(sample_id: int, body: Replay) -> dict:
+        """Ask another tier the same question; the job's result has both answers."""
+        if body.tier not in argus.cfg.models.tiers:
+            have = ", ".join(argus.cfg.models.tiers)
+            raise HTTPException(status_code=422, detail=f"no tier {body.tier} (have {have})")
+        r = await argus.queue_replay(sample_id, body.tier)
+        if r is None:
+            raise HTTPException(status_code=404, detail="no such answer")
+        return r
+
     @app.post("/guidance/review", dependencies=guarded)
     async def guidance_review() -> dict:
         """Review now: Claude proposes lessons for playbooks with new mistakes; you approve them."""
@@ -730,6 +762,15 @@ def create_app(argus: Argus) -> FastAPI:
         "propose_lessons", "(guidance loop) keep proposed lessons for a playbook",
         {"key": {"type": "string"}, "text": {"type": "string"}, "evals": {"type": "object"},
          "job_id": {"type": "string"}}, ["key", "text"], fn=_propose, for_ari=False, for_mcp=False)
+    async def _record(x: dict) -> dict:
+        rid = await argus.store.write(lambda c: guidance.record_run(c, time.time(), str(x["key"]), x.get("run") or {},
+                                                                    str(x.get("why") or "manual"), x.get("job_id")))
+        return {"run": rid}
+
+    tools.builtin["record_evals"] = Tool(
+        "record_evals", "(guidance loop) keep the result of a test run",
+        {"key": {"type": "string"}, "run": {"type": "object"}, "why": {"type": "string"}, "job_id": {"type": "string"}},
+        ["key", "run"], fn=_record, for_ari=False, for_mcp=False)
     tools.builtin["decide_lessons"] = Tool(
         "decide_lessons", "(guidance loop) your answer to proposed lessons",
         {"lesson": {"type": "integer"}, "approve": {"type": "boolean"}}, ["lesson", "approve"], fn=_decide,

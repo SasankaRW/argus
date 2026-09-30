@@ -6,9 +6,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from argus.config import load_config
 from argus.context import Argus
 from argus.worker import Worker
+from argus.worker.client import ApiError
 from argus.worker.review import same
 from fakes import FakeOllama, fake_claude
 from test_worker import Server, client, wait_for
@@ -107,6 +110,8 @@ def test_the_loop(tmp_path):
         assert a["title"] == "New lessons for sorter"
         assert "Tests: 0/1 now, 1/1 with these." in a["payload"]["summary"]
         assert "- An invoice or a bill always goes to Bills." in a["payload"]["summary"]
+        runs = cl.get(f"/guidance/{ov['key']}/evals")["runs"]
+        assert [(x["passed"], x["total"], x["why"], x["tier"]) for x in runs] == [(0, 1, "review", "T1")]
         proposed = cl.get("/guidance?plugin=sorter")[0]["lessons"]
         assert proposed[0]["state"] == "proposed"
         assert cl.post("/guidance/review")["playbooks"] == 0  # nothing new: no second review
@@ -126,3 +131,62 @@ def test_the_loop(tmp_path):
         lesson = cl.get("/guidance?plugin=sorter")[0]["lessons"][0]["id"]
         cl.call("DELETE", f"/lessons/{lesson}")
         assert cl.get("/guidance?plugin=sorter")[0]["lessons"] == []
+
+
+
+def work(cl, w, jid, until=("succeeded", "dead")):
+    for _ in range(4):
+        w.run_once(wait=1)
+        j = cl.get(f"/jobs/{jid}")
+        if j["state"] in until:
+            return j
+    return wait_for(lambda: (x := cl.get(f"/jobs/{jid}"))["state"] in until and x)
+
+
+def test_lessons_that_make_the_tests_worse_are_not_offered(tmp_path):
+    replies = {"small": [{"folder": "Invoices"}, {"folder": "Photos"},
+                         {"folder": "Photos"},   # tests now: pass
+                         {"folder": "Other"}],   # tests with the new lessons: fail
+               "big": [{"folder": "Bills"}]}
+    with FakeOllama(replies) as ol, Server(make(tmp_path).open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        run_job(cl, w, name="invoice-oct.pdf")
+        s2 = cl.get(f"/jobs/{run_job(cl, w, name='beach.jpg')['id']}/samples")[0]
+        cl.post(f"/samples/{s2['id']}/verdict", {"verdict": "correct"})
+        r = cl.post("/guidance/review")
+        done = work(cl, w, r["job_id"], until=("succeeded", "dead", "waiting"))
+        assert done["state"] == "succeeded", done["error"]
+        assert done["result"]["reviewed"][0]["skipped"].startswith("didn't help: 0/1 tests with them, 1/1 without")
+        assert cl.get("/approvals?state=pending") == [] and cl.get("/guidance?plugin=sorter")[0]["lessons"] == []
+
+
+def test_run_the_tests_now_and_try_another_model(tmp_path):
+    replies = {"small": [{"folder": "Photos"},   # the job
+                         {"folder": "Photos"},   # Run tests now: pass
+                         {"folder": "Other"}],   # the second run: fail
+               "big": [{"folder": "Photos"}]}    # Try with T2: agrees
+    with FakeOllama(replies) as ol, Server(make(tmp_path).open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        s = cl.get(f"/jobs/{run_job(cl, w, name='beach.jpg')['id']}/samples")[0]
+        key = s["playbook"]
+        assert cl.get(f"/guidance/{key}/evals")["runs"] == []
+        cl.post(f"/samples/{s['id']}/verdict", {"verdict": "correct"})
+        assert [t["id"] for t in cl.get(f"/guidance/{key}/evals")["tests"]] == [s["id"]]
+        for want in (1, 0):
+            q = cl.post(f"/guidance/{key}/evals")
+            assert q["tests"] == 1
+            assert work(cl, w, q["job_id"])["result"]["passed"] == want
+        assert [(r["passed"], r["why"]) for r in cl.get(f"/guidance/{key}/evals")["runs"]] == [(1, "manual"),
+                                                                                             (0, "manual")]
+        assert cl.get("/guidance?plugin=sorter")[0]["last_run"]["passed"] == 0
+        rep = cl.post(f"/samples/{s['id']}/replay", {"tier": "T2"})
+        res = work(cl, w, rep["job_id"])["result"]
+        assert res == {"tier": "T2", "answer": {"folder": "Photos"}, "error": None, "kept_tier": "T1",
+                       "kept": {"folder": "Photos"}, "same": True}
+        with pytest.raises(ApiError) as e:
+            cl.post(f"/samples/{s['id']}/replay", {"tier": "T9"})
+        assert e.value.status == 422

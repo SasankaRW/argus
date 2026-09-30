@@ -5,6 +5,10 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Guidance: **Run tests now** on a playbook (Plugins > Learning). Its tests are your Correct answers, else the ones the small model got right, and they're replayed on the first local tier with the lessons in use. It keeps a pass-rate history (table `eval_runs`, migration 0013), shows the tests, and lets you remove one. `GET/POST /guidance/{key}/evals`.
+- Guidance: **Try with another model** under each model answer (job details). The same question goes to another tier, and both answers are shown side by side with whether they agree. `POST /samples/{id}/replay`.
+- Guidance: the nightly review no longer offers lessons that pass fewer tests than the playbook does now ("didn't help"). Its test scores go into the history too.
+- Inbox: a lesson's scores show as passed/total.
 - Helios **Inbox** (`#inbox`, nav badge): approvals, lessons from the nightly review, and Ari's open questions in one list, newest first. Review, approve or answer each one right there. The "awaiting input" details links on the home tiles open it. `GET /inbox`.
 - Helios **Settings** (`#settings`): Argus's own settings (quiet phone, brief and summary times, approval reminders, Claude's daily cap, nightly review, power mode and idle time, backups, Ari's pill) change right away and are kept over argus.yaml. "↺" goes back to the argus.yaml value, and a bad value is refused with the reason. `GET/PUT /argus-settings`.
 - Helios **Models** (`#models`): each tier's state, calls per day over the week, Claude's daily cap and login, calls and hand-ups per plugin, and the models pulled in Ollama. `GET /models/usage`, `GET /models/ollama`.
