@@ -41,5 +41,8 @@ ari:
       input: {name: {type: string, description: the watch's name or the page's address}}
       required: [name]
 
+share:                        # Helios > Share: a link from the phone; a price in the note watches for under it
+  - {workflow: add, label: "Watch this page (a price in the note: tell me when it's under)", accepts: [url]}
+
 helios:
   node: {label: Watchers, group: assistant}

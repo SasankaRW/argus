@@ -169,7 +169,7 @@ function Overview({ d }: { d: Detail }) {
         {perms.files.write.length > 0 && <p>Changes: {perms.files.write.join(", ")}</p>}
         <p>Deletes: {perms.files.delete === "recycle_bin" ? "to the Recycle Bin only" : "never"}</p>
         {perms.models.length > 0 && <p>Models: {perms.models.join(", ")}</p>}
-        {perms.network.length > 0 && <p>Internet: {perms.network.join(", ")}</p>}
+        {perms.network.length > 0 && <p>Internet: {perms.network.includes("*") ? "any public website (never your PC, LAN or tailnet)" : perms.network.join(", ")}</p>}
         <p className="muted">Runs on: {d.runs_on === "desktop" ? "the PC" : d.runs_on}{d.needs.includes("session") ? " (your Windows session)" : ""}</p>
       </div>
     </div>

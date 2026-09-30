@@ -151,7 +151,7 @@ export function SettingsView() {
             <div key={g} className="setgroup">
               <div className="sect">{g.toLowerCase()}</div>
               {list.map((s) => (
-                <div key={s.key} className={`setrow${s.key in draft ? " dirty" : ""}`}>
+                <div key={s.key} className={`setrow${s.key in draft ? " dirty" : ""}${s.type === "text" ? " wide" : ""}`}>
                   <label className="setl" htmlFor={`set-${s.key}`}>
                     {s.label}
                     <span className="setk mono">{s.key}{s.changed ? " · changed" : ""}</span>
@@ -268,6 +268,17 @@ type ModelsSnap = { tiers: Tier[]; chain: string[]; claude: { calls_today: numbe
 type Usage = { days: number; daily: { day: string; tier: string; n: number }[]; plugins: { plugin: string; calls: number; escalations: number }[] };
 type Ollama = { reachable: boolean; error?: string; models: { name: string; size_gb: number; family?: string; params?: string }[] };
 
+// Network errors as people say them ("<urlopen error [Errno 111] Connection refused>" -> "nothing answers there").
+export function plainError(e: string): string {
+  const at = e.match(/https?:\/\/[^\s:]+(?::\d+)?/)?.[0];
+  const where = at ? ` at ${at.replace(/^https?:\/\//, "")}` : "";
+  if (/Errno 111|Connection refused|actively refused|10061/i.test(e)) return `Nothing answers${where}: is it running?`;
+  if (/timed out|timeout/i.test(e)) return `No answer${where} in time.`;
+  if (/Name or service not known|getaddrinfo|nodename nor servname|11001/i.test(e)) return `Can't find that address${where}.`;
+  if (/Errno 113|No route to host|unreachable/i.test(e)) return `Can't reach${where || " it"} from here.`;
+  return e.replace(/^<urlopen error (.*)>$/, "$1");
+}
+
 export function ModelsView({ events }: { events: ArgusEvent[] }) {
   const [m, setM] = useState<ModelsSnap | null>(null);
   const [u, setU] = useState<Usage | null>(null);
@@ -309,7 +320,7 @@ export function ModelsView({ events }: { events: ArgusEvent[] }) {
                   {series.map((n, i) => <i key={days[i]} title={`${days[i]}: ${n}`} style={{ height: `${Math.max(4, (n / max) * 100)}%` }} className={n ? "" : "zero"} />)}
                 </div>
                 <div className="muted mono">{t.provider}{t.model ? ` · ${t.model}` : ""} · {t.calls} calls{t.failures ? ` · ${t.failures} failed` : ""}{t.last_latency_ms ? ` · last ${(t.last_latency_ms / 1000).toFixed(1)} s` : ""}</div>
-                {t.last_error && t.state !== "closed" && <div className="tip bad mono">{t.last_error}</div>}
+                {t.last_error && t.state !== "closed" && <div className="tip bad mono" title={t.last_error}>{plainError(t.last_error)}</div>}
               </div>
             </section>
           );
@@ -352,7 +363,7 @@ export function ModelsView({ events }: { events: ArgusEvent[] }) {
                 <span className="muted mono">{x.size_gb} GB</span>
               </div>
             ))}
-            {o && !o.reachable && <div className="muted">{o.error}</div>}
+            {o && !o.reachable && <div className="muted" title={o.error}>{plainError(o.error ?? "")}</div>}
           </div>
         </section>
       </div>

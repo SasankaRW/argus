@@ -101,10 +101,25 @@ def text_price(text: str) -> tuple[float, str] | None:
     return None
 
 
+UNDER = re.compile(rf"(?:(?:tell me )?(?:when )?(?:it'?s |it is )?(?:under|below|less than|<)\s*)(?:{_CUR}\s?)?"
+                   rf"(?P<n>{_NUM})(?:\s?{_CUR})?", re.I)
+
+
+def note_price(note: str) -> tuple[float | None, str]:
+    """A shared link's note: "under 250,000" (or a price with its currency) is the price to watch for; other
+    words are the part of the page to watch. -> (price or None, the other words)."""
+    m = UNDER.search(note) or PRICE.search(note)
+    if not m:
+        return None, note.strip()
+    n = _num(m.group("n") or m.groupdict().get("n2") or "")
+    return n, (note[:m.start()] + note[m.end():]).strip(" ,.-:")
+
+
 def fmt(price: float, cur: str) -> str:
     n = f"{price:,.2f}".rstrip("0").rstrip(".") if price % 1 else f"{price:,.0f}"
-    c = cur.strip().upper()
-    return f"{c} {n}" if c and c not in ("$", "€", "£", "₹") else f"{cur.strip()}{n}"
+    c = cur.strip().rstrip(".").upper()
+    c = {"RS": "Rs", "USD": "$", "US$": "$", "EUR": "€", "GBP": "£", "INR": "₹"}.get(c, c)
+    return f"{c}{n}" if c in ("$", "€", "£", "₹") else f"{c} {n}" if c else n
 
 
 def read(markup: str, w: dict[str, Any]) -> dict[str, Any]:
@@ -175,16 +190,23 @@ def add(ctx: Context):
         url = "https://" + url
     if not re.fullmatch(r"https?://[^\s/$.?#][^\s]{2,500}", url):
         raise PermanentError("that doesn't look like a web address")
-    kind = str(ctx.input.get("kind") or ("price" if ctx.input.get("below") is not None else "change")).lower()
+    below = ctx.input.get("below")
+    part = " ".join(str(ctx.input.get("part") or "").split())[:80]
+    note = " ".join(str(ctx.input.get("note") or "").split())  # shared from the phone: "under 250,000" or words
+    if note:
+        price, rest = note_price(note)
+        if below in (None, ""):
+            below = price
+        part = part or rest[:80]
+    kind = str(ctx.input.get("kind") or ("price" if below not in (None, "") else "change")).lower()
     if kind not in ("change", "price"):
         raise PermanentError('kind is "change" or "price"')
-    part = " ".join(str(ctx.input.get("part") or "").split())[:80]
-    below = ctx.input.get("below")
     try:
         below = float(below) if below not in (None, "") else None
     except (TypeError, ValueError):
         raise PermanentError("the price to watch for should be a number") from None
-    w = {"name": " ".join(str(ctx.input.get("name") or "").split())[:60] or name_for(url, part), "url": url,
+    given = ctx.input.get("name") or ctx.input.get("title")  # a shared link's page title
+    w = {"name": " ".join(str(given or "").split())[:60] or name_for(url, part), "url": url,
          "kind": kind, "below": below, "part": part}
 
     def first_look():

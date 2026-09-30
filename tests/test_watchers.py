@@ -42,10 +42,16 @@ def test_page_text_and_prices():
     assert wt.text_price("from 45 000 LKR") == (45000.0, "LKR")
     assert wt.text_price("3 items in cart") is None
     assert wt.narrow(t, "keyboard").startswith("Keyboard") and wt.narrow(t, "mouse") is None
-    assert wt.fmt(289000, "LKR") == "LKR 289,000" and wt.fmt(1299.5, "$") == "$1,299.5"
+    assert wt.fmt(289000, "LKR") == "LKR 289,000" and wt.fmt(1299.5, "$") == "$1,299.5" and wt.fmt(5, "Rs.") == "Rs 5"
     meta = ('<meta property="product:price:amount" content="45.50">'
             '<meta property="product:price:currency" content="EUR">')
     assert wt.structured_price(meta) == (45.5, "EUR")
+
+
+def test_a_shared_links_note():
+    assert wt.note_price("tell me when it's under Rs 250,000") == (250000.0, "")
+    assert wt.note_price("RTX 5080 below $999") == (999.0, "RTX 5080")
+    assert wt.note_price("RTX 5080") == (None, "RTX 5080")  # a model number is not a price
 
 
 def test_what_counts():
@@ -133,4 +139,7 @@ def test_watch_by_talking_then_the_check_tells_the_phone(tmp_path, monkeypatch):
         assert listed[0]["price"] == "LKR 279,000" and listed[0]["tell_under"] == "LKR 280,000"
         assert call("check")["result"]["told"] == []  # told once
         assert call("remove", name="rtx")["result"] == {"stopped": "RTX 5080"}
+        shared = call("add", url=page.url, title="Keyboard deal", note="Keyboard under 13,000")["result"]
+        assert shared["say"] == "Watching Keyboard deal: it's Rs 12,500 now; I'll tell you when it's under Rs 13,000."
+        assert call("remove", name="keyboard deal")["result"] == {"stopped": "Keyboard deal"}
         assert call("list")["result"]["watches"] == []

@@ -461,7 +461,8 @@ def create_app(argus: Argus) -> FastAPI:
             "host": argus.cfg.instance.host, "uptime_seconds": h["uptime_seconds"],
             "database": h["database"], "watchdog": h["watchdog"], "events": h["events"],
             "jobs": await argus.jobs.counts(),
-            "workers": [{"id": w["id"], "host": w["host"], "state": w["state"]} for w in workers],
+            "workers": [{"id": w["id"], "host": w["host"], "state": w["state"]} for w in workers
+                        if not (w["id"].endswith("-now") and any(x["id"] == w["id"][:-4] for x in workers))],
             "map": {"nodes": len(m["nodes"]), "edges": len(m["edges"])},
             "token_required": bool(argus.cfg.secrets.worker_token),
         }

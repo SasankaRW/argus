@@ -113,6 +113,7 @@ export function PhoneHome({ status, events, onSelect, onAri, onOpen, onInbox, on
   const d = useHomeData(events);
   const [busy, setBusy] = useState<string | null>(null);
   const online = status?.workers.filter((w) => w.state === "online") ?? [];
+  const machines = new Set(online.map((w) => w.host)).size;  // a worker's fast lane and session worker are the same PC
   const first = d.pending[0];
   const decide = async (id: string, answer: "approve" | "reject") => {
     setBusy(id);
@@ -127,7 +128,7 @@ export function PhoneHome({ status, events, onSelect, onAri, onOpen, onInbox, on
           {onAsk ? (
             <form className="prompt-in" onSubmit={(e) => { e.preventDefault(); if (q.trim()) { onAsk(q.trim()); setQ(""); } }}>
               <span className="caret">›</span>
-              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ask ari, or tell it what to do…" aria-label="Ask Ari" />
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ask ari anything…" aria-label="Ask Ari" />
             </form>
           ) : (
             <button type="button" className="prompt-in" onClick={() => onAri(false)}>
@@ -174,7 +175,7 @@ export function PhoneHome({ status, events, onSelect, onAri, onOpen, onInbox, on
 
       <Tile path="~/pc" dot={online.length ? "var(--ok)" : "var(--bad)"} onOpen={() => onOpen("power")}>
         <div className="tmid">{online.length ? "online" : "offline"}</div>
-        <div className="sub">{online.length} worker{online.length === 1 ? "" : "s"}</div>
+        <div className="sub">{machines} machine{machines === 1 ? "" : "s"}</div>
         <div className="sub">queue <Meter value={Math.min(1, d.queued / 10)} n={6} color="var(--amber)" /> {d.queued}</div>
       </Tile>
 
