@@ -5,6 +5,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- docs/architecture.md: the project explained. The big picture with a diagram, the life of one job, where things live, and each part of the core in its own expandable section (argusd, the store, jobs, events, workers, plugins, models, approvals, scheduler, Ari, guidance, Helios, MCP, security).
 - Ari pill: solid background, and a wider, softer glow around the edge (both looks).
 - Ari pill, smooth redesign in two separate looks (pick one on the Ari page; Argus's default is `ari.pill: pulse`): a smooth black capsule whose edge is lit by a soft blurred light instead of a hard line. **Pulse**: the light breathes with the voice while Ari listens or speaks, slowly while it thinks. **Comet**: a soft light travels round the edge, faster while Ari works. Soft orb with sound bars or dots, blur-in text, and the capsule sizes itself to its content and glides between sizes. `/ari-voice` now also says the default look (`pill`); the PC popup follows it.
 - Ari pill, premium redesign (pulse + comet): a black glass capsule with two lights on its edge. A ring that pulses with the voice while Ari listens or speaks, and a comet that runs round the edge while Ari thinks or works (faster while working), with a soft glow beneath in the state's colour. A glossy orb shows sound bars or a spinning arc. The pill sizes itself to its content and glides between sizes; long answers take two lines. Works at any size (the lights follow the capsule's shape).
