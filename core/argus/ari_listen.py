@@ -301,7 +301,7 @@ def main(argv: list[str] | None = None) -> int:
         import sounddevice as sd  # type: ignore[import-not-found]
 
         dev = sd.query_devices(device, "input")
-        log.info("microphone", extra={"name": dev.get("name"), "device": device})
+        log.info("microphone", extra={"mic": dev.get("name"), "device": device})
     except Exception as e:  # noqa: BLE001 - only for the log
         log.warning("no microphone found", extra={"error": str(e)[:200]})
     loudest, since = 0.0, time.monotonic()

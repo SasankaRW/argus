@@ -5,6 +5,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Ari: the listener names the microphone it uses in logs\ari.log.
 - Ari: "Hey Ari" on the PC no longer freezes while starting: once Whisper can't use the GPU, every model goes straight to the CPU (a second GPU try hung), and the GPU check gives up after 30 s.
 - Ari: pick Ari's voice (11 English Piper voices, downloaded the first time) and speed in Helios (Ari page); kept by Argus so "Hey Ari" on the PC uses it too. `GET /ari-voice/voices`, `PUT /ari-voice/voice`.
 - Ari: recordings from the browser decode with newer PyAV (fixes `open() got an unexpected keyword argument 'metadata_errors'`).
