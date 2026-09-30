@@ -242,28 +242,50 @@ def search(ctx: Context):
             out.append({"file": r["path"], "passage": r["text"][:700]})
             if len(out) >= k:
                 break
+        files = [_file(r) for r in named(conn, q)[:10]]  # "open President.Curtis": a file name, not a topic
         conn.close()
-        return {"results": out} if out else {"results": [], "note": f"nothing in your files about {q!r}"}
+        res: dict = {"results": out}
+        if files:
+            res["files_named"] = files
+        if not out and not files:
+            res["note"] = f"nothing in your files about {q!r}"
+        return res
 
     return ctx.step("search", run)
 
 
+def _words(s: str) -> list[str]:
+    """ "President.Curtis", "president curtis" and "president_curtis" are the same words."""
+    return [w for w in re.split(r"[\s*._\-()\[\]]+", s.lower()) if w]
+
+
+def named(conn: sqlite3.Connection, name: str) -> list[sqlite3.Row]:
+    """Files whose name holds every word of `name` (any order, any separator), newest first."""
+    pats = _words(name)
+    if not pats:
+        return []
+    rows = conn.execute("SELECT path, mtime, size FROM files").fetchall()
+    hits = [r for r in rows if all(w in " ".join(_words(os.path.basename(r["path"]))) for w in pats)]
+    hits.sort(key=lambda r: -r["mtime"])
+    return hits
+
+
+def _file(r: sqlite3.Row) -> dict:
+    return {"path": r["path"], "modified": time.strftime("%Y-%m-%d", time.localtime(r["mtime"])),
+            "size_kb": round(r["size"] / 1024)}
+
+
 @workflow(PLUGIN, "find")
 def find(ctx: Context):
-    name = str(ctx.input.get("name") or "").strip().lower()
+    name = str(ctx.input.get("name") or "").strip()
     if not name:
         return {"files": []}
 
     def run():
         conn = db(ctx)
-        pats = [w for w in re.split(r"[\s*]+", name) if w]
-        rows = conn.execute("SELECT path, mtime, size FROM files").fetchall()
-        hits = [r for r in rows if all(w in os.path.basename(r["path"]).lower() for w in pats)]
-        hits.sort(key=lambda r: -r["mtime"])
+        hits = named(conn, name)
         conn.close()
-        return {"files": [{"path": r["path"], "modified": time.strftime("%Y-%m-%d", time.localtime(r["mtime"])),
-                           "size_kb": round(r["size"] / 1024)} for r in hits[:15]],
-                "more": max(0, len(hits) - 15)}
+        return {"files": [_file(r) for r in hits[:15]], "more": max(0, len(hits) - 15)}
 
     return ctx.step("find", run)
 

@@ -306,3 +306,18 @@ def forget(conn: sqlite3.Connection, memory_id: int) -> bool:
 
 _STOP = {"the", "and", "for", "you", "your", "what", "when", "where", "who", "how", "is", "are", "was", "my", "me",
          "did", "does", "can", "about", "that", "this", "with", "have", "has", "tell", "please", "ari", "do"}
+
+
+def chats(conn: sqlite3.Connection, limit: int = 100) -> list[dict]:
+    """Every conversation, newest first: its first question (the title), the last thing said, how many turns."""
+    rows = conn.execute(
+        "SELECT conv, COUNT(*) AS turns, MIN(created_at) AS started, MAX(created_at) AS updated,"
+        " (SELECT text FROM ari_turns f WHERE f.conv = t.conv AND f.role = 'you' ORDER BY f.id LIMIT 1) AS title,"
+        " (SELECT text FROM ari_turns l WHERE l.conv = t.conv AND l.text IS NOT NULL"
+        "  ORDER BY l.id DESC LIMIT 1) AS last"
+        " FROM ari_turns t GROUP BY conv ORDER BY updated DESC LIMIT ?", (limit,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_chat(conn: sqlite3.Connection, conv: str) -> int:
+    return conn.execute("DELETE FROM ari_turns WHERE conv = ?", (conv,)).rowcount

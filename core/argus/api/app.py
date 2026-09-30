@@ -897,6 +897,18 @@ def create_app(argus: Argus) -> FastAPI:
                                           {"id": {"type": "integer", "description": "the memory's id"}}, ["id"],
                                           fn=_forget)
 
+    @app.get("/ari-chats", dependencies=guarded)
+    async def ari_chats() -> list[dict]:
+        """Ari's past conversations, newest first (for the chat list in Helios)."""
+        return await argus.store.read(lambda c: ari_mod.chats(c))
+
+    @app.delete("/ari-chats/{conv}", dependencies=guarded)
+    async def ari_delete_chat(conv: str) -> dict:
+        n = await argus.store.write(lambda c: ari_mod.delete_chat(c, conv))
+        if not n:
+            raise HTTPException(status_code=404, detail="no such chat")
+        return {"deleted": n}
+
     @app.get("/ari/{conv}", dependencies=guarded)
     async def ari_conv(conv: str) -> dict:
         """The conversation; a model's answer is filled in here once its job finished."""

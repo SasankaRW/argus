@@ -403,8 +403,9 @@ def test_approve_from_the_phone_resumes_the_job_in_under_a_second(tmp_path):
             assert cl.post("/outbox/test")["queued"]
             wait_for(lambda: len(ntfy.messages) == 4)
             assert ntfy.messages[3]["title"] == "Argus test"
-            box = cl.get("/outbox")
-            assert box["counts"]["sent"] == 4 and box["ntfy"] is True
+            # ntfy has the message a moment before the outbox marks it sent: wait for the count
+            box = wait_for(lambda: (b := cl.get("/outbox"))["counts"].get("sent") == 4 and b)
+            assert box["ntfy"] is True
             assert cl.get("/health")["replies"]["handled"] == 1
             evs = [e["kind"] for e in cl.get(f"/jobs/{jid}/events")]
             assert "approval.requested" in evs and "approval.approved" in evs and "outbox.sent" in evs
