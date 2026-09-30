@@ -16,6 +16,7 @@ import { QueueView } from "./QueueView";
 import { RulesView } from "./RulesView";
 import { RunsView } from "./RunsView";
 import { ShareView } from "./ShareView";
+import { Sheet } from "./Sheet";
 import { pref, setPref, setVoiceStatus, voiceStatus, VoiceStatus, WakeListener } from "./voice";
 import { AriPill } from "./AriPill";
 import { ariFromEvents, ariSet, ariTell } from "./ariState";
@@ -31,9 +32,9 @@ const NAV: { id: string; label: string; icon: string }[] = [
   { id: "logs", label: "Logs", icon: "M5 4h14v16H5zM8 8h8M8 12h8M8 16h5" },
 ];
 
-function Icon({ d }: { d: string }) {
+function Icon({ d, size = 16 }: { d: string; size?: number }) {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d={d} />
     </svg>
   );
@@ -155,7 +156,7 @@ export function App() {
   const [wide, setWide] = useState(() => { try { return localStorage.getItem("helios.rail") === "wide"; } catch { return false; } });
   const setWideRail = (v: boolean) => { setWide(v); try { localStorage.setItem("helios.rail", v ? "wide" : "icons"); } catch { /* private */ } };
   const [triedLogin, setTriedLogin] = useState(false);
-  const parse = (h: string) => (["queue", "runs", "logs", "share", "power", "ari", "plugins"].includes(h) || h.startsWith("rules/") || h.startsWith("plugins/") ? h : "map");
+  const parse = (h: string) => (["queue", "runs", "logs", "share", "power", "ari", "plugins", "more"].includes(h) || h.startsWith("rules/") || h.startsWith("plugins/") ? h : "map");
   const [view, setView] = useState<string>(() => parse(location.hash.slice(1)));
   useEffect(() => {  // the share menu opens /helios/#share on a page that may already be open
     const on = () => setView(parse(location.hash.slice(1)));
@@ -234,22 +235,61 @@ export function App() {
 
   const st = a.status;
   const ok = st?.status === "ok" && a.conn === "live";
-  if (phone) {
+  if (phone) {  // the phone: an app-like shell with a tab bar; details open in a bottom sheet
+    const proot = view.split("/")[0];
+    const tab = proot === "map" ? "home" : ["queue", "runs", "power", "logs", "share"].includes(proot) ? "more" : proot;
+    const MORE: [string, string, string][] = [["queue", "Queue", "What runs next"], ["runs", "Runs", "Everything that ran"],
+      ["share", "Share", "Send files to Argus"], ["power", "Power", "Wake, sleep, shut down"], ["logs", "Logs", "What Argus wrote"]];
+    const TABS: [string, string, string][] = [["home", "Home", "M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"],
+      ["ari", "Ari", NAV[1].icon], ["plugins", "Plugins", NAV[2].icon], ["map", "Map", NAV[0].icon], ["more", "More", "M5 12h.01M12 12h.01M19 12h.01"]];
+    const onView = (v: string) => (v === "share" || MORE.some(([id]) => id === v) ? go(v) : (setFullView(true), go(v)));
     return (
-      <div className="pshell">
+      <div className="pshell app">
         <header className="ptop">
-          <div className="brand"><Logo /><b>Helios</b></div>
-          {(view !== "map" || sel) && <button type="button" className="btn" onClick={() => { setSel(null); go("map"); }}>Home</button>}
+          <div className="brand"><Logo /><b>helios</b></div>
+          <span className={`pstat mono ${a.phase === "down" ? "bad" : ok ? "ok" : "warn"}`}>
+            <span className={`dot${ok ? " pulse" : ""}`} style={{ background: a.phase === "down" ? "var(--bad)" : ok ? "var(--ok)" : "var(--amber)" }} />
+            {a.phase === "down" ? "unreachable" : ok ? "healthy" : "connecting"}
+          </span>
         </header>
-        {sel?.type === "job" && a.map ? (
-          <div className="psheet"><Inspector sel={sel} map={a.map} status={st} events={a.events} onSelect={setSel} /></div>
-        ) : view === "share" ? (
-          <ShareView onJob={(id) => { setSel({ type: "job", id }); }} onDone={() => go("map")} />
-        ) : view === "ari" ? (
-          <AriView onSelect={setSel} onView={(v) => (v === "share" ? go("share") : (setFullView(true), go(v)))} />
-        ) : (
-          <PhoneHome status={st} events={a.events} onSelect={setSel} onShare={() => go("share")} onFull={() => setFullView(true)}
-            onAri={() => go("ari")} onMap={() => setBigMap(true)} onView={(v) => (v === "share" ? go("share") : (setFullView(true), go(v)))} />
+        <main key={view} className="pmain">
+          {proot === "ari" ? <AriView onSelect={setSel} onView={onView} />
+          : proot === "plugins" ? (
+            <PluginsView phone selected={view.includes("/") ? decodeURIComponent(view.split("/")[1]) : null}
+              onPick={(id) => go(id ? `plugins/${encodeURIComponent(id)}` : "plugins")} onSelect={setSel} />
+          )
+          : proot === "share" ? <ShareView onJob={(id) => setSel({ type: "job", id })} onDone={() => go("map")} />
+          : proot === "queue" ? <QueueView events={a.events} onSelect={setSel} />
+          : proot === "runs" ? <RunsView events={a.events} selected={null} onSelect={setSel} />
+          : proot === "power" ? <PowerView events={a.events} onSelect={setSel} />
+          : proot === "logs" ? <LogsView />
+          : proot === "more" ? (
+            <section className="pmore">
+              {MORE.map(([id, label, sub]) => (
+                <button key={id} type="button" className="pmore-row" onClick={() => go(id)}>
+                  <span><b>{label}</b><span className="muted">{sub}</span></span><span aria-hidden="true">›</span>
+                </button>
+              ))}
+              <button type="button" className="pmore-row" onClick={() => setFullView(true)}>
+                <span><b>Full dashboard</b><span className="muted">The desktop layout</span></span><span aria-hidden="true">›</span>
+              </button>
+            </section>
+          )
+          : <PhoneHome status={st} events={a.events} onSelect={setSel} onShare={() => go("share")} onFull={() => setFullView(true)}
+              onAri={() => go("ari")} onMap={() => setBigMap(true)} onView={onView} />}
+        </main>
+        <nav className="ptabs" aria-label="Sections">
+          {TABS.map(([id, label, icon]) => (
+            <button key={id} type="button" className="ptab" aria-current={tab === id ? "page" : undefined}
+              onClick={() => (id === "map" ? setBigMap(true) : go(id === "home" ? "map" : id))}>
+              <Icon d={icon} size={22} /><span>{label}</span>
+            </button>
+          ))}
+        </nav>
+        {sel && a.map && (
+          <Sheet onClose={() => setSel(null)}>
+            <Inspector sel={sel} map={a.map} status={st} events={a.events} onSelect={setSel} />
+          </Sheet>
         )}
         {mapFull}
         {heardBadge}
