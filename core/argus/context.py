@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
+from datetime import datetime
 
 from . import __version__
 from .approvals import Approvals
+from .backup import Backups
 from .config import Config
 from .db import Store
 from .events import EventHub, insert_event, prune_events
 from .jobs import JobStore, Watchdog
 from .modelboard import ModelBoard
-from .outbox import Outbox, add_message
+from .outbox import Outbox, add_message, ntfy_message
 from .plugins import PluginHost
 from .power import PowerManager
 from .presence import PhoneWatch
@@ -38,6 +41,7 @@ class Argus:
         self.phone = PhoneWatch(self.store, cfg, self.approvals, self.outbox)
         self.plugin_host = PluginHost(cfg)
         self.power = PowerManager(self.store, cfg)
+        self.power.jobs = self.jobs
         self.scheduler = Scheduler(self.store, self.jobs, cfg)
         self.triggers = Triggers(self.store, self.jobs, cfg)
         self.hub = EventHub(self.store, queue_size=cfg.events.stream_queue)
@@ -47,8 +51,10 @@ class Argus:
             cfg.jobs.watchdog_interval_seconds,
             extra=[lambda: self.registry.mark_stale_workers(stale_after), self.prune_events,
                    self.approval_tick, self.scheduler.tick,
-                   self.power.tick],
+                   self.power.tick, self.backup_tick],
         )
+        self.backups = Backups(cfg.db_path, cfg.backup.keep)
+        self.last_backup: dict | None = None
         self.started_at: float | None = None
         self._next_prune = 0.0
         self.pruned_events = 0
@@ -76,6 +82,50 @@ class Argus:
         self.watchdog.start()
         self.started_at = time.time()
         log.info("argus started", extra={"version": self.version, "instance": self.cfg.instance.name})
+
+    def _backup_due(self, now: float) -> bool:
+        """Tonight's slot has passed and the newest backup is older than it."""
+        if not self.cfg.backup.enabled:
+            return False
+        h, m = map(int, self.cfg.backup.at.split(":"))
+        slot = datetime.fromtimestamp(now).replace(hour=h, minute=m, second=0, microsecond=0).timestamp()
+        if now < slot:
+            slot -= 86400
+        if self.last_backup and self.last_backup.get("at", 0) >= slot:
+            return False  # tried for this slot already (a failed one is not retried until the next)
+        latest = self.backups.list()
+        return not latest or latest[0]["made_at"] < slot
+
+    async def backup_tick(self) -> None:
+        if self._backup_due(time.time()):
+            await self.backup_now()
+
+    async def backup_now(self) -> dict:
+        """Back up and check it; tell the phone if it failed; have the PC fetch a copy (backup.copy_to)."""
+        try:
+            res = await asyncio.to_thread(self.backups.make)
+        except Exception as e:  # disk full, database locked for too long, ...
+            res = {"ok": False, "problem": f"{type(e).__name__}: {e}"}
+        self.last_backup = {**res, "at": time.time()}
+        kind = "backup.made" if res["ok"] else "backup.failed"
+
+        def fn(conn):
+            now = time.time()
+            insert_event(conn, now, kind, src="argus", dst="backup", data=res)
+            if not res["ok"]:
+                add_message(conn, now, "ntfy", ntfy_message("Argus backup failed", str(res.get("problem"))[:300],
+                                                            priority="high", tags=["warning"]),
+                            dedupe_key=f"backup-failed:{time.strftime('%Y%m%d', time.localtime(now))}")
+
+        await self.store.write(fn)
+        if not res["ok"]:
+            self.outbox.poke()
+        elif self.cfg.backup.copy_to:
+            await self.jobs.enqueue("backup", "copy", {"file": res["file"], "to": self.cfg.backup.copy_to,
+                                                       "keep": self.cfg.backup.keep},
+                                    needs=["desktop"], priority=20, dedupe_key=f"backup:{res['file']}",
+                                    source="argus")
+        return res
 
     async def notify_from_job(self, job_id: str, worker: str, key: str, message: dict) -> bool:
         """ctx.notify(): queue an ntfy message for a job the worker holds. The key makes a retried step's

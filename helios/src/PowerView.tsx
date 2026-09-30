@@ -4,6 +4,7 @@ import { ago, tone } from "./format";
 import type { Selection } from "./MapView";
 
 type Power = { mode: string; state: string; idle_since: number | null; idle_minutes: number; pc_online: boolean;
+  shutdown_at: number | null; woken_by_argus: boolean;
   pc: { id: string; host: string; state: string; last_seen: number | null } | null; wol: boolean; delay: number;
   recent: Job[]; pending: Job[] };
 
@@ -32,7 +33,8 @@ export function PowerControls({ events, onSelect, compact = false }: { events: A
   // a shutdown or restart that ran in the last `delay` seconds can still be cancelled
   const countdown = p.recent.find((j) => ["shutdown", "restart"].includes(j.workflow) && j.state === "succeeded"
     && j.finished_at && Date.now() / 1000 - j.finished_at < p.delay);
-  const pending = p.pending.length > 0 || !!countdown;
+  const auto = p.state === "warned" && p.shutdown_at ? p.shutdown_at : null;
+  const pending = p.pending.length > 0 || !!countdown || !!auto;
 
   const act = async (a: string) => {
     if (ASK[a] && !window.confirm(ASK[a].replace("{d}", String(p.delay)))) return;
@@ -40,7 +42,7 @@ export function PowerControls({ events, onSelect, compact = false }: { events: A
     try {
       const r = await api<{ id?: string; sent?: boolean }>(`/power/${a}`, { method: "POST" });
       setMsg(a === "wake" ? "Wake signal sent. The PC takes about a minute to come online."
-        : a === "cancel" ? "Cancelled." : p.pc_online ? `Sent to the PC.` : "Queued: runs when the PC is online.");
+        : a === "cancel" ? "Cancelled." : "Sent to the PC.");
       if (r.id && !compact) onSelect({ type: "job", id: r.id });
       reload();
     } catch (e) {
@@ -58,7 +60,9 @@ export function PowerControls({ events, onSelect, compact = false }: { events: A
       </div>
       {!compact && (
         <div className="tip">
-          Auto power ({p.mode}): {p.state === "busy" ? "PC has work" : p.state === "would_shutdown" ? "would shut it down now (idle)" : p.state === "idle" && p.idle_since ? `idle since ${ago(p.idle_since)}; shuts down after ${p.idle_minutes} min` : p.state}
+          Auto power ({p.mode}): {p.state === "busy" ? "PC has work" : p.state === "would_shutdown" ? "would shut it down now (idle)"
+            : p.state === "held" ? "kept on until the PC has work again" : p.state === "warned" ? "warned on the phone; shutting down soon"
+            : p.state === "shutting_down" ? "shutting down" : p.state === "idle" && p.idle_since ? `idle since ${ago(p.idle_since)}; shuts down after ${p.idle_minutes} min${p.mode === "real" && !p.woken_by_argus ? " (only when Argus woke it)" : ""}` : p.state}
           {p.mode === "simulated" ? " — only logged while developing; these buttons act for real." : ""}
         </div>
       )}
@@ -71,7 +75,9 @@ export function PowerControls({ events, onSelect, compact = false }: { events: A
       </div>
       {pending && (
         <div className="pwr-pending">
-          <span>{countdown ? `${countdown.workflow === "restart" ? "Restarting" : "Shutting down"} in about ${Math.max(0, Math.round(p.delay - (Date.now() / 1000 - (countdown.finished_at ?? 0))))} s` : `${p.pending[0].workflow} is queued`}</span>
+          <span>{auto ? `Idle: shuts down at ${new Date(auto * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}`
+            : countdown ? `${countdown.workflow === "restart" ? "Restarting" : "Shutting down"} in about ${Math.max(0, Math.round(p.delay - (Date.now() / 1000 - (countdown.finished_at ?? 0))))} s`
+            : `${p.pending[0].workflow.replace("_", " ")} is queued`}</span>
           <button type="button" className="btn primary-btn" disabled={busy !== null} onClick={() => act("cancel")}>Cancel</button>
         </div>
       )}

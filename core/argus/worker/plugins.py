@@ -57,9 +57,10 @@ class Files:
         self.blocked = [_expand(p) for p in rules.get("blocked", [])]
         self.dry_run = dry_run
         self._trace = trace
+        self._gone: set[Path] = set()  # dry-run: what this job would have moved away already
 
     def _check(self, path: str | Path, write: bool) -> Path:
-        p = _expand(str(path))
+        p = Path(path).resolve()  # a file's own name is taken literally (no $VAR or ~ expansion)
         if _within(p, self.blocked):
             raise PermissionDenied(f"{p} is in a blocked folder")
         if self.allowed and not _within(p, self.allowed):
@@ -99,32 +100,40 @@ class Files:
     # -------------------------------------------------------------- changing (undo log; dry-run aware)
 
     def _free(self, dst: Path) -> Path:
-        """Never overwrite: "name (1).ext", "name (2).ext", ..."""
-        if not dst.exists():
+        """Never overwrite: "name (1).ext", "name (2).ext", ... Each candidate is checked like the asked path."""
+        if not dst.exists() and not dst.is_symlink():
             return dst
         for i in range(1, 1000):
-            cand = dst.with_name(f"{dst.stem} ({i}){dst.suffix}")
-            if not cand.exists():
+            cand = self._check(dst.with_name(f"{dst.stem} ({i}){dst.suffix}"), True)
+            if not cand.exists() and not cand.is_symlink():
                 return cand
         raise PermissionDenied(f"too many files named like {dst}")
 
+    def _create(self, p: Path, data: bytes) -> Path:
+        """Write a new file, never replacing one (even one that appeared a moment ago)."""
+        p.parent.mkdir(parents=True, exist_ok=True)
+        for _ in range(20):
+            target = self._free(p)
+            try:
+                with open(target, "xb") as f:
+                    f.write(data)
+                return target
+            except FileExistsError:
+                continue
+        raise PermissionDenied(f"could not find a free name for {p}")
+
     def write_text(self, path: str | Path, text: str, encoding: str = "utf-8") -> str:
-        p = self._check(path, True)
-        target = self._free(p)
-        self._trace("file.written", {"path": str(target), "dry_run": self.dry_run})
-        if not self.dry_run:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(text, encoding=encoding)
-        return str(target)
+        """A new text file, written as given (no line-ending changes). Returns where it went."""
+        return self.write_bytes(path, text.encode(encoding))
 
     def write_bytes(self, path: str | Path, data: bytes) -> str:
         """A new file (never replacing one: "name (1).ext"). Returns where it went."""
         p = self._check(path, True)
-        target = self._free(p)
+        if self.dry_run:
+            target = self._free(p)
+        else:
+            target = self._create(p, data)
         self._trace("file.written", {"path": str(target), "size": len(data), "dry_run": self.dry_run})
-        if not self.dry_run:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(data)
         return str(target)
 
     def move(self, src: str | Path, dst: str | Path) -> str:
@@ -134,20 +143,26 @@ class Files:
         if d.is_dir():
             d = d / s.name
         target = self._free(d)
-        self._trace("file.moved", {"from": str(s), "to": str(target), "dry_run": self.dry_run})
         if not self.dry_run:
+            if not s.exists():
+                raise FileNotFoundError(str(s))
             target.parent.mkdir(parents=True, exist_ok=True)
+            if target.exists():  # appeared since _free: pick again
+                target = self._free(d)
             shutil.move(str(s), str(target))
+        else:
+            self._gone.add(s)
+        self._trace("file.moved", {"from": str(s), "to": str(target), "dry_run": self.dry_run})
         return str(target)
 
     def remove_empty_dir(self, path: str | Path) -> bool:
         """Remove a folder only if it is empty (nothing is lost, so write permission is enough)."""
         p = self._check(path, True)
-        if not p.is_dir() or any(p.iterdir()) and not self.dry_run:
+        if not p.is_dir() or any(c not in self._gone for c in p.iterdir()):  # dry-run: as if the moves happened
             return False
-        self._trace("file.removed_dir", {"path": str(p), "dry_run": self.dry_run})
         if not self.dry_run:
             p.rmdir()
+        self._trace("file.removed_dir", {"path": str(p), "dry_run": self.dry_run})
         return True
 
     def recycle(self, path: str | Path) -> None:
@@ -155,17 +170,20 @@ class Files:
         if self.delete != "recycle_bin":
             raise PermissionDenied(f"{self.plugin} may not delete files (permissions.files.delete is none)")
         p = self._check(path, True)
-        self._trace("file.recycled", {"path": str(p), "dry_run": self.dry_run})
-        if self.dry_run:
-            return
-        try:
-            from send2trash import send2trash  # type: ignore[import-not-found]
+        if not self.dry_run:
+            try:
+                from send2trash import send2trash  # type: ignore[import-not-found]
 
-            send2trash(str(p))
-        except ImportError:  # no Recycle Bin support installed: a dated folder in the home directory instead
-            bin_ = Path.home() / ".argus-trash" / time.strftime("%Y-%m-%d")
-            bin_.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(p), str(self._free(bin_ / p.name)))
+                send2trash(str(p))
+            except ImportError:  # no Recycle Bin support installed: a dated folder in the home directory instead
+                bin_ = Path.home() / ".argus-trash" / time.strftime("%Y-%m-%d")
+                bin_.mkdir(parents=True, exist_ok=True)
+                dst = bin_ / p.name
+                i = 1
+                while dst.exists():
+                    dst, i = bin_ / f"{p.stem} ({i}){p.suffix}", i + 1
+                shutil.move(str(p), str(dst))
+        self._trace("file.recycled", {"path": str(p), "dry_run": self.dry_run})
 
 
 class Http:
@@ -260,9 +278,12 @@ def load(infos: list[dict[str, Any]], registry: WorkflowRegistry | None = None) 
     errors: dict[str, str] = {}
     for info in infos:
         pid, path = info["id"], Path(info["path"]) / "plugin.py"
-        if not path.exists():
-            errors[pid] = f"{path} not found on this machine"
-            continue
+        if not path.exists():  # argusd runs elsewhere (the laptop): use this machine's copy of the repo
+            here = Path(os.environ.get("ARGUS_PLUGINS_DIR", "plugins")).resolve() / pid / "plugin.py"
+            if not here.exists():
+                errors[pid] = f"{path} not found on this machine (nor {here})"
+                continue
+            path = here
         name = "argus_plugin_" + pid.replace("-", "_")
         for r in {id(REGISTRY): REGISTRY, id(reg): reg}.values():  # a reload replaces the old workflows
             for k in [k for k in r.items if k[0] == pid]:

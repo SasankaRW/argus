@@ -229,6 +229,8 @@ class PowerConfig(_Strict):
     wol_broadcast: str = "255.255.255.255"
     wol_port: int = Field(9, ge=1, le=65535)
     shutdown_delay_seconds: int = Field(60, ge=0, le=3600)  # time to cancel a shutdown or restart
+    warn_minutes: float = Field(5, ge=0, le=120)  # real mode: phone warning this long before an automatic shutdown
+    shutdown_manual_sessions: bool = False  # real mode: also shut down a PC you switched on yourself
 
     @field_validator("pc_mac")
     @classmethod
@@ -250,6 +252,13 @@ class PluginsConfig(_Strict):
 class ShareConfig(_Strict):
     max_mb: float = Field(50, gt=0, le=2000)  # per share, all files together
     keep_days: float = Field(7, gt=0, le=365)  # shared files are deleted after this
+
+
+class BackupConfig(_Strict):
+    enabled: bool = True
+    at: str = Field("02:30", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")  # local time, every night
+    keep: int = Field(5, ge=1, le=100)  # newest backups kept (here and in copy_to)
+    copy_to: str | None = None  # a folder on the PC, e.g. G:/ArgusBackups: the PC worker fetches each new backup
 
 
 class PathsConfig(_Strict):
@@ -289,6 +298,7 @@ class Config(_Strict):
     power: PowerConfig = Field(default_factory=PowerConfig)
     plugins: PluginsConfig = Field(default_factory=PluginsConfig)
     share: ShareConfig = Field(default_factory=ShareConfig)
+    backup: BackupConfig = Field(default_factory=BackupConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
 
     def model_post_init(self, _ctx) -> None:

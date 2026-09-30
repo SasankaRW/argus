@@ -77,3 +77,92 @@ def test_shutdown_runs_on_the_pc_and_cancel_drops_what_has_not_started(tmp_path,
         assert ran[-1] == ["shutdown", "/a"]
         st = cl.get("/power")
         assert st["pc_online"] is True and st["pc"]["id"] == "pc" and len(st["recent"]) == 3
+
+
+# ------------------------------------------------------------------ automatic power (real mode, on the laptop)
+
+from argus.config import Config, PowerConfig  # noqa: E402
+from argus.jobs import JobStore  # noqa: E402
+from argus.power import PowerManager  # noqa: E402
+from argus.registry import Registry  # noqa: E402
+from conftest import run  # noqa: E402
+
+
+def real_power(store, clock, **kw):
+    cfg = Config(power=PowerConfig(mode="real", pc_mac="04:7C:16:AB:CD:EF", idle_minutes=20, warn_minutes=5, **kw))
+    jobs = JobStore(store, cfg.jobs, clock=clock)
+    pm = PowerManager(store, cfg, clock=clock)
+    pm.jobs = jobs
+    woke: list[float] = []
+    pm.wake = lambda: woke.append(clock()) or {"sent": True}
+    run(pm.start())
+    return pm, jobs, Registry(store, clock=clock), woke
+
+
+def kinds(store, prefix):
+    return run(store.read(lambda c: [r[0] for r in c.execute(
+        "SELECT kind FROM events WHERE kind LIKE ? ORDER BY rowid", (prefix + "%",))]))
+
+
+def test_real_wake_warn_then_shutdown_only_a_pc_argus_woke(store, clock):
+    pm, jobs, reg, woke = real_power(store, clock)
+    job, _ = run(jobs.enqueue("vision", "name", needs=["gpu"]))
+    assert run(pm.tick()) == "busy" and len(woke) == 1  # GPU work and no PC: wake it
+    clock.advance(120)
+    run(reg.register_worker("pc", "SasPC", ["desktop", "gpu"]))
+    run(pm.tick())
+    assert pm.by_argus is True
+    run(jobs.cancel(job))
+    assert run(pm.tick()) == "idle"
+    clock.advance(20 * 60 + 1)
+    assert run(pm.tick()) == "warned"
+    msgs = run(store.read(lambda c: [r[0] for r in c.execute("SELECT payload FROM outbox")]))
+    assert any("PC shuts down at" in m for m in msgs)
+    clock.advance(4 * 60)
+    assert run(pm.tick()) == "warned"
+    clock.advance(61)
+    assert run(pm.tick()) == "shutting_down"
+    q = run(jobs.list_jobs(None, 5, "power"))
+    assert [j.workflow for j in q] == ["auto_shutdown"] and q[0].priority == 100 and q[0].needs == ("desktop",)
+    assert kinds(store, "power.")[:3] == ["power.wake_sent", "power.pc_online", "power.shutdown_warned"]
+
+
+def test_real_never_shuts_down_a_pc_you_switched_on(store, clock):
+    pm, jobs, reg, woke = real_power(store, clock)
+    run(reg.register_worker("pc", "SasPC", ["desktop", "gpu"]))  # on by hand: no wake before
+    run(pm.tick())
+    clock.advance(3 * 3600)
+    assert run(pm.tick()) == "idle" and pm.by_argus is False and not woke
+
+
+def test_cancel_holds_for_this_idle_stretch(store, clock):
+    pm, jobs, reg, woke = real_power(store, clock, shutdown_manual_sessions=True)
+    run(reg.register_worker("pc", "SasPC", ["desktop"]))
+    run(pm.tick())
+    clock.advance(21 * 60)
+    assert run(pm.tick()) == "warned"
+    run(pm.hold())
+    clock.advance(3600)
+    assert run(pm.tick()) == "held" and not run(jobs.list_jobs(None, 5, "power"))
+    job, _ = run(jobs.enqueue("dorg", "sort", needs=["desktop"]))  # work again: a new stretch
+    assert run(pm.tick()) == "busy" and pm.held is False
+
+
+def test_auto_shutdown_skips_when_someone_uses_the_pc(monkeypatch):
+    from argus.worker.workflows import Context
+
+    class R:
+        lease_lost = False
+
+        def step(self, *a, **k):
+            pass
+
+    ran = []
+    monkeypatch.setattr(wpower, "_run", lambda cmd: ran.append(cmd) or "")
+    monkeypatch.setattr(wpower, "WIN", True)
+    monkeypatch.setattr(wpower, "input_idle_seconds", lambda: 90.0)
+    ctx = Context({"id": "j1", "input": {"idle_minutes": 20, "delay": 60}}, R())
+    assert "someone used the PC" in wpower.auto_shutdown(ctx)["skipped"] and not ran
+    monkeypatch.setattr(wpower, "input_idle_seconds", lambda: 3000.0)
+    ctx = Context({"id": "j2", "input": {"idle_minutes": 20, "delay": 60}}, R())
+    assert wpower.auto_shutdown(ctx)["pc"] == "shutting down in 60 s" and ran[-1][:2] == ["shutdown", "/s"]

@@ -1,0 +1,23 @@
+[Unit]
+Description=Argus (argusd)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+User=argus
+Group=argus
+WorkingDirectory=/opt/argus
+ExecStart=/opt/argus/.venv/bin/python -m argus
+Restart=always
+RestartSec=5
+# stop gracefully: jobs in flight are handed back and resumed from their last step
+KillSignal=SIGINT
+TimeoutStopSec=30
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/argus/data /opt/argus/logs
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

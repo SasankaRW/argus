@@ -8,8 +8,10 @@ may run on another machine. Shares are kept in `<data>/shares/<id>/` and deleted
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -18,15 +20,24 @@ from .ids import new_id
 
 SAFE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 ID = re.compile(r"^[0-9A-Z]{10,40}$")
+WIN_RESERVED = re.compile(r"^(con|prn|aux|nul|com\d|lpt\d)(\.|$)", re.I)
 
 
 class ShareError(Exception):
-    pass
+    status = 422
+
+
+class ShareTooBig(ShareError):
+    status = 413
+
+
+class ShareSent(ShareError):
+    status = 409
 
 
 def safe_name(name: str) -> str:
-    n = SAFE.sub("_", name).strip(" .")[:150]
-    return n or "file"
+    n = SAFE.sub("_", name).strip(" .")[:150] or "file"
+    return f"_{n}" if WIN_RESERVED.match(n) else n
 
 
 def kinds_of(meta: dict[str, Any]) -> set[str]:
@@ -52,6 +63,7 @@ class ShareStore:
         self.max_bytes = int(max_mb * 1024 * 1024)
         self.keep = keep_days * 86400
         self.clock = clock
+        self._lock = threading.Lock()  # meta.json is read, changed and written back: one at a time
 
     def _dir(self, sid: str) -> Path:
         if not ID.match(sid):
@@ -65,7 +77,9 @@ class ShareStore:
         return json.loads((self._dir(sid) / "meta.json").read_text(encoding="utf-8"))
 
     def _save(self, sid: str, meta: dict[str, Any]) -> None:
-        (self.root / sid / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+        tmp = self.root / sid / "meta.json.tmp"
+        tmp.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, self.root / sid / "meta.json")
 
     def create(self, title: str = "", text: str = "", url: str = "", note: str = "") -> dict[str, Any]:
         self.cleanup()
@@ -77,34 +91,38 @@ class ShareStore:
         return meta
 
     def add_file(self, sid: str, name: str, mime: str, data: bytes) -> dict[str, Any]:
-        meta = self.meta(sid)
-        if meta["job_id"]:
-            raise ShareError("already sent")
-        used = sum(f["size"] for f in meta["files"])
-        if used + len(data) > self.max_bytes:
-            raise ShareError(f"too big: shares are limited to {self.max_bytes // (1024 * 1024)} MB")
-        n = safe_name(name)
-        taken = {f["name"] for f in meta["files"]}
-        stem, dot, ext = n.rpartition(".")
-        i = 1
-        while n in taken or n == "meta.json":
-            n = f"{stem or ext} ({i}){dot}{ext if stem else ''}"
-            i += 1
-        (self.root / sid / n).write_bytes(data)
-        meta["files"].append({"name": n, "type": mime[:100], "size": len(data)})
-        self._save(sid, meta)
-        return meta
+        with self._lock:
+            meta = self.meta(sid)
+            if meta["job_id"]:
+                raise ShareSent("already sent")
+            used = sum(f["size"] for f in meta["files"])
+            if used + len(data) > self.max_bytes:
+                raise ShareTooBig(f"too big: shares are limited to {self.max_bytes // (1024 * 1024)} MB")
+            n = safe_name(name)
+            taken = {f["name"].casefold() for f in meta["files"]} | {"meta.json", "meta.json.tmp"}
+            stem, dot, ext = n.rpartition(".")
+            i = 1
+            while n.casefold() in taken:
+                n = f"{stem or ext} ({i}){dot}{ext if stem else ''}"
+                i += 1
+            (self.root / sid / n).write_bytes(data)
+            meta["files"].append({"name": n, "type": mime[:100], "size": len(data)})
+            self._save(sid, meta)
+            return meta
 
-    def file_path(self, sid: str, name: str) -> Path:
+    def file_path(self, sid: str, name: str) -> tuple[Path, str]:
+        """The file's path and its type."""
         meta = self.meta(sid)
-        if name not in {f["name"] for f in meta["files"]}:
+        f = next((f for f in meta["files"] if f["name"] == name), None)
+        if f is None:
             raise ShareError("no such file in this share")
-        return self._dir(sid) / name
+        return self._dir(sid) / name, f.get("type") or "application/octet-stream"
 
     def mark_sent(self, sid: str, job_id: str) -> None:
-        meta = self.meta(sid)
-        meta["job_id"] = job_id
-        self._save(sid, meta)
+        with self._lock:
+            meta = self.meta(sid)
+            meta["job_id"] = job_id
+            self._save(sid, meta)
 
     def cleanup(self) -> int:
         if not self.root.is_dir():

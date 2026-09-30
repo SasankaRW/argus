@@ -146,6 +146,9 @@ class Context:
         self.emit: Callable[..., None] = lambda name, **data: None
         self._allowed_tiers: list[str] | None = None  # None: any tier
         self.shared: Callable[[str], bytes] | None = None  # a shared file's bytes, for jobs from Helios > Share
+        self.shared_backup: Callable[[str], bytes] | None = None  # built-in backup copy only
+        self._unsent: list = []  # plugin events waiting to be sent (set by the worker)
+        self._flush_trace: Callable[[], None] = lambda: None
 
     def _check_lease(self) -> None:
         if self._reporter.lease_lost:
