@@ -5,6 +5,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Helios (PC): two home layouts, switched top right and remembered per browser: "desk" (the live map as the main focus with terminal tiles under it: Ari prompt, awaiting input, jobs, saved, PC, tail) and "command" (the map fills the screen, cards in the corners, one command bar: ask Ari or type /queue, /plugins…; Ctrl+K or / to jump to it). The map zooms in further to fill its space.
 - Ari: the listener names the microphone it uses in logs\ari.log.
 - Ari: "Hey Ari" on the PC no longer freezes while starting: once Whisper can't use the GPU, every model goes straight to the CPU (a second GPU try hung), and the GPU check gives up after 30 s.
 - Ari: pick Ari's voice (11 English Piper voices, downloaded the first time) and speed in Helios (Ari page); kept by Argus so "Hey Ari" on the PC uses it too. `GET /ari-voice/voices`, `PUT /ari-voice/voice`.
