@@ -48,18 +48,29 @@ Your jobs, schedules, rules, approvals and history come along.
 
 ## 3. The PC becomes the worker
 
-In `G:\Projects\argus\.env` set `ARGUS_WORKER_TOKEN` to the laptop's (in `/opt/argus/.env`). Then, in PowerShell
-as Administrator:
+In `G:\Projects\argus\.env` set `ARGUS_WORKER_TOKEN` to the laptop's (in `/opt/argus/.env`). Check first (it only
+looks): the laptop answers and takes the token, Argus on the PC is stopped, Ollama has the models, Fast Startup is
+off, and the wired card's address for `power.pc_mac`:
+
+```powershell
+.\scripts\pc-worker.ps1 check http://<laptop's Tailscale name>:8600
+```
+
+Fix any `[!!]` line, then, in PowerShell as Administrator:
 
 ```powershell
 .\scripts\pc-worker.ps1 install http://<laptop's Tailscale name>:8600
 ```
 
-The worker and Ollama now start when the PC boots, before anyone logs in. `.\scripts\pc-worker.ps1 status` shows
+The worker and Ollama now start when the PC boots, before anyone logs in. When you log in, a second supervisor
+starts what needs your session: Ari's PC tools (open apps, volume, ...), "Hey Ari" and the island, all talking to
+the laptop (`logs/supervisor-desk.log`). `.\scripts\pc-worker.ps1 status` shows
 them; `remove` undoes it. Don't run `dev.ps1 up` on the PC any more (that starts a second Argus).
 
 ## 4. Check
 
+- Log in on the PC: the island is at the top of the screen and "Hey Ari" answers; Helios > Map shows the PC
+  online (its GPU worker and `desktop-<pc>` are one PC there).
 - Helios > Power: the PC shows **On**; press **Shut down**, then **Wake**: it comes back within a minute or two.
 - Run "Sort Downloads now": the job runs on the PC while Helios runs on the laptop.
 - Leave the PC idle: after 20 minutes the phone says "PC shuts down at …" (tap it to keep it on), and 5 minutes later

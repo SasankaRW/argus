@@ -5,6 +5,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Laptop move prep: `pc-worker.ps1 check <laptop>` looks before the move (laptop answers, token accepted, the PC's Argus stopped, Ollama models, Fast Startup, the wired card's address); after the move a logon-time supervisor (`--desk-only`) keeps Ari's PC tools, "Hey Ari" and the island on the PC; the map shows the PC's session worker as the same PC.
 - Ari is smarter: combines tools across notes, files, routines, the lab and repos in one answer; follow-ups ("open it", "again") see what its tools found last time; retries a search that found nothing; its last step always says what it got done; replies are cleaned to be read aloud (no markdown, links or lists).
 - Ari's island is now **native Qt**: no browser engine inside, a few MB of memory, and nothing runs while it's idle. It's drawn by hand with smooth curves at every size (a soft tapered lip when idle) and a clean shadow that is no longer cut off.
 - Island, when opened: compact and clean, with the time, **Talk** (the PC's "Hey Ari" listener starts listening now, or Helios's mic when no listener runs), status, inbox, the next job, and your shortcuts on one row. Clicking anywhere else folds it.
