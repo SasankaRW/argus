@@ -1,127 +1,817 @@
-"""Ari's island on the PC: a black shape grown out of the top edge of the main screen, over every app (like the
-iPhone's Dynamic Island, but part of the screen's edge).
+"""Ari's island on the PC: a black shape grown out of the top edge of the main screen, over every app.
 
-    python -m argus.ari_popup            (dev.ps1 up starts it when ari.popup is on; needs: pip install -e .[popup])
+    python -m argus.ari_popup     (dev.ps1 up starts it when ari.popup is on; needs: pip install -e .[popup])
 
-A see-through, always-on-top window at the top middle of the screen that never takes the keyboard. Inside is
-Helios's island (/helios/popup.html), which follows Ari through the event stream: a slim lip while idle, wider while
-Ari listens, thinks, works or talks, the answer when done, and details when you click it. The page's title tells
-the window where the island is ("ari:<mode>|<w>x<h>": only that part takes clicks, the rest of the window lets
-them through to the app below) and when to open Helios ("ari:go|<hash>").
-While it runs, Helios in a browser on this PC leaves the pill to it (no double pill).
+Native Qt (no browser inside): a few MB of memory, and nothing runs while it sits idle. It follows Ari through
+Argus's event stream (a light poll):
+  idle     a slim lip under the edge; hover shows "ari"
+  active   it widens: listening / thinking / working / speaking, with what Ari is on
+  done     the answer, two lines, then it folds back
+  click    it opens down: the time, Talk (the PC's "Hey Ari" listener starts listening), how Argus is doing, what
+           waits for you, the next job, your shortcuts (set up in Helios > Ari > island). Clicking anywhere else
+           folds it again.
+It runs on the machine with your desktop session (the PC), also after Argus itself moves to the laptop: set
+ARGUS_URL to the laptop's address.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
+import math
 import os
 import sys
+import threading
+import time
 import urllib.parse
+import urllib.request
+import webbrowser
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
-W, H = 640, 360  # room for the island at its biggest (details), its shoulders and shadow
-SHRINK_AFTER_MS = 750  # the island folds in on a spring (~.6 s); the click area follows after that
+# ------------------------------------------------------------------ sizes (logical px)
 
+SHOULDER_MAX = 13     # the concave curve into the screen's edge, each side
+MARGIN = 28           # room round the shape for its shadow (the window is this much bigger on 3 sides)
+IDLE = (84, 10)
+HOVER = (138, 22)
+DETAILS_W = 384
+MAX_W = 430
+MAX_H = 300
+W, H = MAX_W + 2 * 30 + 2 * MARGIN, MAX_H + MARGIN  # the window (room for the widest shoulders)
 
-def popup_url(base: str, token: str | None) -> str:
-    q = f"?{urllib.parse.urlencode({'token': token})}" if token else ""
-    return f"{base.rstrip('/')}/helios/popup.html{q}"
+WORDS = {"listening": "listening", "thinking": "thinking", "working": "on it", "speaking": "speaking"}
+NICE = {"search_my_files": "searching your files", "find_file": "looking for the file", "open_app": "opening it",
+        "set_volume": "setting the volume", "argus_status": "checking Argus", "add_note": "writing it down",
+        "run_routine": "running the routine", "lab_status": "checking the lab", "repo_status": "checking your repos"}
+TONE = {"listening": "#39ff9c", "done": "#39ff9c", "working": "#4cc2ff", "thinking": "#f5a524",
+        "speaking": "#f5a524", "idle": "#f5a524"}
 
 
 def placement(x: int, y: int, width: int) -> tuple[int, int, int, int]:
-    """Top middle of the screen area (x, y, width of the available area)."""
+    """The window: top middle of the screen, touching its top edge."""
     return x + (width - W) // 2, y, W, H
 
 
-def parse_title(title: str) -> tuple[str, object] | None:
-    """The page's title -> ("area", (w, h)) where the island is, or ("go", "#hash") to open Helios; else None."""
-    if not title.startswith("ari:") or "|" not in title:
-        return None
-    what, _, arg = title[4:].partition("|")
-    if what == "go":
-        return ("go", arg)
-    try:
-        w, h = (int(x) for x in arg.split("x", 1))
-    except ValueError:
-        return None
-    return ("area", (max(1, min(w, W)), max(1, min(h, H))))
+def shoulder_of(h: float) -> float:
+    return min(SHOULDER_MAX, h * 0.55)
 
 
-def open_target(base: str, arg: str) -> str:
-    """What "ari:go|<arg>" opens: a website shortcut (url:https://...) or a Helios page."""
-    if arg.startswith("url:") and arg[4:].startswith(("http://", "https://")):
-        return arg[4:]
-    return f"{base.rstrip('/')}/helios/{'#' + arg if arg and not arg.startswith('url:') else ''}"
+def radius_of(h: float, sh: float, big: bool) -> float:
+    return max(2.0, min(24.0 if big else 19.0, h - sh, h / 2))
 
 
-def click_area(w: int, h: int) -> tuple[int, int, int, int]:
-    """The part of the window that takes clicks: the island, centred at the top (x, y, w, h in the window)."""
-    return (W - w) // 2, 0, w, h
+def stretch_of(h: float) -> float:
+    """How much wider than tall the curves are: small shapes get long, soft curves (a tapered notch rather than
+    tiny round corners); from 24 px tall they are plain round."""
+    return 1.0 + 1.6 * max(0.0, min(1.0, (24 - h) / 16))
 
 
-def main(argv: list[str] | None = None) -> int:
+def shoulder_w(h: float) -> float:
+    return shoulder_of(h) * stretch_of(h)
+
+
+def outline(w: float, h: float, big: bool) -> list[tuple]:
+    """The shape as path commands (origin: its top-left, shoulders included): ("M", x, y), ("L", ...),
+    ("C", c1x, c1y, c2x, c2y, x, y). Concave shoulders into the edge, round bottom corners."""
+    sh = shoulder_of(h)
+    r = radius_of(h, sh, big)
+    st = stretch_of(h)
+    sw, rx = sh * st, r * st  # horizontal extents of the shoulder and the bottom corner
+    x0, x1, k = sw, sw + w, 0.55
+    return [("M", 0, 0), ("L", x1 + sw, 0),
+            ("C", x1 + sw * (1 - k), 0, x1, sh * k, x1, sh),
+            ("L", x1, h - r),
+            ("C", x1, h - r * (1 - k), x1 - rx * (1 - k), h, x1 - rx, h),
+            ("L", x0 + rx, h),
+            ("C", x0 + rx * (1 - k), h, x0, h - r * (1 - k), x0, h - r),
+            ("L", x0, sh),
+            ("C", x0, sh * k, sw * (1 - k), 0, 0, 0)]
+
+
+@dataclass
+class Spring:
+    """A spring towards a target size: a little overshoot, then it settles."""
+    w: float
+    h: float
+    vw: float = 0.0
+    vh: float = 0.0
+    k: float = 260.0
+    c: float = 26.0
+
+    def step(self, tw: float, th: float, dt: float) -> bool:
+        """Advance dt seconds. True while it still moves."""
+        dt = min(dt, 0.032)
+        for _ in range(2):
+            d = dt / 2
+            self.vw += (self.k * (tw - self.w) - self.c * self.vw) * d
+            self.w += self.vw * d
+            self.vh += (self.k * (th - self.h) - self.c * self.vh) * d
+            self.h += self.vh * d
+        if abs(tw - self.w) < 0.3 and abs(th - self.h) < 0.3 and abs(self.vw) + abs(self.vh) < 2:
+            self.w, self.h, self.vw, self.vh = tw, th, 0.0, 0.0
+            return False
+        return True
+
+
+@dataclass
+class AriState:
+    """What Ari is doing, from the event stream (like Helios's pill)."""
+    phase: str = "idle"
+    text: str = ""
+    since: float = 0.0
+    think_job: str | None = None
+
+    def apply(self, events: list[dict], now: float) -> bool:
+        """Feed events (oldest first). True when what shows changed."""
+        changed = False
+        for e in events:
+            data = e.get("data") or {}
+            if e["kind"] == "ari.state":
+                phase = str(data.get("phase") or "idle")
+                if phase == "thinking":
+                    self.think_job = e.get("job_id")
+                self.phase, self.text, self.since = phase, str(data.get("text") or ""), now
+                changed = True
+            elif e["kind"] == "step.running" and e.get("job_id") and e.get("job_id") == self.think_job:
+                step = str(e.get("step") or "")
+                if step.startswith("tool ") and ": " in step:
+                    name = step.split(": ", 1)[1]
+                    self.phase, self.text, self.since = "working", NICE.get(name, name.replace("_", " ")), now
+                    changed = True
+                elif step == "web":
+                    self.phase, self.text, self.since = "working", "searching the web", now
+                    changed = True
+        return changed
+
+    def fold_due(self, now: float) -> bool:
+        """An answer shows for a while (longer for longer ones), then the island folds."""
+        return self.phase == "done" and now - self.since > min(9.0, 3.5 + len(self.text) * 0.04)
+
+
+def target_size(mode: str, text: str, hover: bool, details_h: float) -> tuple[float, float]:
+    if mode == "details":
+        return DETAILS_W, min(MAX_H, details_h)
+    if mode == "done":
+        return 400, 60
+    if mode == "active":
+        return max(220, min(MAX_W, 70 + len(text) * 7.0)), 36
+    return HOVER if hover else IDLE
+
+
+def next_schedule(schedules: list[dict]) -> dict | None:
+    live = [s for s in schedules if s.get("enabled") and s.get("next_run_at")]
+    return min(live, key=lambda s: s["next_run_at"]) if live else None
+
+
+def open_target(base: str, action: str) -> str | None:
+    """Where a shortcut or link goes in the browser; None when Argus runs it instead."""
+    if action.startswith("url:") and action[4:].startswith(("http://", "https://")):
+        return action[4:]
+    if action.startswith("show:"):
+        page = action[5:]
+        return f"{base.rstrip('/')}/helios/" + ("" if page in ("", "map") else f"#{page}")
+    if action.startswith("helios:"):
+        return f"{base.rstrip('/')}/helios/{action[7:]}"
+    return None
+
+
+# ------------------------------------------------------------------ talking to Argus (a background thread)
+
+class Api:
+    def __init__(self, url: str, token: str | None):
+        self.url, self.token = url.rstrip("/"), token
+
+    def call(self, method: str, path: str, body: Any = None, timeout: float = 6) -> Any:
+        req = urllib.request.Request(self.url + path, method=method,
+                                     data=json.dumps(body).encode() if body is not None else None,
+                                     headers={"Content-Type": "application/json",
+                                              **({"Authorization": f"Bearer {self.token}"} if self.token else {})})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            raw = r.read()
+            return json.loads(raw) if raw else None
+
+
+@dataclass
+class Info:
+    """What the opened island shows (fetched when it opens, and every 15 s while open)."""
+    status: dict | None = None
+    waiting: int = 0
+    next: dict | None = None
+    last: str | None = None
+    widgets: list[dict] = field(default_factory=lambda: [{"id": w, "on": True} for w in
+                                                        ("clock", "status", "inbox", "next", "shortcuts")])
+    shortcuts: list[dict] = field(default_factory=list)
+
+
+def fetch_info(api: Api) -> Info:
+    info = Info()
+    for path, fn in (
+        ("/island", lambda r: (setattr(info, "widgets", r.get("widgets") or info.widgets),
+                               setattr(info, "shortcuts", r.get("shortcuts") or []))),
+        ("/status", lambda r: setattr(info, "status", r)),
+        ("/inbox", lambda r: setattr(info, "waiting", len(r.get("items") or []))),
+        ("/schedules", lambda r: setattr(info, "next", next_schedule(r or []))),
+    ):
+        try:
+            fn(api.call("GET", path))
+        except Exception:  # one part missing is fine
+            pass
+    if any(w.get("id") == "last" and w.get("on") for w in info.widgets):
+        try:
+            chats = api.call("GET", "/ari-chats")
+            if chats:
+                turns = api.call("GET", f"/ari/{chats[0]['conv']}")["turns"]
+                last = next((t["text"] for t in reversed(turns) if t["role"] == "ari" and t.get("text")), None)
+                info.last = last.strip() if last else None
+        except Exception:
+            pass
+    return info
+
+
+# ------------------------------------------------------------------ the window
+
+def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, drawn by hand
     from .config import parse_env_file
 
-    p = argparse.ArgumentParser(prog="ari-popup", description="Ari's popup over the whole screen")
+    p = argparse.ArgumentParser(prog="ari-popup", description="Ari's island at the top of the screen")
     p.add_argument("--url", default=os.environ.get("ARGUS_URL", "http://127.0.0.1:8600"))
+    p.add_argument("--preview", help=argparse.SUPPRESS)  # render one state to a PNG and exit (for checking the look)
+    p.add_argument("--phase", default="idle", help=argparse.SUPPRESS)
+    p.add_argument("--text", default="", help=argparse.SUPPRESS)
+    p.add_argument("--details", action="store_true", help=argparse.SUPPRESS)
+    p.add_argument("--hover", action="store_true", help=argparse.SUPPRESS)
     args = p.parse_args(argv)
     token = os.environ.get("ARGUS_WORKER_TOKEN") or parse_env_file(Path(".env")).get("ARGUS_WORKER_TOKEN")
     try:
-        from PySide6.QtCore import Qt, QTimer, QUrl  # type: ignore[import-not-found]
-        from PySide6.QtGui import QDesktopServices, QRegion  # type: ignore[import-not-found]
-        from PySide6.QtWebEngineWidgets import QWebEngineView  # type: ignore[import-not-found]
-        from PySide6.QtWidgets import QApplication  # type: ignore[import-not-found]
+        from PySide6.QtCore import QObject, QPointF, QRect, QRectF, Qt, QTimer, Signal  # type: ignore
+        from PySide6.QtGui import (  # type: ignore[import-not-found]
+            QBrush,
+            QColor,
+            QCursor,
+            QFont,
+            QFontMetrics,
+            QLinearGradient,
+            QPainter,
+            QPainterPath,
+            QPen,
+            QRadialGradient,
+            QRegion,
+        )
+        from PySide6.QtWidgets import QApplication, QWidget  # type: ignore[import-not-found]
     except ImportError as e:
         print(f"ari-popup needs its extras: pip install -e .[popup]  ({e})", file=sys.stderr)
         return 2
 
-    app = QApplication(sys.argv[:1])
-    app.setQuitOnLastWindowClosed(False)  # hiding the window must not end the app
-    view = QWebEngineView()
-    view.setWindowTitle("Ari")
-    view.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
-                        | Qt.WindowType.Tool | Qt.WindowType.WindowDoesNotAcceptFocus)
-    view.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-    view.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-    view.setStyleSheet("background: transparent")
-    view.page().setBackgroundColor(Qt.GlobalColor.transparent)
+    api = Api(args.url, token)
 
-    def place() -> None:
-        g = app.primaryScreen().geometry()  # the whole screen: the island touches its very top edge
-        view.setGeometry(*placement(g.x(), g.y(), g.width()))
+    class Bus(QObject):
+        events = Signal(list)
+        info = Signal(object)
+        flash = Signal(str)
 
-    place()
-    app.primaryScreen().geometryChanged.connect(lambda _g: place())
-    area = {"now": (220, 21), "next": (220, 21)}
-    view.setMask(QRegion(*click_area(*area["now"])))
-    shrink = QTimer(singleShot=True, interval=SHRINK_AFTER_MS)
+    bus = Bus()
 
-    def apply_next() -> None:
-        area["now"] = area["next"]
-        view.setMask(QRegion(*click_area(*area["now"])))
+    def font(families: list[str], px: float, weight: int = 400) -> QFont:
+        f = QFont()
+        f.setFamilies(families)
+        f.setPixelSize(max(1, round(px)))
+        f.setWeight(QFont.Weight(weight))
+        f.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
+        return f
 
-    shrink.timeout.connect(apply_next)
+    SANS = ["Segoe UI Variable Text", "Segoe UI Variable Display", "Segoe UI", "Inter", "Helvetica Neue", "Arial"]
+    DISPLAY = ["Segoe UI Variable Display", "Segoe UI Variable Text", "Segoe UI", "Inter", "Arial"]
+    MONO = ["Cascadia Mono", "Consolas", "Menlo", "monospace"]
+    F_TEXT = font(SANS, 13)
+    F_SMALL = font(SANS, 12)
+    F_LABEL = font(MONO, 11)
+    F_CLOCK = font(DISPLAY, 26, 300)
+    F_CHIP = font(SANS, 12, 500)
 
-    def on_title(title: str) -> None:
-        got = parse_title(title)
-        if got is None:
-            return
-        what, arg = got
-        if what == "area":
-            area["next"] = arg  # type: ignore[assignment]
-            w, h = area["next"]
-            if w >= area["now"][0] and h >= area["now"][1]:
-                shrink.stop()  # growing: the whole new area at once, so the animation isn't cut off
-                apply_next()
+    class Island(QWidget):
+        def __init__(self) -> None:
+            super().__init__()
+            self.setWindowTitle("Ari")
+            self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
+                                | Qt.WindowType.Tool | Qt.WindowType.WindowDoesNotAcceptFocus)
+            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+            self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+            self.setMouseTracking(True)
+            self.ari = AriState()
+            self.info = Info()
+            self.details = False
+            self.hover = False
+            self.hot: str | None = None  # the button under the mouse
+            self.flash_text: str | None = None
+            self.spring = Spring(*IDLE)
+            self.buttons: list[tuple[QRectF, str]] = []
+            self.details_h = 120.0
+            self.anim = QTimer(self, interval=16)
+            self.anim.timeout.connect(self.frame)
+            self.last_frame = time.monotonic()
+            self.pulse = QTimer(self, interval=33)  # the indicators move while Ari is busy (30 fps)
+            self.pulse.timeout.connect(self.update)
+            self.fold = QTimer(self, singleShot=True)
+            self.fold.timeout.connect(self.check_fold)
+            self.away = QTimer(self, interval=60)  # while open: a click anywhere else folds it
+            self.away.timeout.connect(self.click_away)
+            self.was_down = False
+            self.leave = QTimer(self, singleShot=True, interval=4000)
+            self.leave.timeout.connect(self.close_details)
+            self.refresh = QTimer(self, interval=15000)
+            self.refresh.timeout.connect(self.load_info)
+            self.clock = QTimer(self, interval=1000)
+            self.clock.timeout.connect(self.update)
+            bus.events.connect(self.on_events)
+            bus.info.connect(self.on_info)
+            bus.flash.connect(self.on_flash)
+            self.place()
+            self.set_mask()
+
+        # -------------------------------------------------------------- state
+
+        def mode(self) -> str:
+            if self.details:
+                return "details"
+            if self.ari.phase == "idle":
+                return "idle"
+            return "done" if self.ari.phase == "done" else "active"
+
+        def shown_text(self) -> str:
+            return self.ari.text or ("say what you need" if self.ari.phase == "listening" else "")
+
+        def target(self) -> tuple[float, float]:
+            label = WORDS.get(self.ari.phase, "")
+            return target_size(self.mode(), f"{label}  {self.shown_text()}", self.hover, self.details_h)
+
+        def kick(self) -> None:
+            """Something changed: animate to the new size (the timer stops by itself once it settles)."""
+            self.set_mask()
+            if not self.anim.isActive():
+                self.last_frame = time.monotonic()
+                self.anim.start()
+            busy = self.mode() == "active"
+            if busy and not self.pulse.isActive():
+                self.pulse.start()
+            elif not busy and self.pulse.isActive():
+                self.pulse.stop()
+            self.update()
+
+        def frame(self) -> None:
+            now = time.monotonic()
+            moving = self.spring.step(*self.target(), now - self.last_frame)
+            self.last_frame = now
+            self.set_mask()
+            self.update()
+            if not moving:
+                self.anim.stop()
+
+        def on_events(self, evs: list) -> None:
+            if self.ari.apply(evs, time.monotonic()):
+                if self.ari.phase == "done":
+                    self.fold.start(int(min(9.0, 3.5 + len(self.ari.text) * 0.04) * 1000) + 50)
+                self.kick()
+
+        def check_fold(self) -> None:
+            if self.ari.fold_due(time.monotonic()):
+                self.ari.phase, self.ari.text = "idle", ""
+                self.kick()
+
+        def on_info(self, info: Info) -> None:
+            self.info = info
+            self.kick()
+
+        def on_flash(self, text: str) -> None:
+            self.flash_text = text or None
+            if text:
+                QTimer.singleShot(2600, lambda: self.on_flash(""))
+            self.update()
+
+        def load_info(self) -> None:
+            threading.Thread(target=lambda: bus.info.emit(fetch_info(api)), daemon=True).start()
+
+        def open_details(self) -> None:
+            self.details = True
+            self.load_info()
+            self.refresh.start()
+            self.clock.start()
+            self.away.start()
+            self.kick()
+
+        def close_details(self) -> None:
+            if not self.details:
+                return
+            self.details = False
+            for t in (self.refresh, self.clock, self.away, self.leave):
+                t.stop()
+            self.kick()
+
+        def click_away(self) -> None:
+            """Windows: a mouse press outside the island folds it (it never takes the keyboard, so no focus)."""
+            down = mouse_down()
+            if down and not self.was_down:
+                pos = self.mapFromGlobal(QCursor.pos())
+                if not self.shape_rect().adjusted(-2, -2, 2, 2).contains(QPointF(pos)):
+                    self.close_details()
+            self.was_down = down
+
+        # -------------------------------------------------------------- geometry
+
+        def place(self) -> None:
+            g = QApplication.primaryScreen().geometry()  # the whole screen: it touches its very top edge
+            self.setGeometry(*placement(g.x(), g.y(), g.width()))
+
+        def shape_rect(self) -> QRectF:
+            w, h = self.spring.w, self.spring.h
+            sw = shoulder_w(h)
+            return QRectF((W - w) / 2 - sw, 0, w + 2 * sw, h)
+
+        def set_mask(self) -> None:
+            """Only the island (and room for its shadow) is part of the window; clicks elsewhere go to the app
+            below. While it grows, the whole new size at once, so nothing is cut off."""
+            tw, th = self.target()
+            w, h = max(self.spring.w, tw), max(self.spring.h, th)
+            sh = SHOULDER_MAX * 2.6
+            x = int((W - w) / 2 - sh - MARGIN)
+            self.setMask(QRegion(QRect(max(0, x), 0, min(W, int(w + 2 * sh + 2 * MARGIN) + 2), int(h + MARGIN))))
+
+        # -------------------------------------------------------------- drawing
+
+        def path(self, open_top: bool = False) -> Any:
+            """The shape; open_top: only the part below the screen's edge (for the shadow)."""
+            r = self.shape_rect()
+            p = QPainterPath()
+            cmds = outline(self.spring.w, self.spring.h, self.mode() == "details")
+            if open_top:  # start at the right shoulder's tip, go round the bottom, end at the left tip
+                cmds = [("M", cmds[1][1], cmds[1][2])] + cmds[2:]
+            for cmd in cmds:
+                pts = [QPointF(r.x() + cmd[i], r.y() + cmd[i + 1]) for i in range(1, len(cmd), 2)]
+                if cmd[0] == "M":
+                    p.moveTo(pts[0])
+                elif cmd[0] == "L":
+                    p.lineTo(pts[0])
+                else:
+                    p.cubicTo(pts[0], pts[1], pts[2])
+            if not open_top:
+                p.closeSubpath()
+            return p
+
+        def paintEvent(self, _e: Any) -> None:  # noqa: N802 - Qt's name
+            qp = QPainter(self)
+            qp.setRenderHint(QPainter.RenderHint.Antialiasing)
+            qp.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+            path = self.path()
+            mode = self.mode()
+            tone = QColor(TONE.get(self.ari.phase, "#f5a524"))
+            # soft shadow: the lower outline drawn wider and fainter (cheap, no blur pass); its ends sit on the
+            # screen's edge, so nothing bunches up at the shoulders
+            edge = self.path(open_top=True)
+            qp.save()
+            qp.translate(0, 3)
+            steps = 12
+            for i in range(steps, 0, -1):
+                a = int(30 * (1 - i / (steps + 1)) ** 1.7)
+                qp.setPen(QPen(QColor(0, 0, 0, a), i * 3.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap,
+                               Qt.PenJoinStyle.RoundJoin))
+                qp.drawPath(edge)
+            if mode in ("active", "done"):  # a faint glow in Ari's colour under it
+                for i in range(8, 0, -1):
+                    c = QColor(tone)
+                    c.setAlpha(int(13 * (1 - i / 9) ** 1.4))
+                    qp.setPen(QPen(c, i * 3.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap,
+                                   Qt.PenJoinStyle.RoundJoin))
+                    qp.drawPath(edge)
+            qp.restore()
+            # the shape itself
+            r = self.shape_rect()
+            g = QLinearGradient(0, 0, 0, r.height())
+            g.setColorAt(0, QColor("#000000"))
+            g.setColorAt(0.6, QColor("#030303"))
+            g.setColorAt(1, QColor("#0b0b0c"))
+            qp.setPen(Qt.PenStyle.NoPen)
+            qp.setBrush(QBrush(g))
+            qp.drawPath(path)
+            qp.setClipPath(path)
+            body = QRectF(r.x() + shoulder_w(self.spring.h), 0, self.spring.w, self.spring.h)
+            self.buttons = []
+            if mode == "idle":
+                if self.hover and self.spring.h > 16:
+                    qp.setPen(QColor("#5d6670"))
+                    qp.setFont(F_LABEL)
+                    qp.drawText(body, Qt.AlignmentFlag.AlignCenter, "a r i")
+            elif mode in ("active", "done") and self.spring.h > 24:
+                self.draw_active(qp, body, tone, mode)
+            elif mode == "details":
+                self.draw_details(qp, body)
+            qp.end()
+
+        def draw_indicator(self, qp: Any, cx: float, cy: float, tone: Any) -> None:
+            t = time.monotonic()
+            ph = self.ari.phase
+            if ph in ("listening", "speaking"):
+                speed = 1.6 if ph == "listening" else 1.1
+                for i in range(5):
+                    s = 0.22 + 0.78 * (0.5 + 0.5 * math.sin((t / speed) * 2 * math.pi + i * 1.3))
+                    h = 16 * s
+                    qp.setPen(Qt.PenStyle.NoPen)
+                    qp.setBrush(tone)
+                    qp.drawRoundedRect(QRectF(cx - 9 + i * 4.4, cy - h / 2, 2.4, h), 1.2, 1.2)
+            elif ph in ("thinking", "working"):
+                speed = 0.8 if ph == "working" else 1.1
+                start = -((t / speed) % 1.0) * 360
+                grad = QPen(tone, 2.2)
+                grad.setCapStyle(Qt.PenCapStyle.RoundCap)
+                qp.setPen(grad)
+                qp.setBrush(Qt.BrushStyle.NoBrush)
+                qp.drawArc(QRectF(cx - 7, cy - 7, 14, 14), int(start * 16), int(-250 * 16))
             else:
-                shrink.start()  # shrinking: after the island's own animation
-            view.raise_()
-        elif what == "go":
-            QDesktopServices.openUrl(QUrl(open_target(args.url, str(arg))))
+                glow = QRadialGradient(QPointF(cx, cy), 9)
+                c = QColor(tone)
+                glow.setColorAt(0, c)
+                c2 = QColor(tone)
+                c2.setAlpha(0)
+                glow.setColorAt(1, c2)
+                qp.setPen(Qt.PenStyle.NoPen)
+                qp.setBrush(QBrush(glow))
+                qp.drawEllipse(QPointF(cx, cy), 9, 9)
+                qp.setBrush(tone)
+                qp.drawEllipse(QPointF(cx, cy), 3.8, 3.8)
 
-    view.titleChanged.connect(on_title)
-    view.load(QUrl(popup_url(args.url, token)))
-    view.show()
+        def draw_active(self, qp: Any, body: Any, tone: Any, mode: str) -> None:
+            fade = max(0.0, min(1.0, (self.spring.h - 24) / 10))
+            qp.setOpacity(fade)
+            x = body.x() + 16
+            cy = body.y() + (18 if mode == "active" else 19)
+            self.draw_indicator(qp, x + 9, cy, tone)
+            x += 28
+            right = body.right() - 16
+            if mode == "active":
+                label = WORDS.get(self.ari.phase, "")
+                qp.setFont(F_LABEL)
+                qp.setPen(tone)
+                lw = QFontMetrics(F_LABEL).horizontalAdvance(label)
+                qp.drawText(QRectF(x, body.y(), lw + 2, 36), Qt.AlignmentFlag.AlignVCenter, label)
+                x += lw + 10
+                qp.setFont(F_TEXT)
+                qp.setPen(QColor("#e4e6e8"))
+                text = self.shown_text()
+                text = QFontMetrics(F_TEXT).elidedText(text, Qt.TextElideMode.ElideRight, int(right - x))
+                qp.drawText(QRectF(x, body.y(), right - x, 36), Qt.AlignmentFlag.AlignVCenter, text)
+            else:
+                qp.setFont(F_TEXT)
+                qp.setPen(QColor("#e4e6e8"))
+                qp.drawText(QRectF(x, body.y() + 10, right - x, 42),
+                            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+                            two_lines(self.ari.text, QFontMetrics(F_TEXT), int(right - x)))
+            qp.setOpacity(1)
+
+        def button(self, qp: Any, rect: Any, key: str, text: str, *, fill: str = "#141618", color: str = "#e4e6e8",
+                   f: Any = None, radius: float = 13) -> None:
+            hot = self.hot == key
+            qp.setPen(Qt.PenStyle.NoPen)
+            qp.setBrush(QColor("#1f2225" if hot and fill == "#141618" else fill))
+            qp.drawRoundedRect(rect, radius, radius)
+            qp.setPen(QColor(color))
+            qp.setFont(f or F_CHIP)
+            qp.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
+            self.buttons.append((rect, key))
+
+        def draw_details(self, qp: Any, body: Any) -> None:
+            info = self.info
+            on = {w["id"] for w in info.widgets if w.get("on")}
+            order = [w["id"] for w in info.widgets if w.get("on")]
+            fade = max(0.0, min(1.0, (self.spring.h - 70) / 40))
+            qp.setOpacity(fade)
+            x0, x1 = body.x() + 18, body.right() - 18
+            y = body.y() + 14
+            # header: the time (if on), Talk, and a small "…" for Helios's settings
+            talk = QRectF(x1 - 74, y + 1, 74, 30)
+            more = QRectF(talk.x() - 34, y + 1, 30, 30)
+            if "clock" in on:
+                now = time.localtime()
+                qp.setFont(F_CLOCK)
+                qp.setPen(QColor("#ffffff"))
+                tstr = time.strftime("%H:%M", now)
+                tw = QFontMetrics(F_CLOCK).horizontalAdvance(tstr)
+                qp.drawText(QRectF(x0, y - 2, tw + 4, 34), Qt.AlignmentFlag.AlignVCenter, tstr)
+                qp.setFont(F_SMALL)
+                qp.setPen(QColor("#8b939c"))
+                qp.drawText(QRectF(x0 + tw + 10, y - 1, more.x() - x0 - tw - 12, 34), Qt.AlignmentFlag.AlignVCenter,
+                            time.strftime("%a %d %b", now))
+            else:
+                qp.setFont(F_TEXT)
+                qp.setPen(QColor("#e4e6e8"))
+                qp.drawText(QRectF(x0, y, 120, 32), Qt.AlignmentFlag.AlignVCenter, "ari")
+            self.button(qp, talk, "talk", "●  Talk", fill="#1a2a20" if self.hot != "talk" else "#223a2a",
+                        color="#39ff9c", radius=15)
+            self.button(qp, more, "helios:#ari", "···", color="#8b939c", radius=15)
+            y += 42
+            st = info.status or {}
+            jobs = st.get("jobs") or {}
+            for wid in order:
+                if wid == "status":
+                    running = (jobs.get("running") or 0) + (jobs.get("leased") or 0)
+                    queued = (jobs.get("queued") or 0) + (jobs.get("retry") or 0)
+                    ok = st.get("status") == "ok"
+                    y = self.line(qp, x0, x1, y, "#39ff9c" if ok else "#f5a524", "all good" if ok else "needs a look",
+                                  f"{running} running · {queued} queued")
+                elif wid == "inbox":
+                    if info.waiting:
+                        r = QRectF(x0 - 6, y - 1, x1 - x0 + 12, 24)
+                        self.buttons.append((r, "show:inbox"))
+                        y = self.line(qp, x0, x1, y, "#f5a524", f"{info.waiting} waiting for you", "inbox ›",
+                                      hot=self.hot == "show:inbox")
+                elif wid == "next" and info.next and info.next.get("next_run_at"):
+                    nxt = info.next
+                    at = time.localtime(nxt["next_run_at"])
+                    same_day = time.strftime("%Y%m%d", at) == time.strftime("%Y%m%d")
+                    when = time.strftime("%H:%M" if same_day else "%a %H:%M", at)
+                    y = self.line(qp, x0, x1, y, "#4cc2ff", nxt.get("label") or f"{nxt['plugin']} · {nxt['workflow']}",
+                                  when)
+                elif wid == "last" and info.last:
+                    qp.setFont(F_SMALL)
+                    qp.setPen(QColor("#c9ced3"))
+                    qp.drawText(QRectF(x0, y + 2, x1 - x0, 34), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+                                two_lines("ari › " + info.last, QFontMetrics(F_SMALL), int(x1 - x0)))
+                    y += 38
+                elif wid == "shortcuts" and info.shortcuts:
+                    y += 6
+                    fm = QFontMetrics(F_CHIP)
+                    cx = x0
+                    for sc in info.shortcuts:
+                        label = fm.elidedText(sc["label"], Qt.TextElideMode.ElideRight, 120)
+                        cw = fm.horizontalAdvance(label) + 22
+                        if cx + cw > x1 and cx > x0:
+                            cx, y = x0, y + 34
+                        self.button(qp, QRectF(cx, y, cw, 28), "sc:" + sc["action"], label, radius=14)
+                        cx += cw + 6
+                    y += 34
+            if self.flash_text:
+                qp.setFont(F_SMALL)
+                qp.setPen(QColor("#39ff9c"))
+                qp.drawText(QRectF(x0, y + 2, x1 - x0, 18), Qt.AlignmentFlag.AlignLeft, self.flash_text)
+                y += 22
+            qp.setOpacity(1)
+            h = y - body.y() + 10
+            if abs(h - self.details_h) > 1:
+                self.details_h = h
+                QTimer.singleShot(0, self.kick)
+
+        def line(self, qp: Any, x0: float, x1: float, y: float, dot: str, text: str, right: str,
+                 hot: bool = False) -> float:
+            qp.setPen(Qt.PenStyle.NoPen)
+            qp.setBrush(QColor(dot))
+            qp.drawEllipse(QPointF(x0 + 3.5, y + 11), 3.5, 3.5)
+            fm = QFontMetrics(F_TEXT)
+            qp.setFont(F_SMALL)
+            rw = QFontMetrics(F_SMALL).horizontalAdvance(right) + 4
+            qp.setPen(QColor("#e4e6e8" if hot else "#7d8691"))
+            qp.drawText(QRectF(x1 - rw, y, rw, 22), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, right)
+            qp.setFont(F_TEXT)
+            qp.setPen(QColor("#e4e6e8"))
+            left = fm.elidedText(text, Qt.TextElideMode.ElideRight, int(x1 - x0 - 16 - rw - 8))
+            qp.drawText(QRectF(x0 + 14, y, x1 - x0 - 14 - rw, 22), Qt.AlignmentFlag.AlignVCenter, left)
+            return y + 26
+
+        # -------------------------------------------------------------- mouse
+
+        def key_at(self, pos: Any) -> str | None:
+            for rect, key in self.buttons:
+                if rect.contains(QPointF(pos)):
+                    return key
+            return None
+
+        def enterEvent(self, _e: Any) -> None:  # noqa: N802
+            self.leave.stop()
+            if not self.hover:
+                self.hover = True
+                self.kick()
+
+        def leaveEvent(self, _e: Any) -> None:  # noqa: N802
+            self.hover, self.hot = False, None
+            if self.details:
+                self.leave.start()
+            self.kick()
+
+        def mouseMoveEvent(self, e: Any) -> None:  # noqa: N802
+            inside = self.shape_rect().contains(QPointF(e.position()))
+            key = self.key_at(e.position()) if inside else None
+            if key != self.hot:
+                self.hot = key
+                self.setCursor(Qt.CursorShape.PointingHandCursor if (key or inside) else Qt.CursorShape.ArrowCursor)
+                self.update()
+            if inside != self.hover:
+                self.hover = inside
+                self.kick()
+
+        def mousePressEvent(self, e: Any) -> None:  # noqa: N802
+            if not self.shape_rect().contains(QPointF(e.position())):
+                return
+            key = self.key_at(e.position()) if self.details else None
+            if key is None:
+                (self.close_details if self.details else self.open_details)()
+                return
+            if key == "talk":
+                self.talk()
+            elif key.startswith(("helios:", "show:")):
+                target = open_target(args.url, key)
+                if target:
+                    webbrowser.open(target)
+                self.close_details()
+            elif key.startswith("sc:"):
+                self.shortcut(key[3:])
+
+        def talk(self) -> None:
+            def go() -> None:
+                try:
+                    r = api.call("POST", "/ari/wake")
+                except Exception:
+                    r = {"listener": False}
+                if not r.get("listener"):  # no "Hey Ari" listener on this PC: Helios's mic instead
+                    webbrowser.open(f"{args.url.rstrip('/')}/helios/?app=1&mic=1#ari")
+            threading.Thread(target=go, daemon=True).start()
+            self.close_details()
+
+        def shortcut(self, action: str) -> None:
+            target = open_target(args.url, action)
+            if target:
+                webbrowser.open(target)
+                self.close_details()
+                return
+            label = next((s["label"] for s in self.info.shortcuts if s["action"] == action), action)
+            bus.flash.emit(f"{label}…")
+
+            def go() -> None:
+                try:
+                    api.call("POST", "/island/run", {"action": action}, timeout=15)
+                    bus.flash.emit(f"{label} ✓")
+                except Exception as e:  # noqa: BLE001 - shown on the island
+                    bus.flash.emit(f"{label}: {str(e)[:60]}")
+            threading.Thread(target=go, daemon=True).start()
+
+    def two_lines(text: str, fm: Any, width: int) -> str:
+        """The text in at most two lines; the second is cut with … when there is more."""
+        words = text.split()
+        first = ""
+        while words and (not first or fm.horizontalAdvance(f"{first} {words[0]}") <= width):
+            first = f"{first} {words.pop(0)}".strip()
+        if not words:
+            return first
+        return first + "\n" + fm.elidedText(" ".join(words), Qt.TextElideMode.ElideRight, width)
+
+    def mouse_down() -> bool:
+        if sys.platform != "win32":
+            return bool(QApplication.mouseButtons() & Qt.MouseButton.LeftButton)
+        import ctypes
+
+        return bool(ctypes.windll.user32.GetAsyncKeyState(0x01) & 0x8000)
+
+    app = QApplication(sys.argv[:1])
+    app.setQuitOnLastWindowClosed(False)
+    island = Island()
+    if args.preview:
+        island.ari.phase, island.ari.text = args.phase, args.text
+        island.hover = args.hover
+        if args.details:
+            island.details = True
+            island.info = Info(status={"status": "ok", "jobs": {"running": 1, "queued": 2}}, waiting=3,
+                               next={"label": "homelab · check", "plugin": "homelab", "workflow": "check",
+                                     "next_run_at": time.time() + 1800},
+                               shortcuts=[{"label": "Sort downloads", "action": "run:x"},
+                                          {"label": "Work mode", "action": "routine:work mode"},
+                                          {"label": "Inbox", "action": "show:inbox"},
+                                          {"label": "Helios", "action": "show:map"}])
+        for _ in range(3):  # lay out (the details measure themselves), then settle the size
+            island.spring.w, island.spring.h = island.target()
+            island.grab()
+        island.grab().save(args.preview)
+        return 0
+    island.show()
+    app.primaryScreen().geometryChanged.connect(lambda _g: island.place())
+
+    def feed() -> None:
+        """Follow Ari: a light poll of the event stream (faster while Ari is busy), and "I'm here" every 30 s."""
+        seq, last_ping = -1, 0.0
+        while True:
+            try:
+                if time.monotonic() - last_ping > 30:
+                    api.call("POST", "/ari/popup")
+                    last_ping = time.monotonic()
+                if seq < 0:
+                    seq = int(api.call("GET", "/events?kinds=ari.state&limit=1&newest=true").get("seq") or 0)
+                r = api.call("GET", f"/events?kinds=ari.state,step.running&after={seq}&limit=200")
+                evs = r.get("events") or []
+                if evs:
+                    seq = max(int(e["seq"]) for e in evs)
+                    bus.events.emit(evs)
+            except Exception:  # Argus restarting or out of reach: look again later
+                time.sleep(4)
+            busy = island.ari.phase not in ("idle",)
+            time.sleep(0.5 if busy else 1.2)
+
+    threading.Thread(target=feed, daemon=True, name="ari-feed").start()
     print("Ari's island is on (top of the screen).", flush=True)
     return app.exec()
 

@@ -151,9 +151,12 @@ def main(argv: list[str] | None = None) -> int:
     token = os.environ.get("ARGUS_WORKER_TOKEN") or env.get("ARGUS_WORKER_TOKEN")
 
     children = [] if args.no_argusd else [Child("argusd", ["-m", "argus"], marker_path())]
-    if not args.no_argusd and listen_on():  # "Hey Ari" on this PC's microphone
+    # "Hey Ari" and the island belong to the PC you sit at: the machine with the worker in your session. They talk
+    # to Argus over ARGUS_URL, so they stay on the PC when Argus itself moves to the laptop (--no-argusd).
+    desk = not args.no_worker and not args.no_session
+    if desk and listen_on():  # "Hey Ari" on this PC's microphone
         children.append(Child("ari-listen", ["-m", "argus.ari_listen", "--log-file", "logs/ari.log"]))
-    if not args.no_argusd and not args.no_session and ari_on("popup"):  # Ari's popup over the whole screen
+    if desk and ari_on("popup"):  # Ari's island at the top of the screen
         children.append(Child("ari-popup", ["-m", "argus.ari_popup"]))
     if not args.no_worker:
         caps = ["--cap", "desktop", "--cap", "gpu"] + ([] if args.no_session else ["--cap", "session"])

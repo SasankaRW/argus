@@ -5,6 +5,10 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Ari's island is now **native Qt**: no browser engine inside, a few MB of memory, and nothing runs while it's idle. It's drawn by hand with smooth curves at every size (a soft tapered lip when idle) and a clean shadow that is no longer cut off.
+- Island, when opened: compact and clean, with the time, **Talk** (the PC's "Hey Ari" listener starts listening now, or Helios's mic when no listener runs), status, inbox, the next job, and your shortcuts on one row. Clicking anywhere else folds it.
+- "Hey Ari" and the island run on the PC with your desktop session, also after Argus moves to the laptop (they follow ARGUS_URL). New `POST /ari/wake` and `POST /ari/listener`.
+- The browser-based popup page is removed from Helios; the `popup` extra is now PySide6-Essentials, which is much smaller.
 - New Argus icon: the iris, a warm-to-blue gradient ring with a bright pupil (app icon, maskable icon, favicon, Helios header). It replaces the sun.
 - The phone app: Helios installs as **Argus** (More > install-app). It has a new icon, long-press shortcuts (Talk to Ari with the mic on, Inbox, Share, Map), opens instantly from its own copy, and says "can't reach argus" when the PC or Tailscale is off. The share menu works as before.
 - New Argus mark (app icon, maskable icon, favicon, Helios header): a glowing core with a fine corona and an orbit.

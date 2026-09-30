@@ -11,7 +11,7 @@ export default defineConfig({
     outDir: "../core/argus/helios_dist",
     emptyOutDir: true,
     chunkSizeWarningLimit: 2000,
-    rollupOptions: { input: { main: "index.html", popup: "popup.html" } },  // popup: the PC's Ari popup
+    rollupOptions: { input: { main: "index.html" } },
   },
   server: {
     proxy: {

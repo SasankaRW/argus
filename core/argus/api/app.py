@@ -890,6 +890,23 @@ def create_app(argus: Argus) -> FastAPI:
         await argus.store.write(lambda c: ari_state(c, body.phase, body.text, by=body.by or "client"))
         return {"ok": True}
 
+    listener = {"seen": 0.0}
+
+    @app.post("/ari/listener", dependencies=guarded)
+    async def ari_listener_here() -> dict:
+        """The PC's "Hey Ari" listener says it is running (every 30 s)."""
+        listener["seen"] = time.time()
+        return {"ok": True}
+
+    @app.post("/ari/wake", dependencies=guarded)
+    async def ari_wake() -> dict:
+        """The island's Talk button: the PC's listener starts listening now, no "Hey Ari" needed. {listener: false}
+        when no listener runs (the island then opens Helios's mic instead)."""
+        here = time.time() - listener["seen"] < 75
+        if here:
+            await argus.store.write(lambda c: insert_event(c, time.time(), "ari.wake", src="island", dst="ari"))
+        return {"listener": here}
+
     @app.post("/ari/popup", dependencies=guarded)
     async def ari_popup_ping(request: Request) -> dict:
         """The PC's Ari popup is running (sent every 30 s): Helios on that PC then leaves the pill to it."""
