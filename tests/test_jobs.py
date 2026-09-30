@@ -306,3 +306,17 @@ def test_rerun_with_an_active_duplicate_is_refused(jobs):
 
     with pytest.raises(InvalidTransition, match="dedupe"):
         run(go())
+
+
+def test_the_fast_lane_takes_only_interactive_jobs_and_skips_the_gpu_queue(jobs):
+    """Ari's jobs start at once: the worker's fast lane claims only interactive jobs, and they don't wait for a
+    batch job holding the GPU."""
+    caps = {"cpu", "gpu"}
+    batch, _ = run(jobs.enqueue("index", "run", needs=["gpu"], priority=20))
+    assert run(jobs.claim(W, caps, min_priority=90)) is None  # nothing urgent: the fast lane leaves it
+    assert run(jobs.claim(W, caps)).id == batch  # the main lane takes the batch job (GPU now busy)
+    think, _ = run(jobs.enqueue("ari", "think", needs=["gpu"], priority=90))
+    other, _ = run(jobs.enqueue("demo", "echo", needs=["gpu"], priority=50))
+    assert run(jobs.claim("worker-a-now", caps, min_priority=90)).id == think
+    assert run(jobs.claim("worker-b", caps)) is None  # an ordinary GPU job still waits its turn
+    assert other

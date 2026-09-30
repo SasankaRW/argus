@@ -24,7 +24,6 @@ from typing import Any
 
 from .config import Config, FolderTrigger, WebhookTrigger
 from .db import Store
-from .events import insert_event
 from .jobs.store import JobStore
 
 MAX_SKEW = 300  # seconds a signed webhook may be old or early
@@ -78,11 +77,12 @@ class Triggers:
             row = conn.execute("SELECT job_id, path FROM files_seen WHERE plugin = ? AND sha256 = ?",
                                (f.plugin, sha256)).fetchone()
             if row is not None:
-                # A copy somewhere else is worth an event; the same file offered again after a restart is not
-                # (the watcher re-reports every file it finds when it starts, which flooded the event log).
+                # Seen before: the watcher re-reports every file when it starts, and a plugin that renames a file
+                # (screenshot-renamer) makes it look new by path. Neither is news, so no event: remember where the
+                # file is now and move on quietly.
                 if row["path"] != path:
-                    insert_event(conn, now, "trigger.duplicate", job_id=row["job_id"], src=worker, dst=f.plugin,
-                                 data={"trigger": name, "path": path[-200:]})
+                    conn.execute("UPDATE files_seen SET path = ?, updated_at = ? WHERE plugin = ? AND sha256 = ?",
+                                 (path, now, f.plugin, sha256))
                 return {"status": "duplicate", "job_id": row["job_id"]}
             job_id, _ = self.jobs.enqueue_in(
                 conn, now, f.plugin, f.workflow,

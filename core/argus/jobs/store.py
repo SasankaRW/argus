@@ -16,7 +16,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
-from ..config import JobsConfig
+from ..config import PRIORITY_INTERACTIVE, JobsConfig
 from ..cron import in_window, window_opens
 from ..db import Store
 from ..events import insert_event
@@ -327,10 +327,12 @@ class JobStore:
     # ------------------------------------------------------------------ worker side
 
     async def claim(self, worker: str, capabilities: Iterable[str],
-                    plugins: Iterable[str] | None = None) -> Job | None:
+                    plugins: Iterable[str] | None = None, min_priority: int | None = None) -> Job | None:
         """Lease the best claimable job this worker can run, or return None.
 
         `plugins`, when given, limits the claim to jobs of those plugins (the worker has their code).
+        `min_priority`: only jobs at least this urgent (the worker's fast lane takes only interactive jobs, so Ari
+        answers at once even while the main lane runs a long batch job).
         """
         caps = set(capabilities)
         only = set(plugins) if plugins is not None else None
@@ -340,6 +342,9 @@ class JobStore:
             now = self.clock()
             sql = "SELECT * FROM jobs WHERE state IN (?, ?) AND run_after <= ?"
             args: list[Any] = [*[s.value for s in CLAIMABLE_STATES], now]
+            if min_priority is not None:
+                sql += " AND priority >= ?"
+                args.append(min_priority)
             if only is not None:
                 if not only:
                     return None
@@ -361,8 +366,8 @@ class JobStore:
                     continue
                 if running.get(job.plugin, 0) >= self.cfg.limit_for(job.plugin):
                     continue
-                if "gpu" in job.needs and gpu_busy:
-                    continue  # one GPU job at a time
+                if "gpu" in job.needs and gpu_busy and job.priority < PRIORITY_INTERACTIVE:
+                    continue  # one GPU job at a time (you, talking to Argus, don't wait for a batch job)
                 if job.run_window and job.run_window in self.windows and not in_window(
                         self.windows[job.run_window], now):
                     continue

@@ -129,6 +129,7 @@ class Claim(BaseModel):
     capabilities: list[str] = Field(default_factory=list)
     plugins: list[str] | None = None
     wait: float = Field(0, ge=0, le=MAX_CLAIM_WAIT)
+    min_priority: int | None = None  # a worker's fast lane: only jobs at least this urgent
 
 
 class WorkerOnly(BaseModel):
@@ -1319,7 +1320,7 @@ def create_app(argus: Argus) -> FastAPI:
         while True:
             job = None
             if await argus.jobs.has_claimable():
-                job = await argus.jobs.claim(worker_id, body.capabilities, body.plugins)
+                job = await argus.jobs.claim(worker_id, body.capabilities, body.plugins, body.min_priority)
             if job is not None:
                 out = job_json(job, await argus.jobs.steps(job.id))
                 p = argus.plugin_host.plugins.get(job.plugin)

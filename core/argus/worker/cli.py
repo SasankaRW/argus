@@ -20,13 +20,14 @@ import logging
 import os
 import signal
 import sys
+import threading
 from pathlib import Path
 
 from .. import __version__
 from ..config import parse_env_file
 from ..logs import setup_logging
 from .client import ArgusClient, Unreachable
-from .runner import Worker
+from .runner import Worker, fast_lane
 
 log = logging.getLogger("argus.worker")
 
@@ -42,6 +43,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="Ollama address as this machine sees it (default: the one argusd hands out)")
     p.add_argument("--no-demo", action="store_true", help="do not load the built-in demo plugin")
     p.add_argument("--once", action="store_true", help="run at most one job, then exit")
+    p.add_argument("--no-fast-lane", action="store_true",
+                   help="no second loop for interactive jobs (Ari, Ask Argus); they then wait for the running job")
     p.add_argument("--log-level", default="INFO")
     p.add_argument("--log-file", default=os.environ.get("ARGUS_WORKER_LOG"),
                    help="also write JSON-lines logs here (rotated), e.g. logs/worker.log; Helios shows it")
@@ -85,6 +88,10 @@ def main(argv: list[str] | None = None) -> int:
             worker.register()
             worker.run_once(wait=0)
         else:
+            if not args.no_fast_lane:  # Ari and Ask Argus never wait behind a long job
+                worker.register()
+                lane = fast_lane(worker)
+                threading.Thread(target=lane.run_forever, name="fast-lane", daemon=True).start()
             worker.run_forever()
     except Unreachable as e:
         print(f"Argus is not reachable at {args.url}: {e}", file=sys.stderr)
