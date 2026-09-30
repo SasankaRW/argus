@@ -239,7 +239,8 @@ class Approvals:
 
     async def request(self, job_id: str, worker: str, key: str, type_: str, title: str, *,
                       fields: dict | None = None, items: list | None = None, summary: list | None = None,
-                      link: str | None = None, step: str | None = None) -> tuple[dict[str, Any], bool]:
+                      link: str | None = None, step: str | None = None,
+                      image: str | None = None) -> tuple[dict[str, Any], bool]:
         """Create the approval for `key`, or return the one that already exists. Returns (approval, created)."""
         if type_ not in TYPES:
             raise ApprovalError(f"type must be one of {', '.join(TYPES)}")
@@ -251,6 +252,9 @@ class Approvals:
         raw = _dumps(payload)
         if len(raw) > MAX_PAYLOAD:
             raise ApprovalError(f"approval too large ({len(raw)} bytes, limit {MAX_PAYLOAD}); link to the full list")
+        if image:  # a small picture (not counted in the limit above; the API caps it)
+            payload["image"] = image
+            raw = _dumps(payload)
         cfg = self.cfg.approvals
 
         def fn(conn: sqlite3.Connection) -> tuple[dict[str, Any], bool]:

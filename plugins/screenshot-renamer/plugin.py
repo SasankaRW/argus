@@ -224,23 +224,33 @@ def suggest(ctx: Context, path: str, data: bytes) -> tuple[str | None, str]:
 
     order = ["vision", "text"] if ctx.config.get("prefer", "vision") == "vision" else ["text", "vision"]
     why = "no usable name"
-    for route in order:
+    pic = shrink(data, int(ctx.config.get("vision_max_side", 1280)))
+    for route in order:  # the local models first; Claude only when both routes fail
         try:
             if route == "vision":
-                pic = shrink(data, int(ctx.config.get("vision_max_side", 1280)))
                 task: dict = {"task": "name this screenshot"}
                 if screen.get("focus"):
                     task["text_near_the_middle"] = screen["focus"][:15]  # a hint; may still include background
-                n = ctx.llm(PLAYBOOK, task, schema=Name, check=check, tiers=["V1"], images=[pic])
+                n = ctx.llm(PLAYBOOK, task, schema=Name, check=check, tiers=["V1"], images=[pic], claude_last=False)
                 return clean(n.words), "vision (V1)"
             if len(text) >= MIN_TEXT:
-                n = ctx.llm(PLAYBOOK, {"lines_most_prominent_first": screen["focus"]}, schema=Name, check=check)
+                n = ctx.llm(PLAYBOOK, {"lines_most_prominent_first": screen["focus"]}, schema=Name, check=check,
+                            tiers=ctx.local_tiers(), claude_last=False)
                 return clean(n.words), f"text ({ctx.last_answer.tier})"
         except EscalationExhausted as e:
             why = str(e)
             if route == "vision" and ("not available" in why or "V1" in why):
                 why += " - is V1 set in argus.yaml and qwen2.5vl:7b pulled?"
-    return None, f"no usable name ({why[:180]})"
+    try:  # Claude sees the picture; the text on screen is a hint, not a rule here
+        task = {"task": "name this screenshot"}
+        if screen.get("focus"):
+            task["text_near_the_middle"] = screen["focus"][:15]
+        n = ctx.claude(PLAYBOOK, task, schema=Name, check=lambda n, _i: problem(n.words), images=[pic],
+                       advice=f"The local models could not name it: {why[:300]}")
+        return clean(n.words), f"Claude ({ctx.last_answer.tier})"
+    except EscalationExhausted as e:
+        why = f"{why[:120]}; Claude: {str(e)[:120]}"
+    return None, f"no usable name ({why[:240]})"
 
 
 def rename_one(ctx: Context, path: str) -> dict:
@@ -253,10 +263,28 @@ def rename_one(ctx: Context, path: str) -> dict:
     data = ctx.files.read_bytes(path)
     words, how = suggest(ctx, path, data)
     if not words:
-        return {"file": name, "skipped": how}
+        return {"file": name, "skipped": how, "ask": True}
     new = f"{date_for(name, st.st_mtime)} {words}{os.path.splitext(name)[1].lower()}"
     to = ctx.files.move(path, os.path.join(os.path.dirname(path), new))
     return {"file": name, "renamed": os.path.basename(to), "how": how}
+
+
+def ask_you(ctx: Context, path: str, skipped: dict) -> dict:
+    """Nobody could name it: you do (Helios and the phone show the picture). Rejecting leaves it as it is."""
+    name = os.path.basename(path)
+    if ctx.dry_run or not os.path.exists(path) or not is_default_name(name):
+        return skipped
+    thumb = shrink(ctx.files.read_bytes(path), 640)
+    if len(thumb) > 250_000:
+        thumb = b""
+    got = ctx.ask_me("Name this screenshot", {"name": ""}, image=thumb or None,
+                     summary=[name, "Argus and Claude couldn't name it. Type 3 to 6 words, or Reject to leave it."])
+    words = clean((got or {}).get("name") or "")
+    if not words:
+        return {**skipped, "ask": False, "skipped": "you left it as it is"}
+    new = f"{date_for(name, ctx.files.stat(path).st_mtime)} {words}{os.path.splitext(name)[1].lower()}"
+    to = ctx.files.move(path, os.path.join(os.path.dirname(path), new))
+    return {"file": name, "renamed": os.path.basename(to), "how": "you"}
 
 
 # ------------------------------------------------------------------ workflows
@@ -268,6 +296,8 @@ def name(ctx: Context):
     if not path:
         raise PermanentError("no path in the job input")
     out = ctx.step("rename", rename_one, ctx, path)
+    if out.get("ask"):
+        out = ctx.step("ask you", ask_you, ctx, path, out)
     ctx.emit("named", **{k: v for k, v in out.items() if k in ("renamed", "skipped")}, dry_run=ctx.dry_run)
     return {**out, "dry_run": ctx.dry_run}
 
@@ -292,6 +322,9 @@ def sweep(ctx: Context):
 
     paths = ctx.step("find", find)
     results = [ctx.step(f"rename {i}", rename_one, ctx, p) for i, p in enumerate(paths)]
+    for i, (p, r) in enumerate(zip(paths, results, strict=True)):  # the ones nobody could name: one at a time
+        if r.get("ask"):
+            results[i] = ctx.step(f"ask you {i}", ask_you, ctx, p, r)
     ctx.emit("named", renamed=sum(1 for r in results if "renamed" in r), dry_run=ctx.dry_run)
     return {"results": results, "dry_run": ctx.dry_run}
 

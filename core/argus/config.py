@@ -92,6 +92,9 @@ class ClaudeConfig(_Strict):
     ])
     timeout_seconds: float = Field(300, gt=0, le=3600)
     calls_per_day: int = Field(30, ge=0, le=10000)
+    # Each plugin's share when its manifest doesn't say (permissions.claude_calls_per_day; 0 there turns it off).
+    # Claude is the last try when the local models can't do something; after that the plugin asks you.
+    plugin_calls_per_day: int = Field(10, ge=0, le=1000)
 
 
 # Job priorities (higher runs first): interactive work, then jobs resuming after an approval, then scheduled

@@ -40,6 +40,7 @@ export type Approval = {
     items: Record<string, unknown>[];
     summary: string[];
     link: string | null;
+    image?: string;
     count?: number;
     total?: string;
     amount?: string;

@@ -222,6 +222,8 @@ class AskApproval(BaseModel):
     summary: list[str] = Field(default_factory=list, max_length=50)
     link: str | None = Field(None, max_length=2000)
     step: str | None = Field(None, max_length=100)
+    # a small picture to decide by (ctx.ask_me: the screenshot it couldn't name), as a data: URL
+    image: str | None = Field(None, max_length=400_000, pattern=r"^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$")
 
 
 class Notify(BaseModel):
@@ -885,7 +887,7 @@ def create_app(argus: Argus) -> FastAPI:
     async def ask_approval(job_id: str, body: AskApproval) -> dict:
         a, created = await argus.approvals.request(
             job_id, body.worker, body.key, body.type, body.title, fields=body.fields, items=body.items,
-            summary=body.summary, link=body.link, step=body.step)
+            summary=body.summary, link=body.link, step=body.step, image=body.image)
         if created:
             argus.outbox.poke()
         return {**a, "created": created}
@@ -933,7 +935,7 @@ def create_app(argus: Argus) -> FastAPI:
             "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
             # only this page's own inline style and script, talking to this Argus
             "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';"
-                                       " connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none';"
+                                       " connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none';"
                                        " frame-ancestors 'none'"})
 
     @app.post("/outbox/test", dependencies=guarded)

@@ -95,9 +95,11 @@ export function ApprovalCard({ id, onDone }: { id: string; onDone?: () => void }
         </>
       )}
       {a.type === "draft" && (p.summary ?? []).map((l, i) => <p key={i} className="appr-line">{l}</p>)}
+      {p.image?.startsWith("data:image/") && <img className="appr-img" src={p.image} alt="" />}
       {a.type === "entry" && (
         <>
           {p.amount && <div className="appr-big mono">{p.amount}</div>}
+          {(p.summary ?? []).map((l, i) => <p key={i} className="appr-line">{l}</p>)}
           {Object.entries(p.fields ?? {}).map(([k, v]) => (
             <div key={k} className="kv">
               <span className="k">{k}</span>

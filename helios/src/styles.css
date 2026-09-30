@@ -300,3 +300,5 @@ main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .ask.big input { font-size: 15px; }
 .ask.big .ask-out { position: static; margin-top: 8px; box-shadow: none; }
 @media (max-width: 860px) { .top .ask { display: none; } }
+
+.appr-img { display: block; max-width: 100%; max-height: 320px; margin: 8px 0; border-radius: 8px; border: 1px solid var(--line, #0002); }
