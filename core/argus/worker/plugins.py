@@ -97,8 +97,8 @@ class Files:
         d = self._check(folder, False)
         return sorted(str(p) for p in d.iterdir() if fnmatch.fnmatch(p.name, pattern)) if d.is_dir() else []
 
-    def walk(self, folder: str | Path, *, limit: int = 50_000,
-             skip_hidden: bool = True) -> list[tuple[str, int, float]]:
+    def walk(self, folder: str | Path, *, limit: int = 50_000, skip_hidden: bool = True,
+             skip_dirs: set[str] | frozenset[str] = frozenset()) -> list[tuple[str, int, float]]:
         """Every file under `folder` (subfolders too): (path, size, modified). Links are not followed; folders the
         plugin may not read (paths.blocked) are left out. At most `limit` files."""
         root = self._check(folder, False)
@@ -122,7 +122,8 @@ class Files:
                     if e.is_symlink():
                         continue
                     if e.is_dir():
-                        todo.append(p)
+                        if e.name not in skip_dirs:
+                            todo.append(p)
                     elif e.is_file():
                         st = e.stat()
                         out.append((str(p), st.st_size, st.st_mtime))

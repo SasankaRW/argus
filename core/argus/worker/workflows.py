@@ -168,6 +168,7 @@ class Context:
         self.http: Any = None
         self.secrets: Any = None
         self.store: Any = None
+        self.data_dir: Any = None  # a folder on this machine that only this plugin uses (its index, caches)
         self.emit: Callable[..., None] = lambda name, **data: None
         self._allowed_tiers: list[str] | None = None  # None: any tier
         self.shared: Callable[[str], bytes] | None = None  # a shared file's bytes, for jobs from Helios > Share
@@ -311,6 +312,18 @@ class Context:
             raise WaitSignal(f"approval:{a['id']}")
         return Decision(approved=a["state"] == "approved", state=a["state"], fields=a.get("answer") or {},
                         by=a.get("decided_by"), approval_id=a["id"])
+
+    def embed(self, texts: list[str], model: str = "nomic-embed-text") -> list[list[float]] | None:
+        """Vectors for search by meaning, from the local embedding model; None when it isn't available."""
+        prov = next((p for p in (self._router.providers.values() if self._router else [])
+                     if getattr(p, "kind", "") == "ollama" and hasattr(p, "embed")), None)
+        if prov is None or not texts:
+            return None
+        try:
+            return prov.embed(list(texts), model)
+        except Exception as e:  # not pulled, Ollama down: search falls back to words
+            self.log.warning("embeddings unavailable", extra={"error": str(e)[:200]})
+            return None
 
     def tool(self, name: str, args: dict[str, Any] | None = None) -> Any:
         """Use one of Ari's tools (GET /tools): a built-in one answers at once; a plugin's tool runs as its own job,

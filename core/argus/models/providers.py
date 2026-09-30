@@ -87,6 +87,25 @@ class OllamaProvider:
                 if k in data}
         return Reply(text, latency, meta)
 
+    def embed(self, texts: list[str], model: str) -> list[list[float]]:
+        """Vectors for `texts` with an embedding model (e.g. nomic-embed-text), for search by meaning."""
+        body = {"model": model, "input": texts, "keep_alive": self.keep_alive, "truncate": True}
+        req = urllib.request.Request(f"{self.url}/api/embed", data=json.dumps(body).encode(), method="POST",
+                                     headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                data = json.loads(resp.read() or b"{}")
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                raise ModelUnavailable(f"{model} is not pulled on {self.url} (ollama pull {model})") from None
+            raise ModelUnavailable(f"Ollama HTTP {e.code}: {e.read().decode(errors='replace')[:200]}") from None
+        except (TimeoutError, OSError, ValueError) as e:
+            raise ModelUnavailable(f"Ollama not reachable at {self.url}: {e}") from None
+        vecs = data.get("embeddings")
+        if not isinstance(vecs, list) or len(vecs) != len(texts):
+            raise ModelUnavailable(f"Ollama: no embeddings ({str(data)[:200]})")
+        return vecs
+
     def list_models(self) -> list[str]:
         try:
             with urllib.request.urlopen(f"{self.url}/api/tags", timeout=min(self.timeout, 10)) as resp:

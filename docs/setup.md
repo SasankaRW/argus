@@ -29,6 +29,7 @@ cd argus
 ollama pull qwen2.5-coder:7b                # T1: first try for text jobs
 ollama pull qwen2.5-coder:14b               # T2: when T1's answer fails the checks
 ollama pull qwen2.5vl:7b                    # V1: vision (screenshot-renamer)
+ollama pull nomic-embed-text                # search your files by meaning (Ari, "My files")
 ```
 
 They fit the 12 GB GPU one at a time; Ollama swaps them as needed.
@@ -205,6 +206,11 @@ is) and whatever plugins offer (`ari: tools:` in their plugin.yaml). Your own th
 it answers itself; current things (news, weather, scores) go to Claude with web search (read only), within the
 daily cap.
 
+- **My files** (`knowledge`): "what did I write about the laptop server?", "find my invoice from October". It
+  indexes Documents, Desktop, Notes and G:\Projects (contents: text, Markdown, code, Word, PDF) every night at 2:15
+  (or "Index my files now"), and Downloads, Pictures, Videos, Music by file name only; the index stays on the PC.
+  For search by meaning too: `ollama pull nomic-embed-text` (without it, search is by words). Folders: Helios >
+  My files settings (`folders`, `names_only`). It only reads, so it works in dry-run.
 - **PC apps** (`pc-apps`): "open Spotify", "open my CV in Documents", "open youtube.com", "close Chrome" (asks first).
 - **PC media** (`pc-media`): "volume 30", "turn it down", "mute", "next song", "pause".
 

@@ -10,11 +10,13 @@ Safety rules:
 from __future__ import annotations
 
 import logging
+import os
 import socket
 import threading
 import time
 import traceback
 import urllib.parse
+from pathlib import Path
 from typing import Any
 
 from .. import __version__
@@ -341,6 +343,7 @@ class Worker:
         ctx.http = Http(pid, perms.get("network") or [], trace)
         ctx.secrets = Secrets(pid, perms.get("secrets") or [])
         ctx.store = Store(client, pid)
+        ctx.data_dir = Path(os.environ.get("ARGUS_PLUGIN_DATA", "data/plugins")).resolve() / pid  # made on first use
         ctx.emit = lambda name, **data: trace(f"plugin.{name}", data)
         share = (ctx.input or {}).get("share")
         if share:  # something sent from the phone's share menu: its files come from argusd
