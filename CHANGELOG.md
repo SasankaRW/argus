@@ -5,6 +5,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Screen and clipboard (new plugin `screen`): "what's on my screen?" (the vision model V1 looks at a screen grab kept in memory, never saved; without V1 the text on screen goes to T1) and "summarise what I copied" (text or a copied picture). Local models only: nothing on the screen or clipboard goes to Claude.
 - Morning brief upgrade: today's weather first (`brief.weather`, Open-Meteo, no key; also in Helios > Settings); say "good morning" (or "brief me", "what's my day look like?") and Ari says the brief: weather, what waits for you, what failed overnight, today's first schedule. Ari's own chats no longer count as overnight jobs.
 - Laptop move prep: `pc-worker.ps1 check <laptop>` looks before the move (laptop answers, token accepted, the PC's Argus stopped, Ollama models, Fast Startup, the wired card's address); after the move a logon-time supervisor (`--desk-only`) keeps Ari's PC tools, "Hey Ari" and the island on the PC; the map shows the PC's session worker as the same PC.
 - Ari is smarter: combines tools across notes, files, routines, the lab and repos in one answer; follow-ups ("open it", "again") see what its tools found last time; retries a search that found nothing; its last step always says what it got done; replies are cleaned to be read aloud (no markdown, links or lists).

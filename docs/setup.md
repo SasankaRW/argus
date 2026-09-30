@@ -240,6 +240,10 @@ daily cap.
   first; never types passwords).
 - **PC status** (`pc-system`): "how's the PC doing?", "what's using my GPU?", "how much space is left on G?",
   "what's on my clipboard?", "copy that to the clipboard" (asks first).
+- **Screen and clipboard** (`screen`): "what's on my screen?", "what does this error say?", "summarise what I
+  copied", "any action items in what I copied?". The screen is grabbed in memory (never saved) and looked at by
+  the vision model (`V1`, e.g. `qwen2.5vl:7b`; without it, the text on screen via Tesseract goes to T1). Local
+  models only: nothing on your screen or clipboard goes to Claude.
 
 They run in your logged-in Windows session (the worker `dev.ps1 up` starts has it; after the move to the laptop,
 `pc-worker.ps1 install` adds an "Argus desktop" task at logon). Like every plugin they start in dry-run: add them

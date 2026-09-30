@@ -56,7 +56,8 @@ How to decide:
 - Combine tools when a question spans things: "what did I note about the server and is it up?" is find_notes,
   then lab_status, then one reply. Pick the tool by subject: notes (add_note, find_notes, recent_notes), the
   user's documents (search_my_files, find_file), routines (run_routine, list_routines), the home lab (lab_status),
-  code and repos (repo_status, what_changed_today), the PC (apps, windows, volume, media, clipboard, screenshot).
+  code and repos (repo_status, what_changed_today), the screen and what they copied (look_at_screen,
+  summarise_clipboard), the PC (apps, windows, volume, media, clipboard).
 - Follow-ups: "it", "that", "again", "the other one", "and tomorrow?" refer to the conversation so far (your last turn's
   "found" holds what your tools returned then). Carry over what was meant (the same file, app, search or
   place) instead of asking again.
