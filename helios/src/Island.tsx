@@ -54,9 +54,9 @@ export function Island() {
 
   const size = (() => {
     if (mode === "details") return { w: 520, h: Math.min(320, Math.max(110, bodyH)) };
-    if (mode === "done") return { w: 480, h: 70 };
-    if (mode === "active") return { w: Math.min(460, Math.max(300, 150 + s.text.length * 7)), h: 42 };
-    return hover ? { w: 196, h: 24 } : { w: 168, h: 9 };
+    if (mode === "done") return { w: 460, h: 68 };
+    if (mode === "active") return { w: Math.min(440, Math.max(260, 150 + s.text.length * 6.4)), h: 40 };
+    return hover ? { w: 150, h: 24 } : { w: 104, h: 7 };
   })();
 
   useEffect(() => {  // tell the window where the island is (its click area), and whether it's "open" at all

@@ -5,6 +5,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Ari's island: narrower idle lip (104 px). Spring motion with a slight settle, content fading in with a soft blur, a subtle sheen and a glow in Ari's colour while active, smoother bars and spinner, and a shimmer on the text while thinking.
 - Ari's **island** on the PC replaces the popup pill. It's a black shape grown out of the top edge of the screen, and its shoulders curve into the edge. It's always there, as a slim lip when idle and "ari" on hover. It widens while Ari listens, thinks, works or talks (bars, a spinner, and what Ari is on), shows the answer when done, and folds back. Click it for details: the last question and answer, what waits in the inbox, and open chat / new chat / inbox / Helios. Only the island takes clicks; the rest of the window lets them through. Title protocol: `ari:<mode>|<w>x<h>`, `ari:go|<hash>`.
 - Guidance: **Run tests now** on a playbook (Plugins > Learning). Its tests are your Correct answers, else the ones the small model got right, and they're replayed on the first local tier with the lessons in use. It keeps a pass-rate history (table `eval_runs`, migration 0013), shows the tests, and lets you remove one. `GET/POST /guidance/{key}/evals`.
 - Guidance: **Try with another model** under each model answer (job details). The same question goes to another tier, and both answers are shown side by side with whether they agree. `POST /samples/{id}/replay`.
