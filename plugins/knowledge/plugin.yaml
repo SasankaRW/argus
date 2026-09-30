@@ -29,7 +29,7 @@ config:
 ari:
   tools:
     - name: search_my_files
-      description: Search the user's own documents, notes and projects by content; returns matching passages with file paths. Use this first for anything about the user's own things.
+      description: Search the user's own documents, notes and projects by content; returns matching passages with file paths, and files whose name matches (files_named). Use this first for anything about the user's own things; for a file the user names (a video, picture, download), use find_file.
       workflow: search
       input: {query: {type: string, description: "what to look for, in a few words"}}
       required: [query]

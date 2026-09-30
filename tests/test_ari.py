@@ -134,3 +134,16 @@ def test_remember_recall_forget(tmp_path, monkeypatch):
         assert len(cl.get("/ari-memory")) == 1
         tools = {t["name"] for t in cl.get("/tools")}
         assert {"remember", "recall_memory", "forget_memory"} <= tools
+
+
+def test_past_chats_are_listed_newest_first_and_can_be_deleted(tmp_path, monkeypatch):
+    a = make(tmp_path, monkeypatch)
+    with Server(a.open()) as srv:
+        cl = client(srv.url)
+        one = cl.post("/ari", {"text": "sort my downloads every morning at 7"})["conv"]
+        two = cl.post("/ari", {"text": "shut down the pc at 11pm"})["conv"]
+        chats = cl.get("/ari-chats")
+        assert [c["conv"] for c in chats] == [two, one]
+        assert chats[0]["title"] == "shut down the pc at 11pm" and chats[0]["turns"] == 2 and chats[0]["last"]
+        assert cl.call("DELETE", f"/ari-chats/{one}")[1] == {"deleted": 2}
+        assert [c["conv"] for c in cl.get("/ari-chats")] == [two]

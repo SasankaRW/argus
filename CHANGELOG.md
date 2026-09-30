@@ -5,6 +5,10 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Ari: your chats are kept and listed (Ari page: newest first, find, delete); open one to carry on, "‹ chats" goes back. Questions from other screens and "Hey Ari" continue the chat you had open. Settings, schedules and memory sit beside the list.
+- Ari: messages no longer get squeezed (text spilled out of its bubble); "you" / "ari" labels, terminal-style bubbles, the chat fills the page.
+- Ari: files are found by name however it's written (President.Curtis = president curtis = President_Curtis), and "search my files" also returns files whose name matches.
+- API: `GET /ari-chats`, `DELETE /ari-chats/{conv}`.
 - Helios (PC): every page gets the terminal-widgets look (rounded windows with "● ~/name" titles, mono type, soft glows, stat tiles); the header shows `sas@argus:~/page$`; the inspector opens only when you pick something, so pages use the full width.
 - Helios: the home "tail" tile is now a live log view (~/logs); the "saved" tile and stat are gone; the tile strip under the map fills the width; map "new" badges only for parts added in the last day.
 - Map: one box for the PC: the worker's fast lane and "pc" in power events are drawn as the PC's worker.

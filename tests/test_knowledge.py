@@ -88,3 +88,21 @@ def test_words_only_without_the_embedding_model(tmp_path, monkeypatch):
         assert r["with_meaning"] == 0 and r["with_contents"] == 3
         hits = run(cl, w, "search", query="laptop ubuntu")["results"]
         assert hits and hits[0]["file"].endswith("laptop-server.md")
+
+
+def test_a_video_by_its_name_however_it_is_written(tmp_path, monkeypatch):
+    argus, home = setup(tmp_path, monkeypatch)
+    (home / "Downloads/Video").mkdir()
+    (home / "Downloads/Video/President.Curtis.2024.1080p.mp4").write_bytes(b"not really")
+    with FakeOllama({"qwen2.5-coder:7b": ["{}"]}) as ol, Server(argus.open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        run(cl, w, "index")
+        for name in ("President.Curtis", "president curtis", "curtis president", "President_Curtis"):
+            found = run(cl, w, "find", name=name)["files"]
+            assert [os.path.basename(f["path"]) for f in found] == ["President.Curtis.2024.1080p.mp4"], name
+        # asked through the content search instead: the file still turns up by its name
+        r = run(cl, w, "search", query="President.Curtis")
+        assert [os.path.basename(f["path"]) for f in r["files_named"]] == ["President.Curtis.2024.1080p.mp4"]
+        assert "note" not in r

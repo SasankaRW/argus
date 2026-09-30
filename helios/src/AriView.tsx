@@ -12,10 +12,15 @@ type Said = { conv: string; reply: string | null; job_id?: string; view?: string
 type Schedule = { id: string; plugin: string; workflow: string; cron: string; enabled: boolean; next_run_at: number | null;
   last_run_at: number | null; owner: string; label: string | null; spec: { once?: boolean; when?: string } };
 
-function newConv() { return Math.random().toString(36).slice(2, 12); }
-function loadConv(): string {
+type Chat = { conv: string; turns: number; started: number; updated: number; title: string | null; last: string | null };
+
+export function newConv() { return Math.random().toString(36).slice(2, 12); }
+// The chat you had open last: "Hey Ari" and questions from other screens continue it.
+export function currentConv(): string {
   try { const c = localStorage.getItem("ari.conv"); if (c) return c; } catch { /* private */ }
-  return newConv();
+  const c = newConv();
+  try { localStorage.setItem("ari.conv", c); } catch { /* private */ }
+  return c;
 }
 function when(t: number | null) {
   if (!t) return "—";
@@ -25,36 +30,89 @@ function when(t: number | null) {
   return `${same ? "today" : d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })} ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
 }
 
-// Talk to Ari: type or speak; Ari answers (aloud if you like) and asks before doing anything.
-export function AriView({ onSelect, onView, compact = false }: { onSelect: (s: Selection) => void; onView: (v: string) => void; compact?: boolean }) {
-  const [conv, setConv] = useState(loadConv);
+function ago(t: number) {
+  const s = Date.now() / 1000 - t;
+  if (s < 60) return "now";
+  if (s < 3600) return `${Math.floor(s / 60)} min`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h`;
+  return new Date(t * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
+
+// The Ari page: your chats (open one to continue it), Ari's settings, schedules and what Ari remembers.
+export function AriHome({ onOpen }: { onOpen: (conv: string) => void }) {
+  const [chats, setChats] = useState<Chat[] | null>(null);
+  const [q, setQ] = useState("");
+  const [find, setFind] = useState("");
+  const load = useCallback(() => { api<Chat[]>("/ari-chats").then(setChats).catch(() => setChats([])); }, []);
+  useEffect(load, [load]);
+  const start = (text?: string) => {
+    const c = newConv();
+    if (text) { try { sessionStorage.setItem("ari.command", text); } catch { /* private */ } }
+    onOpen(c);
+  };
+  const del = async (c: Chat) => {
+    await api(`/ari-chats/${c.conv}`, { method: "DELETE" }).catch(() => {});
+    load();
+  };
+  const needle = find.trim().toLowerCase();
+  const shown = (chats ?? []).filter((c) => !needle || `${c.title ?? ""} ${c.last ?? ""}`.toLowerCase().includes(needle));
+  return (
+    <div className="ari-home">
+      <section className="panel" aria-label="Chats">
+        <div className="ph">
+          <span className="pt">ari</span>
+          <span className="muted">{chats ? `${chats.length} chat${chats.length === 1 ? "" : "s"}` : "…"}</span>
+          <div className="tools">
+            <input className="chat-find" value={find} onChange={(e) => setFind(e.target.value)} placeholder="find a chat…" aria-label="Find a chat" />
+            <button type="button" className="primary chat-new" onClick={() => start()}>+ new chat</button>
+          </div>
+        </div>
+        <form className="ari-start" onSubmit={(e) => { e.preventDefault(); if (q.trim()) start(q.trim()); }}>
+          <span className="caret">›</span>
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ask ari something new…" aria-label="Start a new chat" />
+        </form>
+        <div className="chat-list">
+          {chats && chats.length === 0 && <div className="tip">No chats yet. Ask Ari something above.</div>}
+          {shown.map((c) => (
+            <div key={c.conv} className="chat-row">
+              <button type="button" className="chat-open" onClick={() => onOpen(c.conv)}>
+                <span className="chat-t">{c.title ?? "(Hey Ari on the PC)"}</span>
+                <span className="chat-l">{c.last ?? ""}</span>
+                <span className="chat-m">{ago(c.updated)} · {c.turns} msg</span>
+              </button>
+              <button type="button" className="chat-del" aria-label="Delete this chat" title="Delete this chat" onClick={() => del(c)}>×</button>
+            </div>
+          ))}
+        </div>
+      </section>
+      <AriSettings />
+    </div>
+  );
+}
+
+// Talk to Ari in one chat: type or speak; Ari answers (aloud if you like) and asks before doing anything.
+export function AriView({ conv, onBack, onNew, onSelect, onView, compact = false }: {
+  conv: string; onBack?: () => void; onNew: (conv: string) => void;
+  onSelect: (s: Selection) => void; onView: (v: string) => void; compact?: boolean;
+}) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [listening, setListening] = useState(false);
   const [talk, setTalk] = useState(() => pref("speak", true));
-  const look = usePillLook();
   const [wake, setWake] = useState(() => pref("wake", false));
-  const [piper, setPiper] = useState(() => pref("piper", true));
   const [vs, setVs] = useState<VoiceStatus>(voiceStatus);
-  useEffect(() => {  // App fetches what Argus offers; the "Hey Ari" box follows the listener (it turns off on errors)
+  useEffect(() => {
     const st = () => setVs(voiceStatus());
     const pr = () => setWake(pref("wake", false));
     window.addEventListener("ari-status", st); window.addEventListener("ari-pref", pr);
     return () => { window.removeEventListener("ari-status", st); window.removeEventListener("ari-pref", pr); };
   }, []);
-  const [scheds, setScheds] = useState<Schedule[]>([]);
-  const [mem, setMem] = useState<{ id: number; fact: string; noted: string }[]>([]);
-  const loadMem = useCallback(() => { api<typeof mem>("/ari-memory").then(setMem).catch(() => {}); }, []);
-  useEffect(loadMem, [loadMem]);
   const spoken = useRef<Set<number>>(new Set());
-  const end = useRef<HTMLDivElement>(null);
+  const log = useRef<HTMLDivElement>(null);
 
   useEffect(() => { try { localStorage.setItem("ari.conv", conv); } catch { /* private */ } }, [conv]);
-
-  const loadScheds = useCallback(() => { api<Schedule[]>("/schedules").then(setScheds).catch(() => {}); }, []);
-  useEffect(loadScheds, [loadScheds]);
 
   const load = useCallback(async () => {
     const r = await api<{ turns: Turn[] }>(`/ari/${conv}`);
@@ -63,6 +121,7 @@ export function AriView({ onSelect, onView, compact = false }: { onSelect: (s: S
   }, [conv]);
 
   useEffect(() => {  // first load: what's already said isn't read out again
+    setTurns([]);
     load().then((ts) => ts.forEach((t) => spoken.current.add(t.id))).catch(() => setTurns([]));
   }, [load]);
 
@@ -72,7 +131,7 @@ export function AriView({ onSelect, onView, compact = false }: { onSelect: (s: S
     return () => clearTimeout(id);
   }, [turns, load]);
 
-  useEffect(() => {  // read new answers aloud
+  useEffect(() => {  // read new answers aloud; keep the newest in view
     for (const t of turns) {
       if (t.role !== "ari" || t.text === null || spoken.current.has(t.id)) continue;
       spoken.current.add(t.id);
@@ -80,7 +139,7 @@ export function AriView({ onSelect, onView, compact = false }: { onSelect: (s: S
         speak(t.text).then(() => { if (t.pending) window.dispatchEvent(new CustomEvent("ari-arm")); });
       }
     }
-    end.current?.scrollIntoView({ block: "end" });
+    if (log.current) log.current.scrollTop = log.current.scrollHeight;
   }, [turns, talk]);
 
   const after = useCallback((r: Said) => {
@@ -88,8 +147,7 @@ export function AriView({ onSelect, onView, compact = false }: { onSelect: (s: S
     else if (r.job_id && !r.reply) { /* a model's answer: it fills in */ }
     else if (r.job_id) onSelect({ type: "job", id: r.job_id });
     else if (r.power?.id) onSelect({ type: "job", id: r.power.id });
-    if (r.schedule) loadScheds();
-  }, [onSelect, onView, loadScheds]);
+  }, [onSelect, onView]);
 
   const send = useCallback(async (q: string) => {
     if (!q.trim()) return;
@@ -98,9 +156,8 @@ export function AriView({ onSelect, onView, compact = false }: { onSelect: (s: S
       const r = await api<Said>("/ari", { method: "POST", body: JSON.stringify({ text: q, conv }) });
       await load();
       after(r);
-      loadMem();
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
-  }, [conv, load, after, loadMem]);
+  }, [conv, load, after]);
 
   const answer = async (yes: boolean) => {
     setBusy(true); setErr(null); stopSpeaking();
@@ -111,7 +168,7 @@ export function AriView({ onSelect, onView, compact = false }: { onSelect: (s: S
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
   };
 
-  useEffect(() => {  // "Hey Ari ..." heard anywhere in Helios
+  useEffect(() => {  // "Hey Ari ..." heard anywhere in Helios, or a question typed on another screen
     const on = (e: Event) => send((e as CustomEvent<string>).detail);
     window.addEventListener("ari-command", on);
     let queued: string | null = null;
@@ -138,28 +195,21 @@ export function AriView({ onSelect, onView, compact = false }: { onSelect: (s: S
   }, []);
 
   const toggle = (k: string, v: boolean, set: (v: boolean) => void) => { set(v); setPref(k, v); };
-  const mine = scheds.filter((s) => s.owner === "you");
   const last = [...turns].reverse().find((t) => t.role === "ari");
   const open = last?.pending && last.text !== null ? last : null;
-
-  const editSched = async (s: Schedule, how: "pause" | "resume" | "delete") => {
-    try {
-      if (how === "delete") await api(`/schedules/${s.id}`, { method: "DELETE" });
-      else await api(`/schedules/${s.id}`, { method: "PATCH", body: JSON.stringify({ enabled: how === "resume" }) });
-      loadScheds();
-    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
-  };
+  const title = turns.find((t) => t.role === "you")?.text ?? "new chat";
 
   return (
     <section className={`panel ari${compact ? " compact" : ""}`} aria-label="Ari">
       <div className="ph">
-        <span className="pt">Ari</span>
-        <span className="muted">your assistant · asks before doing anything</span>
+        {onBack && <button type="button" className="btn chat-back" onClick={() => { stopSpeaking(); onBack(); }}>‹ chats</button>}
+        <span className="pt">ari</span>
+        <span className="chat-title" title={title}>{title}</span>
         <div className="tools">
-          <button type="button" className="btn" onClick={() => { stopSpeaking(); setConv(newConv()); setTurns([]); }}>New chat</button>
+          <button type="button" className="btn" onClick={() => { stopSpeaking(); onNew(newConv()); }}>+ new chat</button>
         </div>
       </div>
-      <div className="ari-log">
+      <div ref={log} className="ari-log">
         {turns.length === 0 && (
           <div className="ari-hello">
             <p>Hi, I'm Ari. Try:</p>
@@ -169,11 +219,14 @@ export function AriView({ onSelect, onView, compact = false }: { onSelect: (s: S
           </div>
         )}
         {turns.map((t) => (
-          <div key={t.id} className={`bubble ${t.role}`}>
-            {t.text ?? <span className="typing" aria-label="Ari is thinking"><i /><i /><i /></span>}
-            {t.used && t.used.length > 0 && (
-              <div className="used">{t.used.map((u, i) => <span key={i} className={u.ok ? "" : "bad"}>{u.tool.replace(/_/g, " ")}</span>)}</div>
-            )}
+          <div key={t.id} className={`msg ${t.role}`}>
+            <span className="who">{t.role === "you" ? "you" : "ari"}</span>
+            <div className="bubble">
+              {t.text ?? <span className="typing" aria-label="Ari is thinking"><i /><i /><i /></span>}
+              {t.used && t.used.length > 0 && (
+                <div className="used">{t.used.map((u, i) => <span key={i} className={u.ok ? "" : "bad"}>{u.tool.replace(/_/g, " ")}</span>)}</div>
+              )}
+            </div>
           </div>
         ))}
         {open && (
@@ -184,60 +237,100 @@ export function AriView({ onSelect, onView, compact = false }: { onSelect: (s: S
           </div>
         )}
         {err && <div className="tip bad">{err}</div>}
-        <div ref={end} />
       </div>
       <form className="ari-in" onSubmit={(e) => { e.preventDefault(); send(text); }}>
-        <input value={text} onChange={(e) => setText(e.target.value)} placeholder={listening ? "Listening… speak now" : "Talk to Ari…"} aria-label="Message Ari" enterKeyHint="send" />
+        <span className="caret">›</span>
+        <input value={text} onChange={(e) => setText(e.target.value)} placeholder={listening ? "listening… speak now" : "talk to ari…"} aria-label="Message Ari" enterKeyHint="send" />
         {(Speech || vs.whisper_ready) && <button type="button" className={`mic${listening ? " on" : ""}`} onClick={mic} aria-label="Speak" title={vs.whisper_ready ? "Whisper on the PC hears you" : "The browser hears you"}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></svg>
         </button>}
-        <button type="submit" className="primary" disabled={busy || !text.trim()}>Send</button>
+        <button type="submit" className="primary" disabled={busy || !text.trim()}>send</button>
       </form>
       <div className="ari-opts">
-        {canSpeak && <label><input type="checkbox" checked={talk} onChange={(e) => toggle("speak", e.target.checked, setTalk)} /> Speak replies</label>}
-        {Speech && <label title="While Helios is open: say &quot;Hey Ari&quot;, then what you want"><input type="checkbox" checked={wake} onChange={(e) => toggle("wake", e.target.checked, setWake)} /> &ldquo;Hey Ari&rdquo;</label>}
-        <span className="pill-pick" role="group" aria-label="Ari pill look">Pill
-          {(["pulse", "comet"] as const).map((l) => (
-            <button key={l} type="button" className="btn" aria-pressed={look === l}
-              onClick={() => {  // pick it, and show it for a moment
-                setPillLook(l);
-                ariSet(l === "pulse" ? "speaking" : "thinking", `This is the ${l} look.`);
-                setTimeout(() => { if (ariNow().text === `This is the ${l} look.`) ariSet("idle"); }, 3500);
-              }}>{l}</button>
-          ))}
-        </span>
-        {vs.voice && <label title="Piper: Argus's own natural voice (off: the browser's voice)"><input type="checkbox" checked={piper} onChange={(e) => toggle("piper", e.target.checked, setPiper)} /> Natural voice</label>}
-        {vs.voice && piper && <VoicePick />}
-        {vs.hearing === "whisper" && <span className="muted">{vs.whisper_ready ? "Whisper hears you" : "Whisper: the PC is off, the browser hears you"}</span>}
+        {canSpeak && <label><input type="checkbox" checked={talk} onChange={(e) => toggle("speak", e.target.checked, setTalk)} /> speak replies</label>}
+        {Speech && <label title="While Helios is open: say &quot;Hey Ari&quot;, then what you want"><input type="checkbox" checked={wake} onChange={(e) => toggle("wake", e.target.checked, setWake)} /> &ldquo;hey ari&rdquo;</label>}
       </div>
-      {!compact && (
+    </section>
+  );
+}
+
+// Ari's settings (voice, pill), your schedules and what Ari remembers: on the chat list page.
+function AriSettings() {
+  const look = usePillLook();
+  const [piper, setPiper] = useState(() => pref("piper", true));
+  const [vs, setVs] = useState<VoiceStatus>(voiceStatus);
+  useEffect(() => {
+    const st = () => setVs(voiceStatus());
+    window.addEventListener("ari-status", st);
+    return () => window.removeEventListener("ari-status", st);
+  }, []);
+  const [scheds, setScheds] = useState<Schedule[]>([]);
+  const [mem, setMem] = useState<{ id: number; fact: string; noted: string }[]>([]);
+  const [err, setErr] = useState<string | null>(null);
+  const loadMem = useCallback(() => { api<typeof mem>("/ari-memory").then(setMem).catch(() => {}); }, []);
+  const loadScheds = useCallback(() => { api<Schedule[]>("/schedules").then(setScheds).catch(() => {}); }, []);
+  useEffect(() => { loadMem(); loadScheds(); }, [loadMem, loadScheds]);
+  const mine = scheds.filter((s) => s.owner === "you");
+  const editSched = async (s: Schedule, how: "pause" | "resume" | "delete") => {
+    try {
+      if (how === "delete") await api(`/schedules/${s.id}`, { method: "DELETE" });
+      else await api(`/schedules/${s.id}`, { method: "PATCH", body: JSON.stringify({ enabled: how === "resume" }) });
+      loadScheds();
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+  };
+  return (
+    <div className="ari-side">
+      <section className="panel">
+        <div className="ph"><span className="pt">ari/settings</span></div>
+        <div className="ari-set">
+          <span className="pill-pick" role="group" aria-label="Ari pill look">pill
+            {(["pulse", "comet"] as const).map((l) => (
+              <button key={l} type="button" className="btn" aria-pressed={look === l}
+                onClick={() => {  // pick it, and show it for a moment
+                  setPillLook(l);
+                  ariSet(l === "pulse" ? "speaking" : "thinking", `This is the ${l} look.`);
+                  setTimeout(() => { if (ariNow().text === `This is the ${l} look.`) ariSet("idle"); }, 3500);
+                }}>{l}</button>
+            ))}
+          </span>
+          {vs.voice && <label title="Piper: Argus's own natural voice (off: the browser's voice)"><input type="checkbox" checked={piper} onChange={(e) => { setPiper(e.target.checked); setPref("piper", e.target.checked); }} /> natural voice</label>}
+          {vs.voice && piper && <VoicePick />}
+          {vs.hearing === "whisper" && <span className="muted">{vs.whisper_ready ? "Whisper hears you" : "Whisper: the PC is off, the browser hears you"}</span>}
+        </div>
+      </section>
+      <section className="panel">
+        <div className="ph"><span className="pt">ari/schedules</span><span className="muted">{mine.length}</span></div>
         <div className="ari-sched">
-          <div className="sect">Your schedules</div>
+          {err && <div className="tip bad">{err}</div>}
           {mine.length === 0 ? <div className="tip">None yet. Tell Ari: "sort downloads every morning at 7".</div> : mine.map((s) => (
             <div key={s.id} className={`srow${s.enabled ? "" : " off"}`}>
               <span className="sl">{s.label ?? `${s.plugin} · ${s.workflow}`}</span>
               <span className="muted mono">{s.enabled ? `next ${when(s.next_run_at)}` : s.spec.once && s.last_run_at ? `done ${when(s.last_run_at)}` : "paused"}</span>
-              {!(s.spec.once && s.last_run_at) && <button type="button" className="btn" onClick={() => editSched(s, s.enabled ? "pause" : "resume")}>{s.enabled ? "Pause" : "Resume"}</button>}
-              <button type="button" className="btn" onClick={() => editSched(s, "delete")}>Delete</button>
-            </div>
-          ))}
-          <div className="sect">What I remember</div>
-          {mem.length === 0 ? <div className="tip">Nothing yet. Say "remember my car service is due in December".</div> : mem.map((m) => (
-            <div key={m.id} className="srow">
-              <span className="sl">{m.fact}</span><span className="muted mono">{m.noted}</span>
-              <button type="button" className="btn" onClick={() => api(`/ari-memory/${m.id}`, { method: "DELETE" }).then(loadMem).catch(() => {})}>Forget</button>
+              {!(s.spec.once && s.last_run_at) && <button type="button" className="btn" onClick={() => editSched(s, s.enabled ? "pause" : "resume")}>{s.enabled ? "pause" : "resume"}</button>}
+              <button type="button" className="btn" onClick={() => editSched(s, "delete")}>delete</button>
             </div>
           ))}
           {scheds.some((s) => s.owner !== "you") && (
-            <details><summary className="muted">From settings and plugins ({scheds.filter((s) => s.owner !== "you").length})</summary>
+            <details><summary className="muted">from settings and plugins ({scheds.filter((s) => s.owner !== "you").length})</summary>
               {scheds.filter((s) => s.owner !== "you").map((s) => (
                 <div key={s.id} className="srow"><span className="sl mono">{s.id}</span><span className="muted mono">{s.cron} · next {when(s.next_run_at)}</span></div>
               ))}
             </details>
           )}
         </div>
-      )}
-    </section>
+      </section>
+      <section className="panel">
+        <div className="ph"><span className="pt">ari/memory</span><span className="muted">{mem.length}</span></div>
+        <div className="ari-sched">
+          {mem.length === 0 ? <div className="tip">Nothing yet. Say "remember my car service is due in December".</div> : mem.map((m) => (
+            <div key={m.id} className="srow">
+              <span className="sl">{m.fact}</span><span className="muted mono">{m.noted}</span>
+              <button type="button" className="btn" onClick={() => api(`/ari-memory/${m.id}`, { method: "DELETE" }).then(loadMem).catch(() => {})}>forget</button>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
   );
 }
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, setToken, Status } from "./api";
-import { AriView } from "./AriView";
+import { AriHome, AriView, currentConv } from "./AriView";
 import { AskBox } from "./AskBox";
 import { EventsPanel } from "./EventsPanel";
 import { uptime } from "./format";
@@ -159,7 +159,7 @@ export function App() {
   const [wide, setWide] = useState(() => { try { return localStorage.getItem("helios.rail") === "wide"; } catch { return false; } });
   const setWideRail = (v: boolean) => { setWide(v); try { localStorage.setItem("helios.rail", v ? "wide" : "icons"); } catch { /* private */ } };
   const [triedLogin, setTriedLogin] = useState(false);
-  const parse = (h: string) => (["queue", "runs", "logs", "share", "power", "ari", "plugins", "more"].includes(h) || h.startsWith("rules/") || h.startsWith("plugins/") ? h : "map");
+  const parse = (h: string) => (["queue", "runs", "logs", "share", "power", "ari", "plugins", "more"].includes(h) || h.startsWith("rules/") || h.startsWith("plugins/") || h.startsWith("ari/") ? h : "map");
   const [view, setView] = useState<string>(() => parse(location.hash.slice(1)));
   useEffect(() => {  // the share menu opens /helios/#share on a page that may already be open
     const on = () => setView(parse(location.hash.slice(1)));
@@ -170,7 +170,15 @@ export function App() {
   const [full, setFull] = useState(() => { try { return localStorage.getItem("helios.full") === "1"; } catch { return false; } });
   const setFullView = (v: boolean) => { setFull(v); try { localStorage.setItem("helios.full", v ? "1" : "0"); } catch { /* private */ } };
   const phone = narrow && !full;
-  const go = (v: string) => { setView(v); history.replaceState(null, "", v === "map" ? location.pathname : `#${v}`); };
+  const go = (to: string) => {
+    let v = to;
+    if (v === "ari") {  // a question or the mic waiting for Ari: straight into the current chat, not the chat list
+      let queued = false;
+      try { queued = !!(sessionStorage.getItem("ari.command") || sessionStorage.getItem("ari.mic")); } catch { /* private */ }
+      if (queued) v = `ari/${currentConv()}`;
+    }
+    setView(v); history.replaceState(null, "", v === "map" ? location.pathname : `#${v}`);
+  };
   const askAri = (text: string) => { try { sessionStorage.setItem("ari.command", text); } catch { /* private */ } go("ari"); };
   const viewRef = useRef(view);
   viewRef.current = view;
@@ -188,8 +196,12 @@ export function App() {
           onCommand: (text) => {
             badge(null);
             ariSet("thinking", text);
-            if (viewRef.current === "ari") window.dispatchEvent(new CustomEvent("ari-command", { detail: text }));
-            else { try { sessionStorage.setItem("ari.command", text); } catch { /* private */ } setView("ari"); history.replaceState(null, "", "#ari"); }
+            if (viewRef.current.startsWith("ari/")) window.dispatchEvent(new CustomEvent("ari-command", { detail: text }));
+            else {
+              const v = `ari/${currentConv()}`;
+              try { sessionStorage.setItem("ari.command", text); } catch { /* private */ }
+              setView(v); history.replaceState(null, "", `#${v}`);
+            }
           },
           onWake: () => ariTell("listening"),
           onError: (msg) => { badge(msg, 15000); setPref("wake", false); },
@@ -248,7 +260,9 @@ export function App() {
         <div className="glow g1" aria-hidden="true" /><div className="glow g2" aria-hidden="true" />
         <PhoneHeader status={st} live={a.conn === "live"} />
         <main key={view} className="pmain2">
-          {proot === "ari" ? <AriView onSelect={setSel} onView={open} />
+          {proot === "ari" ? (view.includes("/")
+            ? <AriView conv={view.split("/")[1]} onBack={() => go("ari")} onNew={(c) => go(`ari/${c}`)} onSelect={setSel} onView={open} />
+            : <AriHome onOpen={(c) => go(`ari/${c}`)} />)
           : proot === "plugins" ? (
             <PluginsView phone selected={view.includes("/") ? decodeURIComponent(view.split("/")[1]) : null}
               onPick={(id) => go(id ? `plugins/${encodeURIComponent(id)}` : "plugins")} onSelect={setSel} />
@@ -361,7 +375,7 @@ export function App() {
       </nav>}
 
       <main>
-        <div key={root} className={`page${root === "map" ? " stagepage" : ""}`}>
+        <div key={root === "ari" ? view : root} className={`page${root === "map" ? " stagepage" : ""}`}>
         {withKpis && <Kpis status={st} />}
         {view.startsWith("rules/") ? <RulesView plugin={decodeURIComponent(view.slice(6))} onBack={() => history.back()} />
         : root === "plugins" ? (
@@ -383,7 +397,9 @@ export function App() {
           )        ) : (
         <div className={`mid${sel ? "" : " one"}`}>
           {view === "ari" ? (
-            <AriView onSelect={setSel} onView={(v) => go(v)} />
+            <AriHome onOpen={(c) => go(`ari/${c}`)} />
+          ) : root === "ari" ? (
+            <AriView conv={view.split("/")[1]} onBack={() => go("ari")} onNew={(c) => go(`ari/${c}`)} onSelect={setSel} onView={(v) => go(v)} />
           ) : view === "power" ? (
             <PowerView events={a.events} onSelect={setSel} />
           ) : view === "queue" ? (
