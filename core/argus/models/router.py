@@ -111,7 +111,10 @@ class Router:
         `advice`: what went wrong before (another chain already tried), handed to the first tier."""
         tiers = chain or self.chain
         tries = attempts or self.attempts
-        json_schema = schema.model_json_schema() if schema is not None else None
+        if isinstance(schema, dict):  # a plain JSON schema (replaying a stored playbook): answers are parsed JSON
+            json_schema = schema
+        else:
+            json_schema = schema.model_json_schema() if schema is not None else None
         system = playbook.strip()
         if json_schema is not None:
             system += "\n\nReply with only a JSON object that matches the given schema. No extra text."
@@ -176,7 +179,12 @@ class Router:
     @staticmethod
     def _judge(text: str, input: Any, schema: type[BaseModel] | None, check: Check | None) -> tuple[Any, str | None]:
         value: Any = text
-        if schema is not None:
+        if isinstance(schema, dict):
+            try:
+                value = parse_json(text)
+            except ValueError as e:
+                return None, f"not valid JSON ({e})"
+        elif schema is not None:
             try:
                 value = schema.model_validate(parse_json(text))
             except ValueError as e:  # json errors and ValidationError both subclass ValueError

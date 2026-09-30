@@ -64,7 +64,7 @@ from pydantic import BaseModel, Field
 
 from .. import ari as ari_mod
 from .. import ask as ask_mod
-from .. import daily, logview
+from .. import daily, guidance, logview
 from ..approvals import ApprovalClosed, ApprovalError, ApprovalNotFound, BadToken
 from ..config import PRIORITY_INTERACTIVE
 from ..context import Argus
@@ -206,6 +206,31 @@ class ToolCall(BaseModel):
     key: str = Field(min_length=1, max_length=200)
     name: str = Field(min_length=1, max_length=60)
     args: dict[str, Any] = Field(default_factory=dict)
+
+
+class SampleIn(BaseModel):
+    worker: str
+    playbook: str = Field(min_length=1, max_length=40_000)
+    schema_: dict[str, Any] | None = Field(None, alias="schema")
+    input: Any = None
+    output: Any = None
+    tier: str | None = None
+    escalated: bool = False
+
+
+class Verdict(BaseModel):
+    verdict: str | None = Field(None, pattern="^(correct|wrong)$")
+    correction: Any = None
+
+
+class LessonDecide(BaseModel):
+    approve: bool
+
+
+class PluginSettings(BaseModel):
+    live: bool | None = None  # None: back to argus.yaml's plugins.live
+    config: dict[str, Any] | None = None  # only the fields you changed; a null value resets that field
+    reset: bool = False  # forget all your changes
 
 
 class ClaudeAuth(BaseModel):
@@ -618,6 +643,83 @@ def create_app(argus: Argus) -> FastAPI:
     tools.builtin["where_is_my_phone"] = Tool("where_is_my_phone", "Where the user's phone is (Tailscale: online at "
                                               "home, away, or offline and when last seen).", fn=_where)
     tools.builtin["ring_phone"] = Tool("ring_phone", "Ring the user's phone loudly to find it.", fn=_ring)
+
+    # -------------------------------------------------------------- the guidance loop
+
+    @app.post("/jobs/{job_id}/samples", dependencies=guarded)
+    async def add_sample(job_id: str, body: SampleIn) -> dict:
+        """A model answer from a plugin's job (ctx.llm), kept for your verdict and the nightly review."""
+        job = await argus.jobs.get(job_id)
+        sid = await argus.store.write(lambda c: guidance.add_sample(
+            c, time.time(), job_id=job_id, plugin=job.plugin, playbook=body.playbook, schema=body.schema_,
+            input=body.input, output=body.output, tier=body.tier, escalated=body.escalated,
+            keep=argus.cfg.guidance.keep_samples))
+        return {"id": sid}
+
+    @app.get("/jobs/{job_id}/samples", dependencies=guarded)
+    async def job_samples(job_id: str) -> list[dict]:
+        return await argus.store.read(lambda c: [guidance.sample_json(r) for r in c.execute(
+            "SELECT * FROM samples WHERE job_id = ? ORDER BY id", (job_id,))])
+
+    @app.get("/guidance", dependencies=guarded)
+    async def guidance_overview(plugin: str | None = None) -> list[dict]:
+        """Per playbook: answers kept, escalations, your verdicts, lessons in force and waiting."""
+        return await argus.store.read(lambda c: guidance.overview(c, plugin))
+
+    @app.get("/guidance/{key}/samples", dependencies=guarded)
+    async def playbook_samples(key: str, verdict: str | None = None, limit: int = Query(50, ge=1, le=500)
+                               ) -> list[dict]:
+        where, args = "playbook = ?", [key]
+        if verdict in ("correct", "wrong"):
+            where, args = where + " AND verdict = ?", args + [verdict]
+        elif verdict == "none":
+            where += " AND verdict IS NULL"
+        return await argus.store.read(lambda c: [guidance.sample_json(r) for r in c.execute(
+            f"SELECT * FROM samples WHERE {where} ORDER BY id DESC LIMIT ?", (*args, limit))])
+
+    @app.post("/samples/{sample_id}/verdict", dependencies=guarded)
+    async def sample_verdict(sample_id: int, body: Verdict) -> dict:
+        """Correct (joins the eval set) or wrong (with what it should have been; the review learns from it)."""
+        if not await argus.store.write(lambda c: guidance.set_verdict(c, sample_id, body.verdict, body.correction)):
+            raise HTTPException(status_code=404, detail="no such answer")
+        return {"ok": True}
+
+    @app.post("/guidance/review", dependencies=guarded)
+    async def guidance_review() -> dict:
+        """Review now: Claude proposes lessons for playbooks with new mistakes; you approve them."""
+        return await argus.guidance_review()
+
+    @app.post("/lessons/{lesson_id}/decide", dependencies=guarded)
+    async def lesson_decide(lesson_id: int, body: LessonDecide) -> dict:
+        r = await argus.store.write(lambda c: guidance.decide(c, lesson_id, body.approve, time.time()))
+        if r is None:
+            raise HTTPException(status_code=409, detail="that lesson isn't waiting for a decision")
+        return r
+
+    @app.delete("/lessons/{lesson_id}", dependencies=guarded)
+    async def lesson_drop(lesson_id: int) -> dict:
+        """Stop using lessons that are in force (the playbook is used as written again)."""
+        if not await argus.store.write(lambda c: guidance.drop_active(c, lesson_id)):
+            raise HTTPException(status_code=404, detail="no such lessons in force")
+        return {"ok": True}
+
+    async def _propose(x: dict) -> dict:
+        lid = await argus.store.write(lambda c: guidance.propose(c, time.time(), str(x["key"]), str(x["text"]),
+                                                                 x.get("evals") or {}, x.get("job_id")))
+        return {"lesson": lid}
+
+    async def _decide(x: dict) -> dict:
+        r = await argus.store.write(lambda c: guidance.decide(c, int(x["lesson"]), bool(x["approve"]), time.time()))
+        return r or {"state": "already decided"}
+
+    tools.builtin["propose_lessons"] = Tool(
+        "propose_lessons", "(guidance loop) keep proposed lessons for a playbook",
+        {"key": {"type": "string"}, "text": {"type": "string"}, "evals": {"type": "object"},
+         "job_id": {"type": "string"}}, ["key", "text"], fn=_propose, for_ari=False, for_mcp=False)
+    tools.builtin["decide_lessons"] = Tool(
+        "decide_lessons", "(guidance loop) your answer to proposed lessons",
+        {"lesson": {"type": "integer"}, "approve": {"type": "boolean"}}, ["lesson", "approve"], fn=_decide,
+        for_ari=False, for_mcp=False)
 
     @app.get("/phone", dependencies=guarded)
     async def get_phone() -> dict:
@@ -1195,6 +1297,8 @@ def create_app(argus: Argus) -> FastAPI:
                 p = argus.plugin_host.plugins.get(job.plugin)
                 if p is not None:  # current settings (live, config): argusd may have restarted since register
                     out["plugin_info"] = p.info()
+                    out["plugin_info"]["lessons"] = await argus.store.read(
+                        lambda c, pid=job.plugin: guidance.active_lessons(c, pid))
                 return out
             if time.monotonic() >= deadline:
                 return Response(status_code=204)
@@ -1385,6 +1489,79 @@ def create_app(argus: Argus) -> FastAPI:
     @app.get("/plugins", dependencies=guarded)
     async def plugins() -> dict:
         return argus.plugin_host.list()
+
+    def plugin_or_404(pid: str):
+        p = argus.plugin_host.plugins.get(pid)
+        if p is None:
+            raise HTTPException(status_code=404, detail=f"no plugin {pid}")
+        return p
+
+    @app.get("/plugins/{pid}", dependencies=guarded)
+    async def plugin_detail(pid: str) -> dict:
+        """Everything Helios's page for one plugin shows: what it is, its buttons and triggers, settings (with
+        where each value comes from), Ari's tools, recent runs, time saved, learning."""
+        p = plugin_or_404(pid)
+        m = p.manifest
+        saved = await state_get(pid, "_settings") or {}
+        mine = saved.get("config") or {}
+        settings = [{"name": k, "type": f.type, "label": f.label or k.replace("_", " "), "choices": f.choices,
+                     "default": f.default, "value": p.config.get(k),
+                     "source": "you" if k in mine else "argus.yaml" if (p.base_config or {}).get(k) != f.default
+                     else "default"} for k, f in m.config.items()]
+        scheds = [s for s in await argus.scheduler.list() if s["plugin"] == pid]
+        runs = [job_json(j) for j in await argus.jobs.list_jobs(None, 15, pid)]
+        week = await argus.store.read(lambda c: daily.time_saved(c, time.time(), 7))
+        learn = await argus.store.read(lambda c: guidance.overview(c, pid))
+        t = m.triggers
+        return {
+            "id": pid, "name": m.name, "version": m.version, "description": m.description, "runs_on": m.runs_on,
+            "needs": m.job_needs(), "live": p.live,
+            "live_from": "you" if saved.get("live") is not None else "argus.yaml",
+            "group": m.helios.node.group, "path": str(p.path),
+            "buttons": [{"workflow": x.manual.workflow, "label": x.manual.label} for x in t if x.manual],
+            "schedules": [{"id": s["id"], "cron": s["cron"], "workflow": s["workflow"], "enabled": s["enabled"],
+                           "next_run_at": s["next_run_at"], "last_run_at": s["last_run_at"]} for s in scheds],
+            "watches": [{"workflow": x.folder_watch.workflow, "paths": x.folder_watch.paths}
+                        for x in t if x.folder_watch],
+            "share": [x.model_dump() for x in m.share],
+            "tools": [{"name": x.name, "description": x.description, "risky": x.risky} for x in m.ari.tools],
+            "rules": m.helios.rules.label if m.helios.rules else None,
+            "wrong": m.helios.wrong.label if m.helios.wrong else None,
+            "permissions": m.permissions.model_dump(),
+            "settings": settings,
+            "runs": runs,
+            "saved": next((x for x in week["plugins"] if x["plugin"] == pid), {"seconds": 0, "jobs": 0}),
+            "learning": learn,
+        }
+
+    @app.put("/plugins/{pid}/settings", dependencies=guarded)
+    async def plugin_settings(pid: str, body: PluginSettings) -> dict:
+        """Change a plugin from Helios: live or dry-run, and its settings. Takes effect with the next job."""
+        from ..plugins import SettingError, check_setting
+
+        p = plugin_or_404(pid)
+        saved = {} if body.reset else dict(await state_get(pid, "_settings") or {})
+        if "live" in body.model_fields_set:
+            saved["live"] = body.live
+        if body.config:
+            mine = dict(saved.get("config") or {})
+            for k, v in body.config.items():
+                f = p.manifest.config.get(k)
+                if f is None:
+                    raise HTTPException(status_code=422, detail=f"{pid} has no setting {k!r}")
+                if v is None:
+                    mine.pop(k, None)
+                    continue
+                try:
+                    mine[k] = check_setting(f, k, v)
+                except SettingError as e:
+                    raise HTTPException(status_code=422, detail=str(e)) from None
+            saved["config"] = mine
+        await state_set(pid, "_settings", saved or None)
+        p.apply(saved)
+        await argus.store.write(lambda c: insert_event(c, time.time(), "plugin.settings", src="helios", dst=pid,
+                                                       data={"live": p.live, "changed": sorted(body.config or {})}))
+        return {"live": p.live, "config": p.config}
 
     @app.post("/plugins/{pid}/run", dependencies=guarded)
     async def plugin_run(pid: str, body: RunPlugin) -> dict:

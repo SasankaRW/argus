@@ -137,6 +137,8 @@ class StepReporter:
 
     def tool(self, body: dict) -> dict: ...
 
+    def sample(self, body: dict) -> None: ...
+
     @property
     def lease_lost(self) -> bool: ...
 
@@ -174,6 +176,7 @@ class Context:
         self.shared: Callable[[str], bytes] | None = None  # a shared file's bytes, for jobs from Helios > Share
         self.shared_backup: Callable[[str], bytes] | None = None  # built-in backup copy only
         self._unsent: list = []  # plugin events waiting to be sent (set by the worker)
+        self._lessons: dict[str, str] = {}  # playbook key -> approved lessons (from argusd with the job)
         self._flush_trace: Callable[[], None] = lambda: None
 
     def _check_lease(self) -> None:
@@ -233,6 +236,10 @@ class Context:
                 raise PermissionDenied(f"{self.job.get('plugin')} may not use these models "
                                        "(permissions.models in plugin.yaml)")
         pics = [base64.b64encode(b).decode() for b in images] if images else None
+        original = playbook
+        key = self._playbook_key(original)
+        if key and self._lessons.get(key):  # approved lessons from the nightly review
+            playbook = f"{playbook}\n\nLessons from earlier mistakes (follow them):\n{self._lessons[key]}"
         try:
             ans = self._router.ask(playbook, input, schema=schema, check=check, chain=tiers, attempts=attempts,
                                    images=pics)
@@ -244,7 +251,28 @@ class Context:
             self._router.board.event("model.escalated", tried[-1].lower(), claude.lower(),
                                      {"from_tier": tried[-1], "to_tier": claude, "reason": "local models failed"})
             ans = self._ask_claude(playbook, input, schema, check, pics, _advice(e), e)
+        self._sample(original, schema, input, ans)
         return self._took(ans)
+
+    def _playbook_key(self, playbook: str) -> str | None:
+        if self.plugin is None:
+            return None
+        import hashlib
+
+        return f"{self.plugin.id}:{hashlib.sha1(playbook.encode()).hexdigest()[:12]}"
+
+    def _sample(self, playbook: str, schema: Any, input: Any, ans: Any) -> None:
+        """Keep this answer for the guidance loop (your verdicts, the nightly review). Best effort."""
+        if self.plugin is None or not hasattr(self._reporter, "sample"):
+            return
+        try:
+            js = schema if isinstance(schema, dict) else schema.model_json_schema() if schema is not None else None
+            value = ans.value.model_dump() if hasattr(ans.value, "model_dump") else ans.value
+            escalated = any(("rejected" in t or "error" in t) for t in ans.trail)
+            self._reporter.sample({"playbook": playbook, "schema": js, "input": input, "output": value,
+                                   "tier": ans.tier, "escalated": escalated})
+        except Exception as e:  # never fail a job over its sample
+            self.log.debug("sample not kept", extra={"error": str(e)[:200]})
 
     def _took(self, ans: Any) -> Any:
         order = list(self._router.chain) if self._router else []

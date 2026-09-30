@@ -241,6 +241,18 @@ class Plugin(BaseModel):
     path: Path
     live: bool
     config: dict[str, Any]
+    base_live: bool | None = None  # from argus.yaml (before your changes in Helios)
+    base_config: dict[str, Any] | None = None
+
+    def apply(self, settings: dict[str, Any] | None) -> None:
+        """Your changes from Helios (plugin state `_settings`) on top of plugin.yaml and argus.yaml."""
+        if self.base_live is None:
+            self.base_live, self.base_config = self.live, dict(self.config)
+        s = settings or {}
+        self.live = self.base_live if s.get("live") is None else bool(s["live"])
+        self.config = {**(self.base_config or {}), **{k: v for k, v in (s.get("config") or {}).items()
+                                                      if k in self.manifest.config}}
+
 
     def info(self) -> dict[str, Any]:
         m = self.manifest
@@ -251,7 +263,34 @@ class Plugin(BaseModel):
                 "wrong": m.helios.wrong.model_dump() if m.helios.wrong else None,
                 "share": [t.model_dump() for t in m.share],
                 "ari_tools": [t.name for t in m.ari.tools],
+                "group": m.helios.node.group,
                 "rules": m.helios.rules.label if m.helios.rules else None}
+
+
+class SettingError(ValueError):
+    pass
+
+
+def check_setting(field: ConfigField, name: str, value: Any) -> Any:
+    """A value from Helios's settings form, in the field's type. SettingError says what's wrong."""
+    t = field.type
+    try:
+        if t == "int":
+            return int(str(value).strip())
+        if t == "bool":
+            return value if isinstance(value, bool) else str(value).strip().lower() in ("1", "true", "yes", "on")
+        if t == "list":
+            items = value if isinstance(value, list) else str(value).splitlines()
+            return [str(x).strip() for x in items if str(x).strip()]
+        if t == "choice":
+            if field.choices and str(value) not in field.choices:
+                raise SettingError(f"{name}: pick one of {', '.join(field.choices)}")
+            return str(value)
+        return str(value).strip()
+    except (TypeError, ValueError) as e:
+        if isinstance(e, SettingError):
+            raise
+        raise SettingError(f"{name}: expected {t}") from None
 
 
 # ------------------------------------------------------------------ loading

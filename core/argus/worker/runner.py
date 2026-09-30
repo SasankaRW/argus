@@ -26,6 +26,7 @@ from . import backup as _backup  # noqa: F401 - the PC's copy of the nightly bac
 from . import health as _health  # noqa: F401 - WSL and Docker on the PC
 from . import hear as _hear  # noqa: F401 - Ari's hearing (Whisper)
 from . import power as _power  # noqa: F401 - the built-in power buttons (sleep, shut down, ...)
+from . import review as _review  # noqa: F401 - the guidance loop's nightly review
 from . import think as _think  # noqa: F401 - Ari's thinking (tools, then an answer)
 from .client import ApiError, ArgusClient, LeaseLostError, Unreachable
 from .plugins import Files, Http, LoadedPlugin, Secrets, Store
@@ -56,6 +57,12 @@ class _JobReporter:
 
     def notify(self, body: dict) -> dict:
         return self._call(lambda: self.client.notify(self.job_id, self.worker_id, body))
+
+    def sample(self, body: dict) -> None:
+        try:
+            self.client.post(f"/jobs/{self.job_id}/samples", {"worker": self.worker_id, **body})
+        except (Unreachable, ApiError):
+            pass
 
     def tool(self, body: dict) -> dict:
         return self._call(lambda: self.client.post(f"/jobs/{self.job_id}/tools", {"worker": self.worker_id, **body}))
@@ -338,6 +345,7 @@ class Worker:
         perms = plugin.perms
         ctx.plugin = plugin
         ctx.config = dict(plugin.config)
+        ctx._lessons = dict(plugin.info.get("lessons") or {})
         ctx.dry_run = plugin.dry_run
         ctx.files = Files(pid, perms.get("files") or {}, self.path_rules, plugin.dry_run, trace)
         ctx.http = Http(pid, perms.get("network") or [], trace)

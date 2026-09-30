@@ -274,6 +274,13 @@ class AriConfig(_Strict):
     listen_wake_model: str = "tiny.en"  # listens for the wake phrase (small and fast; the command uses whisper_model)
 
 
+class GuidanceConfig(_Strict):
+    enabled: bool = True
+    at: str = Field("03:30", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")  # the nightly review (needs Claude)
+    keep_samples: int = Field(200, ge=10, le=5000)  # model answers kept per playbook (marked ones always stay)
+    max_per_review: int = Field(12, ge=1, le=50)  # mistakes shown to Claude per playbook
+
+
 class BriefConfig(_Strict):
     enabled: bool = True
     at: str = Field("07:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")  # local time: the phone gets the morning brief
@@ -338,6 +345,7 @@ class Config(_Strict):
     share: ShareConfig = Field(default_factory=ShareConfig)
     ari: AriConfig = Field(default_factory=AriConfig)
     brief: BriefConfig = Field(default_factory=BriefConfig)
+    guidance: GuidanceConfig = Field(default_factory=GuidanceConfig)
     summary: SummaryConfig = Field(default_factory=SummaryConfig)
     health: HealthConfig = Field(default_factory=HealthConfig)
     backup: BackupConfig = Field(default_factory=BackupConfig)

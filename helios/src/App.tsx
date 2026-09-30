@@ -9,6 +9,7 @@ import { useArgus } from "./live";
 import { MapView, Selection } from "./MapView";
 import { LogsView } from "./LogsView";
 import { PhoneHome } from "./PhoneHome";
+import { PluginsView } from "./PluginsView";
 import { PowerView } from "./PowerView";
 import { QueueView } from "./QueueView";
 import { RulesView } from "./RulesView";
@@ -16,17 +17,15 @@ import { RunsView } from "./RunsView";
 import { ShareView } from "./ShareView";
 import { pref, setPref, setVoiceStatus, VoiceStatus, WakeListener } from "./voice";
 
-const NAV: { id: string; label: string; icon: string; soon?: string }[] = [
+const NAV: { id: string; label: string; icon: string }[] = [
   { id: "map", label: "Live map", icon: "M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3zM9 3v15M15 6v15" },
   { id: "ari", label: "Ari", icon: "M4 5h16v11H9l-5 4zM8 10h.01M12 10h.01M16 10h.01" },
+  { id: "plugins", label: "Plugins", icon: "M9 3v4M15 3v4M6 7h12v5a6 6 0 0 1-12 0zM12 18v3" },
   { id: "queue", label: "Queue", icon: "M4 6h10M4 12h10M4 18h10M18 6l2 2-2 2M18 14l2 2-2 2" },
   { id: "runs", label: "Runs", icon: "M4 6h16M4 12h11M4 18h14" },
   { id: "share", label: "Share", icon: "M12 15V3M7 8l5-5 5 5M5 13v6h14v-6" },
-  { id: "logs", label: "Logs", icon: "M5 4h14v16H5zM8 8h8M8 12h8M8 16h5" },
-  { id: "inbox", label: "Approvals", icon: "M4 13l2.5-8h11l2.5 8v6H4zM4 13h5l1.5 2h3l1.5-2h5", soon: "M3" },
-  { id: "models", label: "Models", icon: "M12 3l8 4.5v9L12 21l-8-4.5v-9zM12 12l8-4.5M12 12v9M12 12L4 7.5", soon: "later" },
   { id: "power", label: "Power", icon: "M12 3v8M7.5 6.5a7 7 0 1 0 9 0" },
-  { id: "custom", label: "Customize", icon: "M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1M15 4v4M9 10v4M17 16v4", soon: "later" },
+  { id: "logs", label: "Logs", icon: "M5 4h14v16H5zM8 8h8M8 12h8M8 16h5" },
 ];
 
 function Icon({ d }: { d: string }) {
@@ -136,7 +135,7 @@ export function App() {
   const [flow, setFlow] = useState(true);
   const [relayout, setRelayout] = useState(0);
   const [triedLogin, setTriedLogin] = useState(false);
-  const parse = (h: string) => (["queue", "runs", "logs", "share", "power", "ari"].includes(h) || h.startsWith("rules/") ? h : "map");
+  const parse = (h: string) => (["queue", "runs", "logs", "share", "power", "ari", "plugins"].includes(h) || h.startsWith("rules/") || h.startsWith("plugins/") ? h : "map");
   const [view, setView] = useState<string>(() => parse(location.hash.slice(1)));
   useEffect(() => {  // the share menu opens /helios/#share on a page that may already be open
     const on = () => setView(parse(location.hash.slice(1)));
@@ -231,8 +230,8 @@ export function App() {
 
       <nav className="rail" aria-label="Helios sections">
         {NAV.map((n) => (
-          <button key={n.id} type="button" className="nav" aria-current={n.id === view.split("/")[0] ? "page" : undefined} disabled={!!n.soon} onClick={() => go(n.id)} title={n.soon ? `Arrives in ${n.soon}` : undefined}>
-            <Icon d={n.icon} /><span>{n.label}</span>{n.soon && <span className="soon mono">{n.soon}</span>}
+          <button key={n.id} type="button" className="nav" aria-current={n.id === view.split("/")[0] ? "page" : undefined} onClick={() => go(n.id)}>
+            <Icon d={n.icon} /><span>{n.label}</span>
           </button>
         ))}
         <div className="foot">
@@ -245,8 +244,13 @@ export function App() {
       </nav>
 
       <main>
-        {view !== "share" && !view.startsWith("rules/") && <Kpis status={st} />}
+        {view !== "share" && !view.startsWith("rules/") && !view.startsWith("plugins") && <Kpis status={st} />}
         {view.startsWith("rules/") ? <RulesView plugin={decodeURIComponent(view.slice(6))} onBack={() => history.back()} />
+        : view.split("/")[0] === "plugins" ? (
+          <PluginsView selected={view.includes("/") ? decodeURIComponent(view.split("/")[1]) : null}
+            onPick={(id) => go(id ? `plugins/${encodeURIComponent(id)}` : "plugins")}
+            onSelect={(s) => { setSel(s); go("runs"); }} />
+        )
         : view === "share" ? <ShareView onJob={(id) => { setSel({ type: "job", id }); go("runs"); }} onDone={() => go("map")} />
         : view === "logs" ? <LogsView /> : (
         <div className="mid">
@@ -287,7 +291,7 @@ export function App() {
           {a.map && <Inspector sel={sel} map={a.map} status={st} events={a.events} onSelect={setSel} />}
         </div>
         )}
-        {view !== "logs" && view !== "share" && !view.startsWith("rules/") && <EventsPanel events={a.events} conn={a.conn} onSelect={setSel} />}
+        {view !== "logs" && view !== "share" && !view.startsWith("rules/") && !view.startsWith("plugins") && <EventsPanel events={a.events} conn={a.conn} onSelect={setSel} />}
       </main>
       {heardBadge}
     </div>

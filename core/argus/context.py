@@ -61,6 +61,7 @@ class Argus:
         self.marker = Marker(cfg.db_path.parent / "argus.running")
         self.brief_sent: str | None = None
         self.summary_sent: str | None = None
+        self.guidance_sent: str | None = None
         self._next_touch = 0.0
         self.resumed: dict | None = None  # set at start when the last run ended abruptly
         self.started_at: float | None = None
@@ -83,6 +84,7 @@ class Argus:
             await self.resume_notice(stopped_at)
         self.plugin_host.load()  # adds the plugins' schedules and triggers before the scheduler reads them
         self._health_schedule()
+        await self.apply_plugin_settings()
         await self.register_plugins()
         self.models.plugin_caps = self.plugin_host.claude_caps()
         await self.scheduler.sync()
@@ -127,10 +129,32 @@ class Argus:
             day = brief_due(self.cfg.brief.at, now, self.brief_sent)
             if day:
                 await self.send_brief(day)
+        if self.cfg.guidance.enabled:
+            day = brief_due(self.cfg.guidance.at, now, self.guidance_sent, until_hour=23)
+            if day:
+                self.guidance_sent = day
+                await self.guidance_review()
         if self.cfg.summary.enabled:
             day = brief_due(self.cfg.summary.at, now, self.summary_sent, until_hour=23)
             if day:
                 await self.send_summary(day)
+
+    async def guidance_review(self) -> dict:
+        """Queue the review of new mistakes (a job for a worker with Claude). Nothing to do: no job."""
+        from . import guidance
+
+        def fn(conn):
+            now = time.time()
+            items = guidance.review_inputs(conn, self.cfg.guidance.max_per_review)
+            if not items:
+                return None
+            guidance.mark_reviewed(conn, [s["id"] for it in items for s in it["mistakes"]], now)
+            jid, _ = self.jobs.enqueue_in(conn, now, "guidance", "review", {"playbooks": items}, needs=[],
+                                          priority=PRIORITY_BATCH, model_group="cloud", source="argus",
+                                          dedupe_key="guidance:review")
+            return {"job_id": jid, "playbooks": len(items)}
+
+        return await self.store.write(fn) or {"job_id": None, "playbooks": 0, "note": "nothing new to learn from"}
 
     async def send_summary(self, day: str | None = None) -> dict:
         """The evening summary to the phone (once per day; `POST /summary` sends one now)."""
@@ -241,6 +265,18 @@ class Argus:
         if queued:
             self.outbox.poke()
         return queued
+
+    async def apply_plugin_settings(self) -> None:
+        """Your changes from Helios (live, settings) on top of argus.yaml."""
+        import json
+
+        def fn(conn):
+            return {r[0]: json.loads(r[1]) for r in conn.execute(
+                "SELECT plugin, value FROM plugin_state WHERE key = '_settings' AND value IS NOT NULL")}
+
+        saved = await self.store.read(fn)
+        for pid, p in self.plugin_host.plugins.items():
+            p.apply(saved.get(pid))
 
     async def register_plugins(self) -> None:
         from .registry import _upsert_component
