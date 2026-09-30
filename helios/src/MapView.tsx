@@ -20,6 +20,11 @@ const KIND_LABEL: Record<string, string> = { core: "core", worker: "worker", plu
 function sub(n: MapNode): string {
   if (n.kind === "core") return `core${n.meta?.version ? ` · v${n.meta.version}` : ""}`;
   if (n.kind === "worker") return `${n.state ?? "unknown"}${n.group ? ` · ${n.group}` : ""}`;
+  if (n.id === PLUGINS) {
+    const j = n.jobs ?? { active: 0, queued: 0, waiting: 0 };
+    const busy = [j.active ? `${j.active} running` : "", j.queued ? `${j.queued} queued` : "", j.waiting ? `${j.waiting} waiting` : ""].filter(Boolean);
+    return busy.length ? `${n.meta.count} · ${busy.join(" · ")}` : `${n.meta.count} plugins · idle`;
+  }
   if (n.kind === "plugin") {
     const j = n.jobs ?? { active: 0, queued: 0, waiting: 0 };
     if (!j.active && !j.queued && !j.waiting) return "idle";
@@ -307,10 +312,34 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal 
   );
 }
 
-export function MapView(p: Props) {
+// The map shows the main parts only: all plugins are one "Plugins" box (their own page has the details). Lines
+// and message dots to or from any plugin go to that box.
+export const PLUGINS = "plugins";
+export function mainParts(map: ArgusMap, pulses: Pulse[], active: Record<string, number>) {
+  const plug = new Set(map.nodes.filter((n) => n.kind === "plugin").map((n) => n.id));
+  if (!plug.size) return { map, pulses, active };
+  const to = (id: string) => (plug.has(id) ? PLUGINS : id);
+  const ps = map.nodes.filter((n) => plug.has(n.id));
+  const sum = (k: "active" | "queued" | "waiting") => ps.reduce((a, n) => a + (n.jobs?.[k] ?? 0), 0);
+  const group: MapNode = {
+    id: PLUGINS, kind: "plugin", label: "Plugins", group: null, first_seen: Math.min(...ps.map((n) => n.first_seen)),
+    meta: { count: ps.length }, jobs: { active: sum("active"), queued: sum("queued"), waiting: sum("waiting") },
+  };
+  const nodes = [...map.nodes.filter((n) => !plug.has(n.id)), group];
+  const edges = map.edges.map((e) => ({ ...e, src: to(e.src), dst: to(e.dst) })).filter((e) => e.src !== e.dst);
+  const act: Record<string, number> = {};
+  for (const [k, v] of Object.entries(active)) act[to(k)] = Math.max(act[to(k)] ?? 0, v);
+  const pl = pulses.map((x) => ({ ...x, src: to(x.src), dst: to(x.dst) })).filter((x) => x.src !== x.dst);
+  return { map: { ...map, nodes, edges }, pulses: pl, active: act };
+}
+
+export function MapView(p: Props & { onPlugins?: () => void }) {
+  const m = useMemo(() => mainParts(p.map, p.pulses, p.active), [p.map, p.pulses, p.active]);
+  const sel = p.selection?.type === "node" && p.selection.id === PLUGINS ? null : p.selection;
+  const onSelect = (s: Selection) => (s?.type === "node" && s.id === PLUGINS && p.onPlugins ? p.onPlugins() : p.onSelect(s));
   return (
     <ReactFlowProvider>
-      <Inner {...p} />
+      <Inner {...p} {...m} selection={sel} onSelect={onSelect} />
     </ReactFlowProvider>
   );
 }

@@ -5,6 +5,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Live map: shows the main parts only. All plugins are one "Plugins" box (count, and what runs or waits); clicking it opens the Plugins page. Lines and message dots to any plugin go to that box.
 - Helios redesign: a modern terminal look. Status line on top (health, uptime, Claude calls, clock) with an `› ask argus…` prompt; an icon rail that expands to labels (remembered); the live map fills the page with the job counts and legend floating over it and the inspector sliding in from the right; events are a `tail -f` pane docked at the bottom that folds to one line; job counts are one mono strip on Queue, Runs and Power.
 - Smooth motion: pages and panels rise in, the inspector slides in, the events pane opens, buttons press, changed numbers flash, busy boxes glow; all off when the system asks for reduced motion.
 - Phone: the "Talk to Ari" button text was invisible (dark on dark); fixed.

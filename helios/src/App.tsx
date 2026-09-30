@@ -6,7 +6,7 @@ import { EventsPanel } from "./EventsPanel";
 import { uptime } from "./format";
 import { Inspector } from "./Inspector";
 import { useArgus } from "./live";
-import { MapView, Selection } from "./MapView";
+import { mainParts, MapView, mergeEdges, Selection } from "./MapView";
 import { LogsView } from "./LogsView";
 import { PhoneHome } from "./PhoneHome";
 import { PluginsView } from "./PluginsView";
@@ -226,6 +226,7 @@ export function App() {
     );
   }
   const root = view.split("/")[0];
+  const main = a.map ? mainParts(a.map, [], {}).map : null;
   const withKpis = ["queue", "runs", "power"].includes(root);
   const withDock = !["logs", "share", "plugins", "rules"].includes(root);
   const health = a.phase === "down" ? "unreachable" : ok ? "healthy" : a.conn === "live" ? "degraded" : "connecting";
@@ -277,13 +278,13 @@ export function App() {
           <section className="stage" aria-label="Live map">
             <div className="canvas">
               {a.map && a.map.nodes.length > 0 ? (
-                <MapView map={a.map} pulses={a.pulses} active={a.active} selection={sel} onSelect={setSel} flow={flow} relayoutSignal={relayout} />
+                <MapView map={a.map} pulses={a.pulses} active={a.active} selection={sel} onSelect={setSel} flow={flow} relayoutSignal={relayout} onPlugins={() => go("plugins")} />
               ) : (
                 <div className="empty mono">{a.phase === "down" ? "$ waiting for argus…" : "$ loading the map…"}</div>
               )}
             </div>
             <div className="hud hud-tl">
-              <div className="hud-title mono"><span className="pt">live map</span><span className="dim">{a.map ? `${a.map.nodes.length} boxes · ${a.map.edges.length} lines` : "loading…"}</span></div>
+              <div className="hud-title mono"><span className="pt">live map</span><span className="dim">{main ? `${main.nodes.length} parts · ${mergeEdges(main.edges).length} lines` : "loading…"}</span></div>
               <Kpis status={st} hud />
             </div>
             <div className="hud hud-tr tools">
