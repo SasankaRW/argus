@@ -10,7 +10,7 @@ import { FitPad, mainParts, MapView, mergeEdges, Selection } from "./MapView";
 import { LogsView } from "./LogsView";
 import { MapFull } from "./MapFull";
 import { CommandLayer, Layout, LayoutSwitch, loadLayout, saveLayout } from "./Desk";
-import { PhoneHeader, PhoneHome, PhoneMore, PhoneTab, PhoneTabs } from "./Phone";
+import { PhoneHeader, PhoneHome, PhoneMore, PhoneOffline, PhoneTab, PhoneTabs } from "./Phone";
 import { Sheet } from "./Sheet";
 import { InboxView, ModelsView, SettingsView, useInboxCount } from "./Pages";
 import { PluginsView } from "./PluginsView";
@@ -47,11 +47,21 @@ function Icon({ d }: { d: string }) {
   );
 }
 
+// The Argus mark in small: the iris (a gradient ring and a bright pupil); the app icon is the same.
 function Logo() {
   return (
-    <svg width="22" height="22" viewBox="0 0 26 26" fill="none" aria-hidden="true">
-      <circle cx="13" cy="13" r="5" fill="#F5A524" />
-      <path d="M13 2v3M13 21v3M2 13h3M21 13h3M5.2 5.2l2.1 2.1M18.7 18.7l2.1 2.1M5.2 20.8l2.1-2.1M18.7 7.3l2.1-2.1" stroke="#F5A524" strokeWidth="1.6" strokeLinecap="round" />
+    <svg width="22" height="22" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <defs>
+        <linearGradient id="lg-ring" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#ffb547" /><stop offset=".5" stopColor="#ff7a59" /><stop offset="1" stopColor="#4cc2ff" />
+        </linearGradient>
+        <radialGradient id="lg-pupil" cx="40%" cy="35%" r="70%">
+          <stop offset="0" stopColor="#ffffff" /><stop offset=".5" stopColor="#b9f0ff" /><stop offset="1" stopColor="#4cc2ff" />
+        </radialGradient>
+      </defs>
+      <circle cx="16" cy="16" r="11.5" stroke="url(#lg-ring)" strokeWidth="4" />
+      <circle cx="18" cy="14.2" r="3.4" fill="#4cc2ff" opacity=".35" />
+      <circle cx="18" cy="14.2" r="2.6" fill="url(#lg-pupil)" />
     </svg>
   );
 }
@@ -263,6 +273,7 @@ export function App() {
       <div className="phone2">
         <div className="glow g1" aria-hidden="true" /><div className="glow g2" aria-hidden="true" />
         <PhoneHeader status={st} live={a.conn === "live"} />
+        {a.phase === "down" && <PhoneOffline onRetry={() => a.reconnect()} />}
         <main key={view} className="pmain2">
           {proot === "ari" ? (view.includes("/")
             ? <AriView conv={view.split("/")[1]} onBack={() => go("ari")} onNew={(c) => go(`ari/${c}`)} onSelect={setSel} onView={open} />

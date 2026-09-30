@@ -943,8 +943,10 @@ main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 
 /* ---- Ari's island (the PC's popup): black, grown out of the top edge (shape and motion in Island.tsx) ---- */
 .island-wrap { position: fixed; inset: 0; display: flex; justify-content: center; align-items: flex-start; pointer-events: none; }
-.island { --tone: var(--amber); --glow: 0; position: relative; pointer-events: auto; cursor: pointer; color: #f4f4f5; outline: none;
-  font-family: "Geist Sans", var(--sans); }
+.island { --tone: var(--amber); --glow: 0; --isl-font: "Inter Variable", "Geist Sans", var(--sans);
+  position: relative; pointer-events: auto; cursor: pointer; color: #f4f4f5; outline: none;
+  font-family: var(--isl-font); font-optical-sizing: auto; font-feature-settings: "cv11", "ss03", "calt";
+  -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
 .island.t-tg { --tone: #39ff9c; } .island.t-flow { --tone: var(--flow); } .island.t-amber { --tone: var(--amber); }
 .island.m-active, .island.m-done { --glow: .5; } .island.m-details { --glow: .12; }
 .isl-shape { position: absolute; top: 0; left: 0; overflow: visible; transition: filter .6s ease;
@@ -957,7 +959,7 @@ main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .isl-row { position: absolute; inset: 0; display: flex; align-items: center; gap: 12px; padding: 0 18px 1px 16px; min-width: 240px; transform-origin: center top;
   animation: islin .5s .14s both cubic-bezier(.2, .8, .2, 1); }
 .m-done .isl-row { align-items: flex-start; padding-top: 13px; }
-.isl-text { min-width: 0; flex: 1; display: flex; gap: 9px; align-items: baseline; font-size: 13px; line-height: 1.45; letter-spacing: -.005em; }
+.isl-text { min-width: 0; flex: 1; display: flex; gap: 9px; align-items: baseline; font-size: 13.5px; font-weight: 400; line-height: 1.45; letter-spacing: -.011em; }
 .isl-text b { font: 500 11.5px var(--mono); color: var(--tone); flex: none; letter-spacing: .02em; }
 .isl-text span { color: #e4e6e8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .m-active.t-amber .isl-text span { background: linear-gradient(90deg, #e4e6e8 0%, #e4e6e8 40%, #fff7e6 50%, #e4e6e8 60%, #e4e6e8 100%);
@@ -985,9 +987,9 @@ main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .isl-details { position: absolute; top: 0; left: 0; width: 440px; padding: 16px 20px 14px; display: flex; flex-direction: column; gap: 10px; cursor: default;
   animation: islin .55s .16s both cubic-bezier(.2, .8, .2, 1); }
 .iw-clock { display: flex; align-items: baseline; gap: 12px; padding-bottom: 2px; }
-.iw-clock b { font: 300 38px/1 "Geist Sans", var(--sans); letter-spacing: -.02em; color: #fff; font-variant-numeric: tabular-nums; }
+.iw-clock b { font: 250 40px/1 var(--isl-font); letter-spacing: -.035em; color: #fff; font-variant-numeric: tabular-nums; }
 .iw-clock span { font-size: 12.5px; color: #8b939c; }
-.iw-line { display: flex; align-items: center; gap: 10px; min-height: 22px; font-size: 13px; color: #e4e6e8; border: 0; background: none; padding: 0; text-align: left; font-family: inherit; width: 100%; }
+.iw-line { display: flex; align-items: center; gap: 10px; min-height: 22px; font-size: 13.5px; letter-spacing: -.011em; color: #e4e6e8; border: 0; background: none; padding: 0; text-align: left; font-family: inherit; width: 100%; }
 .iw-line > span:first-of-type { flex: none; }
 .iw-line .iw-dim { margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .iw-link { cursor: pointer; border-radius: 8px; }
@@ -997,8 +999,8 @@ main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .iw-dot.amber { background: var(--amber); box-shadow: 0 0 8px var(--amber); } .iw-dot.flow { background: var(--flow); box-shadow: 0 0 8px var(--flow); }
 .iw-dot.dim { background: #3a4047; box-shadow: none; }
 .iw-shortcuts { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 6px; padding-top: 2px; }
-.iw-shortcuts button { height: 32px; padding: 0 10px; border: 0; border-radius: 12px; background: #131517; color: #e4e6e8; font: 500 12px "Geist Sans", var(--sans);
-  cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; box-shadow: inset 0 .5px 0 rgba(255, 255, 255, .07); transition: background .2s, transform .15s; }
+.iw-shortcuts button { height: 32px; padding: 0 10px; border: 0; border-radius: 12px; background: #131517; color: #e4e6e8; font: 450 12.5px var(--isl-font);
+  letter-spacing: -.01em; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; box-shadow: inset 0 .5px 0 rgba(255, 255, 255, .07); transition: background .2s, transform .15s; }
 .iw-shortcuts button:hover { background: #1d2023; }
 .iw-shortcuts button:active { transform: scale(.96); }
 .iw-last { margin: 0; font-size: 12.5px; line-height: 1.5; color: #d8dcd9; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
@@ -1019,3 +1021,9 @@ main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .btn.mini { height: 26px; min-width: 26px; padding: 0 6px; }
 .isl-set-foot { display: flex; align-items: center; gap: 8px; padding-top: 10px; }
 .isl-set-foot .primary { height: 30px; padding: 0 14px; }
+.p-offline { position: relative; z-index: 1; margin: 0 14px 10px; padding: 12px 14px; border-radius: 16px; border: 1px solid rgba(255, 122, 107, .35);
+  background: rgba(255, 122, 107, .06); display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font: 12.5px var(--mono); }
+.p-offline b { color: var(--bad); font-weight: 500; }
+.p-offline span { flex-basis: 100%; color: #9fb0a7; font-size: 11.5px; }
+.p-offline button { margin-left: auto; height: 32px; padding: 0 12px; border-radius: 10px; border: 1px solid rgba(255, 122, 107, .45); background: none; color: var(--bad); font: 12px var(--mono); }
+@media (display-mode: standalone) { html, body { overscroll-behavior-y: contain; } }

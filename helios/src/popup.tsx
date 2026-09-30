@@ -3,6 +3,7 @@
 //   "ari:<mode>|<w>x<h>" = where the island is (the window's click area), "ari:go|<hash>" = open Helios there.
 import "@fontsource/geist-sans/latin-400.css";
 import "@fontsource/geist-sans/latin-500.css";
+import "@fontsource-variable/inter/opsz.css";  // the island's text: smooth at every weight on Windows
 import "@fontsource/geist-mono/latin-400.css";
 import "@fontsource/geist-mono/latin-500.css";
 import "./styles.css";
