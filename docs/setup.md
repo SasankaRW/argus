@@ -118,6 +118,7 @@ Each plugin starts in dry-run: it shows what it would do (Runs page in Helios) a
 | --- | --- | --- |
 | downloads-organizer | T1, T2 | "Sort Downloads now" on its box |
 | screenshot-renamer | T1, V1 (Tesseract optional) | take a screenshot, or "Name screenshots now" |
+| duplicate-finder | nothing (no model) | "Find duplicates": one approval, then the extra copies go to the Recycle Bin |
 
 When the dry-run results look right, add the plugin to `plugins.live` and restart. Anything it moves or renames
 can be put back with **Undo** on the job's Changes (downloads-organizer also has **Wrong folder**).

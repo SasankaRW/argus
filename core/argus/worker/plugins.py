@@ -97,6 +97,60 @@ class Files:
         d = self._check(folder, False)
         return sorted(str(p) for p in d.iterdir() if fnmatch.fnmatch(p.name, pattern)) if d.is_dir() else []
 
+    def walk(self, folder: str | Path, *, limit: int = 50_000,
+             skip_hidden: bool = True) -> list[tuple[str, int, float]]:
+        """Every file under `folder` (subfolders too): (path, size, modified). Links are not followed; folders the
+        plugin may not read (paths.blocked) are left out. At most `limit` files."""
+        root = self._check(folder, False)
+        out: list[tuple[str, int, float]] = []
+        if not root.is_dir():
+            return out
+        todo = [root]
+        while todo and len(out) < limit:
+            d = todo.pop()
+            try:
+                entries = list(os.scandir(d))
+            except OSError:
+                continue
+            for e in entries:
+                if skip_hidden and (e.name.startswith(".") or e.name.lower() in ("desktop.ini", "thumbs.db")):
+                    continue
+                p = Path(e.path)
+                if _within(p, self.blocked):
+                    continue
+                try:
+                    if e.is_symlink():
+                        continue
+                    if e.is_dir():
+                        todo.append(p)
+                    elif e.is_file():
+                        st = e.stat()
+                        out.append((str(p), st.st_size, st.st_mtime))
+                except OSError:
+                    continue
+                if len(out) >= limit:
+                    break
+        return out
+
+    def sha256(self, path: str | Path, limit: int | None = None) -> str:
+        """The file's SHA-256, read in pieces (fine for big videos). `limit`: only the first `limit` bytes."""
+        import hashlib
+
+        p = self._check(path, False)
+        h = hashlib.sha256()
+        left = limit
+        with open(p, "rb") as f:
+            while True:
+                chunk = f.read(1 << 20 if left is None else min(1 << 20, left))
+                if not chunk:
+                    break
+                h.update(chunk)
+                if left is not None:
+                    left -= len(chunk)
+                    if left <= 0:
+                        break
+        return h.hexdigest()
+
     # -------------------------------------------------------------- changing (undo log; dry-run aware)
 
     def _free(self, dst: Path) -> Path:

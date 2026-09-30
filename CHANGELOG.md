@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **New plugin: duplicate-finder.** Finds files with identical content (same size, first 64 KB, then full SHA-256; names don't matter) in the folders you pick (Downloads and Pictures by default, compared together), keeps the best copy (outside Downloads, plain name, shallowest, oldest) and, after one batch approval, sends the extras to the Recycle Bin, checking each again right before. Sunday 4 am or "Find duplicates". Dry-run until listed in `plugins.live`.
+- `ctx.files.walk(folder)` (every file below a folder) and `ctx.files.sha256(path, limit=)` (read in pieces) for plugins.
 - Tests: the approve-from-the-phone timing check allows 6 s on shared CI runners (1 s locally).
 - Fixed (Windows): stopping argusd could fail with "file in use" when the running-marker was being refreshed at the same moment.
 - Tests: the nightly backup and the morning brief no longer start on their own during tests (they depend on the clock and made CI fail after 02:30 UTC).
