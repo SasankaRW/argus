@@ -115,3 +115,46 @@ def test_current_things_go_to_claude_with_web_search(tmp_path):
     argv = json.loads((tmp_path / "claude_argv.json").read_text())
     assert "WebSearch,WebFetch" in argv and "--disallowedTools" not in argv
     assert "who won the cricket" in (tmp_path / "claude_stdin.txt").read_text()
+
+
+def test_replies_are_made_fit_to_be_read_aloud():
+    from argus.worker.think import spoken
+    md = "**Done.** Here's what I found:\n- one [note](https://x.y/z)\n- `two`\n\n## Next\nSee https://a.b ."
+    assert spoken(md) == "Done. Here's what I found: one note two Next See."
+    long = "Short one. " * 80
+    out = spoken(long, 100)
+    assert len(out) <= 100 and out.endswith(".")
+
+
+def test_the_last_step_must_reply_with_what_was_done(tmp_path):
+    from argus.worker import think as th
+    steps = [{"tool": "shout", "args": {"text": str(i)}} for i in range(th.MAX_STEPS)]
+    replies = {"qwen2.5-coder:7b": [*steps, {"reply": "I shouted five times, then stopped."}]}
+    with FakeOllama(replies) as ol, Server(make(tmp_path).open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop", "session"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        r = cl.post("/ari", {"text": "shout a lot"})
+        last = settle(cl, w, r["conv"], n=30)
+        assert last["text"] == "I shouted five times, then stopped."
+        final = json.loads(ol.requests[-1]["messages"][1]["content"])
+        assert final["last_step"] is True
+        assert "last step" in ol.requests[-1]["messages"][-1]["content"]
+
+
+def test_a_follow_up_sees_what_the_tools_found_last_time(tmp_path):
+    replies = {"qwen2.5-coder:7b": [
+        {"tool": "shout", "args": {"text": "cv.pdf"}}, {"reply": "Found it."},
+        {"reply": "Shouting cv.pdf again."}]}
+    with FakeOllama(replies) as ol, Server(make(tmp_path).open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop", "session"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        r = cl.post("/ari", {"text": "shout my cv"})
+        settle(cl, w, r["conv"])
+        r2 = cl.post("/ari", {"text": "do it again", "conv": r["conv"]})
+        settle(cl, w, r2["conv"])
+        asked = json.loads(ol.requests[-1]["messages"][1]["content"])
+        prev = asked["conversation_so_far"][-1]
+        assert prev["text"] == "Found it." and prev["found"][0]["result"]["said"] == "CV.PDF"
+        assert "job_id" not in prev

@@ -250,8 +250,25 @@ def close_question(conn: sqlite3.Connection, turn_id: int) -> None:
     conn.execute("UPDATE ari_turns SET pending = NULL WHERE id = ?", (turn_id,))
 
 
-def history(conn: sqlite3.Connection, conv: str) -> list[dict[str, str]]:
-    return [{"role": t["role"], "text": t["text"]} for t in turns(conn, conv, HISTORY) if t["text"]]
+def history(conn: sqlite3.Connection, conv: str) -> list[dict[str, Any]]:
+    """The chat so far for the model. Ari's last answer also carries what its tools found (clipped), so a
+    follow-up like "open it" or "and the other one?" knows what "it" was."""
+    out: list[dict[str, Any]] = [{"role": t["role"], "text": t["text"], "job_id": t.get("job_id")}
+                                 for t in turns(conn, conv, HISTORY) if t["text"]]
+    last = next((t for t in reversed(out) if t["role"] == "ari" and t["job_id"]), None)
+    if last is not None:
+        row = conn.execute("SELECT result FROM jobs WHERE id = ?", (last["job_id"],)).fetchone()
+        try:
+            used = (json.loads(row[0]) or {}).get("used") if row and row[0] else None
+        except (ValueError, AttributeError):
+            used = None
+        if used:
+            found = [{k: u[k] for k in ("tool", "args", "result", "error") if k in u} for u in used[-3:]]
+            s = json.dumps(found, ensure_ascii=False, default=str)
+            last["found"] = found if len(s) <= 1200 else s[:1200] + "…"
+    for t in out:
+        t.pop("job_id")
+    return out
 
 
 def add_schedule(conn: sqlite3.Connection, now: float, when: When, action: str, *, plugin: str, workflow: str,

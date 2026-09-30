@@ -15,6 +15,7 @@ A tool marked "asks first" (closing apps, typing, changing files) is not run: Ar
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import Any
 
@@ -52,7 +53,17 @@ How to decide:
 - General knowledge (how something works, definitions, maths, advice): answer yourself if you are sure.
 - Current things (news, weather, prices, scores, today's events, anything after your training) or when you are
   not sure: {"need_web": true}.
+- Combine tools when a question spans things: "what did I note about the server and is it up?" is find_notes,
+  then lab_status, then one reply. Pick the tool by subject: notes (add_note, find_notes, recent_notes), the
+  user's documents (search_my_files, find_file), routines (run_routine, list_routines), the home lab (lab_status),
+  code and repos (repo_status, what_changed_today), the PC (apps, windows, volume, media, clipboard, screenshot).
+- Follow-ups: "it", "that", "again", "the other one", "and tomorrow?" refer to the conversation so far (your last turn's
+  "found" holds what your tools returned then). Carry over what was meant (the same file, app, search or
+  place) instead of asking again.
+- If a tool failed or found nothing, try once more with a better argument (another wording, a wider search)
+  before telling the user.
 - A tool marked "asks_first": still choose it; the user will be asked before it runs.
+- When "last_step" is true you must reply now: say what you did and what you found so far.
 - Reply naturally about what happened ("Opened Spotify and turned it down."). If a tool failed, say what went wrong
   in plain words.
 Answer with the JSON only."""
@@ -61,6 +72,24 @@ WEB = """You are Ari, the user's personal assistant. Answer the user's question 
 current information. Your answer is read aloud: 2-4 short sentences, no lists, no markdown, no links (mention the
 source by name if it matters). If something the user's own files said is included, prefer it for their own
 matters. Answer with only the reply text."""
+
+
+def spoken(text: str, limit: int = 600) -> str:
+    """A reply fit to be read aloud: no markdown, links, bullets or code; short."""
+    t = re.sub(r"```.*?```", " ", text, flags=re.S)
+    t = re.sub(r"\[([^\]]+)\]\((?:[^)]+)\)", r"\1", t)          # [text](link) -> text
+    t = re.sub(r"https?://\S+", "", t)
+    t = re.sub(r"(?m)^\s*(?:[-*\u2022]|\d+[.)])\s+", "", t)       # bullets and numbered lists
+    t = re.sub(r"(?m)^\s*#+\s*", "", t)
+    t = re.sub(r"[*_`]{1,3}([^*_`]+)[*_`]{1,3}", r"\1", t)
+    t = re.sub(r"\s*\n+\s*", " ", t)
+    t = re.sub(r"\s{2,}", " ", t).strip()
+    t = re.sub(r"\s+([.,!?])", r"\1", t)
+    if len(t) > limit:
+        cut = t[:limit]
+        end = max(cut.rfind(". "), cut.rfind("! "), cut.rfind("? "))
+        t = cut[:end + 1] if end > limit // 3 else cut.rstrip() + "…"
+    return t
 
 
 def _clip(v: Any, n: int = 1500) -> Any:
@@ -80,7 +109,10 @@ def think(ctx: Context):
             "tools": list(tools.values())}
     done: list[dict[str, Any]] = []
 
-    def check(s: Step, _inp) -> str | None:
+    def check(s: Step, inp) -> str | None:
+        last = '"last_step": true' in str(inp)
+        if last and (s.tool or (s.need_web and not s.reply.strip())):
+            return "this is your last step: reply now with what you did and found"
         if s.tool:
             if s.tool not in tools:
                 return f"{s.tool!r} is not one of the tools; use a name from the list, or reply"
@@ -97,7 +129,9 @@ def think(ctx: Context):
 
     for i in range(MAX_STEPS):
         def decide(i=i) -> dict:
-            task = {**base, "results_so_far": done} if done else base
+            task = {**base, "results_so_far": done} if done else dict(base)
+            if i == MAX_STEPS - 1:
+                task["last_step"] = True
             s = ctx.llm(PLAYBOOK, json.dumps(task, ensure_ascii=False), schema=Step, check=check,
                         tiers=ctx.local_tiers() or None, claude_last=True)
             return {**s.model_dump(), "tier": ctx.last_answer.tier}
@@ -105,6 +139,8 @@ def think(ctx: Context):
         try:
             s = ctx.step(f"think {i + 1}", decide)
         except EscalationExhausted as e:
+            if done:
+                return {"reply": _so_far(done), "error": str(e)[:200], "used": done}
             return {"reply": "Sorry, I couldn't work that out just now.", "error": str(e)[:200], "used": done}
         if s["tool"]:
             t = tools[s["tool"]]
@@ -128,11 +164,18 @@ def think(ctx: Context):
 
             try:
                 w = ctx.step("web", web)
-                return {"reply": w["reply"], "used": done, "via": "web", "tier": w["tier"]}
+                return {"reply": spoken(w["reply"], 900), "used": done, "via": "web", "tier": w["tier"]}
             except EscalationExhausted:
                 if s["reply"]:
-                    return {"reply": s["reply"], "used": done}
+                    return {"reply": spoken(s["reply"]), "used": done}
                 return {"reply": "That needs the internet, and I can't reach Claude right now.", "used": done}
-        return {"reply": s["reply"].strip(), "used": done, "tier": s.get("tier")}
-    return {"reply": "That took more steps than I can do at once. Could you ask for one thing at a time?",
-            "used": done}
+        return {"reply": spoken(s["reply"]), "used": done, "tier": s.get("tier")}
+    return {"reply": _so_far(done), "used": done}
+
+
+def _so_far(done: list[dict[str, Any]]) -> str:
+    """When Ari runs out of steps or models: what it did get done, in words."""
+    ok = [d["tool"].replace("_", " ") for d in done if "error" not in d]
+    if not ok:
+        return "That took more steps than I can do at once. Could you ask for one thing at a time?"
+    return f"I got as far as {', '.join(ok[:4])}, but couldn't finish. Could you ask for the rest on its own?"
