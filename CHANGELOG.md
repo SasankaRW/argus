@@ -5,6 +5,9 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Ari's island: the outline is now one smooth SVG shape (curved shoulders into the screen's edge, round bottom corners) moved by a real spring, so it stays smooth at every size, including the slim idle lip.
+- Ari's island: clicking it opens your widgets instead of the last chat: the time and date, how Argus is doing, what waits in the inbox, the next scheduled thing, your shortcuts, and optionally Ari's last answer. Shortcuts can be Helios pages, plugin buttons, routines, power or ring-the-phone, or a website.
+- Helios > Ari > **ari/island**: turn widgets on or off, reorder them, and add, edit, reorder or remove up to 8 shortcuts. `GET/PUT /island`, `POST /island/run`.
 - Ari's island: narrower idle lip (104 px). Spring motion with a slight settle, content fading in with a soft blur, a subtle sheen and a glow in Ari's colour while active, smoother bars and spinner, and a shimmer on the text while thinking.
 - Ari's **island** on the PC replaces the popup pill. It's a black shape grown out of the top edge of the screen, and its shoulders curve into the edge. It's always there, as a slim lip when idle and "ari" on hover. It widens while Ari listens, thinks, works or talks (bars, a spinner, and what Ari is on), shows the answer when done, and folds back. Click it for details: the last question and answer, what waits in the inbox, and open chat / new chat / inbox / Helios. Only the island takes clicks; the rest of the window lets them through. Title protocol: `ari:<mode>|<w>x<h>`, `ari:go|<hash>`.
 - Guidance: **Run tests now** on a playbook (Plugins > Learning). Its tests are your Correct answers, else the ones the small model got right, and they're replayed on the first local tier with the lessons in use. It keeps a pass-rate history (table `eval_runs`, migration 0013), shows the tests, and lets you remove one. `GET/POST /guidance/{key}/evals`.

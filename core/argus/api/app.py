@@ -66,6 +66,7 @@ from pydantic import BaseModel, Field
 from .. import ari as ari_mod
 from .. import ask as ask_mod
 from .. import daily, guidance, logview
+from .. import island as island_mod
 from .. import settings as settings_mod
 from ..approvals import ApprovalClosed, ApprovalError, ApprovalNotFound, BadToken
 from ..config import PRIORITY_INTERACTIVE
@@ -622,6 +623,51 @@ def create_app(argus: Argus) -> FastAPI:
                                                        priority=PRIORITY_INTERACTIVE, source="helios")
             return {"job_id": job_id, "created": created}
         raise HTTPException(status_code=404, detail=f"unknown action {a!r}")
+
+    # -------------------------------------------------------------- Ari's island: widgets and shortcuts
+
+    async def island_choices() -> list[dict]:
+        acts = [{"action": a["id"], "label": a["label"], "group": "plugin buttons" if a["id"].startswith("run:")
+                 else "power" if a["id"].startswith("power:") else "phone"}
+                for a in ask_mod.catalog(argus.plugin_host) if not a["id"].startswith("show:")]
+        acts += [{"action": f"show:{k}", "label": f"Open {v}", "group": "Helios pages"}
+                 for k, v in island_mod.PAGES.items()]
+        acts += [{"action": f"routine:{n}", "label": n, "group": "routines"}
+                 for n in await argus.store.read(island_mod.routines)]
+        return acts
+
+    @app.get("/island", dependencies=guarded)
+    async def island_get() -> dict:
+        cfg = await argus.store.read(island_mod.load)
+        return {**cfg, "widget_labels": island_mod.WIDGETS, "choices": await island_choices(),
+                "max_shortcuts": island_mod.MAX_SHORTCUTS}
+
+    @app.put("/island", dependencies=guarded)
+    async def island_put(body: dict[str, Any]) -> dict:
+        actions = {c["action"] for c in await island_choices()}
+        try:
+            cfg = island_mod.check(body, actions)
+        except island_mod.IslandError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from None
+        await argus.store.write(lambda c: island_mod.save(c, cfg))
+        return await island_get()
+
+    @app.post("/island/run", dependencies=guarded)
+    async def island_run(body: AskDo) -> dict:
+        """A shortcut on the island: a routine or a website here, everything else as in Ask."""
+        a = body.action
+        if a.startswith("url:"):
+            if not re.fullmatch(r"url:https?://[^\s]{3,500}", a):
+                raise HTTPException(status_code=422, detail="not a website")
+            return {"open": a[4:]}
+        if a.startswith("routine:"):
+            try:
+                tool = tools.get("run_routine")
+                job_id, created = await tools.enqueue(tool, {"name": a[8:]}, parent=None, key=None)
+            except ToolError as e:
+                raise HTTPException(status_code=409, detail=str(e)) from None
+            return {"job_id": job_id, "created": created}
+        return await do_action(a)
 
     # -------------------------------------------------------------- find my phone
 

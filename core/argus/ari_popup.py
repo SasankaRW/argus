@@ -20,7 +20,7 @@ import urllib.parse
 from pathlib import Path
 
 W, H = 640, 360  # room for the island at its biggest (details), its shoulders and shadow
-SHRINK_AFTER_MS = 600  # the island folds in over .55 s; the click area follows after that
+SHRINK_AFTER_MS = 750  # the island folds in on a spring (~.6 s); the click area follows after that
 
 
 def popup_url(base: str, token: str | None) -> str:
@@ -45,6 +45,13 @@ def parse_title(title: str) -> tuple[str, object] | None:
     except ValueError:
         return None
     return ("area", (max(1, min(w, W)), max(1, min(h, H))))
+
+
+def open_target(base: str, arg: str) -> str:
+    """What "ari:go|<arg>" opens: a website shortcut (url:https://...) or a Helios page."""
+    if arg.startswith("url:") and arg[4:].startswith(("http://", "https://")):
+        return arg[4:]
+    return f"{base.rstrip('/')}/helios/{'#' + arg if arg and not arg.startswith('url:') else ''}"
 
 
 def click_area(w: int, h: int) -> tuple[int, int, int, int]:
@@ -110,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
                 shrink.start()  # shrinking: after the island's own animation
             view.raise_()
         elif what == "go":
-            QDesktopServices.openUrl(QUrl(f"{args.url.rstrip('/')}/helios/{'#' + str(arg) if arg else ''}"))
+            QDesktopServices.openUrl(QUrl(open_target(args.url, str(arg))))
 
     view.titleChanged.connect(on_title)
     view.load(QUrl(popup_url(args.url, token)))

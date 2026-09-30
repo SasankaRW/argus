@@ -71,3 +71,24 @@ def test_model_usage_is_empty_but_well_formed(tmp_path, monkeypatch):
         assert cl.get("/models/usage") == {"days": 7, "daily": [], "plugins": []}
         o = cl.get("/models/ollama")
         assert set(o) >= {"reachable", "models"}
+
+
+def test_island_widgets_and_shortcuts(tmp_path, monkeypatch):
+    with Server(make(tmp_path, monkeypatch).open()) as srv:
+        cl = client(srv.url)
+        isl = cl.get("/island")
+        assert [w["id"] for w in isl["widgets"]][:2] == ["clock", "status"]
+        assert any(c["action"] == "show:inbox" for c in isl["choices"])
+        with pytest.raises(ApiError) as e:
+            cl.call("PUT", "/island", {"widgets": [], "shortcuts": [{"label": "x", "action": "rm:-rf"}]})
+        assert e.value.status == 422
+        with pytest.raises(ApiError):
+            cl.call("PUT", "/island", {"widgets": [], "shortcuts": [{"label": "x", "action": "url:javascript:x"}]})
+        got = cl.call("PUT", "/island", {"widgets": [{"id": "shortcuts", "on": True}, {"id": "clock", "on": False}],
+                                         "shortcuts": [{"label": "Queue", "action": "show:queue"},
+                                                       {"label": "Docs", "action": "url:https://example.com"}]})[1]
+        assert [w["id"] for w in got["widgets"]][:2] == ["shortcuts", "clock"] and not got["widgets"][1]["on"]
+        assert len(got["widgets"]) == 6  # the rest are kept, in their usual order
+        assert [s["label"] for s in cl.get("/island")["shortcuts"]] == ["Queue", "Docs"]
+        assert cl.post("/island/run", {"action": "url:https://example.com"}) == {"open": "https://example.com"}
+        assert cl.post("/island/run", {"action": "show:queue"}) == {"view": "queue"}

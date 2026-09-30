@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from argus.ari_listen import Listener
-from argus.ari_popup import click_area, parse_title, placement, popup_url
+from argus.ari_popup import click_area, open_target, parse_title, placement, popup_url
 from argus.worker import Worker
 from fakes import FakeOllama
 from test_ask import make
@@ -24,6 +24,10 @@ def test_the_popup_window_helpers():
     assert parse_title("ari:go|ari/abc123") == ("go", "ari/abc123") and parse_title("ari:go|") == ("go", "")
     assert [parse_title(t) for t in ("Helios", "ari:idle", "ari:x|bad")] == [None, None, None]
     assert click_area(352, 54) == (144, 0, 352, 54)
+    assert open_target("http://x:8600", "inbox") == "http://x:8600/helios/#inbox"
+    assert open_target("http://x:8600", "") == "http://x:8600/helios/"
+    assert open_target("http://x", "url:https://github.com") == "https://github.com"
+    assert open_target("http://x", "url:file:///c:/windows") == "http://x/helios/"  # only websites
 
 
 def test_ari_says_what_it_is_doing(tmp_path, monkeypatch):

@@ -941,35 +941,21 @@ main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .try-cmp { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .try-cmp pre { margin-top: 4px; }
 
-/* ---- Ari's island (the PC's popup): black, grown out of the top edge ---- */
+/* ---- Ari's island (the PC's popup): black, grown out of the top edge (shape and motion in Island.tsx) ---- */
 .island-wrap { position: fixed; inset: 0; display: flex; justify-content: center; align-items: flex-start; pointer-events: none; }
-.island {
-  /* a gentle spring: settles with a ~4% overshoot, like the iPhone's island */
-  --spring: linear(0, .0063, .0253, .0563 3.2%, .1438, .2572 7.4%, .5093 11.9%, .7536 17.1%, .8497 19.8%, .9259,
-    .9792 25.5%, 1.0151 28.8%, 1.0355 32.2%, 1.0433 35.5%, 1.0417 39.4%, 1.0167 50.6%, 1.0033 61.2%, .9984 73.3%, 1);
-  --tone: var(--amber); --glow: 0;
-  position: relative; pointer-events: auto; cursor: pointer; color: #f4f4f5; outline: none;
-  background: linear-gradient(180deg, #000 0%, #030303 55%, #0a0a0b 100%);
-  box-shadow: inset 0 -.5px 0 rgba(255, 255, 255, .09), 0 8px 22px -10px rgba(0, 0, 0, .75),
-    0 14px 34px -16px color-mix(in srgb, var(--tone) calc(var(--glow) * 100%), transparent);
-  font-family: "Geist Sans", var(--sans);
-  transition: width .7s var(--spring), height .7s var(--spring), border-radius .7s var(--spring), box-shadow .6s ease; }
-.island.m-active, .island.m-done { --glow: .55; }
-.island.m-details { --glow: .18; }
+.island { --tone: var(--amber); --glow: 0; position: relative; pointer-events: auto; cursor: pointer; color: #f4f4f5; outline: none;
+  font-family: "Geist Sans", var(--sans); }
 .island.t-tg { --tone: #39ff9c; } .island.t-flow { --tone: var(--flow); } .island.t-amber { --tone: var(--amber); }
-.island:focus-visible { box-shadow: 0 0 0 1px color-mix(in srgb, var(--tone) 60%, transparent), 0 8px 22px -10px rgba(0, 0, 0, .75); }
-/* the concave curves where it meets the screen's edge */
-.shoulder { position: absolute; top: 0; width: var(--sh, 14px); height: var(--sh, 14px); pointer-events: none;
-  transition: width .7s var(--spring), height .7s var(--spring), left .7s var(--spring), right .7s var(--spring); }
-.shoulder.l { left: calc(-1 * var(--sh, 14px)); background: radial-gradient(circle at 0 100%, transparent calc(var(--sh, 14px) - .6px), #000 var(--sh, 14px)); }
-.shoulder.r { right: calc(-1 * var(--sh, 14px)); background: radial-gradient(circle at 100% 100%, transparent calc(var(--sh, 14px) - .6px), #000 var(--sh, 14px)); }
-
-/* content fades in once the shape has mostly opened, with a touch of blur */
-@keyframes islin { from { opacity: 0; transform: scale(.94); filter: blur(6px); } to { opacity: 1; transform: none; filter: none; } }
+.island.m-active, .island.m-done { --glow: .5; } .island.m-details { --glow: .12; }
+.isl-shape { position: absolute; top: 0; left: 0; overflow: visible; transition: filter .6s ease;
+  filter: drop-shadow(0 8px 14px rgba(0, 0, 0, .55)) drop-shadow(0 10px 18px color-mix(in srgb, var(--tone) calc(var(--glow) * 100%), transparent)); }
+.island:focus-visible .isl-shape { filter: drop-shadow(0 0 1px var(--tone)) drop-shadow(0 8px 14px rgba(0, 0, 0, .55)); }
+.isl-body { position: absolute; top: 0; overflow: hidden; }
+@keyframes islin { from { opacity: 0; transform: scale(.95); filter: blur(6px); } to { opacity: 1; transform: none; filter: none; } }
 .isl-idle { position: absolute; inset: 0; display: grid; place-items: center; font: 500 10px var(--mono); letter-spacing: .22em; color: #5d6670;
-  animation: islin .45s .12s both cubic-bezier(.2, .8, .2, 1); }
-.isl-row { position: absolute; inset: 0; display: flex; align-items: center; gap: 12px; padding: 0 20px 1px 16px; transform-origin: center top;
-  animation: islin .5s .16s both cubic-bezier(.2, .8, .2, 1); }
+  animation: islin .45s .1s both cubic-bezier(.2, .8, .2, 1); }
+.isl-row { position: absolute; inset: 0; display: flex; align-items: center; gap: 12px; padding: 0 18px 1px 16px; min-width: 240px; transform-origin: center top;
+  animation: islin .5s .14s both cubic-bezier(.2, .8, .2, 1); }
 .m-done .isl-row { align-items: flex-start; padding-top: 13px; }
 .isl-text { min-width: 0; flex: 1; display: flex; gap: 9px; align-items: baseline; font-size: 13px; line-height: 1.45; letter-spacing: -.005em; }
 .isl-text b { font: 500 11.5px var(--mono); color: var(--tone); flex: none; letter-spacing: .02em; }
@@ -981,7 +967,6 @@ main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 
 .isl-ind { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 20px; }
 .isl-ind.dot::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--tone); box-shadow: 0 0 10px var(--tone), 0 0 2px var(--tone); }
-.isl-ind.dot.still::before { background: #39ff9c; box-shadow: 0 0 8px #39ff9c; }
 .isl-ind.bars { gap: 2.5px; height: 18px; }
 .isl-ind.bars i { width: 2.5px; height: 100%; border-radius: 3px; background: linear-gradient(180deg, color-mix(in srgb, var(--tone) 70%, #fff), var(--tone));
   box-shadow: 0 0 6px color-mix(in srgb, var(--tone) 60%, transparent); animation: islbar 1.1s cubic-bezier(.45, 0, .55, 1) infinite; }
@@ -996,21 +981,41 @@ main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .isl-ind.ring.working { animation-duration: .8s; }
 @keyframes islspin { to { transform: rotate(360deg); } }
 
-.isl-details { position: absolute; inset: 0 0 auto 0; padding: 15px 18px 16px; display: flex; flex-direction: column; gap: 11px; cursor: default;
-  animation: islin .55s .18s both cubic-bezier(.2, .8, .2, 1); }
-.isl-head { display: flex; align-items: center; gap: 10px; font-size: 13.5px; }
-.isl-head b { font-weight: 600; letter-spacing: .01em; }
-.isl-dim { color: #7d8691; font-size: 12px; }
-.isl-x { margin-left: auto; width: 26px; height: 26px; border: 0; border-radius: 50%; background: #141618; color: #9aa1a8; font-size: 15px; line-height: 1; cursor: pointer; transition: background .2s, color .2s; }
-.isl-x:hover { color: #fff; background: #202326; }
-.isl-chat { display: flex; flex-direction: column; gap: 7px; max-height: 150px; overflow-y: auto; font-size: 13px; line-height: 1.5; }
-.isl-chat p { margin: 0; color: #e4e6e8; display: grid; grid-template-columns: 38px minmax(0, 1fr); gap: 4px; }
-.isl-chat p span { color: #646d77; font: 11.5px/1.75 var(--mono); }
-.isl-chat p.ari span { color: #39ff9c; }
-.isl-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-.isl-actions button { height: 30px; padding: 0 14px; border: 0; border-radius: 99px; background: #141618; color: #e4e6e8; font: 500 12px "Geist Sans", var(--sans); cursor: pointer;
-  box-shadow: inset 0 .5px 0 rgba(255, 255, 255, .06); transition: background .2s, color .2s, transform .15s; }
-.isl-actions button:hover { background: #1f2225; color: #fff; }
-.isl-actions button:active { transform: scale(.96); }
-.isl-actions button.warn { color: var(--amber); }
-@media (prefers-reduced-motion: reduce) { .island, .shoulder, .isl-row, .isl-details, .isl-idle { transition: none; animation: none; } .isl-ind i, .isl-ind.ring { animation: none; } }
+/* opened: your widgets */
+.isl-details { position: absolute; top: 0; left: 0; width: 440px; padding: 16px 20px 14px; display: flex; flex-direction: column; gap: 10px; cursor: default;
+  animation: islin .55s .16s both cubic-bezier(.2, .8, .2, 1); }
+.iw-clock { display: flex; align-items: baseline; gap: 12px; padding-bottom: 2px; }
+.iw-clock b { font: 300 38px/1 "Geist Sans", var(--sans); letter-spacing: -.02em; color: #fff; font-variant-numeric: tabular-nums; }
+.iw-clock span { font-size: 12.5px; color: #8b939c; }
+.iw-line { display: flex; align-items: center; gap: 10px; min-height: 22px; font-size: 13px; color: #e4e6e8; border: 0; background: none; padding: 0; text-align: left; font-family: inherit; width: 100%; }
+.iw-line > span:first-of-type { flex: none; }
+.iw-line .iw-dim { margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.iw-link { cursor: pointer; border-radius: 8px; }
+.iw-link:hover .iw-dim { color: #d8dcd9; }
+.iw-dim { color: #7d8691; font-size: 12px; }
+.iw-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: #39ff9c; box-shadow: 0 0 8px #39ff9c; }
+.iw-dot.amber { background: var(--amber); box-shadow: 0 0 8px var(--amber); } .iw-dot.flow { background: var(--flow); box-shadow: 0 0 8px var(--flow); }
+.iw-dot.dim { background: #3a4047; box-shadow: none; }
+.iw-shortcuts { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 6px; padding-top: 2px; }
+.iw-shortcuts button { height: 32px; padding: 0 10px; border: 0; border-radius: 12px; background: #131517; color: #e4e6e8; font: 500 12px "Geist Sans", var(--sans);
+  cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; box-shadow: inset 0 .5px 0 rgba(255, 255, 255, .07); transition: background .2s, transform .15s; }
+.iw-shortcuts button:hover { background: #1d2023; }
+.iw-shortcuts button:active { transform: scale(.96); }
+.iw-last { margin: 0; font-size: 12.5px; line-height: 1.5; color: #d8dcd9; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.iw-last span { color: #39ff9c; font: 11.5px var(--mono); }
+.iw-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 18px; }
+.iw-flash { font-size: 12px; color: #39ff9c; }
+.iw-edit { border: 0; background: none; padding: 0; color: #5d6670; font: 11px var(--mono); cursor: pointer; }
+.iw-edit:hover { color: #c9ced3; }
+@media (prefers-reduced-motion: reduce) { .isl-row, .isl-details, .isl-idle { animation: none; } .isl-ind i, .isl-ind.ring { animation: none; } }
+.isl-set { padding: 6px 16px 14px; display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
+.isl-set .sect { margin: 10px 0 4px; }
+.isl-set-row { display: flex; align-items: center; gap: 6px; padding: 4px 0; border-bottom: 1px solid var(--line); }
+.isl-set-row label { display: inline-flex; gap: 8px; align-items: center; cursor: pointer; }
+.isl-set-row .grow, .isl-set-foot .grow { flex: 1; }
+.isl-set-row.sc input { height: 30px; padding: 0 8px; width: 120px; }
+.isl-set-row.sc select { height: 30px; padding: 0 6px; flex: 1; min-width: 0; }
+.isl-set-row.sc input + select + input { flex: 1; width: auto; }
+.btn.mini { height: 26px; min-width: 26px; padding: 0 6px; }
+.isl-set-foot { display: flex; align-items: center; gap: 8px; padding-top: 10px; }
+.isl-set-foot .primary { height: 30px; padding: 0 14px; }
