@@ -110,9 +110,12 @@ class ArgusClient:
         return self.post("/workers/register", {"id": worker_id, "host": host, "capabilities": capabilities,
                                                "version": version})
 
-    def claim(self, worker_id: str, capabilities: list[str], plugins: list[str] | None, wait: float) -> dict | None:
-        status, body = self.call("POST", f"/workers/{worker_id}/claim",
-                                 {"capabilities": capabilities, "plugins": plugins, "wait": wait},
+    def claim(self, worker_id: str, capabilities: list[str], plugins: list[str] | None, wait: float,
+              min_priority: int | None = None) -> dict | None:
+        body_in: dict = {"capabilities": capabilities, "plugins": plugins, "wait": wait}
+        if min_priority is not None:
+            body_in["min_priority"] = min_priority
+        status, body = self.call("POST", f"/workers/{worker_id}/claim", body_in,
                                  timeout=wait + self.timeout)
         return None if status == 204 else body
 

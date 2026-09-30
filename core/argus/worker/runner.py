@@ -124,16 +124,34 @@ class _Heartbeat(threading.Thread):
         self._halt.set()
 
 
+def fast_lane(main: Worker) -> Worker:
+    """A second loop in the same process that takes only interactive jobs (Ari's thinking and the tools it uses,
+    Ask Argus), so they start at once even while the main lane runs a long job. It shares the main worker's loaded
+    plugins; call after main.register()."""
+    from ..config import PRIORITY_INTERACTIVE
+
+    lane = Worker(main.client, f"{main.id}-now", capabilities=main.capabilities, registry=main.registry,
+                  host=main.host, claim_wait=main.claim_wait, ollama_url=main.ollama_url,
+                  providers=main.providers if main._fixed_providers else None, watch_folders=False,
+                  min_priority=PRIORITY_INTERACTIVE)
+    lane.plugins = main.plugins  # same code, same settings: nothing is imported twice
+    lane.stopping = main.stopping
+    lane._claude_checked = float("inf")  # the main lane reports the Claude login
+    return lane
+
+
 class Worker:
     def __init__(self, client: ArgusClient, worker_id: str | None = None, *, capabilities: list[str] | None = None,
                  registry: WorkflowRegistry | None = None, host: str | None = None, claim_wait: float = 10.0,
-                 ollama_url: str | None = None, providers: dict | None = None, watch_folders: bool = True):
+                 ollama_url: str | None = None, providers: dict | None = None, watch_folders: bool = True,
+                 min_priority: int | None = None):
         self.client = client
         self.registry = registry or REGISTRY
         self.host = host or socket.gethostname()
         self.id = worker_id or f"worker-{self.host}".lower()
         self.capabilities = sorted(set(capabilities or []) | set(self.registry.needs))
         self.claim_wait = claim_wait
+        self.min_priority = min_priority  # set on the fast lane: interactive jobs only
         self.heartbeat_seconds = 15.0
         self.ollama_url = ollama_url
         self.models_cfg: dict = {}
@@ -211,7 +229,7 @@ class Worker:
         self.check_claude()
         try:
             job = self.client.claim(self.id, self.capabilities, self.registry.plugins,
-                                    self.claim_wait if wait is None else wait)
+                                    self.claim_wait if wait is None else wait, self.min_priority)
         except Unreachable as e:
             log.warning("cannot reach argus", extra={"error": str(e)})
             self.stopping.wait(5)

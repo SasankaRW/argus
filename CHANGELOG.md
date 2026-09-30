@@ -5,6 +5,16 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Ari: the listener names the microphone it uses in logs\ari.log.
+- Ari: "Hey Ari" on the PC no longer freezes while starting: once Whisper can't use the GPU, every model goes straight to the CPU (a second GPU try hung), and the GPU check gives up after 30 s.
+- Ari: pick Ari's voice (11 English Piper voices, downloaded the first time) and speed in Helios (Ari page); kept by Argus so "Hey Ari" on the PC uses it too. `GET /ari-voice/voices`, `PUT /ari-voice/voice`.
+- Ari: recordings from the browser decode with newer PyAV (fixes `open() got an unexpected keyword argument 'metadata_errors'`).
+- Ari: the PC listener logs its microphone, the loudest level each minute, and what it heard without the wake phrase (to find why "Hey Ari" misses).
+- Ari never waits in the queue: each worker runs a fast lane (a second loop, `worker-<name>-now`) that takes only interactive jobs (Ari's thinking and the tools it uses, Ask Argus), so they start at once even while the main lane runs a long job. Interactive jobs also skip the one-GPU-job-at-a-time rule. `argus-worker --no-fast-lane` turns it off.
+- `trigger.duplicate` events are gone: a file the folder watcher already reported (after a restart, or renamed by a plugin such as screenshot-renamer) is recognised quietly by its content, and its new path is remembered.
+- Phone: rebuilt from scratch as "terminal widgets". A `sas@argus:~$` header with an ONLINE badge, soft green and amber glows, and tiles that are small terminal windows: `~/ari` (Ari's last reply, an `› ask ari…` prompt and a mic button that opens Ari listening), `! awaiting input` (approve or reject right there, details in a bottom sheet), `~/jobs` today, `~/saved`, `~/running`, `~/pc` and a live `~/tail -f`. A floating pill tab bar (home, ari, plug, map, more), job details in a bottom sheet, plugins as a list with `cd ..` back, More as a directory listing.
+- The full dashboard on a phone has a "phone view" button to get back.
+- The folder watcher no longer floods the event log with `trigger.duplicate` when it re-reports the same files after a restart (a copy of a file somewhere else still shows).
 - Fix: Ari's replies never arrived (and so were never spoken) on a database that applied migration 0011 before `ari_turns.used` was added to it ("no such column: used"). Argus now adds such late columns when it opens the database.
 - Fix: "Hey Ari" failed on every clip when Whisper loaded on the GPU but CUDA's cuBLAS was missing ("cublas64_12.dll is not found"). Whisper now proves the GPU works on a moment of silence when it loads, and uses the CPU otherwise.
 - Ari's popup sits a little lower so its glow isn't cut off at the top of the screen.

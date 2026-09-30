@@ -91,3 +91,62 @@ def test_whisper_on_the_pc(tmp_path, monkeypatch):
         t.join(10)
     assert b"sort my downloads" in out["r"] and got == {"audio": b"OggS-audio", "model": "base.en"}
     assert not list((tmp_path / "data" / "ari").glob("*")) if (tmp_path / "data" / "ari").exists() else True
+
+
+def test_pick_a_voice_and_speed(tmp_path, monkeypatch):
+    fake_piper(monkeypatch)
+    voices = tmp_path / "voices"
+    voices.mkdir()
+    for n in ("en_US-lessac-medium", "en_GB-alan-medium"):
+        (voices / f"{n}.onnx").write_bytes(b"x")
+        (voices / f"{n}.onnx.json").write_text("{}")
+    cfg = f"ari:\n  voice: '{(voices / 'en_US-lessac-medium.onnx').as_posix()}'\n"
+    a = with_cfg(tmp_path, monkeypatch, cfg)
+    with Server(a.open()) as srv:
+        cl = client(srv.url)
+        v = cl.get("/ari-voice/voices")
+        assert v["current"] == "en_US-lessac-medium" and v["speed"] == 1.0
+        have = {x["id"]: x["installed"] for x in v["voices"]}
+        assert have["en_GB-alan-medium"] is True and have["en_US-amy-medium"] is False
+        v = cl.call("PUT", "/ari-voice/voice", {"voice": "en_GB-alan-medium", "speed": 1.2})[1]
+        assert v["current"] == "en_GB-alan-medium" and v["speed"] == 1.2
+        with pytest.raises(ApiError) as e:  # not a voice name: never downloaded
+            cl.call("PUT", "/ari-voice/voice", {"voice": "../evil", "speed": 1.0})
+        assert e.value.status in (409, 422)
+    # The pick survives a restart of argusd.
+    from argus.config import load_config
+    from argus.context import Argus
+    with Server(Argus(load_config(tmp_path / "argus.yaml")).open()) as srv:
+        v = client(srv.url).get("/ari-voice/voices")
+        assert v["current"] == "en_GB-alan-medium" and v["speed"] == 1.2
+
+
+def test_whisper_falls_back_to_the_cpu_once_and_for_all(monkeypatch):
+    made = []
+
+    class WhisperModel:
+        def __init__(self, name, device, compute_type):
+            made.append((name, device))
+            self.device = device
+
+        def transcribe(self, audio, **kw):
+            if self.device == "cuda":
+                raise RuntimeError("Library cublas64_12.dll is not found")
+            return iter(()), None
+
+    monkeypatch.setitem(sys.modules, "faster_whisper", types.SimpleNamespace(WhisperModel=WhisperModel))
+    monkeypatch.setattr(hear, "_models", {})
+    monkeypatch.setattr(hear, "_gpu", {"ok": True})
+    hear.model("tiny.en")
+    hear.model("small.en")  # the GPU is not tried again: a second try can hang
+    assert made == [("tiny.en", "cuda"), ("tiny.en", "cpu"), ("small.en", "cpu")]
+
+
+def test_a_gpu_check_that_hangs_counts_as_failed():
+    class Stuck:
+        def transcribe(self, audio, **kw):
+            threading.Event().wait(5)
+            return iter(()), None
+
+    with pytest.raises(TimeoutError):
+        hear._prove(Stuck(), limit=0.2)

@@ -15,6 +15,7 @@ from .workflows import Context, PermanentError, workflow
 log = logging.getLogger("argus.hear")
 _models: dict[str, object] = {}
 _lock = threading.Lock()
+_gpu = {"ok": True}  # once the GPU fails, later models go straight to the CPU (a second try can hang forever)
 
 
 def model(name: str):
@@ -24,27 +25,64 @@ def model(name: str):
                 from faster_whisper import WhisperModel  # type: ignore[import-not-found]
             except ImportError:
                 raise PermanentError("faster-whisper is not installed on this PC (pip install -e .[hearing])") from None
-            try:
-                m = WhisperModel(name, device="cuda", compute_type="float16")
-                _prove(m)  # loading works without CUDA's libraries; the first real use is what fails
-                _models[name] = m
-                log.info("whisper loaded", extra={"model": name, "device": "cuda"})
-            except Exception as e:  # no CUDA 12 cuBLAS / cuDNN 9: the CPU is fine for short commands
-                log.warning("whisper on the GPU failed; using the CPU", extra={"error": str(e)[:200]})
+            if _gpu["ok"]:
+                try:
+                    m = WhisperModel(name, device="cuda", compute_type="float16")
+                    _prove(m)  # loading works without CUDA's libraries; the first real use is what fails
+                    _models[name] = m
+                    log.info("whisper loaded", extra={"model": name, "device": "cuda"})
+                except Exception as e:  # no CUDA 12 cuBLAS / cuDNN 9: the CPU is fine for short commands
+                    _gpu["ok"] = False
+                    log.warning("whisper on the GPU failed; using the CPU", extra={"error": str(e)[:200]})
+            if name not in _models:
                 _models[name] = WhisperModel(name, device="cpu", compute_type="int8")
+                log.info("whisper loaded", extra={"model": name, "device": "cpu"})
         return _models[name]
 
 
-def _prove(m) -> None:
-    """Run the model once on a moment of silence, so missing GPU libraries show up now, not on your first word."""
+def _prove(m, limit: float = 30.0) -> None:
+    """Run the model once on a moment of silence, so missing GPU libraries show up now, not on your first word.
+    Raises when it fails or takes longer than `limit` seconds (a broken CUDA setup can hang instead of failing)."""
     import numpy as np
 
-    segments, _ = m.transcribe(np.zeros(8000, dtype=np.float32), language="en", beam_size=1)
-    list(segments)
+    out: dict[str, object] = {}
+
+    def run() -> None:
+        try:
+            segments, _ = m.transcribe(np.zeros(8000, dtype=np.float32), language="en", beam_size=1)
+            list(segments)
+            out["ok"] = True
+        except Exception as e:  # noqa: BLE001 - handed to the caller
+            out["error"] = e
+
+    t = threading.Thread(target=run, daemon=True, name="whisper-check")
+    t.start()
+    t.join(limit)
+    if "error" in out:
+        raise out["error"]  # type: ignore[misc]
+    if not out.get("ok"):
+        raise TimeoutError(f"the GPU did not answer in {limit:.0f} s")
+
+
+def decode(audio: bytes):
+    """A recording from the browser (webm/ogg/wav) as 16 kHz mono float samples. Done here rather than by
+    faster-whisper, whose own decoder breaks with newer PyAV ("unexpected keyword argument 'metadata_errors'")."""
+    import av  # type: ignore[import-not-found]  # comes with faster-whisper
+    import numpy as np
+
+    chunks = []
+    with av.open(io.BytesIO(audio)) as c:
+        rs = av.AudioResampler(format="s16", layout="mono", rate=16000)
+        for frame in c.decode(audio=0):
+            chunks += [f.to_ndarray() for f in rs.resample(frame)]
+        chunks += [f.to_ndarray() for f in rs.resample(None)]
+    if not chunks:
+        return np.zeros(0, dtype=np.float32)
+    return np.concatenate([c.reshape(-1) for c in chunks]).astype(np.float32) / 32768.0
 
 
 def transcribe(audio: bytes, name: str) -> str:
-    segments, _info = model(name).transcribe(io.BytesIO(audio), language="en", beam_size=1, vad_filter=True,
+    segments, _info = model(name).transcribe(decode(audio), language="en", beam_size=1, vad_filter=True,
                                              condition_on_previous_text=False)
     return " ".join(s.text.strip() for s in segments).strip()
 

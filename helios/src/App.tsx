@@ -9,7 +9,8 @@ import { useArgus } from "./live";
 import { mainParts, MapView, mergeEdges, Selection } from "./MapView";
 import { LogsView } from "./LogsView";
 import { MapFull } from "./MapFull";
-import { PhoneHome } from "./PhoneHome";
+import { PhoneHeader, PhoneHome, PhoneInbox, PhoneMore, PhoneTab, PhoneTabs } from "./Phone";
+import { Sheet } from "./Sheet";
 import { PluginsView } from "./PluginsView";
 import { PowerView } from "./PowerView";
 import { QueueView } from "./QueueView";
@@ -151,11 +152,12 @@ export function App() {
   const [flow, setFlow] = useState(true);
   const [relayout, setRelayout] = useState(0);
   const [info, setInfo] = useState(false);
-  const [bigMap, setBigMap] = useState(false);  // the phone's sideways full-screen map  // the map's inspector drawer with nothing selected (the overview)
+  const [bigMap, setBigMap] = useState(false);
+  const [inbox, setInbox] = useState(false);  // the phone's "waiting for you" sheet  // the phone's sideways full-screen map  // the map's inspector drawer with nothing selected (the overview)
   const [wide, setWide] = useState(() => { try { return localStorage.getItem("helios.rail") === "wide"; } catch { return false; } });
   const setWideRail = (v: boolean) => { setWide(v); try { localStorage.setItem("helios.rail", v ? "wide" : "icons"); } catch { /* private */ } };
   const [triedLogin, setTriedLogin] = useState(false);
-  const parse = (h: string) => (["queue", "runs", "logs", "share", "power", "ari", "plugins"].includes(h) || h.startsWith("rules/") || h.startsWith("plugins/") ? h : "map");
+  const parse = (h: string) => (["queue", "runs", "logs", "share", "power", "ari", "plugins", "more"].includes(h) || h.startsWith("rules/") || h.startsWith("plugins/") ? h : "map");
   const [view, setView] = useState<string>(() => parse(location.hash.slice(1)));
   useEffect(() => {  // the share menu opens /helios/#share on a page that may already be open
     const on = () => setView(parse(location.hash.slice(1)));
@@ -234,23 +236,36 @@ export function App() {
 
   const st = a.status;
   const ok = st?.status === "ok" && a.conn === "live";
-  if (phone) {
+  if (phone) {  // the phone: terminal widgets (Phone.tsx), a floating tab bar, details in a bottom sheet
+    const proot = view.split("/")[0];
+    const tab: PhoneTab = proot === "map" ? "home" : proot === "ari" ? "ari" : proot === "plugins" ? "plug" : "more";
+    const open = (v: string) => go(v);
     return (
-      <div className="pshell">
-        <header className="ptop">
-          <div className="brand"><Logo /><b>Helios</b></div>
-          {(view !== "map" || sel) && <button type="button" className="btn" onClick={() => { setSel(null); go("map"); }}>Home</button>}
-        </header>
-        {sel?.type === "job" && a.map ? (
-          <div className="psheet"><Inspector sel={sel} map={a.map} status={st} events={a.events} onSelect={setSel} /></div>
-        ) : view === "share" ? (
-          <ShareView onJob={(id) => { setSel({ type: "job", id }); }} onDone={() => go("map")} />
-        ) : view === "ari" ? (
-          <AriView onSelect={setSel} onView={(v) => (v === "share" ? go("share") : (setFullView(true), go(v)))} />
-        ) : (
-          <PhoneHome status={st} events={a.events} onSelect={setSel} onShare={() => go("share")} onFull={() => setFullView(true)}
-            onAri={() => go("ari")} onMap={() => setBigMap(true)} onView={(v) => (v === "share" ? go("share") : (setFullView(true), go(v)))} />
+      <div className="phone2">
+        <div className="glow g1" aria-hidden="true" /><div className="glow g2" aria-hidden="true" />
+        <PhoneHeader status={st} live={a.conn === "live"} />
+        <main key={view} className="pmain2">
+          {proot === "ari" ? <AriView onSelect={setSel} onView={open} />
+          : proot === "plugins" ? (
+            <PluginsView phone selected={view.includes("/") ? decodeURIComponent(view.split("/")[1]) : null}
+              onPick={(id) => go(id ? `plugins/${encodeURIComponent(id)}` : "plugins")} onSelect={setSel} />
+          )
+          : proot === "share" ? <ShareView onJob={(id) => setSel({ type: "job", id })} onDone={() => go("map")} />
+          : proot === "queue" ? <QueueView events={a.events} onSelect={setSel} />
+          : proot === "runs" ? <RunsView events={a.events} selected={null} onSelect={setSel} />
+          : proot === "power" ? <PowerView events={a.events} onSelect={setSel} />
+          : proot === "logs" ? <LogsView />
+          : proot === "more" ? <PhoneMore onOpen={open} onFull={() => setFullView(true)} />
+          : <PhoneHome status={st} events={a.events} onSelect={setSel} onOpen={open} onInbox={() => setInbox(true)}
+              onAri={(mic) => { if (mic) { try { sessionStorage.setItem("ari.mic", "1"); } catch { /* private */ } } go("ari"); }} />}
+        </main>
+        <PhoneTabs tab={tab} onTab={(t) => (t === "map" ? setBigMap(true) : go(t === "home" ? "map" : t === "plug" ? "plugins" : t))} />
+        {sel && a.map && (
+          <Sheet onClose={() => setSel(null)}>
+            <Inspector sel={sel} map={a.map} status={st} events={a.events} onSelect={setSel} />
+          </Sheet>
         )}
+        {inbox && <Sheet label="Waiting for you" onClose={() => setInbox(false)}><PhoneInbox onDone={() => setInbox(false)} /></Sheet>}
         {mapFull}
         {heardBadge}
       </div>
@@ -266,6 +281,7 @@ export function App() {
       <header className="top">
         <div className="brand"><Logo /><b>helios</b>{st && <span className="crumb hide-sm">▸ {st.instance}@{st.host}</span>}</div>
         <AskBox onSelect={setSel} onView={(v) => go(v)} />
+        {narrow && <button type="button" className="btn phone-back" onClick={() => setFullView(false)}>phone view</button>}
         <div className="status mono">
           <span className={`seg-s ${a.phase === "down" ? "bad" : ok ? "ok" : "warn"}`}>
             <span className={`dot${ok ? " pulse" : ""}`} style={{ background: a.phase === "down" ? "var(--bad)" : ok ? "var(--ok)" : "var(--amber)" }} />{health}

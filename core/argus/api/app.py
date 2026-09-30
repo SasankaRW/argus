@@ -78,7 +78,7 @@ from ..presence import describe_phone
 from ..shares import ShareError, ShareStore, kinds_of
 from ..tools import Tool, ToolError, Tools
 from ..triggers import BadSignature, TriggerError, UnknownTrigger
-from ..voice import Voice, VoiceUnavailable
+from ..voice import CATALOG, Voice, VoiceUnavailable, download, installed
 from . import approval_page, mcp
 from .home import HOME_HTML
 
@@ -129,6 +129,7 @@ class Claim(BaseModel):
     capabilities: list[str] = Field(default_factory=list)
     plugins: list[str] | None = None
     wait: float = Field(0, ge=0, le=MAX_CLAIM_WAIT)
+    min_priority: int | None = None  # a worker's fast lane: only jobs at least this urgent
 
 
 class WorkerOnly(BaseModel):
@@ -205,6 +206,11 @@ class AriStateIn(BaseModel):
 
 class AriSpeak(BaseModel):
     text: str = Field(min_length=1, max_length=1000)
+
+
+class AriVoicePick(BaseModel):
+    voice: str = Field(min_length=3, max_length=80)
+    speed: float = Field(1.0, ge=0.6, le=1.6)
 
 
 class ToolCall(BaseModel):
@@ -928,6 +934,21 @@ def create_app(argus: Argus) -> FastAPI:
 
     voice = Voice(argus.cfg.ari.voice, argus.cfg.base_dir)
     audio_dir = argus.cfg.db_path.parent / "ari"
+    voices_dir = voice.path.parent if voice.path is not None else argus.cfg.db_path.parent / "voices"
+    picked = {"loaded": False}
+
+    async def use_picked_voice() -> None:
+        """The voice you picked in Helios (kept in the settings table) wins over ari.voice in argus.yaml."""
+        if picked["loaded"]:
+            return
+        picked["loaded"] = True
+        sql = "SELECT value FROM settings WHERE key = 'ari_voice'"
+        row = await argus.store.read(lambda c: c.execute(sql).fetchone())
+        if row:
+            v = json.loads(row[0])
+            path = voices_dir / f"{v.get('voice')}.onnx"
+            if path.exists():
+                voice.use(path, float(v.get("speed") or 1.0))
 
     async def gpu_online() -> bool:
         return any(w["state"] == "online" and "gpu" in w["capabilities"] for w in await argus.registry.workers())
@@ -940,9 +961,37 @@ def create_app(argus: Argus) -> FastAPI:
                 "whisper_ready": argus.cfg.ari.hearing == "whisper" and await gpu_online(),
                 "popup_here": time.time() - overlays.get(host, 0) < 75, "pill": argus.cfg.ari.pill}
 
+    @app.get("/ari-voice/voices", dependencies=guarded)
+    async def ari_voices() -> dict:
+        """Voices you can pick (Piper, English), which are on this machine, and the one in use."""
+        await use_picked_voice()
+        have = set(installed(voices_dir))
+        known = [{"id": v, "label": label, "installed": v in have} for v, label in CATALOG]
+        known += [{"id": v, "label": v, "installed": True} for v in sorted(have - {k for k, _ in CATALOG})]
+        return {"current": voice.name, "speed": voice.speed, "voices": known}
+
+    @app.put("/ari-voice/voice", dependencies=guarded)
+    async def ari_pick_voice(body: AriVoicePick) -> dict:
+        """Pick Ari's voice (downloaded the first time, ~60 MB) and speed; every screen and "Hey Ari" use it."""
+        path = voices_dir / f"{body.voice}.onnx"
+        if not path.exists():
+            try:
+                path = await asyncio.to_thread(download, body.voice, voices_dir)
+            except VoiceUnavailable as e:
+                raise HTTPException(status_code=409, detail=str(e)) from None
+        voice.use(path, body.speed)
+        picked["loaded"] = True
+        value = json.dumps({"voice": body.voice, "speed": voice.speed})
+        await argus.store.write(lambda c: c.execute(
+            "INSERT INTO settings (key, value, created_at, updated_at) VALUES ('ari_voice', ?, ?, ?)"
+            " ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            (value, time.time(), time.time())))
+        return await ari_voices()
+
     @app.post("/ari-voice/say", dependencies=guarded)
     async def ari_say_audio(body: AriSpeak) -> Response:
         """Ari's natural voice: WAV audio of the text (Piper). 409 when none is set up: use the browser's voice."""
+        await use_picked_voice()
         try:
             wav = await asyncio.to_thread(voice.say, body.text)
         except VoiceUnavailable as e:
@@ -1319,7 +1368,7 @@ def create_app(argus: Argus) -> FastAPI:
         while True:
             job = None
             if await argus.jobs.has_claimable():
-                job = await argus.jobs.claim(worker_id, body.capabilities, body.plugins)
+                job = await argus.jobs.claim(worker_id, body.capabilities, body.plugins, body.min_priority)
             if job is not None:
                 out = job_json(job, await argus.jobs.steps(job.id))
                 p = argus.plugin_host.plugins.get(job.plugin)

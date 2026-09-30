@@ -30,7 +30,7 @@ function when(t: number | null) { return t ? new Date(t * 1000).toLocaleString([
 
 // Every plugin with its own controls: what it does, its buttons, live or dry-run, settings, runs, and what its
 // models learned. Clean list on the left, one plugin on the right.
-export function PluginsView({ onSelect, selected, onPick }: { onSelect: (s: Selection) => void; selected: string | null; onPick: (id: string | null) => void }) {
+export function PluginsView({ onSelect, selected, onPick, phone = false }: { onSelect: (s: Selection) => void; selected: string | null; onPick: (id: string | null) => void; phone?: boolean }) {
   const [list, setList] = useState<PluginInfo[] | null>(null);
   const [errors, setErrors] = useState<{ folder: string; error: string }[]>([]);
   const [q, setQ] = useState("");
@@ -40,11 +40,11 @@ export function PluginsView({ onSelect, selected, onPick }: { onSelect: (s: Sele
     }).catch(() => setList([]));
   }, []);
   useEffect(load, [load]);
-  useEffect(() => { if (!selected && list && list.length) onPick(list[0].id); }, [list, selected, onPick]);
+  useEffect(() => { if (!phone && !selected && list && list.length) onPick(list[0].id); }, [list, selected, onPick, phone]);  // the phone starts on the list
 
   const shown = (list ?? []).filter((p) => !q || `${p.name} ${p.description} ${p.id}`.toLowerCase().includes(q.toLowerCase()));
   return (
-    <section className="panel plugins" aria-label="Plugins">
+    <section className={`panel plugins${phone ? " phone" : ""}${phone && selected ? " has-sel" : ""}`} aria-label="Plugins">
       <div className="plist">
         <input className="psearch" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a plugin…" aria-label="Find a plugin" />
         {list === null && <div className="tip">Loading…</div>}
@@ -72,6 +72,7 @@ export function PluginsView({ onSelect, selected, onPick }: { onSelect: (s: Sele
         )}
       </div>
       <div className="pdetail">
+        {phone && selected && <button type="button" className="pback" onClick={() => onPick(null)}>‹ cd ..</button>}
         {selected ? <PluginDetail id={selected} onSelect={onSelect} onChanged={load} /> : <div className="tip">Pick a plugin.</div>}
       </div>
     </section>
