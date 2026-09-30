@@ -4,15 +4,15 @@ import { useSyncExternalStore } from "react";
 import { api } from "./api";
 
 export type AriPhase = "idle" | "listening" | "thinking" | "working" | "speaking" | "done";
-export type AriState = { phase: AriPhase; text: string; at: number };
+export type AriState = { phase: AriPhase; text: string; at: number; remote?: boolean };
 
 let state: AriState = { phase: "idle", text: "", at: 0 };
 const subs = new Set<() => void>();
 let fold: ReturnType<typeof setTimeout> | undefined;
 
-export function ariSet(phase: AriPhase, text = "") {
+export function ariSet(phase: AriPhase, text = "", remote = false) {
   clearTimeout(fold);
-  state = { phase, text, at: Date.now() };
+  state = { phase, text, at: Date.now(), remote };
   subs.forEach((f) => f());
   if (phase === "done") fold = setTimeout(() => ariSet("idle"), Math.min(9000, 3500 + text.length * 40));
 }
@@ -50,14 +50,15 @@ export function ariFromEvents(evs: Ev[]) {
       const text = String(e.data?.text ?? "");
       if (phase === "thinking") thinkJob = e.job_id;
       if (phase === "done" && e.job_id && e.job_id === thinkJob) thinkJob = null;
-      // a "done" while this screen is already speaking the answer: keep speaking
-      if (phase === "done" && state.phase === "speaking") continue;
-      if (phase === "idle" && state.phase !== "speaking" && state.phase !== "listening") { ariSet("idle"); continue; }
-      if (phase !== "idle") ariSet(phase, text);
+      // a "done" while this screen is itself speaking the answer: keep speaking
+      const mine = !state.remote && (state.phase === "speaking" || state.phase === "listening");
+      if (phase === "done" && mine && state.phase === "speaking") continue;
+      if (phase === "idle") { if (!mine) ariSet("idle"); continue; }
+      ariSet(phase, text, true);
     } else if (e.kind === "step.running" && e.job_id && e.job_id === thinkJob && e.step) {
       const m = TOOL.exec(e.step);
-      if (m) ariSet("working", NICE[m[1]] ?? m[1].replace(/_/g, " "));
-      else if (e.step === "web") ariSet("working", "searching the web");
+      if (m) ariSet("working", NICE[m[1]] ?? m[1].replace(/_/g, " "), true);
+      else if (e.step === "web") ariSet("working", "searching the web", true);
     }
   }
 }
