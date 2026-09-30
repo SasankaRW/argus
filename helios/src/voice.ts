@@ -46,7 +46,7 @@ async function speakBrowser(text: string): Promise<void> {
 async function speakPiper(text: string): Promise<boolean> {
   try {
     const t = getToken();
-    const r = await fetch("/ari/say", { method: "POST", headers: { "Content-Type": "application/json", ...(t ? { Authorization: `Bearer ${t}` } : {}) },
+    const r = await fetch("/ari-voice/say", { method: "POST", headers: { "Content-Type": "application/json", ...(t ? { Authorization: `Bearer ${t}` } : {}) },
       body: JSON.stringify({ text }) });
     if (!r.ok) return false;
     const url = URL.createObjectURL(await r.blob());
@@ -61,14 +61,73 @@ export async function speak(text: string): Promise<void> {
   if (!clean) return;
   speaking++;
   try {
-    if (pref("piper", false) && await speakPiper(clean)) return;
+    if (status.voice && pref("piper", true) && await speakPiper(clean)) return;
     await speakBrowser(clean);
   } finally { speaking--; }
 }
 
 export function stopSpeaking() { if (canSpeak) window.speechSynthesis.cancel(); }
 
-// One utterance: resolves with what was said ("" when nothing).
+// What Argus offers (GET /ari-voice): Piper for speaking, Whisper on the PC for hearing.
+export type VoiceStatus = { voice: boolean; hearing: "browser" | "whisper"; whisper_ready: boolean };
+let status: VoiceStatus = { voice: false, hearing: "browser", whisper_ready: false };
+export function setVoiceStatus(s: VoiceStatus) { status = s; }
+
+// Record until you stop talking (about a second of quiet), at most 15 s; then Whisper on the PC. null: not
+// available now (the caller uses the browser's recognition instead).
+async function hearWhisper(onLevel?: (on: boolean) => void): Promise<string | null> {
+  if (!status.whisper_ready || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") return null;
+  let stream: MediaStream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch { return null; }
+  const rec = new MediaRecorder(stream);
+  const chunks: Blob[] = [];
+  rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  const done = new Promise<void>((res) => { rec.onstop = () => res(); });
+  const ctx = new AudioContext();
+  const an = ctx.createAnalyser();
+  ctx.createMediaStreamSource(stream).connect(an);
+  const buf = new Uint8Array(an.fftSize);
+  const t0 = Date.now();
+  let lastLoud = Date.now(), spoke = false;
+  rec.start(250);
+  onLevel?.(true);
+  await new Promise<void>((res) => {
+    const tick = () => {
+      an.getByteTimeDomainData(buf);
+      let peak = 0;
+      for (const v of buf) peak = Math.max(peak, Math.abs(v - 128));
+      if (peak > 12) { lastLoud = Date.now(); spoke = true; }
+      const quiet = Date.now() - lastLoud;
+      if ((spoke && quiet > 1100) || (!spoke && Date.now() - t0 > 6000) || Date.now() - t0 > 15000) return res();
+      requestAnimationFrame(tick);
+    };
+    tick();
+  });
+  rec.stop();
+  await done;
+  onLevel?.(false);
+  stream.getTracks().forEach((t) => t.stop());
+  ctx.close().catch(() => {});
+  if (!spoke) return "";
+  const blob = new Blob(chunks, { type: rec.mimeType || "audio/webm" });
+  try {
+    const t = getToken();
+    const r = await fetch("/ari-voice/hear", { method: "POST", body: blob,
+      headers: { "Content-Type": blob.type.split(";")[0], ...(t ? { Authorization: `Bearer ${t}` } : {}) } });
+    if (r.status === 409) return null;
+    if (!r.ok) return "";
+    return String((await r.json()).text ?? "");
+  } catch { return null; }
+}
+
+// One utterance: Whisper on the PC when it is set up and on, else the browser. "" when nothing was heard.
+export async function listen(): Promise<string> {
+  const w = await hearWhisper();
+  if (w !== null) return w;
+  return listenOnce();
+}
+
+// One utterance with the browser's recognition.
 export function listenOnce(): Promise<string> {
   return new Promise((res) => {
     if (!Speech) return res("");

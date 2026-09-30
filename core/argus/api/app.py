@@ -76,6 +76,7 @@ from ..outbox import PRIORITIES, add_message, ntfy_message
 from ..power import PowerError
 from ..shares import ShareError, ShareStore, kinds_of
 from ..triggers import BadSignature, TriggerError, UnknownTrigger
+from ..voice import Voice, VoiceUnavailable
 from . import approval_page
 from .home import HOME_HTML
 
@@ -192,6 +193,10 @@ class AriSay(BaseModel):
 
 class AriAnswer(BaseModel):
     yes: bool
+
+
+class AriSpeak(BaseModel):
+    text: str = Field(min_length=1, max_length=1000)
 
 
 class ScheduleEdit(BaseModel):
@@ -648,6 +653,72 @@ def create_app(argus: Argus) -> FastAPI:
         for t in rows:
             t["label"] = labels.get(t["action"] or "")
         return {"conv": conv, "turns": rows}
+
+    # Ari's voice and ears ----------------------------------------------------
+
+    voice = Voice(argus.cfg.ari.voice, argus.cfg.db_path.parent.parent)
+    audio_dir = argus.cfg.db_path.parent / "ari"
+
+    async def gpu_online() -> bool:
+        return any(w["state"] == "online" and "gpu" in w["capabilities"] for w in await argus.registry.workers())
+
+    @app.get("/ari-voice", dependencies=guarded)
+    async def ari_voice() -> dict:
+        """What Helios can use: Piper here, Whisper on the PC (only while a GPU worker is online)."""
+        return {"voice": voice.configured, "hearing": argus.cfg.ari.hearing,
+                "whisper_ready": argus.cfg.ari.hearing == "whisper" and await gpu_online()}
+
+    @app.post("/ari-voice/say", dependencies=guarded)
+    async def ari_say_audio(body: AriSpeak) -> Response:
+        """Ari's natural voice: WAV audio of the text (Piper). 409 when none is set up: use the browser's voice."""
+        try:
+            wav = await asyncio.to_thread(voice.say, body.text)
+        except VoiceUnavailable as e:
+            raise HTTPException(status_code=409, detail=str(e)) from None
+        return Response(wav, media_type="audio/wav", headers={"Cache-Control": "no-store"})
+
+    @app.post("/ari-voice/hear", dependencies=guarded)
+    async def ari_hear(request: Request) -> dict:
+        """A recording in (webm/ogg/wav, at most 5 MB), its text out: Whisper on the PC. 409 while the PC is off
+        (Helios then uses the browser's recognition)."""
+        if argus.cfg.ari.hearing != "whisper":
+            raise HTTPException(status_code=409, detail="hearing is set to the browser (ari.hearing)")
+        if not await gpu_online():
+            raise HTTPException(status_code=409, detail="the PC is off")
+        data = bytearray()
+        async for chunk in request.stream():
+            data += chunk
+            if len(data) > 5 * 1024 * 1024:
+                raise HTTPException(status_code=413, detail="recording too long")
+        if not data:
+            raise HTTPException(status_code=422, detail="empty recording")
+        kind = (request.headers.get("content-type") or "").split(";")[0].strip()
+        ext = {"audio/webm": "webm", "audio/ogg": "ogg", "audio/wav": "wav", "audio/x-wav": "wav",
+               "audio/mp4": "m4a", "audio/mpeg": "mp3"}.get(kind, "webm")
+        name = f"{new_id().lower()}.{ext}"
+        audio_dir.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread((audio_dir / name).write_bytes, bytes(data))
+        try:
+            job_id, _ = await argus.jobs.enqueue("ari", "transcribe", {"audio": name,
+                                                                      "model": argus.cfg.ari.whisper_model},
+                                                 needs=["gpu"], priority=95, source="helios")
+            for _ in range(120):  # up to 60 s (the first time loads the model)
+                j = await argus.jobs.get(job_id)
+                if j.state.value == "succeeded":
+                    return {"text": (j.result or {}).get("text", "")}
+                if j.state.value in ("dead", "cancelled"):
+                    raise HTTPException(status_code=502, detail=(j.error or "could not transcribe").split("\n")[0])
+                await asyncio.sleep(0.5)
+            await argus.jobs.cancel(job_id, "took too long")
+            raise HTTPException(status_code=504, detail="the PC didn't answer in time")
+        finally:
+            (audio_dir / name).unlink(missing_ok=True)
+
+    @app.get("/ari/audio/{name}", dependencies=guarded)
+    async def ari_audio(name: str):
+        if not re.fullmatch(r"[0-9a-z]{10,40}\.(webm|ogg|wav|m4a|mp3)", name) or not (audio_dir / name).is_file():
+            raise HTTPException(status_code=404, detail="no such recording")
+        return FileResponse(audio_dir / name, media_type="application/octet-stream")
 
     @app.post("/ari/{conv}/answer", dependencies=guarded)
     async def ari_answer(conv: str, body: AriAnswer) -> dict:

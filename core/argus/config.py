@@ -257,6 +257,17 @@ class ShareConfig(_Strict):
     keep_days: float = Field(7, gt=0, le=365)  # shared files are deleted after this
 
 
+class AriConfig(_Strict):
+    # Ari's natural voice: a Piper voice file (.onnx, with its .onnx.json next to it) on the machine running argusd.
+    # Empty: the browser's own voice.
+    # Get one: python -m piper.download_voices en_US-lessac-medium --data-dir data/voices
+    voice: str = ""
+    # How Ari hears you: "browser" (the browser's speech recognition) or "whisper" (Whisper on the PC: private and
+    # better with accents; the browser is used while the PC is off).
+    hearing: Literal["browser", "whisper"] = "browser"
+    whisper_model: str = "small.en"  # tiny.en, base.en, small.en, medium.en, large-v3 (bigger: better, slower)
+
+
 class BackupConfig(_Strict):
     enabled: bool = True
     at: str = Field("02:30", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")  # local time, every night
@@ -301,6 +312,7 @@ class Config(_Strict):
     power: PowerConfig = Field(default_factory=PowerConfig)
     plugins: PluginsConfig = Field(default_factory=PluginsConfig)
     share: ShareConfig = Field(default_factory=ShareConfig)
+    ari: AriConfig = Field(default_factory=AriConfig)
     backup: BackupConfig = Field(default_factory=BackupConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
 

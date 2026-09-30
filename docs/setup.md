@@ -149,6 +149,23 @@ Helios > **Ari** (and **Talk to Ari** on the phone): talk to Argus by typing or 
 - **"Hey Ari"**: tick it and, while Helios is open (on the PC, for example), say "Hey Ari, …". After Ari asks
   "Shall I?", just say yes or no. The browser listens for the wake phrase (Chrome or Edge; allow the microphone).
 
+*Optional:* a natural voice and private hearing.
+
+```powershell
+pip install -e .[voice,hearing]                   # Piper (voice) and faster-whisper (hearing)
+python -m piper.download_voices en_US-lessac-medium --data-dir data\voices
+```
+
+```yaml
+ari:
+  voice: data/voices/en_US-lessac-medium.onnx     # Ari speaks with Piper instead of the browser's voice
+  hearing: whisper                                # the mic button records; Whisper on the PC writes it down
+  whisper_model: small.en
+```
+
+Whisper uses the GPU when CUDA 12 and cuDNN 9 are found, else the CPU (fine for short commands). While the PC is
+off, the browser hears you. Other voices: https://rhasspy.github.io/piper-samples/
+
 ## PC power buttons
 
 Helios > **Power** (and the **PC power** card on the phone): **Sleep**, **Restart**, **Shut down** (waits

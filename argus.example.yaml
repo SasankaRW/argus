@@ -38,6 +38,11 @@ claude:
   calls_per_day: 30        # hard daily cap across all workers
   plugin_calls_per_day: 10 # each plugin's share unless its plugin.yaml sets claude_calls_per_day (0 = never)
 
+ari:
+  voice: ""                # a Piper voice (.onnx) for Ari's natural voice; empty: the browser's voice
+  hearing: browser         # browser | whisper (Whisper on the PC's GPU; the browser while the PC is off)
+  whisper_model: small.en
+
 jobs:
   lease_seconds: 60
   heartbeat_seconds: 15
