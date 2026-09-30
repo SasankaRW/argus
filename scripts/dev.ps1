@@ -37,6 +37,8 @@ Set-Location $Root
 $Py = Join-Path $Root ".venv\Scripts\python.exe"
 
 $Stamp = Join-Path $Root ".venv\argus-deps.hash"
+# Everything the PC runs: plugins' helpers, Ari's voice (Piper), hearing and "Hey Ari" (Whisper), the Ari popup (Qt)
+$Extras = "dev,plugins,voice,listen,popup"
 $UpFile = Join-Path $Root ".venv\argus-up.json"
 $ArgusUrl = "http://127.0.0.1:8600"
 $LogDir = Join-Path $Root "logs"
@@ -45,10 +47,10 @@ $OllamaUrl = if ($env:ARGUS_OLLAMA_URL) { $env:ARGUS_OLLAMA_URL } else { "http:/
 function Need-Venv {
     if (-not (Test-Path $Py)) { throw "No .venv yet. Run: .\scripts\dev.ps1 setup" }
     # New version with new dependencies? Update .venv automatically.
-    $Hash = (Get-FileHash (Join-Path $Root "pyproject.toml")).Hash
+    $Hash = (Get-FileHash (Join-Path $Root "pyproject.toml")).Hash + ":" + $Extras
     if (-not (Test-Path $Stamp) -or (Get-Content $Stamp) -ne $Hash) {
         Write-Host "Dependencies changed; updating .venv ..."
-        & $Py -m pip install -q -e ".[dev,plugins]"
+        & $Py -m pip install -q -e ".[$Extras]"
         if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
         Set-Content $Stamp $Hash
     }
@@ -260,7 +262,7 @@ switch ($Command) {
             py -3 -m venv .venv
         }
         & $Py -m pip install --upgrade pip | Out-Null
-        & $Py -m pip install -e ".[dev,plugins]"
+        & $Py -m pip install -e ".[$Extras]"
         Set-Content $Stamp (Get-FileHash (Join-Path $Root "pyproject.toml")).Hash
         if (-not (Test-Path "argus.yaml")) { Copy-Item "argus.example.yaml" "argus.yaml"; Write-Host "Created argus.yaml" }
         if (-not (Test-Path ".env")) { Copy-Item ".env.example" ".env"; Write-Host "Created .env (edit the password)" }
