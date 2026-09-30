@@ -76,3 +76,12 @@ def _no_real_claude(monkeypatch):
 
     real = shutil.which
     monkeypatch.setattr(prov.shutil, "which", lambda cmd, *a, **k: None if cmd == "claude" else real(cmd, *a, **k))
+
+
+@pytest.fixture(autouse=True)
+def _no_morning_brief(monkeypatch, request):
+    """The morning brief depends on the clock; tests that want it use the `brief` marker."""
+    if request.node.get_closest_marker("brief") is None:
+        import argus.context
+
+        monkeypatch.setattr(argus.context, "brief_due", lambda *a, **k: None)

@@ -61,7 +61,7 @@ class PowerManager:
         needs = self.cfg.power.pc_needs
         waiting = running = 0
         for r in conn.execute("SELECT state, needs FROM jobs WHERE state IN ('queued','retry','leased','running') "
-                              "AND plugin != 'power'"):
+                              "AND plugin NOT IN ('power', 'health')"):
             if set(json.loads(r["needs"])) & set(needs):
                 if r["state"] in ("leased", "running"):
                     running += 1

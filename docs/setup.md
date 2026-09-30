@@ -166,6 +166,16 @@ ari:
 Whisper uses the GPU when CUDA 12 and cuDNN 9 are found, else the CPU (fine for short commands). While the PC is
 off, the browser hears you. Other voices: https://rhasspy.github.io/piper-samples/
 
+## What Argus tells you by itself
+
+- **Morning brief** (`brief.at`, 07:00): overnight results, failures, what waits for you, today's schedules, the
+  backup, the PC and Docker, yesterday's Claude calls. `POST /brief` sends one now to try it.
+- **After a power cut or crash**: "Argus is back": when it stopped, which jobs pick up from their last finished
+  step, which missed schedules run now. (Not after `dev.ps1 down` or an update: only when it didn't stop cleanly.)
+- **PC health** (`health.enabled: true`, `health.containers: [eclaire-app, eclaire-db]`): the PC's worker looks at
+  WSL and Docker every 30 minutes while the PC is on (it never wakes the PC for it) and tells the phone when a
+  container stops, reports unhealthy, or Docker stops answering, and again when it's fine.
+
 ## PC power buttons
 
 Helios > **Power** (and the **PC power** card on the phone): **Sleep**, **Restart**, **Shut down** (waits

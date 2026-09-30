@@ -21,6 +21,7 @@ from .. import __version__
 from ..models import Router, build_providers
 from . import ask as _ask  # noqa: F401 - Ask Argus (the model part)
 from . import backup as _backup  # noqa: F401 - the PC's copy of the nightly backup
+from . import health as _health  # noqa: F401 - WSL and Docker on the PC
 from . import hear as _hear  # noqa: F401 - Ari's hearing (Whisper)
 from . import power as _power  # noqa: F401 - the built-in power buttons (sleep, shut down, ...)
 from .client import ApiError, ArgusClient, LeaseLostError, Unreachable

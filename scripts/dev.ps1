@@ -248,6 +248,8 @@ switch ($Command) {
             else { Line "--" $N "was not running" "" }
             $Left.Remove($N)
         }
+        # stopped on purpose: not a power cut (argusd leaves this file only when it did not stop by itself)
+        if (Test-Path "data\argus.running") { Remove-Item "data\argus.running" -ErrorAction SilentlyContinue }
         Save-Up $Left
         if ($Arg -ne "all" -and (Is-Up "$OllamaUrl/api/version")) { Write-Host "Ollama keeps running (use 'down all' to stop it too)." }
     }

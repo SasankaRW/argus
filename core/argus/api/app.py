@@ -656,7 +656,7 @@ def create_app(argus: Argus) -> FastAPI:
 
     # Ari's voice and ears ----------------------------------------------------
 
-    voice = Voice(argus.cfg.ari.voice, argus.cfg.db_path.parent.parent)
+    voice = Voice(argus.cfg.ari.voice, argus.cfg.base_dir)
     audio_dir = argus.cfg.db_path.parent / "ari"
 
     async def gpu_online() -> bool:
@@ -855,6 +855,13 @@ def create_app(argus: Argus) -> FastAPI:
             needs=p.manifest.job_needs(), priority=PRIORITY_INTERACTIVE, dedupe_key=f"share:{sid}", source="helios")
         await asyncio.to_thread(shares.mark_sent, sid, job_id)
         return {"id": job_id, "created": created}
+
+    # -------------------------------------------------------------- the morning brief
+
+    @app.post("/brief", dependencies=guarded)
+    async def brief_now() -> dict:
+        """Send the morning brief now (to try it)."""
+        return await argus.send_brief()
 
     # -------------------------------------------------------------- backups
 

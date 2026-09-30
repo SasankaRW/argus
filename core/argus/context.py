@@ -10,7 +10,8 @@ from datetime import datetime
 from . import __version__
 from .approvals import Approvals
 from .backup import Backups
-from .config import Config
+from .config import PRIORITY_BATCH, Config, ScheduleConfig
+from .daily import Marker, brief_due, compose_brief, last_health, resume_summary
 from .db import Store
 from .events import EventHub, insert_event, prune_events
 from .jobs import JobStore, Watchdog
@@ -52,10 +53,14 @@ class Argus:
             cfg.jobs.watchdog_interval_seconds,
             extra=[lambda: self.registry.mark_stale_workers(stale_after), self.prune_events,
                    self.approval_tick, self.scheduler.tick,
-                   self.power.tick, self.backup_tick],
+                   self.power.tick, self.backup_tick, self.daily_tick],
         )
         self.backups = Backups(cfg.db_path, cfg.backup.keep)
         self.last_backup: dict | None = None
+        self.marker = Marker(cfg.db_path.parent / "argus.running")
+        self.brief_sent: str | None = None
+        self._next_touch = 0.0
+        self.resumed: dict | None = None  # set at start when the last run ended abruptly
         self.started_at: float | None = None
         self._next_prune = 0.0
         self.pruned_events = 0
@@ -71,7 +76,11 @@ class Argus:
         await self.registry.component("argus", "core", "Argus", group, {"version": self.version})
         await self.models.register()
         await self.approvals.start()
+        stopped_at = self.marker.start()
+        if stopped_at is not None:  # the last run ended abruptly (power cut, crash): say what happens now
+            await self.resume_notice(stopped_at)
         self.plugin_host.load()  # adds the plugins' schedules and triggers before the scheduler reads them
+        self._health_schedule()
         await self.register_plugins()
         self.models.plugin_caps = self.plugin_host.claude_caps()
         await self.scheduler.sync()
@@ -83,6 +92,58 @@ class Argus:
         self.watchdog.start()
         self.started_at = time.time()
         log.info("argus started", extra={"version": self.version, "instance": self.cfg.instance.name})
+
+    def _health_schedule(self) -> None:
+        """health.enabled: the PC's worker checks WSL and Docker every health.every_minutes."""
+        h = self.cfg.health
+        if not h.enabled or any(s.id == "argus-health" for s in self.cfg.schedules):
+            return
+        n = h.every_minutes
+        cron = f"*/{n} * * * *" if n < 60 else f"0 */{max(1, n // 60)} * * *"
+        self.cfg.schedules.append(ScheduleConfig(id="argus-health", plugin="health", workflow="check", cron=cron,
+                                                 input={"containers": h.containers}, needs=["desktop"],
+                                                 priority=PRIORITY_BATCH))
+
+    async def resume_notice(self, stopped_at: float) -> None:
+        def fn(conn):
+            now = time.time()
+            title, text, data = resume_summary(conn, now, stopped_at)
+            insert_event(conn, now, "argus.resumed", src="argus", dst="phone", data=data)
+            add_message(conn, now, "ntfy", ntfy_message(title, text, tags=["electric_plug"]),
+                        dedupe_key=f"resumed:{int(stopped_at)}")
+            return data
+
+        self.resumed = await self.store.write(fn)
+        log.warning("argus did not stop cleanly last time", extra=self.resumed)
+
+    async def daily_tick(self) -> None:
+        now = time.time()
+        if now >= self._next_touch:
+            self._next_touch = now + 60
+            await asyncio.to_thread(self.marker.touch)
+        if self.cfg.brief.enabled:
+            day = brief_due(self.cfg.brief.at, now, self.brief_sent)
+            if day:
+                await self.send_brief(day)
+
+    async def send_brief(self, day: str | None = None) -> dict:
+        """The morning brief to the phone (once per day; `POST /brief` sends one now)."""
+        needs = set(self.cfg.power.pc_needs)
+        pc = any(w["state"] == "online" and set(w["capabilities"]) & needs for w in await self.registry.workers())
+
+        def fn(conn):
+            now = time.time()
+            title, text = compose_brief(conn, now, last_backup=self.last_backup, pc_online=pc,
+                                        health=last_health(conn), claude_cap=self.cfg.claude.calls_per_day)
+            key = f"brief:{day}" if day else f"brief:now:{int(now)}"
+            oid = add_message(conn, now, "ntfy", ntfy_message(title, text, tags=["sunrise"]), dedupe_key=key)
+            return {"title": title, "text": text, "queued": oid is not None}
+
+        out = await self.store.write(fn)
+        if day:
+            self.brief_sent = day
+        self.outbox.poke()
+        return out
 
     def _backup_due(self, now: float) -> bool:
         """Tonight's slot has passed and the newest backup is older than it."""
@@ -185,6 +246,7 @@ class Argus:
         return n
 
     async def stop(self) -> None:
+        self.marker.stop()  # a clean stop: no "Argus is back" message next time
         await self.watchdog.stop()
         await self.phone.stop()
         await self.relay.stop()
