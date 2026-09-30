@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { setToken, Status } from "./api";
+import { api, setToken, Status } from "./api";
 import { AriView } from "./AriView";
 import { AskBox } from "./AskBox";
 import { EventsPanel } from "./EventsPanel";
@@ -14,7 +14,7 @@ import { QueueView } from "./QueueView";
 import { RulesView } from "./RulesView";
 import { RunsView } from "./RunsView";
 import { ShareView } from "./ShareView";
-import { pref, Speech, WakeListener } from "./voice";
+import { pref, setPref, setVoiceStatus, VoiceStatus, WakeListener } from "./voice";
 
 const NAV: { id: string; label: string; icon: string; soon?: string }[] = [
   { id: "map", label: "Live map", icon: "M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3zM9 3v15M15 6v15" },
@@ -125,27 +125,40 @@ export function App() {
   const go = (v: string) => { setView(v); history.replaceState(null, "", v === "map" ? location.pathname : `#${v}`); };
   const viewRef = useRef(view);
   viewRef.current = view;
-  const [heard, setHeard] = useState(false);
+  const [heard, setHeard] = useState<string | null>(null);
   useEffect(() => {  // "Hey Ari" while Helios is open (Ari > "Hey Ari" turns it on)
-    if (!Speech) return;
     let wl: WakeListener | null = null;
-    const sync = () => {
-      if (pref("wake", false) && !wl) {
-        wl = new WakeListener((text) => {
-          setHeard(false);
-          if (viewRef.current === "ari") window.dispatchEvent(new CustomEvent("ari-command", { detail: text }));
-          else { try { sessionStorage.setItem("ari.command", text); } catch { /* private */ } setView("ari"); history.replaceState(null, "", "#ari"); }
-        }, () => { setHeard(true); setTimeout(() => setHeard(false), 8000); });
-        wl.start();
-      } else if (!pref("wake", false) && wl) { wl.stop(); wl = null; }
+    let hide: ReturnType<typeof setTimeout> | undefined;
+    const badge = (msg: string | null, ms = 8000) => {
+      clearTimeout(hide); setHeard(msg); if (msg) hide = setTimeout(() => setHeard(null), ms);
     };
+    const sync = () => {
+      const want = pref("wake", false);
+      if (want && !wl) {
+        wl = new WakeListener({
+          onCommand: (text) => {
+            badge(null);
+            if (viewRef.current === "ari") window.dispatchEvent(new CustomEvent("ari-command", { detail: text }));
+            else { try { sessionStorage.setItem("ari.command", text); } catch { /* private */ } setView("ari"); history.replaceState(null, "", "#ari"); }
+          },
+          onWake: () => badge("Ari is listening…"),
+          onError: (msg) => { badge(msg, 15000); setPref("wake", false); },
+        });
+        wl.start();
+      } else if (!want && wl) { wl.stop(); wl = null; }
+    };
+    const restart = () => { if (wl) { wl.stop(); wl = null; } sync(); };  // Whisper became (un)available
     const arm = () => wl?.arm();
-    sync();
+    api<VoiceStatus>("/ari-voice").then(setVoiceStatus).catch(() => {}).finally(sync);
     window.addEventListener("ari-pref", sync);
+    window.addEventListener("ari-status", restart);
     window.addEventListener("ari-arm", arm);
-    return () => { window.removeEventListener("ari-pref", sync); window.removeEventListener("ari-arm", arm); wl?.stop(); };
+    return () => {
+      window.removeEventListener("ari-pref", sync); window.removeEventListener("ari-status", restart);
+      window.removeEventListener("ari-arm", arm); wl?.stop(); clearTimeout(hide);
+    };
   }, []);
-  const heardBadge = heard ? <div className="ari-heard" role="status">Ari is listening…</div> : null;
+  const heardBadge = heard ? <div className="ari-heard" role="status">{heard}</div> : null;
 
   if (a.phase === "login") return <Login bad={triedLogin} onDone={() => { setTriedLogin(true); a.reconnect(); }} />;
 

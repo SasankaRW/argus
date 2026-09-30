@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import type { Selection } from "./MapView";
-import { canSpeak, listen, pref, setPref, setVoiceStatus, speak, Speech, stopSpeaking, VoiceStatus } from "./voice";
+import { canSpeak, listen, pref, setPref, speak, Speech, stopSpeaking, voiceStatus, VoiceStatus } from "./voice";
 
 type Turn = { id: number; role: "you" | "ari"; text: string | null; action: string | null; label?: string | null;
   pending: { kind: string; action: string } | null; job_id: string | null; created_at: number };
@@ -34,8 +34,13 @@ export function AriView({ onSelect, onView, compact = false }: { onSelect: (s: S
   const [talk, setTalk] = useState(() => pref("speak", true));
   const [wake, setWake] = useState(() => pref("wake", false));
   const [piper, setPiper] = useState(() => pref("piper", true));
-  const [vs, setVs] = useState<VoiceStatus | null>(null);
-  useEffect(() => { api<VoiceStatus>("/ari-voice").then((s) => { setVoiceStatus(s); setVs(s); }).catch(() => {}); }, []);
+  const [vs, setVs] = useState<VoiceStatus>(voiceStatus);
+  useEffect(() => {  // App fetches what Argus offers; the "Hey Ari" box follows the listener (it turns off on errors)
+    const st = () => setVs(voiceStatus());
+    const pr = () => setWake(pref("wake", false));
+    window.addEventListener("ari-status", st); window.addEventListener("ari-pref", pr);
+    return () => { window.removeEventListener("ari-status", st); window.removeEventListener("ari-pref", pr); };
+  }, []);
   const [scheds, setScheds] = useState<Schedule[]>([]);
   const spoken = useRef<Set<number>>(new Set());
   const end = useRef<HTMLDivElement>(null);
@@ -109,11 +114,13 @@ export function AriView({ onSelect, onView, compact = false }: { onSelect: (s: S
   }, [send]);
 
   const mic = async () => {
-    if ((!Speech && !vs?.whisper_ready) || listening) return;
-    stopSpeaking(); setListening(true);
-    const said = await listen();
-    setListening(false);
-    if (said) send(said);
+    if ((!Speech && !vs.whisper_ready) || listening) return;
+    stopSpeaking(); setListening(true); setErr(null);
+    try {
+      const said = await listen();
+      if (said) send(said);
+      else setErr("I didn't hear anything. Press the mic and speak.");
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setListening(false); }
   };
 
   const toggle = (k: string, v: boolean, set: (v: boolean) => void) => { set(v); setPref(k, v); };
@@ -163,8 +170,8 @@ export function AriView({ onSelect, onView, compact = false }: { onSelect: (s: S
         <div ref={end} />
       </div>
       <form className="ari-in" onSubmit={(e) => { e.preventDefault(); send(text); }}>
-        <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Talk to Ari…" aria-label="Message Ari" enterKeyHint="send" />
-        {(Speech || vs?.whisper_ready) && <button type="button" className={`mic${listening ? " on" : ""}`} onClick={mic} aria-label="Speak" title={vs?.whisper_ready ? "Whisper on the PC hears you" : "The browser hears you"}>
+        <input value={text} onChange={(e) => setText(e.target.value)} placeholder={listening ? "Listening… speak now" : "Talk to Ari…"} aria-label="Message Ari" enterKeyHint="send" />
+        {(Speech || vs.whisper_ready) && <button type="button" className={`mic${listening ? " on" : ""}`} onClick={mic} aria-label="Speak" title={vs.whisper_ready ? "Whisper on the PC hears you" : "The browser hears you"}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></svg>
         </button>}
         <button type="submit" className="primary" disabled={busy || !text.trim()}>Send</button>
@@ -172,8 +179,8 @@ export function AriView({ onSelect, onView, compact = false }: { onSelect: (s: S
       <div className="ari-opts">
         {canSpeak && <label><input type="checkbox" checked={talk} onChange={(e) => toggle("speak", e.target.checked, setTalk)} /> Speak replies</label>}
         {Speech && <label title="While Helios is open: say &quot;Hey Ari&quot;, then what you want"><input type="checkbox" checked={wake} onChange={(e) => toggle("wake", e.target.checked, setWake)} /> &ldquo;Hey Ari&rdquo;</label>}
-        {vs?.voice && <label title="Piper: Argus's own natural voice (off: the browser's voice)"><input type="checkbox" checked={piper} onChange={(e) => toggle("piper", e.target.checked, setPiper)} /> Natural voice</label>}
-        {vs?.hearing === "whisper" && <span className="muted">{vs.whisper_ready ? "Whisper hears you" : "Whisper: the PC is off, the browser hears you"}</span>}
+        {vs.voice && <label title="Piper: Argus's own natural voice (off: the browser's voice)"><input type="checkbox" checked={piper} onChange={(e) => toggle("piper", e.target.checked, setPiper)} /> Natural voice</label>}
+        {vs.hearing === "whisper" && <span className="muted">{vs.whisper_ready ? "Whisper hears you" : "Whisper: the PC is off, the browser hears you"}</span>}
       </div>
       {!compact && (
         <div className="ari-sched">
