@@ -8,9 +8,9 @@ import { PowerControls } from "./PowerView";
 import { prio, useQueue, waitText, whyText } from "./QueueView";
 
 // The phone's Helios: what needs you, what runs, what's next, what just finished. The full dashboard is one tap away.
-export function PhoneHome({ status, events, onSelect, onShare, onFull, onView, onAri }: {
+export function PhoneHome({ status, events, onSelect, onShare, onFull, onView, onAri, onMap }: {
   status: Status | null; events: ArgusEvent[]; onSelect: (s: Selection) => void; onShare: () => void; onFull: () => void;
-  onView: (v: string) => void; onAri: () => void;
+  onView: (v: string) => void; onAri: () => void; onMap: () => void;
 }) {
   const q = useQueue(events);
   const saved = useTimeSaved();
@@ -35,6 +35,11 @@ export function PhoneHome({ status, events, onSelect, onShare, onFull, onView, o
       <button type="button" className="pshare pari" onClick={onAri}>
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z" /></svg>
         Talk to Ari
+      </button>
+
+      <button type="button" className="pshare pari pmap" onClick={onMap}>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3zM9 3v15M15 6v15" /></svg>
+        Live map <span className="muted">turn your phone</span>
       </button>
 
       <button type="button" className="pshare" onClick={onShare}>

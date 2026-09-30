@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, setToken, Status, useTimeSaved } from "./api";
 import { AriView } from "./AriView";
 import { AskBox } from "./AskBox";
@@ -8,6 +8,7 @@ import { Inspector } from "./Inspector";
 import { useArgus } from "./live";
 import { mainParts, MapView, mergeEdges, Selection } from "./MapView";
 import { LogsView } from "./LogsView";
+import { MapFull } from "./MapFull";
 import { PhoneHome } from "./PhoneHome";
 import { PluginsView } from "./PluginsView";
 import { PowerView } from "./PowerView";
@@ -147,7 +148,8 @@ export function App() {
   const [sel, setSel] = useState<Selection>(null);
   const [flow, setFlow] = useState(true);
   const [relayout, setRelayout] = useState(0);
-  const [info, setInfo] = useState(false);  // the map's inspector drawer with nothing selected (the overview)
+  const [info, setInfo] = useState(false);
+  const [bigMap, setBigMap] = useState(false);  // the phone's sideways full-screen map  // the map's inspector drawer with nothing selected (the overview)
   const [wide, setWide] = useState(() => { try { return localStorage.getItem("helios.rail") === "wide"; } catch { return false; } });
   const setWideRail = (v: boolean) => { setWide(v); try { localStorage.setItem("helios.rail", v ? "wide" : "icons"); } catch { /* private */ } };
   const [triedLogin, setTriedLogin] = useState(false);
@@ -199,6 +201,11 @@ export function App() {
     };
   }, []);
   const heardBadge = heard ? <div className="ari-heard" role="status">{heard}</div> : null;
+  const closeMap = useCallback(() => setBigMap(false), []);
+  const mapFull = bigMap && a.map ? (
+    <MapFull map={a.map} pulses={a.pulses} active={a.active} status={a.status} events={a.events} onClose={closeMap}
+      onPlugins={() => { setBigMap(false); setFullView(true); go("plugins"); }} />
+  ) : null;
 
   if (a.phase === "login") return <Login bad={triedLogin} onDone={() => { setTriedLogin(true); a.reconnect(); }} />;
 
@@ -219,8 +226,9 @@ export function App() {
           <AriView onSelect={setSel} onView={(v) => (v === "share" ? go("share") : (setFullView(true), go(v)))} />
         ) : (
           <PhoneHome status={st} events={a.events} onSelect={setSel} onShare={() => go("share")} onFull={() => setFullView(true)}
-            onAri={() => go("ari")} onView={(v) => (v === "share" ? go("share") : (setFullView(true), go(v)))} />
+            onAri={() => go("ari")} onMap={() => setBigMap(true)} onView={(v) => (v === "share" ? go("share") : (setFullView(true), go(v)))} />
         )}
+        {mapFull}
         {heardBadge}
       </div>
     );
@@ -290,6 +298,7 @@ export function App() {
             <div className="hud hud-tr tools">
               <button type="button" className="btn" aria-pressed={flow} onClick={() => setFlow(!flow)}>flow</button>
               <button type="button" className="btn" onClick={() => setRelayout((x) => x + 1)}>auto layout</button>
+              {narrow && <button type="button" className="btn" onClick={() => setBigMap(true)}>full screen</button>}
               <button type="button" className="btn" aria-pressed={info || !!sel} onClick={() => (sel || info ? (setSel(null), setInfo(false)) : setInfo(true))}>inspector</button>
             </div>
             <div className="hud hud-bl legend mono">
@@ -322,6 +331,7 @@ export function App() {
         </div>
         {withDock && <EventsPanel events={a.events} conn={a.conn} onSelect={setSel} />}
       </main>
+      {mapFull}
       {heardBadge}
     </div>
   );

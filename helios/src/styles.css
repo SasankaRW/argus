@@ -500,3 +500,17 @@ main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; animation-delay: 0s !important; transition-duration: .01ms !important; }
 }
+
+/* ---------------------------------------------------------------- phone: the sideways full-screen map */
+.mapfull { position: fixed; inset: 0; z-index: 70; background: var(--bg); overflow: hidden; animation: fade .25s var(--ease); }
+.mapfull-in { position: absolute; inset: 0; }
+@media (orientation: portrait) {
+  /* turn the page 90°: its width is the phone's height */
+  .mapfull-in { inset: auto; top: 0; left: 100%; width: 100vh; width: 100dvh; height: 100vw; transform-origin: top left; transform: rotate(90deg); }
+}
+.mapfull .hud-tl { top: 10px; left: 12px; }
+.mapfull .hud-tr { top: 10px; right: 12px; bottom: auto; }
+.mapfull .drawer { top: 50px; width: min(340px, 60%); }
+.mf-close { font-size: 16px; width: 34px; padding: 0; }
+.pmap { display: flex; align-items: center; gap: 10px; }
+.pmap .muted { margin-left: auto; }

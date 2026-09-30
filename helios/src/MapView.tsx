@@ -2,7 +2,7 @@
 
 import {
   Background, BaseEdge, Controls, EdgeProps, getBezierPath, Handle, Node, NodeProps, Position, ReactFlow,
-  useEdgesState, useNodesState, useReactFlow, ReactFlowProvider, Edge,
+  useEdgesState, useInternalNode, useNodesState, useReactFlow, ReactFlowProvider, Edge,
 } from "@xyflow/react";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ArgusMap, MapNode } from "./api";
@@ -116,7 +116,24 @@ function Dot({ path, tone, back }: { path: string; tone: string; back: boolean }
   );
 }
 
-const Line = memo(function Line(p: EdgeProps<Edge<LineData>>) {
+// Where each handle sits on a box. Boxes have a fixed size, so line ends are worked out here instead of measured
+// on screen: measuring breaks when the map is shown turned sideways (the phone's full-screen map).
+const HANDLE: Record<string, [number, number, Position]> = {
+  "": [NODE_W, NODE_H / 2, Position.Right], in: [0, NODE_H / 2, Position.Left],
+  b: [NODE_W / 2, NODE_H, Position.Bottom], "t-out": [NODE_W / 2, 0, Position.Top],
+  t: [NODE_W / 2, 0, Position.Top], "b-in": [NODE_W / 2, NODE_H, Position.Bottom],
+};
+function useEnds(p: EdgeProps<Edge<LineData>>) {
+  const a = useInternalNode(p.source), b = useInternalNode(p.target);
+  if (!a || !b) return p;
+  const [sx, sy, sp] = HANDLE[p.sourceHandleId ?? ""] ?? HANDLE[""];
+  const [tx, ty, tp] = HANDLE[p.targetHandleId ?? "in"] ?? HANDLE.in;
+  const pa = a.internals.positionAbsolute, pb = b.internals.positionAbsolute;
+  return { ...p, sourceX: pa.x + sx, sourceY: pa.y + sy, targetX: pb.x + tx, targetY: pb.y + ty, sourcePosition: sp, targetPosition: tp };
+}
+
+const Line = memo(function Line(props: EdgeProps<Edge<LineData>>) {
+  const p = useEnds(props);
   const d = p.data!;
   // ELK's route when the boxes are where the layout put them; a plain curve once you drag one away
   const r = d.route;
