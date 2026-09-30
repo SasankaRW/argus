@@ -31,7 +31,7 @@ export function Meter({ value, n = 10, color = "var(--ok)" }: { value: number; n
 function startOfDay() { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime() / 1000; }
 
 // What the home screen shows, refreshed whenever a job or approval changes.
-function useHomeData(events: ArgusEvent[]) {
+export function useHomeData(events: ArgusEvent[]) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [pending, setPending] = useState<Approval[]>([]);
   const [lastAri, setLastAri] = useState<string | null>(null);
@@ -57,10 +57,12 @@ function useHomeData(events: ArgusEvent[]) {
   };
 }
 
-export function PhoneHome({ status, events, onSelect, onAri, onOpen, onInbox }: {
+export function PhoneHome({ status, events, onSelect, onAri, onOpen, onInbox, onAsk }: {
   status: Status | null; events: ArgusEvent[]; onSelect: (s: { type: "job"; id: string }) => void;
   onAri: (mic: boolean) => void; onOpen: (view: string) => void; onInbox: () => void;
+  onAsk?: (text: string) => void;  // the desktop: type right in the tile
 }) {
+  const [q, setQ] = useState("");
   const d = useHomeData(events);
   const saved = useTimeSaved();
   const [busy, setBusy] = useState<string | null>(null);
@@ -78,9 +80,16 @@ export function PhoneHome({ status, events, onSelect, onAri, onOpen, onInbox }: 
       <Tile path="~/ari" dot="var(--amber)" span>
         <p className="ari-last">› {d.lastAri ?? "hi, I'm Ari. Ask me anything, or tell me what to do."}</p>
         <div className="prompt">
-          <button type="button" className="prompt-in" onClick={() => onAri(false)}>
-            <span className="caret">›</span><span className="ph">ask ari…</span><span className="cur" aria-hidden="true" />
-          </button>
+          {onAsk ? (
+            <form className="prompt-in" onSubmit={(e) => { e.preventDefault(); if (q.trim()) { onAsk(q.trim()); setQ(""); } }}>
+              <span className="caret">›</span>
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ask ari, or tell it what to do…" aria-label="Ask Ari" />
+            </form>
+          ) : (
+            <button type="button" className="prompt-in" onClick={() => onAri(false)}>
+              <span className="caret">›</span><span className="ph">ask ari…</span><span className="cur" aria-hidden="true" />
+            </button>
+          )}
           <button type="button" className="prompt-mic" aria-label="Talk to Ari" onClick={() => onAri(true)}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></svg>
           </button>
@@ -125,7 +134,7 @@ export function PhoneHome({ status, events, onSelect, onAri, onOpen, onInbox }: 
       )}
 
       <Tile path="~/pc" dot={online.length ? "var(--ok)" : "var(--bad)"} onOpen={() => onOpen("power")}>
-        <div className="mid">{online.length ? "online" : "offline"}</div>
+        <div className="tmid">{online.length ? "online" : "offline"}</div>
         <div className="sub">{online.length} worker{online.length === 1 ? "" : "s"}</div>
         <div className="sub">queue <Meter value={Math.min(1, d.queued / 10)} n={6} color="var(--amber)" /> {d.queued}</div>
       </Tile>

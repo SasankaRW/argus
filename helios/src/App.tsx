@@ -6,9 +6,10 @@ import { EventsPanel } from "./EventsPanel";
 import { uptime } from "./format";
 import { Inspector } from "./Inspector";
 import { useArgus } from "./live";
-import { mainParts, MapView, mergeEdges, Selection } from "./MapView";
+import { FitPad, mainParts, MapView, mergeEdges, Selection } from "./MapView";
 import { LogsView } from "./LogsView";
 import { MapFull } from "./MapFull";
+import { CommandLayer, Layout, LayoutSwitch, loadLayout, saveLayout } from "./Desk";
 import { PhoneHeader, PhoneHome, PhoneInbox, PhoneMore, PhoneTab, PhoneTabs } from "./Phone";
 import { Sheet } from "./Sheet";
 import { PluginsView } from "./PluginsView";
@@ -20,6 +21,8 @@ import { ShareView } from "./ShareView";
 import { pref, setPref, setVoiceStatus, voiceStatus, VoiceStatus, WakeListener } from "./voice";
 import { AriPill } from "./AriPill";
 import { ariFromEvents, ariSet, ariTell } from "./ariState";
+
+const CMD_PAD: FitPad = { top: "340px", right: "40px", bottom: "150px", left: "40px" };  // below the corner cards, above the command bar
 
 const NAV: { id: string; label: string; icon: string }[] = [
   { id: "map", label: "Live map", icon: "M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3zM9 3v15M15 6v15" },
@@ -153,7 +156,9 @@ export function App() {
   const [relayout, setRelayout] = useState(0);
   const [info, setInfo] = useState(false);
   const [bigMap, setBigMap] = useState(false);
-  const [inbox, setInbox] = useState(false);  // the phone's "waiting for you" sheet  // the phone's sideways full-screen map  // the map's inspector drawer with nothing selected (the overview)
+  const [inbox, setInbox] = useState(false);
+  const [layout, setLayoutState] = useState<Layout>(loadLayout);  // the PC's home: map + tiles, or map + command bar
+  const setLayout = (l: Layout) => { setLayoutState(l); saveLayout(l); };  // the phone's "waiting for you" sheet  // the phone's sideways full-screen map  // the map's inspector drawer with nothing selected (the overview)
   const [wide, setWide] = useState(() => { try { return localStorage.getItem("helios.rail") === "wide"; } catch { return false; } });
   const setWideRail = (v: boolean) => { setWide(v); try { localStorage.setItem("helios.rail", v ? "wide" : "icons"); } catch { /* private */ } };
   const [triedLogin, setTriedLogin] = useState(false);
@@ -169,6 +174,7 @@ export function App() {
   const setFullView = (v: boolean) => { setFull(v); try { localStorage.setItem("helios.full", v ? "1" : "0"); } catch { /* private */ } };
   const phone = narrow && !full;
   const go = (v: string) => { setView(v); history.replaceState(null, "", v === "map" ? location.pathname : `#${v}`); };
+  const askAri = (text: string) => { try { sessionStorage.setItem("ari.command", text); } catch { /* private */ } go("ari"); };
   const viewRef = useRef(view);
   viewRef.current = view;
   const [heard, setHeard] = useState<string | null>(null);
@@ -274,11 +280,55 @@ export function App() {
   const root = view.split("/")[0];
   const main = a.map ? mainParts(a.map, [], {}).map : null;
   const withKpis = ["queue", "runs", "power"].includes(root);
-  const withDock = !["logs", "share", "plugins", "rules"].includes(root);
+  const withDock = !["logs", "share", "plugins", "rules", "map"].includes(root);
+  const cmd = root === "map" && layout === "command";
+  const tools = (
+    <>
+      <button type="button" className="btn" aria-pressed={flow} onClick={() => setFlow(!flow)}>flow</button>
+      <button type="button" className="btn" onClick={() => setRelayout((x) => x + 1)}>auto layout</button>
+      {narrow && <button type="button" className="btn" onClick={() => setBigMap(true)}>full screen</button>}
+      <button type="button" className="btn" aria-pressed={info || !!sel} onClick={() => (sel || info ? (setSel(null), setInfo(false)) : setInfo(true))}>inspector</button>
+    </>
+  );
+  const stage = (
+    <section className="stage" aria-label="Live map">
+      <div className="canvas">
+        {a.map && a.map.nodes.length > 0 ? (
+          <MapView map={a.map} pulses={a.pulses} active={a.active} selection={sel} onSelect={setSel} flow={flow} relayoutSignal={relayout} onPlugins={() => go("plugins")}
+            fitPad={cmd ? CMD_PAD : undefined} />
+        ) : (
+          <div className="empty mono">{a.phase === "down" ? "$ waiting for argus…" : "$ loading the map…"}</div>
+        )}
+      </div>
+      {cmd ? (
+        <CommandLayer status={st} events={a.events} live={a.conn === "live"} onView={go} onAsk={askAri}
+          onInbox={() => setInbox(true)} onLayout={setLayout} tools={tools} />
+      ) : (
+        <>
+          <div className="hud hud-tl">
+            <div className="hud-title mono"><span className="pt">live map</span><span className="dim">{main ? `${main.nodes.length} parts · ${mergeEdges(main.edges).length} lines` : "loading…"}</span></div>
+          </div>
+          <div className="hud hud-tr tools">{tools}</div>
+        </>
+      )}
+      {!cmd && <div className="hud hud-bl legend mono">
+        <span><i style={{ background: "var(--flow)" }} />message</span>
+        <span><i style={{ background: "var(--amber)" }} />escalation</span>
+        <span><i style={{ background: "var(--bad)" }} />failure</span>
+        <span><i className="thick" />busier line</span>
+        <span className="dim hide-sm">drag to arrange · click to inspect</span>
+      </div>}
+      {a.map && (sel || info) && (
+        <aside className="drawer">
+          <Inspector sel={sel} map={a.map} status={st} events={a.events} onSelect={setSel} onClose={() => { setSel(null); setInfo(false); }} />
+        </aside>
+      )}
+    </section>
+  );
   const health = a.phase === "down" ? "unreachable" : ok ? "healthy" : a.conn === "live" ? "degraded" : "connecting";
   return (
-    <div className={`shell${wide ? " wide" : ""}`}>
-      <header className="top">
+    <div className={`shell${wide ? " wide" : ""}${cmd ? " cmdmode" : ""}`}>
+      {!cmd && <header className="top">
         <div className="brand"><Logo /><b>helios</b>{st && <span className="crumb hide-sm">▸ {st.instance}@{st.host}</span>}</div>
         <AskBox onSelect={setSel} onView={(v) => go(v)} />
         {narrow && <button type="button" className="btn phone-back" onClick={() => setFullView(false)}>phone view</button>}
@@ -290,10 +340,11 @@ export function App() {
           <ClaudeChip />
           {st && <span className="seg-s hide-sm">v<b>{st.version}</b></span>}
           <span className="seg-s hide-sm"><Clock /></span>
+          {root === "map" && <LayoutSwitch layout={layout} onChange={setLayout} />}
         </div>
-      </header>
+      </header>}
 
-      <nav className="rail" aria-label="Helios sections">
+      {!cmd && <nav className="rail" aria-label="Helios sections">
         {NAV.map((n) => (
           <button key={n.id} type="button" className="nav" title={n.label} aria-current={n.id === root ? "page" : undefined} onClick={() => go(n.id)}>
             <Icon d={n.icon} /><span className="nl">{n.label}</span>
@@ -308,7 +359,7 @@ export function App() {
             <Icon d={wide ? "M15 6l-6 6 6 6" : "M9 6l6 6-6 6"} /><span className="nl">Collapse</span>
           </button>
         </div>
-      </nav>
+      </nav>}
 
       <main>
         <div key={root} className={`page${root === "map" ? " stagepage" : ""}`}>
@@ -322,38 +373,15 @@ export function App() {
         : view === "share" ? <ShareView onJob={(id) => { setSel({ type: "job", id }); go("runs"); }} onDone={() => go("map")} />
         : view === "logs" ? <LogsView />
         : root === "map" ? (
-          <section className="stage" aria-label="Live map">
-            <div className="canvas">
-              {a.map && a.map.nodes.length > 0 ? (
-                <MapView map={a.map} pulses={a.pulses} active={a.active} selection={sel} onSelect={setSel} flow={flow} relayoutSignal={relayout} onPlugins={() => go("plugins")} />
-              ) : (
-                <div className="empty mono">{a.phase === "down" ? "$ waiting for argus…" : "$ loading the map…"}</div>
-              )}
-            </div>
-            <div className="hud hud-tl">
-              <div className="hud-title mono"><span className="pt">live map</span><span className="dim">{main ? `${main.nodes.length} parts · ${mergeEdges(main.edges).length} lines` : "loading…"}</span></div>
-              <Kpis status={st} hud />
-            </div>
-            <div className="hud hud-tr tools">
-              <button type="button" className="btn" aria-pressed={flow} onClick={() => setFlow(!flow)}>flow</button>
-              <button type="button" className="btn" onClick={() => setRelayout((x) => x + 1)}>auto layout</button>
-              {narrow && <button type="button" className="btn" onClick={() => setBigMap(true)}>full screen</button>}
-              <button type="button" className="btn" aria-pressed={info || !!sel} onClick={() => (sel || info ? (setSel(null), setInfo(false)) : setInfo(true))}>inspector</button>
-            </div>
-            <div className="hud hud-bl legend mono">
-              <span><i style={{ background: "var(--flow)" }} />message</span>
-              <span><i style={{ background: "var(--amber)" }} />escalation</span>
-              <span><i style={{ background: "var(--bad)" }} />failure</span>
-              <span><i className="thick" />busier line</span>
-              <span className="dim hide-sm">drag to arrange · click to inspect</span>
-            </div>
-            {a.map && (sel || info) && (
-              <aside className="drawer">
-                <Inspector sel={sel} map={a.map} status={st} events={a.events} onSelect={setSel} onClose={() => { setSel(null); setInfo(false); }} />
+          cmd ? stage : (
+            <div className="deskhome">
+              {stage}
+              <aside className="desk-side" aria-label="At a glance">
+                <PhoneHome status={st} events={a.events} onSelect={setSel} onOpen={go} onInbox={() => setInbox(true)} onAsk={askAri}
+                  onAri={(mic) => { if (mic) { try { sessionStorage.setItem("ari.mic", "1"); } catch { /* private */ } } go("ari"); }} />
               </aside>
-            )}
-          </section>
-        ) : (
+            </div>
+          )        ) : (
         <div className="mid">
           {view === "ari" ? (
             <AriView onSelect={setSel} onView={(v) => go(v)} />
@@ -370,6 +398,7 @@ export function App() {
         </div>
         {withDock && <EventsPanel events={a.events} conn={a.conn} onSelect={setSel} />}
       </main>
+      {inbox && <Sheet label="Waiting for you" onClose={() => setInbox(false)}><PhoneInbox onDone={() => setInbox(false)} /></Sheet>}
       {mapFull}
       {heardBadge}
     </div>

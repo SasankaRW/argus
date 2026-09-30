@@ -167,9 +167,12 @@ type Props = {
   onSelect: (s: Selection) => void;
   flow: boolean;
   relayoutSignal: number;
+  fitPad?: FitPad;  // room kept clear around the map when it fits itself (cards floating over it)
 };
 
-function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal }: Props) {
+export type FitPad = { top: `${number}px`; right: `${number}px`; bottom: `${number}px`; left: `${number}px` };
+
+function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal, fitPad }: Props) {
   const [positions, setPositions] = useState<Record<string, Pos>>({});
   const [labels, setLabels] = useState<ColumnLabel[]>([]);
   const [routes, setRoutes] = useState<Record<string, Route>>({});
@@ -181,7 +184,14 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal 
   const coarse = useMemo(() => typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches, []);
   const userMoved = useRef(false); // once you pan or zoom, the map stops re-fitting itself
   const wrap = useRef<HTMLDivElement>(null);
-  const fit = (duration = 300) => rf.fitView({ padding: 0.12, maxZoom: 1.1, duration });
+  const pad = useRef(fitPad);
+  pad.current = fitPad;
+  const fit = (duration = 300) => rf.fitView({ padding: pad.current ?? 0.1, maxZoom: 1.45, duration });
+  const padKey = fitPad ? Object.values(fitPad).join(",") : "";
+  useEffect(() => {  // the layout changed: fit again (unless you moved the map yourself)
+    if (!userMoved.current) window.setTimeout(() => fit(300), 60);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [padKey]);
 
   // Re-run layout when the set of boxes or lines changes (not on every count update).
   const lines = useMemo(() => mergeEdges(map.edges), [map.edges]);
