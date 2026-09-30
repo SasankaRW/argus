@@ -10,8 +10,9 @@ import { FitPad, mainParts, MapView, mergeEdges, Selection } from "./MapView";
 import { LogsView } from "./LogsView";
 import { MapFull } from "./MapFull";
 import { CommandLayer, Layout, LayoutSwitch, loadLayout, saveLayout } from "./Desk";
-import { PhoneHeader, PhoneHome, PhoneInbox, PhoneMore, PhoneTab, PhoneTabs } from "./Phone";
+import { PhoneHeader, PhoneHome, PhoneMore, PhoneTab, PhoneTabs } from "./Phone";
 import { Sheet } from "./Sheet";
+import { InboxView, ModelsView, SettingsView, useInboxCount } from "./Pages";
 import { PluginsView } from "./PluginsView";
 import { PowerView } from "./PowerView";
 import { QueueView } from "./QueueView";
@@ -26,12 +27,15 @@ const CMD_PAD: FitPad = { top: "340px", right: "40px", bottom: "150px", left: "4
 
 const NAV: { id: string; label: string; icon: string }[] = [
   { id: "map", label: "Live map", icon: "M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3zM9 3v15M15 6v15" },
+  { id: "inbox", label: "Inbox", icon: "M4 13l2.5-8h11L20 13v6H4zM4 13h5l1 2h4l1-2h5" },
   { id: "ari", label: "Ari", icon: "M4 5h16v11H9l-5 4zM8 10h.01M12 10h.01M16 10h.01" },
   { id: "plugins", label: "Plugins", icon: "M9 3v4M15 3v4M6 7h12v5a6 6 0 0 1-12 0zM12 18v3" },
   { id: "queue", label: "Queue", icon: "M4 6h10M4 12h10M4 18h10M18 6l2 2-2 2M18 14l2 2-2 2" },
   { id: "runs", label: "Runs", icon: "M4 6h16M4 12h11M4 18h14" },
   { id: "share", label: "Share", icon: "M12 15V3M7 8l5-5 5 5M5 13v6h14v-6" },
   { id: "power", label: "Power", icon: "M12 3v8M7.5 6.5a7 7 0 1 0 9 0" },
+  { id: "models", label: "Models", icon: "M12 3l8 4.5v9L12 21l-8-4.5v-9zM12 12l8-4.5M12 12v9M12 12L4 7.5" },
+  { id: "settings", label: "Settings", icon: "M4 7h10M18 7h2M4 17h4M12 17h8M14 5v4M8 15v4" },
   { id: "logs", label: "Logs", icon: "M5 4h14v16H5zM8 8h8M8 12h8M8 16h5" },
 ];
 
@@ -153,13 +157,12 @@ export function App() {
   const [relayout, setRelayout] = useState(0);
   const [info, setInfo] = useState(false);
   const [bigMap, setBigMap] = useState(false);
-  const [inbox, setInbox] = useState(false);
   const [layout, setLayoutState] = useState<Layout>(loadLayout);  // the PC's home: map + tiles, or map + command bar
   const setLayout = (l: Layout) => { setLayoutState(l); saveLayout(l); };  // the phone's "waiting for you" sheet  // the phone's sideways full-screen map  // the map's inspector drawer with nothing selected (the overview)
   const [wide, setWide] = useState(() => { try { return localStorage.getItem("helios.rail") === "wide"; } catch { return false; } });
   const setWideRail = (v: boolean) => { setWide(v); try { localStorage.setItem("helios.rail", v ? "wide" : "icons"); } catch { /* private */ } };
   const [triedLogin, setTriedLogin] = useState(false);
-  const parse = (h: string) => (["queue", "runs", "logs", "share", "power", "ari", "plugins", "more"].includes(h) || h.startsWith("rules/") || h.startsWith("plugins/") || h.startsWith("ari/") ? h : "map");
+  const parse = (h: string) => (["queue", "runs", "logs", "share", "power", "ari", "plugins", "more", "inbox", "models", "settings"].includes(h) || h.startsWith("rules/") || h.startsWith("plugins/") || h.startsWith("ari/") ? h : "map");
   const [view, setView] = useState<string>(() => parse(location.hash.slice(1)));
   useEffect(() => {  // the share menu opens /helios/#share on a page that may already be open
     const on = () => setView(parse(location.hash.slice(1)));
@@ -167,6 +170,7 @@ export function App() {
     return () => window.removeEventListener("hashchange", on);
   }, []);
   const narrow = useNarrow();
+  const waiting = useInboxCount(a.events);
   const [full, setFull] = useState(() => { try { return localStorage.getItem("helios.full") === "1"; } catch { return false; } });
   const setFullView = (v: boolean) => { setFull(v); try { localStorage.setItem("helios.full", v ? "1" : "0"); } catch { /* private */ } };
   const phone = narrow && !full;
@@ -272,8 +276,11 @@ export function App() {
           : proot === "runs" ? <RunsView events={a.events} selected={null} onSelect={setSel} />
           : proot === "power" ? <PowerView events={a.events} onSelect={setSel} />
           : proot === "logs" ? <LogsView />
+          : proot === "inbox" ? <InboxView events={a.events} onOpenChat={(c) => go(`ari/${c}`)} />
+          : proot === "settings" ? <SettingsView />
+          : proot === "models" ? <ModelsView events={a.events} />
           : proot === "more" ? <PhoneMore onOpen={open} onFull={() => setFullView(true)} />
-          : <PhoneHome status={st} events={a.events} onSelect={setSel} onOpen={open} onInbox={() => setInbox(true)}
+          : <PhoneHome status={st} events={a.events} onSelect={setSel} onOpen={open} onInbox={() => go("inbox")}
               onAri={(mic) => { if (mic) { try { sessionStorage.setItem("ari.mic", "1"); } catch { /* private */ } } go("ari"); }} />}
         </main>
         <PhoneTabs tab={tab} onTab={(t) => (t === "map" ? setBigMap(true) : go(t === "home" ? "map" : t === "plug" ? "plugins" : t))} />
@@ -282,7 +289,6 @@ export function App() {
             <Inspector sel={sel} map={a.map} status={st} events={a.events} onSelect={setSel} />
           </Sheet>
         )}
-        {inbox && <Sheet label="Waiting for you" onClose={() => setInbox(false)}><PhoneInbox onDone={() => setInbox(false)} /></Sheet>}
         {mapFull}
         {heardBadge}
       </div>
@@ -313,7 +319,7 @@ export function App() {
       </div>
       {cmd ? (
         <CommandLayer status={st} events={a.events} live={a.conn === "live"} onView={go} onAsk={askAri}
-          onInbox={() => setInbox(true)} onLayout={setLayout} tools={tools} />
+          onInbox={() => go("inbox")} onLayout={setLayout} tools={tools} />
       ) : (
         <>
           <div className="hud hud-tl">
@@ -361,6 +367,7 @@ export function App() {
         {NAV.map((n) => (
           <button key={n.id} type="button" className="nav" title={n.label} aria-current={n.id === root ? "page" : undefined} onClick={() => go(n.id)}>
             <Icon d={n.icon} /><span className="nl">{n.label}</span>
+            {n.id === "inbox" && waiting > 0 && <span className="navbadge" aria-label={`${waiting} waiting`}>{waiting}</span>}
           </button>
         ))}
         <div className="foot">
@@ -385,12 +392,15 @@ export function App() {
         )
         : view === "share" ? <ShareView onJob={(id) => { setSel({ type: "job", id }); go("runs"); }} onDone={() => go("map")} />
         : view === "logs" ? <LogsView />
+        : view === "inbox" ? <InboxView events={a.events} onOpenChat={(c) => go(`ari/${c}`)} />
+        : view === "settings" ? <SettingsView />
+        : view === "models" ? <ModelsView events={a.events} />
         : root === "map" ? (
           cmd ? stage : (
             <div className="deskhome">
               {stage}
               <aside className="desk-side" aria-label="At a glance">
-                <PhoneHome status={st} events={a.events} onSelect={setSel} onOpen={go} onInbox={() => setInbox(true)} onAsk={askAri}
+                <PhoneHome status={st} events={a.events} onSelect={setSel} onOpen={go} onInbox={() => go("inbox")} onAsk={askAri}
                   onAri={(mic) => { if (mic) { try { sessionStorage.setItem("ari.mic", "1"); } catch { /* private */ } } go("ari"); }} />
               </aside>
             </div>
@@ -413,7 +423,6 @@ export function App() {
         </div>
         {withDock && <EventsPanel events={a.events} conn={a.conn} onSelect={setSel} />}
       </main>
-      {inbox && <Sheet label="Waiting for you" onClose={() => setInbox(false)}><PhoneInbox onDone={() => setInbox(false)} /></Sheet>}
       {mapFull}
       {heardBadge}
     </div>

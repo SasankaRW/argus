@@ -191,6 +191,16 @@ class Files:
         self._trace("file.written", {"path": str(target), "size": len(data), "dry_run": self.dry_run})
         return str(target)
 
+    def append_text(self, path: str | Path, text: str, encoding: str = "utf-8") -> str:
+        """Add text to the end of a file (created if missing): what was there is never changed. For logs and notes."""
+        p = self._check(path, True)
+        if not self.dry_run:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with open(p, "a", encoding=encoding, newline="") as f:
+                f.write(text)
+        self._trace("file.appended", {"path": str(p), "size": len(text), "dry_run": self.dry_run})
+        return str(p)
+
     def move(self, src: str | Path, dst: str | Path) -> str:
         """Move (or rename) a file. Both ends must be writable; an existing target is never replaced."""
         s = self._check(src, True)

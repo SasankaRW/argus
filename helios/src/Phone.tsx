@@ -187,8 +187,9 @@ export function PhoneHome({ status, events, onSelect, onAri, onOpen, onInbox, on
 
 // "More": the other pages, as a terminal listing.
 export function PhoneMore({ onOpen, onFull }: { onOpen: (v: string) => void; onFull: () => void }) {
-  const rows: [string, string, string][] = [["queue", "queue", "what runs next"], ["runs", "runs", "everything that ran"],
-    ["share", "share", "send files to argus"], ["power", "power", "wake · sleep · shut down"], ["logs", "logs", "what argus wrote"]];
+  const rows: [string, string, string][] = [["inbox", "inbox", "everything waiting for you"], ["queue", "queue", "what runs next"], ["runs", "runs", "everything that ran"],
+    ["share", "share", "send files to argus"], ["power", "power", "wake · sleep · shut down"], ["models", "models", "tiers, calls, hand-ups"],
+    ["settings", "settings", "quiet hours, summaries, power…"], ["logs", "logs", "what argus wrote"]];
   return (
     <div className="tgrid">
       <Tile path="~/more" dot="var(--flow)" span>

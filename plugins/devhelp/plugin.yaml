@@ -1,0 +1,30 @@
+id: devhelp
+name: Dev helper
+version: 1.0.0
+kind: workflow
+argus_api: ">=1.0 <2.0"
+description: Tells Ari about your code - each repo's branch, uncommitted files, commits not pushed yet, the last commit and CI - and what you changed today. Reads only; never commits or pushes.
+runs_on: desktop
+
+workflows: [repos, today]
+
+permissions:
+  files: {read: ["G:/Projects", "~/Projects", "~/source/repos"], write: [], delete: none}
+  models: []
+
+config:
+  folders: {type: list, default: ["G:/Projects"], label: Repos are in these folders}
+  ci: {type: bool, default: true, label: "Ask GitHub for the last CI run (gh CLI, logged in)"}
+
+ari:
+  tools:
+    - name: repo_status
+      description: "The user's code repos: branch, uncommitted files, commits not pushed, the last commit, and the last CI run (optionally just one repo by name)."
+      workflow: repos
+      input: {name: {type: string, description: "a repo's name (leave out for all)"}}
+    - name: what_changed_today
+      description: The commits the user made today in each repo, and files changed but not committed yet.
+      workflow: today
+
+helios:
+  node: {label: Dev helper, group: files}

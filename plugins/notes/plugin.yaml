@@ -1,0 +1,36 @@
+id: notes
+name: Notes
+version: 1.0.0
+kind: workflow
+argus_api: ">=1.0 <2.0"
+description: '"Note: ..." goes into a dated file in Documents/notes (one per day, time-stamped); Ari finds your notes again.'
+runs_on: desktop
+
+workflows: [add, find, recent]
+
+permissions:
+  files: {read: ["~/Documents/notes"], write: ["~/Documents/notes"], delete: none}
+  models: []
+
+config:
+  folder: {type: text, default: "~/Documents/notes", label: Notes folder}
+
+ari:
+  tools:
+    - name: add_note
+      description: "Write down a note for the user (\"note: ...\", \"remember to write down ...\"): added, time-stamped, to today's notes file."
+      workflow: add
+      input: {text: {type: string, description: the note, in the user's words}}
+      required: [text]
+    - name: find_notes
+      description: Find the user's notes that mention some words; returns each note with its date and time.
+      workflow: find
+      input: {query: {type: string, description: words to look for}}
+      required: [query]
+    - name: recent_notes
+      description: The user's notes from the last few days, newest first.
+      workflow: recent
+      input: {days: {type: integer, description: "how many days back (default 7)"}}
+
+helios:
+  node: {label: Notes, group: files}

@@ -1,0 +1,33 @@
+id: homelab
+name: Home lab
+version: 1.0.0
+kind: workflow
+argus_api: ">=1.0 <2.0"
+description: Every hour, keeps an eye on the PC's disks, GPU, Ollama models, Argus backups and Tailscale devices; problems go in the evening summary, not to the phone.
+runs_on: desktop
+
+triggers:
+  - schedule: {workflow: check, cron: "5 * * * *"}
+  - manual: {workflow: check, label: Check the lab now}
+
+workflows: [check, status]
+
+permissions:
+  files: {read: [], write: [], delete: none}
+  models: []
+  network: ["127.0.0.1", "localhost"]
+
+config:
+  disk_free_percent: {type: int, default: 10, label: Warn when a drive has less free space than this (%)}
+  gpu_hot_c: {type: int, default: 85, label: Warn when the GPU is hotter than (°C)}
+  backup_hours: {type: int, default: 48, label: Warn when the newest backup is older than (hours)}
+  ollama_url: {type: text, default: "http://127.0.0.1:11434", label: Ollama}
+
+ari:
+  tools:
+    - name: lab_status
+      description: "The home lab at a glance: free space per drive, GPU temperature and memory, Ollama models, the newest Argus backup, Tailscale devices online, and anything that needs attention."
+      workflow: status
+
+helios:
+  node: {label: Home lab, group: pc}

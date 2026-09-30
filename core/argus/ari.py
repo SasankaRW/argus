@@ -321,3 +321,15 @@ def chats(conn: sqlite3.Connection, limit: int = 100) -> list[dict]:
 
 def delete_chat(conn: sqlite3.Connection, conv: str) -> int:
     return conn.execute("DELETE FROM ari_turns WHERE conv = ?", (conv,)).rowcount
+
+
+def open_questions(conn: sqlite3.Connection, since: float) -> list[dict]:
+    """Every chat whose newest Ari turn still waits for your yes / no (for Helios's inbox)."""
+    rows = conn.execute(
+        "SELECT t.conv, t.id, t.text, t.pending, t.created_at,"
+        " (SELECT text FROM ari_turns f WHERE f.conv = t.conv AND f.role = 'you' ORDER BY f.id LIMIT 1) AS title"
+        " FROM ari_turns t WHERE t.role = 'ari' AND t.pending IS NOT NULL AND t.created_at >= ?"
+        " AND t.id = (SELECT MAX(id) FROM ari_turns x WHERE x.conv = t.conv)"
+        " ORDER BY t.created_at DESC", (since,)).fetchall()
+    return [{"conv": r["conv"], "turn": r["id"], "text": r["text"], "title": r["title"], "at": r["created_at"]}
+            for r in rows]

@@ -8,6 +8,7 @@ import time
 from datetime import datetime
 
 from . import __version__
+from . import settings as settings_mod
 from .approvals import Approvals
 from .backup import Backups
 from .config import PRIORITY_BATCH, Config, ScheduleConfig
@@ -67,6 +68,7 @@ class Argus:
         self.started_at: float | None = None
         self._next_prune = 0.0
         self.pruned_events = 0
+        self.base_settings = settings_mod.base_values(cfg)  # argus.yaml's values, before Helios's overrides
 
     def open(self) -> Argus:
         """Synchronous part of startup: open the database and run migrations."""
@@ -82,6 +84,7 @@ class Argus:
         stopped_at = self.marker.start()
         if stopped_at is not None:  # the last run ended abruptly (power cut, crash): say what happens now
             await self.resume_notice(stopped_at)
+        await self.apply_argus_settings()
         self.plugin_host.load()  # adds the plugins' schedules and triggers before the scheduler reads them
         self._health_schedule()
         await self.apply_plugin_settings()
@@ -96,6 +99,37 @@ class Argus:
         self.watchdog.start()
         self.started_at = time.time()
         log.info("argus started", extra={"version": self.version, "instance": self.cfg.instance.name})
+
+    def _setting_changed(self, key: str, value) -> None:
+        if key == "backup.keep":
+            self.backups.keep = value
+
+    async def apply_argus_settings(self) -> None:
+        """Settings changed in Helios, over argus.yaml (a value that no longer passes is skipped and logged)."""
+        for key, value in (await self.store.read(settings_mod.load)).items():
+            try:
+                settings_mod.apply(self.cfg, key, settings_mod.check(self.cfg, key, value), self._setting_changed)
+            except settings_mod.SettingError as e:
+                log.warning("setting from Helios skipped", extra={"error": str(e)})
+
+    async def change_settings(self, changes: dict) -> None:
+        """Change settings now and keep them (None: back to argus.yaml). All are checked before any is changed."""
+        checked = {k: (None if v is None else settings_mod.check(self.cfg, k, v)) for k, v in changes.items()}
+
+        def fn(conn):
+            over = settings_mod.load(conn)
+            for k, v in checked.items():
+                if v is None or v == self.base_settings[k]:
+                    over.pop(k, None)
+                else:
+                    over[k] = v
+            settings_mod.save(conn, over)
+            insert_event(conn, time.time(), "settings.changed", src="helios", dst="argus",
+                         data={"keys": sorted(checked)})
+
+        await self.store.write(fn)
+        for k, v in checked.items():
+            settings_mod.apply(self.cfg, k, self.base_settings[k] if v is None else v, self._setting_changed)
 
     def _health_schedule(self) -> None:
         """health.enabled: the PC's worker checks WSL and Docker every health.every_minutes."""
