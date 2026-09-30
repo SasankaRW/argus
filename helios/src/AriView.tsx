@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import type { Selection } from "./MapView";
+import { ariNow, ariSet, setPillLook, usePillLook } from "./ariState";
 import { canSpeak, listen, pref, setPref, speak, Speech, stopSpeaking, voiceStatus, VoiceStatus } from "./voice";
 
 type Turn = { id: number; role: "you" | "ari"; text: string | null; action: string | null; label?: string | null;
@@ -33,6 +34,7 @@ export function AriView({ onSelect, onView, compact = false }: { onSelect: (s: S
   const [err, setErr] = useState<string | null>(null);
   const [listening, setListening] = useState(false);
   const [talk, setTalk] = useState(() => pref("speak", true));
+  const look = usePillLook();
   const [wake, setWake] = useState(() => pref("wake", false));
   const [piper, setPiper] = useState(() => pref("piper", true));
   const [vs, setVs] = useState<VoiceStatus>(voiceStatus);
@@ -187,6 +189,16 @@ export function AriView({ onSelect, onView, compact = false }: { onSelect: (s: S
       <div className="ari-opts">
         {canSpeak && <label><input type="checkbox" checked={talk} onChange={(e) => toggle("speak", e.target.checked, setTalk)} /> Speak replies</label>}
         {Speech && <label title="While Helios is open: say &quot;Hey Ari&quot;, then what you want"><input type="checkbox" checked={wake} onChange={(e) => toggle("wake", e.target.checked, setWake)} /> &ldquo;Hey Ari&rdquo;</label>}
+        <span className="pill-pick" role="group" aria-label="Ari pill look">Pill
+          {(["pulse", "comet"] as const).map((l) => (
+            <button key={l} type="button" className="btn" aria-pressed={look === l}
+              onClick={() => {  // pick it, and show it for a moment
+                setPillLook(l);
+                ariSet(l === "pulse" ? "speaking" : "thinking", `This is the ${l} look.`);
+                setTimeout(() => { if (ariNow().text === `This is the ${l} look.`) ariSet("idle"); }, 3500);
+              }}>{l}</button>
+          ))}
+        </span>
         {vs.voice && <label title="Piper: Argus's own natural voice (off: the browser's voice)"><input type="checkbox" checked={piper} onChange={(e) => toggle("piper", e.target.checked, setPiper)} /> Natural voice</label>}
         {vs.hearing === "whisper" && <span className="muted">{vs.whisper_ready ? "Whisper hears you" : "Whisper: the PC is off, the browser hears you"}</span>}
       </div>

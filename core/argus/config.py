@@ -275,6 +275,9 @@ class AriConfig(_Strict):
     # Ari's popup over the whole screen while Ari listens, thinks or talks (python -m argus.ari_popup; needs
     # pip install -e .[popup]; `dev.ps1 up` starts it when on).
     popup: bool = False
+    # The Ari pill's look: "pulse" (a soft light that breathes with the voice) or "comet" (a soft light travelling
+    # round the edge). Each browser can pick its own on the Ari page.
+    pill: Literal["pulse", "comet"] = "pulse"
 
 
 class GuidanceConfig(_Strict):

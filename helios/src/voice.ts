@@ -4,7 +4,7 @@
 // follows the wake phrase.
 
 import { getToken } from "./api";
-import { ariNow, ariReport, ariSet, ariTell } from "./ariState";
+import { ariNow, ariReport, ariSet, ariTell, setServerLook } from "./ariState";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const W = window as any;
@@ -85,9 +85,9 @@ export function stopSpeaking() { if (canSpeak) window.speechSynthesis.cancel(); 
 const playing = new Set<HTMLAudioElement>();
 
 // What Argus offers (GET /ari-voice): Piper for speaking, Whisper on the PC for hearing.
-export type VoiceStatus = { voice: boolean; hearing: "browser" | "whisper"; whisper_ready: boolean; popup_here?: boolean };
+export type VoiceStatus = { voice: boolean; hearing: "browser" | "whisper"; whisper_ready: boolean; popup_here?: boolean; pill?: string };
 let status: VoiceStatus = { voice: false, hearing: "browser", whisper_ready: false };
-export function setVoiceStatus(s: VoiceStatus) { status = s; window.dispatchEvent(new CustomEvent("ari-status")); }
+export function setVoiceStatus(s: VoiceStatus) { status = s; setServerLook(s.pill); window.dispatchEvent(new CustomEvent("ari-status")); }
 export const voiceStatus = () => status;
 
 // One microphone user at a time: the "Hey Ari" listener steps aside while the mic button records.

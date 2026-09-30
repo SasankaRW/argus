@@ -62,3 +62,22 @@ export function ariFromEvents(evs: Ev[]) {
     }
   }
 }
+
+// The pill's look: "pulse" (a soft light that breathes with the voice) or "comet" (a soft light that travels
+// round the edge). Argus's default (ari.pill), unless this browser picked one.
+export type PillLook = "pulse" | "comet";
+let serverLook: PillLook = "pulse";
+export function setServerLook(l: string | undefined) {
+  if (l === "pulse" || l === "comet") { serverLook = l; window.dispatchEvent(new CustomEvent("ari-look")); }
+}
+export function pillLook(): PillLook {
+  try { const v = localStorage.getItem("helios.pill"); if (v === "pulse" || v === "comet") return v; } catch { /* private */ }
+  return serverLook;
+}
+export function setPillLook(l: PillLook) {
+  try { localStorage.setItem("helios.pill", l); } catch { /* private */ }
+  window.dispatchEvent(new CustomEvent("ari-look"));
+}
+export function usePillLook(): PillLook {
+  return useSyncExternalStore((f) => { window.addEventListener("ari-look", f); return () => window.removeEventListener("ari-look", f); }, pillLook);
+}

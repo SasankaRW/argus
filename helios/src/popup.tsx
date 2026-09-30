@@ -11,7 +11,7 @@ import { StrictMode, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { adoptTokenFromUrl, api, EventStream, Status } from "./api";
 import { AriPill } from "./AriPill";
-import { ariFromEvents, useAri } from "./ariState";
+import { ariFromEvents, setServerLook, useAri } from "./ariState";
 
 adoptTokenFromUrl();
 
@@ -23,6 +23,7 @@ function Popup() {
     let stop = false;
     const ping = () => api("/ari/popup", { method: "POST" }).catch(() => {});
     ping();
+    api<{ pill?: string }>("/ari-voice").then((v) => setServerLook(v.pill)).catch(() => {});
     const t = setInterval(ping, 30000);
     api<Status>("/status").then((st) => {
       if (stop) return;

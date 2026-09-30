@@ -938,7 +938,7 @@ def create_app(argus: Argus) -> FastAPI:
         host = request.client.host if request.client else "?"
         return {"voice": voice.configured, "hearing": argus.cfg.ari.hearing,
                 "whisper_ready": argus.cfg.ari.hearing == "whisper" and await gpu_online(),
-                "popup_here": time.time() - overlays.get(host, 0) < 75}
+                "popup_here": time.time() - overlays.get(host, 0) < 75, "pill": argus.cfg.ari.pill}
 
     @app.post("/ari-voice/say", dependencies=guarded)
     async def ari_say_audio(body: AriSpeak) -> Response:
