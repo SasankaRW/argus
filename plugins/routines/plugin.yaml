@@ -1,0 +1,41 @@
+id: routines
+name: Routines
+version: 1.0.0
+kind: workflow
+argus_api: ">=1.0 <2.0"
+description: Named chains of Ari's tools ("work mode" opens your apps and sets the volume); saving or changing one asks you first.
+runs_on: desktop
+
+workflows: [run, list, save, delete]
+
+permissions:
+  files: {read: [], write: [], delete: none}
+  models: []
+
+ari:
+  tools:
+    - name: run_routine
+      description: "Run one of the user's saved routines by name (e.g. work mode, movie night): its steps run in order, and it stops at the first step that fails."
+      workflow: run
+      input: {name: {type: string, description: the routine's name}}
+      required: [name]
+    - name: list_routines
+      description: The user's saved routines and their steps.
+      workflow: list
+    - name: save_routine
+      description: "Save (or replace) a routine: a name and its steps, one per line or separated by ';', each 'tool_name arg=value arg2=value', e.g. 'open_app name=Visual Studio Code; set_volume level=20'."
+      workflow: save
+      input:
+        name: {type: string, description: the routine's name}
+        steps: {type: string, description: "the steps: 'tool arg=value' separated by ';'"}
+      required: [name, steps]
+      risky: true
+    - name: delete_routine
+      description: Delete one of the user's routines.
+      workflow: delete
+      input: {name: {type: string, description: the routine's name}}
+      required: [name]
+      risky: true
+
+helios:
+  node: {label: Routines, group: pc}

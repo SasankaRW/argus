@@ -220,7 +220,16 @@ class Tools:
             return hit or {"reply": "No instant answer; ask about the queue, failures, approvals, or a button.",
                            "action": None}
 
+        async def backups(_: dict) -> Any:
+            files = a.backups.list()
+            newest = files[0]["made_at"] if files else None
+            return {"enabled": a.cfg.backup.enabled, "count": len(files), "newest": files[0]["file"] if files else None,
+                    "hours_ago": round((time.time() - newest) / 3600, 1) if newest else None,
+                    "copy_to": a.cfg.backup.copy_to}
+
         return [
+            Tool("backup_status", "Argus's own backups: how many, the newest and how many hours ago it was made.",
+                 fn=backups),
             Tool("argus_status", "Argus right now: health, workers, what runs, what is queued, what waits for the "
                  "user, the PC's power state.", fn=status),
             Tool("list_jobs", "Recent jobs, newest first (optionally only one state or one plugin).",

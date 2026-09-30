@@ -5,6 +5,11 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- New plugin **routines**: named chains of Ari's tools ("work mode" = open VS Code and Chrome, volume 20). Ari tools run_routine, list_routines, save_routine and delete_routine (saving or deleting asks you first and shows the steps). Stops at the first step that fails and says which.
+- New plugin **notes**: "note: ..." goes into ~/Documents/notes/YYYY-MM-DD.md, time-stamped, only ever added to. Ari tools add_note, find_notes, recent_notes.
+- New plugin **homelab**: every hour, disk space, GPU temperature and memory, Ollama models, the newest Argus backup, and Tailscale devices. Problems go to the evening summary, once a day each. Ari tool lab_status.
+- New plugin **devhelp**: your repos' branch, uncommitted files, commits not pushed, last commit and last CI run (gh), plus what you changed today. It only reads. Ari tools repo_status and what_changed_today.
+- Core: `ctx.files.append_text` (add to the end of a file, never change what's there); built-in tool `backup_status`; `ToolFailed` is exported from argus.worker.
 - Ari: your chats are kept and listed (Ari page: newest first, find, delete); open one to carry on, "‹ chats" goes back. Questions from other screens and "Hey Ari" continue the chat you had open. Settings, schedules and memory sit beside the list.
 - Ari: messages no longer get squeezed (text spilled out of its bubble); "you" / "ari" labels, terminal-style bubbles, the chat fills the page.
 - Ari: files are found by name however it's written (President.Curtis = president curtis = President_Curtis), and "search my files" also returns files whose name matches.
