@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from argus.ari_listen import Listener
-from argus.ari_popup import action_for, placement, popup_url
+from argus.ari_popup import click_area, parse_title, placement, popup_url
 from argus.worker import Worker
 from fakes import FakeOllama
 from test_ask import make
@@ -18,9 +18,12 @@ def states(cl) -> list[tuple[str, str]]:
 def test_the_popup_window_helpers():
     assert popup_url("http://127.0.0.1:8600/", "a b") == "http://127.0.0.1:8600/helios/popup.html?token=a+b"
     assert popup_url("http://x", None) == "http://x/helios/popup.html"
-    assert placement(0, 0, 1920) == (640, 0, 640, 150)
-    assert [action_for(t) for t in ("ari:open", "ari:idle", "ari:helios", "Helios")] == ["show", "hide", "helios",
-                                                                                          None]
+    assert placement(0, 0, 1920) == (640, 0, 640, 360)
+    assert parse_title("ari:active|352x54") == ("area", (352, 54))
+    assert parse_title("ari:details|9999x9999") == ("area", (640, 360))  # never bigger than the window
+    assert parse_title("ari:go|ari/abc123") == ("go", "ari/abc123") and parse_title("ari:go|") == ("go", "")
+    assert [parse_title(t) for t in ("Helios", "ari:idle", "ari:x|bad")] == [None, None, None]
+    assert click_area(352, 54) == (144, 0, 352, 54)
 
 
 def test_ari_says_what_it_is_doing(tmp_path, monkeypatch):

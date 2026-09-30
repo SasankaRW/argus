@@ -1,6 +1,6 @@
-// The Ari popup page: only the Ari pill, on a see-through page. The PC's popup window (python -m argus.ari_popup)
-// shows it over every app; the window reads the page title to know when to appear:
-//   "ari:open" = show, "ari:idle" = hide, "ari:helios" = you clicked it (open Helios on the Ari page).
+// The Ari popup page: Ari's island (Island.tsx) on a see-through page. The PC's popup window
+// (python -m argus.ari_popup) keeps it at the top edge of the screen over every app and reads the page title:
+//   "ari:<mode>|<w>x<h>" = where the island is (the window's click area), "ari:go|<hash>" = open Helios there.
 import "@fontsource/geist-sans/latin-400.css";
 import "@fontsource/geist-sans/latin-500.css";
 import "@fontsource/geist-mono/latin-400.css";
@@ -10,14 +10,12 @@ import "./styles.css";
 import { StrictMode, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { adoptTokenFromUrl, api, EventStream, Status } from "./api";
-import { AriPill } from "./AriPill";
-import { ariFromEvents, setServerLook, useAri } from "./ariState";
+import { ariFromEvents, setServerLook } from "./ariState";
+import { Island } from "./Island";
 
 adoptTokenFromUrl();
 
 function Popup() {
-  const s = useAri();
-  useEffect(() => { document.title = s.phase === "idle" ? "ari:idle" : "ari:open"; }, [s.phase]);
   useEffect(() => {
     let es: EventStream | null = null;
     let stop = false;
@@ -33,8 +31,7 @@ function Popup() {
     }).catch(() => {});
     return () => { stop = true; clearInterval(t); es?.stop(); };
   }, []);
-  const open = () => { document.title = "ari:helios"; setTimeout(() => { document.title = s.phase === "idle" ? "ari:idle" : "ari:open"; }, 300); };
-  return <AriPill onOpen={open} />;
+  return <Island />;
 }
 
 createRoot(document.getElementById("root")!).render(<StrictMode><Popup /></StrictMode>);
