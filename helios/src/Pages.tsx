@@ -170,7 +170,69 @@ export function SettingsView() {
           ))}
         </div>
       </section>
+      <ToolTest />
     </div>
+  );
+}
+
+type TestRow = { tool: string; plugin: string | null; ok: boolean; about?: string; error?: string };
+
+// Runs each of Ari's read-only tools once (nothing opens, types or changes) and shows which work.
+function ToolTest() {
+  const [deep, setDeep] = useState(false);
+  const [job, setJob] = useState<string | null>(null);
+  const [rows, setRows] = useState<TestRow[] | null>(null);
+  const [state, setState] = useState<"idle" | "running" | "done" | "failed">("idle");
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    if (!job) return;
+    let stop = false;
+    const tick = async () => {
+      try {
+        const j = await api<{ state: string; result: { results: TestRow[] } | null; error: string | null; steps: { name: string; state: string }[] }>(`/jobs/${job}`);
+        if (stop) return;
+        if (j.state === "succeeded") { setRows(j.result?.results ?? []); setState("done"); return; }
+        if (["dead", "cancelled"].includes(j.state)) { setErr(j.error || "the test didn't finish"); setState("failed"); return; }
+      } catch (e) { if (!stop) setErr(String(e)); }
+      if (!stop) setTimeout(tick, 900);
+    };
+    tick();
+    return () => { stop = true; };
+  }, [job]);
+  const start = async () => {
+    setErr(null); setRows(null); setState("running");
+    try { setJob((await api<{ job_id: string }>("/tools/selftest", { method: "POST", body: JSON.stringify({ deep }) })).job_id); }
+    catch (e) { setErr(e instanceof Error ? e.message : String(e)); setState("failed"); }
+  };
+  const bad = rows?.filter((r) => !r.ok).length ?? 0;
+  return (
+    <section className="panel ttest">
+      <div className="ph">
+        <span className="pt">ari's tools</span>
+        <span className="muted">runs each tool that only looks, once, as Ari would; nothing opens, types or changes</span>
+        <div className="tools">
+          <button type="button" role="switch" aria-checked={deep} className={`switch${deep ? " on" : ""}`} onClick={() => setDeep(!deep)} title="Also look at the screen with the vision model (slower)">
+            <i /><span>deep</span>
+          </button>
+          <button type="button" className="primary" disabled={state === "running"} onClick={start}>{state === "running" ? "testing…" : "test"}</button>
+        </div>
+      </div>
+      {err && <div className="tip bad setp-err">{err}</div>}
+      {state === "running" && <div className="tip">Running the tools on the PC… the first one can take a few seconds.</div>}
+      {rows && (
+        <div className="ttrows">
+          <div className={`ttsum mono ${bad ? "bad" : "ok"}`}>{bad ? `${bad} of ${rows.length} failed` : `all ${rows.length} work`}</div>
+          {rows.map((r) => (
+            <div key={r.tool} className={`ttrow${r.ok ? "" : " bad"}`}>
+              <i aria-hidden="true">{r.ok ? "✓" : "✗"}</i>
+              <span className="mono">{r.tool}</span>
+              <span className="muted">{r.plugin ?? "built in"}</span>
+              <span className="ttabout">{r.ok ? r.about : r.error}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 

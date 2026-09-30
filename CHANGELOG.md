@@ -5,6 +5,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Helios > Settings > **Ari's tools**: a test button that runs each tool that only looks (PC status, apps, clipboard, notes, routines, the lab, repos, watches, file search; "deep" adds looking at the screen) once, as Ari would, and shows which work and why not. Nothing opens, types or changes. Text settings get a wider box.
 - Watchers (new plugin `watchers`): "watch this page", "tell me when <product> on <page> is under 280,000"; checked every 3 hours, the phone hears when a page changes or a price drops or goes under yours (once). A product name narrows the watch to that part of the page. `permissions.network: ["*"]` now means public websites only: never this machine, the LAN or the tailnet, also after a redirect.
 - Screen and clipboard (new plugin `screen`): "what's on my screen?" (the vision model V1 looks at a screen grab kept in memory, never saved; without V1 the text on screen goes to T1) and "summarise what I copied" (text or a copied picture). Local models only: nothing on the screen or clipboard goes to Claude.
 - Morning brief upgrade: today's weather first (`brief.weather`, Open-Meteo, no key; also in Helios > Settings); say "good morning" (or "brief me", "what's my day look like?") and Ari says the brief: weather, what waits for you, what failed overnight, today's first schedule. Ari's own chats no longer count as overnight jobs.

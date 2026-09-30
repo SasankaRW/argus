@@ -900,7 +900,18 @@ main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .setv { display: flex; align-items: center; gap: 8px; flex: none; }
 .setv input { height: 32px; padding: 0 10px; width: 110px; }
 .setv input[type="time"] { width: 136px; color-scheme: dark; }
+.setv input:not([type]) { width: 190px; }
 .setback { height: 28px; font-size: 11px; color: var(--tx3); }
+.setp { display: flex; flex-direction: column; gap: 14px; }
+.ttest .tools { gap: 10px; }
+.ttrows { padding: 4px 16px 16px; }
+.ttsum { font-size: 12px; padding: 8px 0; }
+.ttsum.ok { color: var(--tg, var(--ok)); } .ttsum.bad { color: var(--bad, #ff6b6b); }
+.ttrow { display: grid; grid-template-columns: 18px minmax(120px, 170px) minmax(90px, 140px) minmax(0, 1fr); gap: 10px; align-items: baseline; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+.ttrow i { font-style: normal; color: var(--tg, var(--ok)); }
+.ttrow.bad i, .ttrow.bad .ttabout { color: var(--bad, #ff6b6b); }
+.ttabout { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tx2); }
+@media (max-width: 720px) { .ttrow { grid-template-columns: 18px minmax(0, 1fr) auto; } .ttrow .ttabout { grid-column: 2 / -1; white-space: normal; } .ttest .ph .muted { display: none; } }
 .switch { display: inline-flex; align-items: center; gap: 8px; height: 30px; padding: 0 10px 0 4px; border-radius: 99px; border: 1px solid var(--line2); background: #0a0d10; color: var(--tx3); font: 12px var(--mono); cursor: pointer; }
 .switch i { width: 22px; height: 22px; border-radius: 50%; background: #2a3238; transition: background .2s, box-shadow .2s; }
 .switch.on { color: var(--tg, var(--ok)); border-color: rgba(57, 255, 156, .4); }
