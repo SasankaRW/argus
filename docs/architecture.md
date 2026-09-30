@@ -59,6 +59,30 @@ flowchart TB
 - **You** approve risky things from the phone or Helios. Ari is the conversational way in.
 
 <details>
+<summary><b>▸ The detailed diagram (every part, every connection)</b></summary>
+
+![Argus detailed architecture](diagrams/architecture-detailed.svg)
+
+**The numbered flows:**
+
+| # | From → to | What travels |
+| --- | --- | --- |
+| 1 | Helios (desktop, phone) ↔ REST API | Every page's data and every button (token) |
+| 2 | WebSocket → Helios | Live events, replayed from the last `seq` after a reconnect |
+| 3 | Folder watcher (PC) → Triggers | "A finished file appeared" (path + sha256) |
+| 4 | Outbox → ntfy.sh → phone | Approvals, failures, the brief, the summary: sent exactly once |
+| 5 | Phone button → Approval page | Approve / Reject with a one-time HMAC token |
+| 6 | Claude Desktop / Code → MCP | Read status, press a plugin's button, ask Ari |
+| 7 | PC worker ↔ REST API | The worker protocol: register, claim, heartbeat, steps, result |
+| 8 | Model router → Model board | "May I call this tier?" (breaker, Claude budget) |
+| 9 | Model router → Ollama / Claude CLI | The model calls themselves (T1 → T2 → T3) |
+| 10 | ari_listen (PC mic) → REST API | What you said after "Hey Ari", and listening / speaking |
+| 11 | Event stream → Ari popup (and every pill) | `ari.state`: listening, thinking, working, speaking, done |
+| 12 | Power manager → Wake-on-LAN | Wake the PC when GPU or desktop work is waiting (real mode) |
+
+</details>
+
+<details>
 <summary><b>▸ The life of one job, start to finish (read this first)</b></summary>
 
 Take "a PDF lands in Downloads" as the example.
