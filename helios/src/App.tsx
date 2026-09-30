@@ -93,6 +93,28 @@ function Kpis({ status }: { status: Status | null }) {
   );
 }
 
+// Claude today: calls used of the daily cap, and whether the CLI is logged in (checked by the workers).
+function ClaudeChip() {
+  const [c, setC] = useState<{ calls_today: number; calls_per_day: number; logged_in: boolean | null } | null>(null);
+  useEffect(() => {
+    const load = () => api<{ claude: NonNullable<typeof c> }>("/models").then((m) => setC(m.claude)).catch(() => {});
+    load();
+    const id = setInterval(load, 60000);
+    return () => clearInterval(id);
+  }, []);
+  if (!c) return null;
+  if (c.logged_in === false) {
+    return <span className="inline claude-chip bad" title="Run `claude` on the PC and log in (/login)"><span className="dot" style={{ background: "var(--bad)" }} />Claude logged out</span>;
+  }
+  const left = c.calls_per_day - c.calls_today;
+  return (
+    <span className="inline claude-chip hide-sm" title={`Claude calls today: ${c.calls_today} of ${c.calls_per_day}`}>
+      Claude <b className="mono">{c.calls_today}/{c.calls_per_day}</b>
+      {left <= 3 && <span className="muted">{left <= 0 ? " · none left today" : ` · ${left} left`}</span>}
+    </span>
+  );
+}
+
 function Login({ onDone, bad }: { onDone: () => void; bad: boolean }) {
   const [v, setV] = useState("");
   return (
@@ -200,6 +222,7 @@ export function App() {
           </span>
           {st && <span className="hide-sm">{st.instance} on <b>{st.host}</b></span>}
           {st && <span className="mono hide-sm">up <b>{uptime(st.uptime_seconds)}</b></span>}
+          <ClaudeChip />
           <span className="sep hide-sm" />
           {st && <span className="mono">v<b>{st.version}</b></span>}
           <Clock />

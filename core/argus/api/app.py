@@ -199,6 +199,11 @@ class AriSpeak(BaseModel):
     text: str = Field(min_length=1, max_length=1000)
 
 
+class ClaudeAuth(BaseModel):
+    logged_in: bool
+    detail: str = Field("", max_length=300)
+
+
 class ScheduleEdit(BaseModel):
     enabled: bool
 
@@ -1091,6 +1096,12 @@ def create_app(argus: Argus) -> FastAPI:
         return {"ok": True}
 
     # -------------------------------------------------------------- models (breakers, Claude budget)
+
+    @app.post("/workers/{worker_id}/claude", dependencies=guarded)
+    async def worker_claude(worker_id: str, body: ClaudeAuth) -> dict:
+        """A worker's `claude auth status`: the phone hears when Claude is logged out."""
+        await argus.models.auth_seen(body.logged_in, worker_id, body.detail)
+        return {"ok": True}
 
     @app.get("/models", dependencies=guarded)
     async def models() -> dict:

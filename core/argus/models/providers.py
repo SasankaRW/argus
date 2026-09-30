@@ -134,6 +134,21 @@ class ClaudeProvider:
             return "image/webp"
         return "image/jpeg"
 
+    def auth_status(self) -> tuple[bool | None, str]:
+        """(logged in?, detail) from `claude auth status` (no call, no cost). None: can't tell."""
+        if not self.available():
+            return None, "claude CLI not found"
+        program = shutil.which(self.command[0]) or self.command[0]
+        try:
+            p = subprocess.run([program, *self.command[1:], "auth", "status"], capture_output=True, text=True,
+                               timeout=30, stdin=subprocess.DEVNULL)
+            info = json.loads(p.stdout or "{}")
+        except (OSError, subprocess.TimeoutExpired, ValueError) as e:
+            return None, str(e)[:200]
+        if "loggedIn" not in info:
+            return None, (p.stderr or p.stdout)[:200]
+        return bool(info["loggedIn"]), str(info.get("authMethod") or "")
+
     def chat(self, system: str, messages: list[dict[str, Any]], schema: dict | None = None) -> Reply:
         """Claude sees the pictures too (`images` on a message, base64), like the vision tier."""
         images = [i for m in messages for i in (m.get("images") or [])]

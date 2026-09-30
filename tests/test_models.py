@@ -225,7 +225,8 @@ def test_claude_daily_cap_and_reset(store, clock):
         p = await mb.permit("T3")
         assert not p.allowed and "cap" in p.reason
         assert (await mb.permit("T1")).allowed  # local tiers have no budget
-        assert (await mb.snapshot())["claude"] == {"calls_today": 2, "calls_per_day": 2}
+        snap = (await mb.snapshot())["claude"]
+        assert (snap["calls_today"], snap["calls_per_day"], snap["logged_in"]) == (2, 2, None)
         clock.advance(86400)
         assert (await mb.permit("T3")).allowed  # a new day
         assert not (await mb.permit("T9")).allowed

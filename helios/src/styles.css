@@ -337,3 +337,5 @@ main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 
 .psaved { display: flex; flex-direction: column; gap: 2px; }
 .psaved b { font-size: 22px; }
+
+.claude-chip.bad { color: var(--bad); font-weight: 600; }

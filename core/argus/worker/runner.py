@@ -174,8 +174,28 @@ class Worker:
                 return
             self.run_once()
 
+    CLAUDE_CHECK_SECONDS = 1800.0
+    _claude_checked = 0.0
+
+    def check_claude(self, force: bool = False) -> None:
+        """Every half hour: is the Claude CLI on this machine logged in? (argusd tells the phone when it isn't.)"""
+        if not force and time.monotonic() - self._claude_checked < self.CLAUDE_CHECK_SECONDS:
+            return
+        self._claude_checked = time.monotonic()
+        claude = next((p for p in self.providers.values() if getattr(p, "kind", "") == "claude"), None)
+        if claude is None or not hasattr(claude, "auth_status"):
+            return
+        logged_in, detail = claude.auth_status()
+        if logged_in is None:
+            return
+        try:
+            self.client.post(f"/workers/{self.id}/claude", {"logged_in": logged_in, "detail": detail})
+        except (Unreachable, ApiError) as e:
+            log.warning("could not report the Claude login", extra={"error": str(e)})
+
     def run_once(self, wait: float | None = None) -> bool:
         """Claim and run at most one job. Returns True if a job was run."""
+        self.check_claude()
         try:
             job = self.client.claim(self.id, self.capabilities, self.registry.plugins,
                                     self.claim_wait if wait is None else wait)

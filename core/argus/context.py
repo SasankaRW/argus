@@ -45,6 +45,7 @@ class Argus:
         self.power.jobs = self.jobs
         self.scheduler = Scheduler(self.store, self.jobs, cfg)
         self.scheduler.poke = self.outbox.poke
+        self.models.poke = self.outbox.poke
         self.triggers = Triggers(self.store, self.jobs, cfg)
         self.hub = EventHub(self.store, queue_size=cfg.events.stream_queue)
         stale_after = cfg.jobs.heartbeat_seconds * 4
