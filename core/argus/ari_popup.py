@@ -17,7 +17,7 @@ import sys
 import urllib.parse
 from pathlib import Path
 
-W, H = 640, 116  # room for the pill and its glow
+W, H = 640, 150  # room for the pill and its glow all round (the pill sits 26 px down)
 HIDE_AFTER_MS = 520  # let the pill's fold-away animation play before the window goes
 
 
@@ -28,7 +28,7 @@ def popup_url(base: str, token: str | None) -> str:
 
 def placement(x: int, y: int, width: int) -> tuple[int, int, int, int]:
     """Top middle of the screen area (x, y, width of the available area)."""
-    return x + (width - W) // 2, y + 4, W, H
+    return x + (width - W) // 2, y, W, H
 
 
 def action_for(title: str) -> str | None:
