@@ -207,6 +207,14 @@ class JobStore:
             dst=job.plugin,
             data={"from": job.state.value, **(event_data or {})},
         )
+        if job.plugin == "ari" and job.workflow == "think" and dst in (S.SUCCEEDED, S.DEAD, S.CANCELLED):
+            # Ari's answer is ready: the Ari pill (Helios, the PC's popup) shows it
+            try:
+                reply = str((json.loads(fields.get("result") or "null") or {}).get("reply") or "")
+            except (ValueError, AttributeError):
+                reply = ""
+            self._event(conn, now, "ari.state", job, data={
+                "phase": "done", "text": (reply or "Sorry, I couldn't answer that just now.")[:300]})
         return self._get(conn, job.id)
 
     def _check_lease(self, job: Job, worker: str, now: float) -> None:

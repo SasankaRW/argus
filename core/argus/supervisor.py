@@ -53,13 +53,18 @@ def marker_path() -> Path:
         return ROOT / "data" / "argus.running"
 
 
-def listen_on() -> bool:
+def ari_on(what: str) -> bool:
+    """ari.listen / ari.popup in argus.yaml."""
     try:
         from .config import load_config
 
-        return load_config(ROOT / "argus.yaml").ari.listen
+        return bool(getattr(load_config(ROOT / "argus.yaml").ari, what))
     except Exception:
         return False
+
+
+def listen_on() -> bool:
+    return ari_on("listen")
 
 
 class Child:
@@ -148,6 +153,8 @@ def main(argv: list[str] | None = None) -> int:
     children = [] if args.no_argusd else [Child("argusd", ["-m", "argus"], marker_path())]
     if not args.no_argusd and listen_on():  # "Hey Ari" on this PC's microphone
         children.append(Child("ari-listen", ["-m", "argus.ari_listen", "--log-file", "logs/ari.log"]))
+    if not args.no_argusd and not args.no_session and ari_on("popup"):  # Ari's popup over the whole screen
+        children.append(Child("ari-popup", ["-m", "argus.ari_popup"]))
     if not args.no_worker:
         caps = ["--cap", "desktop", "--cap", "gpu"] + ([] if args.no_session else ["--cap", "session"])
         children.append(Child("worker", ["-m", "argus.worker.cli", *caps, "--log-file", "logs/worker.log"]))

@@ -185,6 +185,22 @@ sounddevice` lists them).
 Whisper uses the GPU when CUDA 12 and cuDNN 9 are found, else the CPU (fine for short commands). While the PC is
 off, the browser hears you. Other voices: https://rhasspy.github.io/piper-samples/
 
+**Ari's popup over the whole screen** (like Siri: a glowing pill at the top of the screen while Ari listens,
+thinks, works or talks, over any app; tap it to open Ari in Helios):
+
+```powershell
+pip install -e .[popup]
+```
+
+```yaml
+ari:
+  popup: true             # dev.ps1 up starts it; or run: python -m argus.ari_popup
+```
+
+It follows Ari everywhere: "Hey Ari" on the PC, a question typed in Helios on the phone, the tool Ari is using, the
+answer. It never takes the keyboard. While it runs, Helios in a browser on the PC leaves the pill to it. Helios on
+other screens (the phone) shows the same pill at the top of the page.
+
 ## What Argus tells you by itself
 
 - **Morning brief** (`brief.at`, 07:00): overnight results, failures, what waits for you, today's schedules, the

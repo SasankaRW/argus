@@ -4,6 +4,7 @@
 // follows the wake phrase.
 
 import { getToken } from "./api";
+import { ariNow, ariReport, ariSet, ariTell } from "./ariState";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const W = window as any;
@@ -58,7 +59,9 @@ async function speakPiper(text: string): Promise<boolean> {
       body: JSON.stringify({ text }) });
     if (!r.ok) return false;
     const url = URL.createObjectURL(await r.blob());
-    await new Promise<void>((res) => { const a = new Audio(url); a.onended = () => res(); a.onerror = () => res(); a.play().catch(() => res()); });
+    await new Promise<void>((res) => { const a = new Audio(url); playing.add(a);
+      const end = () => { playing.delete(a); res(); };
+      a.onended = end; a.onerror = end; a.onpause = end; a.play().catch(end); });
     URL.revokeObjectURL(url);
     return true;
   } catch { return false; }
@@ -68,16 +71,21 @@ export async function speak(text: string): Promise<void> {
   const clean = text.replace(/[*_`#>]/g, "").trim();
   if (!clean) return;
   speaking++;
+  ariTell("speaking", clean);
   try {
     if (status.voice && pref("piper", true) && await speakPiper(clean)) return;
     await speakBrowser(clean);
-  } finally { speaking--; }
+  } finally {
+    speaking--;
+    if (!speaking && ariNow().phase === "speaking") { ariSet("done", clean); ariReport("idle"); }
+  }
 }
 
-export function stopSpeaking() { if (canSpeak) window.speechSynthesis.cancel(); }
+export function stopSpeaking() { if (canSpeak) window.speechSynthesis.cancel(); for (const a of playing) a.pause(); }
+const playing = new Set<HTMLAudioElement>();
 
 // What Argus offers (GET /ari-voice): Piper for speaking, Whisper on the PC for hearing.
-export type VoiceStatus = { voice: boolean; hearing: "browser" | "whisper"; whisper_ready: boolean };
+export type VoiceStatus = { voice: boolean; hearing: "browser" | "whisper"; whisper_ready: boolean; popup_here?: boolean };
 let status: VoiceStatus = { voice: false, hearing: "browser", whisper_ready: false };
 export function setVoiceStatus(s: VoiceStatus) { status = s; window.dispatchEvent(new CustomEvent("ari-status")); }
 export const voiceStatus = () => status;
@@ -170,13 +178,17 @@ function hearBrowser(): Promise<string> {
 export async function listen(): Promise<string> {
   micBusy++;
   window.dispatchEvent(new CustomEvent("ari-mic"));
+  ariTell("listening");
   try {
     await new Promise((r) => setTimeout(r, 150)); // let the wake listener release the microphone
     const w = await hearWhisper();
-    return w !== null ? w : await hearBrowser();
+    const said = w !== null ? w : await hearBrowser();
+    if (said && ariNow().phase === "listening") ariSet("thinking", said);  // Argus reports the rest
+    return said;
   } finally {
     micBusy--;
     window.dispatchEvent(new CustomEvent("ari-mic"));
+    if (ariNow().phase === "listening") ariTell("idle");
   }
 }
 

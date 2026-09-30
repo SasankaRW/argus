@@ -11,6 +11,7 @@ export default defineConfig({
     outDir: "../core/argus/helios_dist",
     emptyOutDir: true,
     chunkSizeWarningLimit: 2000,
+    rollupOptions: { input: { main: "index.html", popup: "popup.html" } },  // popup: the PC's Ari popup
   },
   server: {
     proxy: {
@@ -26,6 +27,8 @@ export default defineConfig({
       "/schedules": argus,
       "/plugins": argus,
       "/power": argus,
+      "/ari": argus,
+      "/ari-voice": argus,
       "/ws": { target: argus.replace("http", "ws"), ws: true },
     },
   },

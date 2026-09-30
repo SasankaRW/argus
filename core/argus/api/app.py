@@ -54,7 +54,7 @@ import re
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
@@ -195,6 +195,12 @@ class AriSay(BaseModel):
 
 class AriAnswer(BaseModel):
     yes: bool
+
+
+class AriStateIn(BaseModel):
+    phase: Literal["idle", "listening", "thinking", "working", "speaking", "done"]
+    text: str = Field("", max_length=300)
+    by: str = Field("", max_length=40)
 
 
 class AriSpeak(BaseModel):
@@ -774,8 +780,26 @@ def create_app(argus: Argus) -> FastAPI:
             else:
                 out = await do_action(q["action"])
             reply = f"Opening {out['view']}." if "view" in out else "Ringing it now." if "phone" in out else "Done."
-        await argus.store.write(lambda c: ari_mod.add_turn(c, conv, "ari", reply))
+        await argus.store.write(lambda c: (ari_mod.add_turn(c, conv, "ari", reply), ari_state(c, "done", reply)))
         return {"conv": conv, "reply": reply, **out}
+
+    def ari_state(c, phase: str, text: str = "", job_id: str | None = None, by: str = "argus") -> None:
+        """What Ari is doing (event ari.state): the Ari pill in Helios and the PC's popup follow it."""
+        insert_event(c, time.time(), "ari.state", job_id=job_id, data={"phase": phase, "text": text[:300], "by": by})
+
+    overlays: dict[str, float] = {}  # host -> last ping from the PC's Ari popup
+
+    @app.post("/ari/state", dependencies=guarded)
+    async def ari_state_set(body: AriStateIn) -> dict:
+        """Report what Ari is doing where you are (listening, speaking) so every Ari pill shows it."""
+        await argus.store.write(lambda c: ari_state(c, body.phase, body.text, by=body.by or "client"))
+        return {"ok": True}
+
+    @app.post("/ari/popup", dependencies=guarded)
+    async def ari_popup_ping(request: Request) -> dict:
+        """The PC's Ari popup is running (sent every 30 s): Helios on that PC then leaves the pill to it."""
+        overlays[request.client.host if request.client else "?"] = time.time()
+        return {"ok": True}
 
     @app.post("/ari", dependencies=guarded)
     async def ari_say(body: AriSay) -> dict:
@@ -790,8 +814,9 @@ def create_app(argus: Argus) -> FastAPI:
             await argus.store.write(lambda c: ari_mod.close_question(c, q["turn"]))
 
         async def reply(text: str, action: str | None = None, pending: dict | None = None) -> dict:
-            tid = await argus.store.write(lambda c: ari_mod.add_turn(c, conv, "ari", text, action=action,
-                                                                     pending=pending))
+            tid = await argus.store.write(lambda c: (ari_mod.add_turn(c, conv, "ari", text, action=action,
+                                                                      pending=pending),
+                                                     ari_state(c, "done", text))[0])
             return {"conv": conv, "turn": tid, "reply": text, "action": action, "pending": pending}
 
         actions = ask_mod.catalog(argus.plugin_host)
@@ -828,7 +853,8 @@ def create_app(argus: Argus) -> FastAPI:
                              "you_remember": known,
                              "tools": [t.brief() for t in tools.all().values() if t.for_ari]},
             priority=PRIORITY_INTERACTIVE, source="helios")
-        tid = await argus.store.write(lambda c: ari_mod.add_turn(c, conv, "ari", None, job_id=job_id))
+        tid = await argus.store.write(lambda c: (ari_mod.add_turn(c, conv, "ari", None, job_id=job_id),
+                                                 ari_state(c, "thinking", text, job_id))[0])
         return {"conv": conv, "turn": tid, "job_id": job_id, "reply": None}
 
     @app.get("/ari-memory", dependencies=guarded)
@@ -907,10 +933,12 @@ def create_app(argus: Argus) -> FastAPI:
         return any(w["state"] == "online" and "gpu" in w["capabilities"] for w in await argus.registry.workers())
 
     @app.get("/ari-voice", dependencies=guarded)
-    async def ari_voice() -> dict:
+    async def ari_voice(request: Request) -> dict:
         """What Helios can use: Piper here, Whisper on the PC (only while a GPU worker is online)."""
+        host = request.client.host if request.client else "?"
         return {"voice": voice.configured, "hearing": argus.cfg.ari.hearing,
-                "whisper_ready": argus.cfg.ari.hearing == "whisper" and await gpu_online()}
+                "whisper_ready": argus.cfg.ari.hearing == "whisper" and await gpu_online(),
+                "popup_here": time.time() - overlays.get(host, 0) < 75}
 
     @app.post("/ari-voice/say", dependencies=guarded)
     async def ari_say_audio(body: AriSpeak) -> Response:

@@ -96,6 +96,7 @@ class Listener:
     say: Callable[[str], dict]  # text -> Ari's answer {reply, pending, ...}
     speak: Callable[[str], None]
     chime: Callable[[], None] = lambda: None
+    report: Callable[[str], None] = lambda phase: None  # what Ari is doing, for the Ari pill / the PC's popup
     wake_max_ms: int = 4000
     follow_s: float = 8.0
     armed_until: float = 0.0  # a command without the wake phrase is taken until then
@@ -111,6 +112,7 @@ class Listener:
             text = self.transcribe(audio).strip()
             self.armed_until = 0.0
             if not text:
+                self.report("idle")
                 return None
             rest = wake_rest(text)
             return self._send(rest if rest else text)
@@ -123,6 +125,7 @@ class Listener:
         if len(rest.replace(" ", "")) > 2:
             return self._send(rest)
         self.chime()
+        self.report("listening")
         self.armed_until = self.clock() + self.follow_s
         return None
 
@@ -139,6 +142,7 @@ class Listener:
             self.speak(reply)
         if ans.get("pending"):
             self.armed_until = self.clock() + self.follow_s  # "Shall I?": answer without the wake phrase
+            self.report("listening")
         return text
 
 
@@ -178,6 +182,13 @@ class AriClient:
                     return {"reply": last["text"], "pending": last.get("pending")}
             return {"reply": "That's taking a while; the answer will be in Helios."}
         return r
+
+    def state(self, phase: str, text: str = "") -> None:
+        """Tell Argus what Ari is doing here (the Ari pill in Helios and the popup follow it). Best effort."""
+        try:
+            self._req("POST", "/ari/state", {"phase": phase, "text": text[:300], "by": "pc"}, timeout=3)
+        except (OSError, urllib.error.HTTPError):
+            pass
 
     def voice(self, text: str) -> bytes | None:
         try:
@@ -264,7 +275,9 @@ def main(argv: list[str] | None = None) -> int:
     def speak(text: str) -> None:
         wav = client.voice(text)
         if wav:
+            client.state("speaking", text)
             play_wav(wav)
+            client.state("done", text)
         else:
             print(f"Ari: {text}", flush=True)
         quiet_until[0] = time.monotonic() + 0.3
@@ -276,7 +289,8 @@ def main(argv: list[str] | None = None) -> int:
     log.info("loading Whisper", extra={"wake": cfg.ari.listen_wake_model, "command": cfg.ari.whisper_model})
     wake_t = whisper(cfg.ari.listen_wake_model)
     cmd_t = whisper(cfg.ari.whisper_model) if cfg.ari.whisper_model != cfg.ari.listen_wake_model else wake_t
-    listener = Listener(transcribe_wake=wake_t, transcribe=cmd_t, say=client.say, speak=speak, chime=ding)
+    listener = Listener(transcribe_wake=wake_t, transcribe=cmd_t, say=client.say, speak=speak, chime=ding,
+                        report=client.state)
     seg = Segmenter()
     device = int(args.device) if args.device and args.device.isdigit() else args.device
     log.info("listening for Hey Ari", extra={"device": device})

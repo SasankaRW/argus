@@ -272,6 +272,9 @@ class AriConfig(_Strict):
     # "Hey Ari" on the PC's microphone, no browser (python -m argus.ari_listen; `dev.ps1 up` starts it when on).
     listen: bool = False
     listen_wake_model: str = "tiny.en"  # listens for the wake phrase (small and fast; the command uses whisper_model)
+    # Ari's popup over the whole screen while Ari listens, thinks or talks (python -m argus.ari_popup; needs
+    # pip install -e .[popup]; `dev.ps1 up` starts it when on).
+    popup: bool = False
 
 
 class GuidanceConfig(_Strict):

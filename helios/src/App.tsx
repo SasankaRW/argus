@@ -16,7 +16,9 @@ import { QueueView } from "./QueueView";
 import { RulesView } from "./RulesView";
 import { RunsView } from "./RunsView";
 import { ShareView } from "./ShareView";
-import { pref, setPref, setVoiceStatus, VoiceStatus, WakeListener } from "./voice";
+import { pref, setPref, setVoiceStatus, voiceStatus, VoiceStatus, WakeListener } from "./voice";
+import { AriPill } from "./AriPill";
+import { ariFromEvents, ariSet, ariTell } from "./ariState";
 
 const NAV: { id: string; label: string; icon: string }[] = [
   { id: "map", label: "Live map", icon: "M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3zM9 3v15M15 6v15" },
@@ -180,10 +182,11 @@ export function App() {
         wl = new WakeListener({
           onCommand: (text) => {
             badge(null);
+            ariSet("thinking", text);
             if (viewRef.current === "ari") window.dispatchEvent(new CustomEvent("ari-command", { detail: text }));
             else { try { sessionStorage.setItem("ari.command", text); } catch { /* private */ } setView("ari"); history.replaceState(null, "", "#ari"); }
           },
-          onWake: () => badge("Ari is listening…"),
+          onWake: () => ariTell("listening"),
           onError: (msg) => { badge(msg, 15000); setPref("wake", false); },
         });
         wl.start();
@@ -200,7 +203,27 @@ export function App() {
       window.removeEventListener("ari-arm", arm); wl?.stop(); clearTimeout(hide);
     };
   }, []);
-  const heardBadge = heard ? <div className="ari-heard" role="status">{heard}</div> : null;
+  // The Ari pill follows Ari from the event stream (answers from any screen, the PC's "Hey Ari"). On the PC that
+  // runs the Ari popup, the popup shows it over everything instead.
+  const seen = useRef(0);
+  useEffect(() => {
+    const fresh = a.events.filter((e) => e.seq > seen.current);
+    if (!fresh.length) return;
+    const first = seen.current === 0;
+    seen.current = fresh[fresh.length - 1].seq;
+    if (!first) ariFromEvents(fresh);  // not the replay of old events on load
+  }, [a.events]);
+  const [popupHere, setPopupHere] = useState(false);
+  useEffect(() => {
+    const on = () => setPopupHere(!!voiceStatus().popup_here);
+    const t = setInterval(() => api<VoiceStatus>("/ari-voice").then((v) => setPopupHere(!!v.popup_here)).catch(() => {}), 60000);
+    window.addEventListener("ari-status", on);
+    return () => { clearInterval(t); window.removeEventListener("ari-status", on); };
+  }, []);
+  const heardBadge = <>
+    {heard && <div className="ari-heard" role="status">{heard}</div>}
+    {!popupHere && <AriPill onOpen={() => go("ari")} />}
+  </>;
   const closeMap = useCallback(() => setBigMap(false), []);
   const mapFull = bigMap && a.map ? (
     <MapFull map={a.map} pulses={a.pulses} active={a.active} status={a.status} events={a.events} onClose={closeMap}

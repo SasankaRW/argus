@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Ari pill: a glowing capsule at the top of Helios while Ari listens, thinks, works (shows the tool: "searching your files", "searching the web") or talks, then shows the answer for a moment and folds away. Terminal colours, turning gradient edge, sound bars, a braille spinner; tap it to open Ari, × stops the voice. It follows Ari from any screen through the new `ari.state` event (`POST /ari/state`; Argus reports thinking and the answer itself; `ari_listen` reports listening and speaking).
+- Ari's popup over the whole PC screen: `python -m argus.ari_popup` (`pip install -e .[popup]`, PySide6; `ari.popup: true` makes `dev.ps1 up` start it). A see-through always-on-top window at the top middle of the screen showing the same pill over any app, never taking the keyboard; it hides while Ari is idle. Helios in a browser on that PC then leaves the pill to it (`/ari-voice` says `popup_here`).
 - Phone: a "Live map" button opens the map as its own full-screen page, turned sideways so the left-to-right map uses the phone's long side (turn the phone to read it); tap a box for its details, × or Esc closes. On Android it also goes full screen and holds landscape. The full dashboard on a narrow screen gets a "full screen" button on the map.
 - Map lines are now drawn from the boxes' known handle spots instead of screen measurements (needed for the turned map; long lines follow the layout's routes).
 - Live map: shows the main parts only. All plugins are one "Plugins" box (count, and what runs or waits); clicking it opens the Plugins page. Lines and message dots to any plugin go to that box.
