@@ -25,12 +25,22 @@ def model(name: str):
             except ImportError:
                 raise PermanentError("faster-whisper is not installed on this PC (pip install -e .[hearing])") from None
             try:
-                _models[name] = WhisperModel(name, device="cuda", compute_type="float16")
+                m = WhisperModel(name, device="cuda", compute_type="float16")
+                _prove(m)  # loading works without CUDA's libraries; the first real use is what fails
+                _models[name] = m
                 log.info("whisper loaded", extra={"model": name, "device": "cuda"})
-            except Exception as e:  # no CUDA / cuDNN: the CPU is fine for short commands
+            except Exception as e:  # no CUDA 12 cuBLAS / cuDNN 9: the CPU is fine for short commands
                 log.warning("whisper on the GPU failed; using the CPU", extra={"error": str(e)[:200]})
                 _models[name] = WhisperModel(name, device="cpu", compute_type="int8")
         return _models[name]
+
+
+def _prove(m) -> None:
+    """Run the model once on a moment of silence, so missing GPU libraries show up now, not on your first word."""
+    import numpy as np
+
+    segments, _ = m.transcribe(np.zeros(8000, dtype=np.float32), language="en", beam_size=1)
+    list(segments)
 
 
 def transcribe(audio: bytes, name: str) -> str:

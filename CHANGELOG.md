@@ -5,6 +5,9 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Fix: Ari's replies never arrived (and so were never spoken) on a database that applied migration 0011 before `ari_turns.used` was added to it ("no such column: used"). Argus now adds such late columns when it opens the database.
+- Fix: "Hey Ari" failed on every clip when Whisper loaded on the GPU but CUDA's cuBLAS was missing ("cublas64_12.dll is not found"). Whisper now proves the GPU works on a moment of silence when it loads, and uses the CPU otherwise.
+- Ari's popup sits a little lower so its glow isn't cut off at the top of the screen.
 - The detailed architecture diagram redrawn as a clean C4-style container view: light theme, four clearly separated zones (clients, argusd, PC worker host, external services), argusd split into client API / services / worker API / engine / storage, straight edge-to-edge connections with 11 numbered flows and a legend.
 - docs/diagrams/architecture-detailed.svg: the detailed architecture diagram (clients, every part of argusd by layer, the PC worker, plugins, models, Ari on the PC, external services, twelve numbered flows), linked from docs/architecture.md with a table of the flows.
 - docs/architecture.md: the project explained. The big picture with a diagram, the life of one job, where things live, and each part of the core in its own expandable section (argusd, the store, jobs, events, workers, plugins, models, approvals, scheduler, Ari, guidance, Helios, MCP, security).

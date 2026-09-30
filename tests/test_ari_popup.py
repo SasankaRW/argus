@@ -18,7 +18,7 @@ def states(cl) -> list[tuple[str, str]]:
 def test_the_popup_window_helpers():
     assert popup_url("http://127.0.0.1:8600/", "a b") == "http://127.0.0.1:8600/helios/popup.html?token=a+b"
     assert popup_url("http://x", None) == "http://x/helios/popup.html"
-    assert placement(0, 0, 1920) == (640, 4, 640, 116)
+    assert placement(0, 0, 1920) == (640, 0, 640, 150)
     assert [action_for(t) for t in ("ari:open", "ari:idle", "ari:helios", "Helios")] == ["show", "hide", "helios",
                                                                                           None]
 

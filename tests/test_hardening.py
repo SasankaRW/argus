@@ -214,3 +214,23 @@ def test_change_is_recorded_after_it_happened(tmp_path):
     assert seen == []  # a move that failed is not in the undo log
     f.move(root / "a", root / "b")
     assert seen == [("file.moved", True)]
+
+
+def test_a_column_added_late_to_a_migration_is_repaired(tmp_path):
+    """A database that applied 0011 before `ari_turns.used` was added to it gets the column on open."""
+    import sqlite3
+
+    from argus.db import Store
+
+    s = Store(tmp_path / "a.db")
+    s.open()
+    s.close()
+    c = sqlite3.connect(tmp_path / "a.db")
+    c.execute("ALTER TABLE ari_turns DROP COLUMN used")
+    c.commit()
+    c.close()
+    s = Store(tmp_path / "a.db")
+    s.open()
+    s.close()
+    c = sqlite3.connect(tmp_path / "a.db")
+    assert "used" in {r[1] for r in c.execute("PRAGMA table_info(ari_turns)")}

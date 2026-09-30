@@ -159,7 +159,18 @@ class Store:
                     conn.execute("ROLLBACK")
                 raise StoreError(f"Migration {number:04d}_{name} failed: {e}") from e
             log.info("migration applied", extra={"version": number, "migration": name})
+        self._repair(conn)
         self.schema_version = code_max
+
+    # Columns added to a migration after some databases had already applied it: added here when missing.
+    LATE_COLUMNS = [("ari_turns", "used", "TEXT")]  # 0011: Ari's reply shows the tools it used
+
+    def _repair(self, conn: sqlite3.Connection) -> None:
+        for table, column, kind in self.LATE_COLUMNS:
+            cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+            if cols and column not in cols:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
+                log.warning("added a missing column", extra={"table": table, "column": column})
 
     # ---------------------------------------------------------------- writes
 
