@@ -15,110 +15,27 @@ It can't approve anything (money and deletes stay with you), change settings, po
 from __future__ import annotations
 
 import json
-import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
-from .. import ask as ask_mod
-from .. import daily, logview
+from ..tools import ToolError, check_args
 
 PROTOCOL = "2025-06-18"
 KNOWN = ("2025-06-18", "2025-03-26", "2024-11-05")
 
 
-def _tool(name: str, description: str, props: dict[str, Any] | None = None,
-          required: list[str] | None = None) -> dict[str, Any]:
-    return {"name": name, "description": description,
-            "inputSchema": {"type": "object", "properties": props or {}, "required": required or [],
-                            "additionalProperties": False}}
+def register(app: FastAPI, argus, auth_ok: Callable[[Request], Awaitable[bool]], tools) -> None:
+    def listed() -> list:
+        return [t for t in tools.all().values() if t.for_mcp and t.fn is not None]  # built-ins only, for now
 
-
-TOOLS = [
-    _tool("argus_status", "Argus right now: health, workers, what runs, what is queued, what waits for the user."),
-    _tool("list_jobs", "Recent jobs, newest first.",
-          {"state": {"type": "string", "enum": ["queued", "leased", "running", "waiting", "retry", "succeeded",
-                                                "dead", "cancelled"]},
-           "plugin": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 100}}),
-    _tool("get_job", "One job: input, steps (with tier used and errors), result.",
-          {"id": {"type": "string"}}, ["id"]),
-    _tool("read_log", "The last lines of an Argus log (argus, worker, supervisor, ollama, ...).",
-          {"name": {"type": "string"}, "lines": {"type": "integer", "minimum": 1, "maximum": 500}}, ["name"]),
-    _tool("list_approvals", "What waits for the user's decision (read only: only the user can approve)."),
-    _tool("list_schedules", "Schedules: from settings, plugins and the ones made by talking to Ari."),
-    _tool("time_saved", "Time the plugins saved the user over the last days.",
-          {"days": {"type": "integer", "minimum": 1, "maximum": 90}}),
-    _tool("list_buttons", "The plugin buttons Argus can run (ids for run_button)."),
-    _tool("run_button", "Run a plugin button now, e.g. run:downloads-organizer:sort. Plugins in dry-run only "
-                        "report what they would do.", {"id": {"type": "string"}}, ["id"]),
-    _tool("ask_argus", "Ask Argus in plain words (the Ask box): an answer and at most one suggested action "
-                       "(never done by this call).", {"text": {"type": "string"}}, ["text"]),
-]
-
-
-class ToolError(Exception):
-    pass
-
-
-def register(app: FastAPI, argus, auth_ok: Callable[[Request], Awaitable[bool]],
-             run_button: Callable[[str], Awaitable[dict]], job_json: Callable[..., dict]) -> None:
     async def call(name: str, a: dict[str, Any]) -> Any:
-        if name == "argus_status":
-            q = await argus.jobs.queue(await argus.registry.workers())
-            h = argus.health()
-            return {"status": h["status"], "version": h.get("version"), "workers_online": q["workers_online"],
-                    "running": [f"{j['plugin']}.{j['workflow']}" for j in q["running"]],
-                    "queued": [f"{j['plugin']}.{j['workflow']} ({j.get('why')})" for j in q["queued"]][:20],
-                    "waiting": [f"{j['plugin']}.{j['workflow']}" for j in q["waiting"]],
-                    "power": argus.power.status()}
-        if name == "list_jobs":
-            from ..jobs import JobState
-
-            state = JobState(a["state"]) if a.get("state") else None
-            jobs = await argus.jobs.list_jobs(state, int(a.get("limit") or 20), a.get("plugin"))
-            return [{"id": j.id, "job": f"{j.plugin}.{j.workflow}", "state": j.state.value,
-                     "created": time.strftime("%Y-%m-%d %H:%M", time.localtime(j.created_at)),
-                     "error": (j.error or "").split("\n")[0][:200] or None} for j in jobs]
-        if name == "get_job":
-            try:
-                return job_json(await argus.jobs.get(str(a["id"])), await argus.jobs.steps(str(a["id"])))
-            except Exception:
-                raise ToolError(f"no job {a['id']!r}") from None
-        if name == "read_log":
-            path = logview.sources(argus.cfg.log_dir).get(str(a["name"]))
-            if path is None:
-                raise ToolError(f"no log {a['name']!r}; there are: {', '.join(logview.sources(argus.cfg.log_dir))}")
-            import asyncio
-
-            out = await asyncio.to_thread(logview.read, path, str(a["name"]), lines=int(a.get("lines") or 100))
-            return out["entries"]
-        if name == "list_approvals":
-            return [{"id": x["id"], "plugin": x["plugin"], "title": x["title"], "type": x["type"]}
-                    for x in await argus.approvals.list("pending", None, 100)]
-        if name == "list_schedules":
-            return [{"id": s["id"], "what": s.get("label") or f"{s['plugin']}.{s['workflow']}", "cron": s["cron"],
-                     "enabled": s["enabled"], "owner": s.get("owner"),
-                     "next": time.strftime("%Y-%m-%d %H:%M", time.localtime(s["next_run_at"]))
-                     if s.get("next_run_at") else None} for s in await argus.scheduler.list()]
-        if name == "time_saved":
-            return await argus.store.read(lambda c: daily.time_saved(c, time.time(), int(a.get("days") or 7)))
-        if name == "list_buttons":
-            return [b for b in ask_mod.catalog(argus.plugin_host) if b["id"].startswith("run:")]
-        if name == "run_button":
-            bid = str(a["id"])
-            if not bid.startswith("run:"):
-                raise ToolError("only plugin buttons (run:...) can be run from here; see list_buttons")
-            return await run_button(bid)
-        if name == "ask_argus":
-            actions = ask_mod.catalog(argus.plugin_host)
-            hit = ask_mod.rules(str(a["text"]), actions, await ask_mod.snapshot(argus))
-            if hit is None:
-                return {"reply": "No instant answer; ask about the queue, failures, approvals, or a button.",
-                        "action": None}
-            return hit
-        raise ToolError(f"unknown tool {name!r}")
+        t = next((t for t in listed() if t.name == name), None)
+        if t is None:
+            raise ToolError(f"unknown tool {name!r}")
+        return await t.fn(check_args(t, a))  # type: ignore[misc]
 
     async def handle(msg: dict[str, Any]) -> dict[str, Any] | None:
         mid = msg.get("id")
@@ -142,11 +59,12 @@ def register(app: FastAPI, argus, auth_ok: Callable[[Request], Awaitable[bool]],
         if method == "ping":
             return ok({})
         if method == "tools/list":
-            return ok({"tools": TOOLS})
+            return ok({"tools": [{"name": t.name, "description": t.description, "inputSchema": t.schema()}
+                                 for t in listed()]})
         if method == "tools/call":
             p = msg.get("params") or {}
             name, args = p.get("name"), p.get("arguments") or {}
-            if not any(t["name"] == name for t in TOOLS):
+            if not any(t.name == name for t in listed()):
                 return err(-32602, f"unknown tool {name!r}")
             try:
                 out = await call(str(name), args)

@@ -24,6 +24,7 @@ from . import backup as _backup  # noqa: F401 - the PC's copy of the nightly bac
 from . import health as _health  # noqa: F401 - WSL and Docker on the PC
 from . import hear as _hear  # noqa: F401 - Ari's hearing (Whisper)
 from . import power as _power  # noqa: F401 - the built-in power buttons (sleep, shut down, ...)
+from . import think as _think  # noqa: F401 - Ari's thinking (tools, then an answer)
 from .client import ApiError, ArgusClient, LeaseLostError, Unreachable
 from .plugins import Files, Http, LoadedPlugin, Secrets, Store
 from .plugins import load as load_plugins
@@ -53,6 +54,9 @@ class _JobReporter:
 
     def notify(self, body: dict) -> dict:
         return self._call(lambda: self.client.notify(self.job_id, self.worker_id, body))
+
+    def tool(self, body: dict) -> dict:
+        return self._call(lambda: self.client.post(f"/jobs/{self.job_id}/tools", {"worker": self.worker_id, **body}))
 
     def _call(self, fn):
         try:

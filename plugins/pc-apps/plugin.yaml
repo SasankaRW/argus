@@ -1,0 +1,44 @@
+id: pc-apps
+name: PC apps
+version: 1.0.0
+kind: workflow
+argus_api: ">=1.0 <2.0"
+description: Lets Ari open apps, files, folders and websites on the PC, and close apps (after you say yes).
+runs_on: desktop
+needs: [session]          # your logged-in Windows session (dev.ps1 up, or the "Argus desktop" task at logon)
+
+workflows: [open_app, open_path, open_url, close_app, list_apps]
+
+permissions:
+  files: {read: ["~"], write: [], delete: none}   # only checks that a file or folder exists before opening it
+  models: []
+
+ari:
+  tools:
+    - name: open_app
+      description: Open an app on the PC by name (Spotify, Chrome, VS Code, Calculator, Settings, ...).
+      workflow: open_app
+      input: {name: {type: string, description: the app's name as you'd say it}}
+      required: [name]
+    - name: open_file
+      description: Open a file or folder on the PC in its usual app (a path, e.g. ~/Documents/cv.pdf).
+      workflow: open_path
+      input: {path: {type: string, description: full path of the file or folder}}
+      required: [path]
+    - name: open_website
+      description: Open a website in the default browser (a web address, or words to search for).
+      workflow: open_url
+      input: {url: {type: string, description: "https://... address, or search words"}}
+      required: [url]
+    - name: close_app
+      description: Close an app that is open on the PC (it can save first, like clicking X).
+      workflow: close_app
+      input: {name: {type: string, description: the app's name}}
+      required: [name]
+      risky: true
+    - name: list_apps
+      description: The apps installed on the PC that Ari can open (names only).
+      workflow: list_apps
+
+helios:
+  node: {label: PC apps, group: pc}

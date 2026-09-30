@@ -106,7 +106,7 @@ class Router:
 
     def ask(self, playbook: str, input: Any, *, schema: type[BaseModel] | None = None, check: Check | None = None,
             chain: list[str] | None = None, attempts: int | None = None, images: list[str] | None = None,
-            advice: str | None = None) -> Answer:
+            advice: str | None = None, web: bool = False) -> Answer:
         """`images`: base64-encoded pictures for a vision model (sent with the first message).
         `advice`: what went wrong before (another chain already tried), handed to the first tier."""
         tiers = chain or self.chain
@@ -146,7 +146,8 @@ class Router:
                 self.board.event("model.request", self.source, comp, {"tier": tier, "attempt": attempt})
                 t0 = self.clock()
                 try:
-                    reply = provider.chat(system, messages, json_schema)
+                    extra = {"web": True} if web and getattr(provider, "kind", "") == "claude" else {}
+                    reply = provider.chat(system, messages, json_schema, **extra)
                 except ModelError as e:
                     ms = (self.clock() - t0) * 1000
                     self.board.report(tier, False, ms, str(e))

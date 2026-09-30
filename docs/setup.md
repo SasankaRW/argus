@@ -198,6 +198,21 @@ off, the browser hears you. Other voices: https://rhasspy.github.io/piper-sample
   WSL and Docker every 30 minutes while the PC is on (it never wakes the PC for it) and tells the phone when a
   container stops, reports unhealthy, or Docker stops answering, and again when it's fine.
 
+## Ari: questions and things on the PC
+
+Ari answers anything now, and can use tools: Argus's own data (what ran, schedules, time saved, where your phone
+is) and whatever plugins offer (`ari: tools:` in their plugin.yaml). Your own things come first; general knowledge
+it answers itself; current things (news, weather, scores) go to Claude with web search (read only), within the
+daily cap.
+
+- **PC apps** (`pc-apps`): "open Spotify", "open my CV in Documents", "open youtube.com", "close Chrome" (asks first).
+- **PC media** (`pc-media`): "volume 30", "turn it down", "mute", "next song", "pause".
+
+Both run in your logged-in Windows session (the worker `dev.ps1 up` starts has it; after the move to the laptop,
+`pc-worker.ps1 install` adds an "Argus desktop" task at logon). Like every plugin they start in dry-run: add them
+to `plugins.live` (`live: [downloads-organizer, pc-apps, pc-media]`). Anything that closes, types or changes files
+asks you first.
+
 ## Argus in Claude (MCP)
 
 `.\scripts\dev.ps1 mcp` adds Argus to Claude Code as an MCP server (`http://127.0.0.1:8600/mcp`, with your

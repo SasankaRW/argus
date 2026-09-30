@@ -161,6 +161,20 @@ class RulesFile(_M):
     label: str = "Rules"
 
 
+class AriTool(_M):
+    """Something Ari can do with this plugin: a job of `workflow` with the tool's arguments as its input."""
+    name: str = Field(pattern=r"^[a-z][a-z0-9_]{1,40}$")
+    description: str = Field(min_length=3, max_length=300)  # what it does, for the model choosing a tool
+    workflow: str
+    input: dict[str, Any] = Field(default_factory=dict)  # JSON schema properties of the arguments
+    required: list[str] = Field(default_factory=list)
+    risky: bool = False  # true: Ari asks you first (closing apps, typing, changing files)
+
+
+class AriInfo(_M):
+    tools: list[AriTool] = Field(default_factory=list)
+
+
 class HeliosInfo(_M):
     node: HeliosNode = Field(default_factory=HeliosNode)
     wrong: WrongButton | None = None
@@ -183,11 +197,12 @@ class Manifest(_M):
     config: dict[str, ConfigField] = Field(default_factory=dict)
     helios: HeliosInfo = Field(default_factory=HeliosInfo)
     share: list[ShareTarget] = Field(default_factory=list)
+    ari: AriInfo = Field(default_factory=AriInfo)
 
     @model_validator(mode="after")
     def _checks(self) -> Manifest:
-        if self.kind != "connector" and not self.triggers:
-            raise ValueError("a workflow or trigger plugin needs at least one trigger")
+        if self.kind != "connector" and not self.triggers and not self.ari.tools:
+            raise ValueError("a workflow or trigger plugin needs at least one trigger (or Ari tools)")
         if not api_ok(self.argus_api):
             raise ValueError(f"argus_api {self.argus_api!r} does not include this Argus "
                              f"(plugin API {API_VERSION[0]}.{API_VERSION[1]})")
@@ -197,7 +212,8 @@ class Manifest(_M):
         return self
 
     def all_workflows(self) -> list[str]:
-        extra = ({self.helios.wrong.workflow} if self.helios.wrong else set()) | {t.workflow for t in self.share}
+        extra = ({self.helios.wrong.workflow} if self.helios.wrong else set()) | {t.workflow for t in self.share} \
+            | {t.workflow for t in self.ari.tools}
         return sorted(set(self.workflows) | {t.workflow() for t in self.triggers} | extra)
 
     def job_needs(self) -> list[str]:
@@ -234,6 +250,7 @@ class Plugin(BaseModel):
                 "triggers": [t.model_dump(exclude_none=True) for t in m.triggers],
                 "wrong": m.helios.wrong.model_dump() if m.helios.wrong else None,
                 "share": [t.model_dump() for t in m.share],
+                "ari_tools": [t.name for t in m.ari.tools],
                 "rules": m.helios.rules.label if m.helios.rules else None}
 
 

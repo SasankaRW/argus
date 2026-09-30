@@ -56,6 +56,10 @@ class PermanentError(Exception):
     """Raise from a workflow when retrying cannot help (bad input, missing file). The job goes to dead."""
 
 
+class ToolFailed(Exception):
+    """ctx.tool(): the tool ran and failed (the message says why)."""
+
+
 class WaitSignal(Exception):  # noqa: N818 - a signal, not an error
     """Raised by `ctx.wait()`. The job parks in `waiting` until someone resumes it."""
 
@@ -130,6 +134,8 @@ class StepReporter:
     def approval(self, body: dict) -> dict: ...
 
     def notify(self, body: dict) -> dict: ...
+
+    def tool(self, body: dict) -> dict: ...
 
     @property
     def lease_lost(self) -> bool: ...
@@ -248,14 +254,14 @@ class Context:
         return ans.value
 
     def _ask_claude(self, playbook: str, input: Any, schema: Any, check: Any, pics: list[str] | None,
-                    advice: str | None, before: EscalationExhausted | None = None) -> Any:
+                    advice: str | None, before: EscalationExhausted | None = None, web: bool = False) -> Any:
         claude = self._claude_tier()
         if claude is None:
             raise EscalationExhausted("Claude is not available on this worker (claude CLI not found)",
                                       before.trail if before else [])
         try:
             return self._router.ask(playbook, input, schema=schema, check=check,  # type: ignore[union-attr]
-                                    chain=[claude], attempts=1, images=pics, advice=advice)
+                                    chain=[claude], attempts=1, images=pics, advice=advice, web=web)
         except EscalationExhausted as e2:
             if before is None:
                 raise
@@ -274,12 +280,13 @@ class Context:
         return next((t for t, p in self._router.providers.items() if getattr(p, "kind", "") == "claude"), None)
 
     def claude(self, prompt: str, input: Any = "", *, schema: Any = None, check: Any = None,
-               images: list[bytes] | None = None, advice: str | None = None) -> Any:
-        """Ask Claude directly (one try, pictures too). Counts against the plugin's and the global daily cap."""
+               images: list[bytes] | None = None, advice: str | None = None, web: bool = False) -> Any:
+        """Ask Claude directly (one try, pictures too). Counts against the plugin's and the global daily cap.
+        `web`: Claude may search and read the web (and nothing else), for current things."""
         if self._router is None:
             raise RuntimeError("this worker has no model configuration (is it connected to argusd?)")
         pics = [base64.b64encode(b).decode() for b in images] if images else None
-        return self._took(self._ask_claude(prompt, input, schema, check, pics, advice))
+        return self._took(self._ask_claude(prompt, input, schema, check, pics, advice, web=web))
 
     def _key(self, what: str) -> str:
         if self._step_idx is None:
@@ -304,6 +311,18 @@ class Context:
             raise WaitSignal(f"approval:{a['id']}")
         return Decision(approved=a["state"] == "approved", state=a["state"], fields=a.get("answer") or {},
                         by=a.get("decided_by"), approval_id=a["id"])
+
+    def tool(self, name: str, args: dict[str, Any] | None = None) -> Any:
+        """Use one of Ari's tools (GET /tools): a built-in one answers at once; a plugin's tool runs as its own job,
+        and this job waits (no worker held) until it is done, then this step runs again and gets the result.
+        Raises ToolFailed when the tool failed. Call it inside ctx.step."""
+        self._check_lease()
+        r = self._reporter.tool({"key": self._key("tool"), "name": name, "args": args or {}})
+        if r.get("state") == "pending":
+            raise WaitSignal(f"tool:{r['job']}")
+        if r.get("state") == "failed":
+            raise ToolFailed(r.get("error") or "the tool failed")
+        return r.get("result")
 
     def saved(self, seconds: float, key: str | None = None) -> None:
         """This job saved you about `seconds` of your time (Helios adds it up per week; the evening summary per

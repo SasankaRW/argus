@@ -76,6 +76,7 @@ from ..outbox import PRIORITIES, add_message, ntfy_message
 from ..power import PowerError
 from ..presence import describe_phone
 from ..shares import ShareError, ShareStore, kinds_of
+from ..tools import Tool, ToolError, Tools
 from ..triggers import BadSignature, TriggerError, UnknownTrigger
 from ..voice import Voice, VoiceUnavailable
 from . import approval_page, mcp
@@ -198,6 +199,13 @@ class AriAnswer(BaseModel):
 
 class AriSpeak(BaseModel):
     text: str = Field(min_length=1, max_length=1000)
+
+
+class ToolCall(BaseModel):
+    worker: str
+    key: str = Field(min_length=1, max_length=200)
+    name: str = Field(min_length=1, max_length=60)
+    args: dict[str, Any] = Field(default_factory=dict)
 
 
 class ClaudeAuth(BaseModel):
@@ -535,10 +543,20 @@ def create_app(argus: Argus) -> FastAPI:
     async def mcp_auth(request: Request) -> bool:
         return token_ok(request.headers.get("authorization"))
 
-    async def do_action_ref(a: str) -> dict:  # defined below
-        return await do_action(a)
+    tools = Tools(argus, job_json)
+    app.state.tools = tools
+    mcp.register(app, argus, mcp_auth, tools)
 
-    mcp.register(app, argus, mcp_auth, do_action_ref, job_json)
+    @app.post("/jobs/{job_id}/tools", dependencies=guarded)
+    async def job_tool(job_id: str, body: ToolCall) -> dict:
+        """ctx.tool() from a worker: a built-in tool's answer now, or a plugin tool's child job (pending until done;
+        the calling job then waits and is resumed when the child ends)."""
+        return await tools.call_from_job(job_id, body.worker, body.key, body.name, body.args)
+
+    @app.get("/tools", dependencies=guarded)
+    async def list_tools() -> list[dict]:
+        """Everything Ari can use (built in and from plugins)."""
+        return [{**t.brief(), "plugin": t.plugin, "risky": t.risky} for t in tools.all().values() if t.for_ari]
 
     @app.post("/ask/do", dependencies=guarded)
     async def ask_do(body: AskDo) -> dict:
@@ -591,6 +609,16 @@ def create_app(argus: Argus) -> FastAPI:
             return {"info": None, "text": f"I can't read Tailscale right now ({str(e)[:80]}).", }
         return {"info": info, "text": describe_phone(info)}
 
+    async def _where(_: dict) -> dict:
+        return await phone_where()
+
+    async def _ring(_: dict) -> dict:
+        return await ring_phone()
+
+    tools.builtin["where_is_my_phone"] = Tool("where_is_my_phone", "Where the user's phone is (Tailscale: online at "
+                                              "home, away, or offline and when last seen).", fn=_where)
+    tools.builtin["ring_phone"] = Tool("ring_phone", "Ring the user's phone loudly to find it.", fn=_ring)
+
     @app.get("/phone", dependencies=guarded)
     async def get_phone() -> dict:
         """Where the phone is as far as Tailscale knows (online, home or away, last seen)."""
@@ -620,6 +648,12 @@ def create_app(argus: Argus) -> FastAPI:
         await argus.store.write(lambda c: ari_mod.close_question(c, q["turn"]))
         if not yes:
             reply, out = "Okay, I won't.", {}
+        elif q["kind"] == "tool":
+            try:
+                res = await tools.run_now(q["name"], q.get("args") or {})
+                reply, out = "Done.", {"tool": q["name"], "result": res}
+            except ToolError as e:
+                reply, out = f"I couldn't: {e}.", {}
         elif q["kind"] == "schedule":
             when = ari_mod.When(q["cron"], q["once"], q["say"], "")
             spec = _schedule_spec(q["action"])
@@ -683,8 +717,9 @@ def create_app(argus: Argus) -> FastAPI:
             return await reply(hit["reply"], act)
         hist = await argus.store.read(lambda c: ari_mod.history(c, conv))
         job_id, _ = await argus.jobs.enqueue(
-            "ask", "ask", {"text": text, "actions": actions, "snapshot": snap, "history": hist[:-1],
-                           "persona": "ari"}, priority=PRIORITY_INTERACTIVE, source="helios")
+            "ari", "think", {"text": text, "history": hist[:-1], "now": time.strftime("%A %d %B %Y, %H:%M"),
+                             "tools": [t.brief() for t in tools.all().values() if t.for_ari]},
+            priority=PRIORITY_INTERACTIVE, source="helios")
         tid = await argus.store.write(lambda c: ari_mod.add_turn(c, conv, "ari", None, job_id=job_id))
         return {"conv": conv, "turn": tid, "job_id": job_id, "reply": None}
 
@@ -704,7 +739,9 @@ def create_app(argus: Argus) -> FastAPI:
                     r = j.result or {}
                     t["text"] = str(r.get("reply") or "…")
                     t["action"] = r.get("action")
-                    if t["action"] and not str(t["action"]).startswith("show:"):
+                    if r.get("pending"):  # a tool that asks first
+                        t["pending"] = r["pending"]
+                    elif t["action"] and not str(t["action"]).startswith("show:"):
                         t["pending"] = {"kind": "action", "action": t["action"]}
                 else:
                     continue

@@ -86,8 +86,8 @@ def test_a_reminder_goes_to_the_phone_at_its_time(tmp_path, monkeypatch):
 
 
 def test_actions_wait_for_yes_and_the_model_gets_the_conversation(tmp_path, monkeypatch):
-    replies = {"qwen2.5-coder:7b": [{"reply": "Hi! I'm Ari. Want me to sort your downloads?",
-                                     "action": "run:downloads-organizer:sort"}]}
+    replies = {"qwen2.5-coder:7b": [{"tool": "run_button", "args": {"id": "run:downloads-organizer:sort"},
+                                     "reply": "Hi! I'm Ari. Want me to sort your downloads?"}]}
     with FakeOllama(replies) as ol, Server(make(tmp_path, monkeypatch).open()) as srv:
         cl = client(srv.url)
         w = Worker(cl, "pc", capabilities=["desktop"], ollama_url=ol.url, watch_folders=False)
@@ -98,12 +98,17 @@ def test_actions_wait_for_yes_and_the_model_gets_the_conversation(tmp_path, monk
         assert cl.get("/jobs?plugin=downloads-organizer") == []
         d = cl.post(f"/ari/{conv}/answer", {"yes": True})
         assert d["reply"] == "Done." and cl.get(f"/jobs/{d['job_id']}")["workflow"] == "sort"
+        cl.post(f"/jobs/{d['job_id']}/cancel")  # (the sort job would run first)
         m = cl.post("/ari", {"text": "hello there, who are you?", "conv": conv})
         assert m["reply"] is None and m["job_id"]
-        cl.post(f"/jobs/{d['job_id']}/cancel")  # (the sort job would run first)
         assert w.run_once(wait=2)
         t = wait_for(lambda: (x := cl.get(f"/ari/{conv}")["turns"][-1])["text"] and x)
-        assert t["text"].startswith("Hi! I'm Ari") and t["pending"]["action"] == "run:downloads-organizer:sort"
+        # run_button asks first: Ari asks, and the pending tool waits for a yes
+        assert t["text"].startswith("Hi! I'm Ari")
+        assert t["pending"] == {"kind": "tool", "name": "run_button", "args": {"id": "run:downloads-organizer:sort"}}
         sent = ol.requests[0]["messages"]
         assert "You are Ari" in sent[0]["content"] and "conversation_so_far" in sent[1]["content"]
         assert "sort downloads" in sent[1]["content"]  # the earlier turns
+        assert "argus_status" in sent[1]["content"]  # the tools it may use
+        y = cl.post("/ari", {"text": "yes", "conv": conv})
+        assert y["reply"] == "Done." and y["tool"] == "run_button" and y["result"]["job_id"]

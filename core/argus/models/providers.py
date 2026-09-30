@@ -107,12 +107,19 @@ class ClaudeProvider:
     def available(self) -> bool:
         return bool(self.command) and (shutil.which(self.command[0]) is not None or os.path.exists(self.command[0]))
 
-    def argv(self, stream: bool = False) -> list[str]:
+    def argv(self, stream: bool = False, web: bool = False) -> list[str]:
         # Resolve the program (on Windows `claude` is claude.cmd, which needs its full path to start).
         # Nothing from the playbook or the input goes on the command line: on Windows cmd.exe would cut it at the
         # first newline and could read & | % in it as commands. All text goes through stdin.
         program = shutil.which(self.command[0]) or self.command[0]
         args = list(self.args)
+        if web:  # general questions that need the internet: web search and fetch only, nothing else
+            if "--disallowedTools" in args:
+                i = args.index("--disallowedTools")
+                del args[i:i + 2]
+            if "--max-turns" in args:
+                args[args.index("--max-turns") + 1] = "8"
+            args += ["--allowedTools", "WebSearch,WebFetch"]
         if stream:  # pictures: the message goes in as JSON (stream-json), the answer comes back as JSON lines
             if "--output-format" in args:
                 i = args.index("--output-format")
@@ -149,8 +156,10 @@ class ClaudeProvider:
             return None, (p.stderr or p.stdout)[:200]
         return bool(info["loggedIn"]), str(info.get("authMethod") or "")
 
-    def chat(self, system: str, messages: list[dict[str, Any]], schema: dict | None = None) -> Reply:
-        """Claude sees the pictures too (`images` on a message, base64), like the vision tier."""
+    def chat(self, system: str, messages: list[dict[str, Any]], schema: dict | None = None, *,
+             web: bool = False) -> Reply:
+        """`web`: may search and read the web (for current things). Claude sees the pictures too (`images` on a
+        message, base64), like the vision tier."""
         images = [i for m in messages for i in (m.get("images") or [])]
         prompt = "\n\n".join(m["content"] for m in messages if m["role"] == "user")
         if system:
@@ -167,7 +176,7 @@ class ClaudeProvider:
                        for b in images] + [{"type": "text", "text": prompt}]
             stdin = json.dumps({"type": "user", "message": {"role": "user", "content": content}}) + "\n"
         try:
-            code, stdout, stderr = run_with_timeout(self.argv(stream=bool(images)), stdin, self.timeout)
+            code, stdout, stderr = run_with_timeout(self.argv(stream=bool(images), web=web), stdin, self.timeout)
         except subprocess.TimeoutExpired:
             raise ModelTimeout(f"claude gave no answer within {self.timeout:g} s") from None
         except OSError as e:
