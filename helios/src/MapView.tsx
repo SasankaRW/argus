@@ -300,8 +300,8 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal 
       elementsSelectable={false}
       colorMode="dark"
     >
-      <Background gap={22} size={1} color="#1a1f2a" />
-      <Controls showInteractive={false} position="bottom-right" onFitView={() => { userMoved.current = false; }} />
+      <Background gap={20} size={1.2} color="#1c2330" />
+      <Controls showInteractive={false} position="bottom-left" onFitView={() => { userMoved.current = false; }} />
     </ReactFlow>
     </div>
   );

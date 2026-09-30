@@ -75,8 +75,10 @@ export function AskBox({ onSelect, onView, big = false }: { onSelect: (s: Select
   return (
     <div className={`ask${big ? " big" : ""}`}>
       <form onSubmit={(e) => { e.preventDefault(); ask(text); }}>
-        <input ref={input} value={text} onChange={(e) => setText(e.target.value)} placeholder={big ? "Ask Argus…" : "Ask Argus…  (Ctrl+K)"}
+        {!big && <span className="prompt" aria-hidden="true">›</span>}
+        <input ref={input} value={text} onChange={(e) => setText(e.target.value)} placeholder={big ? "Ask Argus…" : "ask argus…"}
           aria-label="Ask Argus" enterKeyHint="send" />
+        {!big && <kbd className="hide-sm">ctrl k</kbd>}
         {Speech && <button type="button" className={`mic${listening ? " on" : ""}`} onClick={listen} aria-label="Speak">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></svg>
         </button>}

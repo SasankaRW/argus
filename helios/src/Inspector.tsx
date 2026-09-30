@@ -11,6 +11,7 @@ type Props = {
   status: Status | null;
   events: ArgusEvent[];
   onSelect: (s: Selection) => void;
+  onClose?: () => void;  // shown as a drawer: the × also closes the overview
 };
 
 function KV({ k, v }: { k: string; v: React.ReactNode }) {
@@ -589,7 +590,7 @@ export function Inspector(p: Props) {
       {s?.type === "node" && <NodePanel key={s.id} id={s.id} {...p} />}
       {s?.type === "edge" && <EdgePanel key={`${s.src}>${s.dst}`} src={s.src} dst={s.dst} {...p} />}
       {s?.type === "job" && <JobPanel key={s.id} id={s.id} events={p.events} onSelect={p.onSelect} />}
-      {s && <button type="button" className="close" onClick={() => p.onSelect(null)} aria-label="Close">×</button>}
+      {(s || p.onClose) && <button type="button" className="close" onClick={() => (p.onClose ? p.onClose() : p.onSelect(null))} aria-label="Close">×</button>}
     </section>
   );
 }
