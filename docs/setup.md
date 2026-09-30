@@ -181,6 +181,14 @@ off, the browser hears you. Other voices: https://rhasspy.github.io/piper-sample
   WSL and Docker every 30 minutes while the PC is on (it never wakes the PC for it) and tells the phone when a
   container stops, reports unhealthy, or Docker stops answering, and again when it's fine.
 
+## Argus in Claude (MCP)
+
+`.\scripts\dev.ps1 mcp` adds Argus to Claude Code as an MCP server (`http://127.0.0.1:8600/mcp`, with your
+token). Then ask Claude Code things like "what did Argus do today?", "why did the last screenshot job fail?" or
+"sort my downloads". Tools: `argus_status`, `list_jobs`, `get_job`, `read_log`, `list_approvals`,
+`list_schedules`, `time_saved`, `list_buttons`, `run_button`, `ask_argus`. Claude can't approve anything, power
+the PC or touch files: approvals stay yours.
+
 ## Find my phone
 
 Ask Ari "where's my phone?" (or Helios > Power > Your phone): where Tailscale sees it (online at home on the same

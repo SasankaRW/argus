@@ -17,6 +17,7 @@
 #   .\scripts\dev.ps1 ntfy      send a test notification to your phone (NTFY_TOPIC in .env)
 #   .\scripts\dev.ps1 approval  send a pretend bill that waits for your approval (phone or Helios)
 #   .\scripts\dev.ps1 approve   approve the newest waiting approval ("approve no" rejects it)
+#   .\scripts\dev.ps1 mcp       let Claude Code use Argus (adds Argus as an MCP server to the claude CLI)
 #
 # Version control (see CONTRIBUTING.md):
 #   .\scripts\dev.ps1 github            one-time: log in to GitHub, create the private repo, push everything
@@ -299,6 +300,15 @@ switch ($Command) {
         catch { throw "Could not send: $($_.ErrorDetails.Message) (is argusd running? is NTFY_TOPIC set in .env?)" }
         Write-Host "Test message queued. Check the ntfy app on your phone (topic from NTFY_TOPIC)."
     }
+    "mcp" {
+        $T = Token
+        if (-not (Get-Command claude -ErrorAction SilentlyContinue)) { throw "claude CLI not found (npm install -g @anthropic-ai/claude-code)" }
+        $Hdr = @(); if ($T) { $Hdr = @("--header", "Authorization: Bearer $T") }
+        Quiet { claude mcp remove --scope user argus } | Out-Null
+        & claude mcp add --transport http --scope user argus "$ArgusUrl/mcp" @Hdr
+        if ($LASTEXITCODE -ne 0) { throw "claude mcp add failed" }
+        Write-Host "Done. In Claude Code, ask: 'what is Argus doing?' (tools: argus_status, list_jobs, get_job, read_log, run_button, ...)"
+    }
     "approval" {
         $H = @{}; $T = Token; if ($T) { $H["Authorization"] = "Bearer $T" }
         $Body = '{"plugin":"demo","workflow":"approval","input":{"vendor":"CEB","amount":"4250","due":"2026-10-15"}}'
@@ -423,6 +433,6 @@ switch ($Command) {
         if ($LASTEXITCODE -ne 0) { throw "Release stopped" }
     }
     default {
-        Get-Content $PSCommandPath | Select-Object -Skip 1 -First 24 | ForEach-Object { $_.TrimStart("#") }
+        Get-Content $PSCommandPath | Select-Object -Skip 1 -First 26 | ForEach-Object { $_.TrimStart("#") }
     }
 }

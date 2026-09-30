@@ -78,7 +78,7 @@ from ..presence import describe_phone
 from ..shares import ShareError, ShareStore, kinds_of
 from ..triggers import BadSignature, TriggerError, UnknownTrigger
 from ..voice import Voice, VoiceUnavailable
-from . import approval_page
+from . import approval_page, mcp
 from .home import HOME_HTML
 
 mimetypes.add_type("application/manifest+json", ".webmanifest")  # Helios as an installable app (share menu)
@@ -531,6 +531,14 @@ def create_app(argus: Argus) -> FastAPI:
             "ask", "ask", {"text": body.text, "actions": actions, "snapshot": snap},
             priority=PRIORITY_INTERACTIVE, source="helios")
         return {"via": "model", "job_id": job_id}
+
+    async def mcp_auth(request: Request) -> bool:
+        return token_ok(request.headers.get("authorization"))
+
+    async def do_action_ref(a: str) -> dict:  # defined below
+        return await do_action(a)
+
+    mcp.register(app, argus, mcp_auth, do_action_ref, job_json)
 
     @app.post("/ask/do", dependencies=guarded)
     async def ask_do(body: AskDo) -> dict:

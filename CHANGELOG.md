@@ -5,6 +5,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Argus as an MCP server** (`POST /mcp`, Streamable HTTP with JSON answers, the Helios token): Claude Code can see Argus's status, jobs and their steps, logs, waiting approvals, schedules and time saved, list and run plugin buttons, and ask Argus. It can't approve, power the PC or touch files. `.\scripts\dev.ps1 mcp` adds it to the claude CLI. Checked with Claude Code itself.
 - **Quiet by default** (`ntfy.quiet`, on): a plugin's ordinary messages (`ctx.notify` with priority min/low/default) no longer buzz the phone; they come together in the evening summary ("Also: …"). Approvals, failures, reminders, warnings and high/urgent messages still come at once. Migration 0010.
 - **Find my phone:** "where's my phone?" to Ari or Ask Argus says where Tailscale sees it (online at home on the same Wi-Fi, online away, or offline and when last seen) and offers to ring it: three urgent notifications 20 s apart. Helios > Power > Your phone; `GET /phone`, `POST /phone/ring`.
 - **Claude usage meter and login check:** Helios's top bar shows Claude calls used today of the daily cap (and how many are left when few are). Every half hour each worker runs `claude auth status` (free, no call) and tells argusd; a failed call that asks for a login counts too. When Claude is logged out, the phone hears it once (with what to do) and Helios shows "Claude logged out". `POST /workers/{id}/claude`; `GET /models` has `claude.logged_in`.
