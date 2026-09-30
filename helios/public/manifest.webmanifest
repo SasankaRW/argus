@@ -1,16 +1,29 @@
 {
-  "name": "Helios",
-  "short_name": "Helios",
-  "description": "Argus: jobs, approvals and the live map",
+  "name": "Argus",
+  "short_name": "Argus",
+  "description": "Ari, your approvals, jobs and the live map: Argus on your phone.",
   "id": "/helios/",
-  "start_url": "/helios/",
+  "start_url": "/helios/?app=1",
   "scope": "/helios/",
   "display": "standalone",
-  "background_color": "#0b0d10",
-  "theme_color": "#0b0d10",
+  "display_override": ["standalone"],
+  "orientation": "any",
+  "background_color": "#050607",
+  "theme_color": "#050607",
+  "categories": ["productivity", "utilities"],
   "icons": [
-    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
-    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Talk to Ari", "short_name": "Talk", "url": "/helios/?app=1&mic=1#ari",
+      "icons": [{ "src": "sc-mic.png", "sizes": "96x96", "type": "image/png" }] },
+    { "name": "Inbox", "url": "/helios/?app=1#inbox", "icons": [{ "src": "sc-inbox.png", "sizes": "96x96", "type": "image/png" }] },
+    { "name": "Share to Argus", "short_name": "Share", "url": "/helios/?app=1#share",
+      "icons": [{ "src": "sc-share.png", "sizes": "96x96", "type": "image/png" }] },
+    { "name": "Live map", "short_name": "Map", "url": "/helios/?app=1#map", "icons": [{ "src": "sc-map.png", "sizes": "96x96", "type": "image/png" }] }
   ],
   "share_target": {
     "action": "/helios/share-target",

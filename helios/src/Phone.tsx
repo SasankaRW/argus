@@ -186,7 +186,22 @@ export function PhoneHome({ status, events, onSelect, onAri, onOpen, onInbox, on
 }
 
 // "More": the other pages, as a terminal listing.
+type InstallEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> };
+
+// "Install app": Chrome's own install prompt, when it offers one (not yet installed, served over https).
+function useInstall(): (() => void) | null {
+  const [ev, setEv] = useState<InstallEvent | null>(() => (window as unknown as { heliosInstall?: InstallEvent }).heliosInstall ?? null);
+  useEffect(() => {
+    const on = () => setEv((window as unknown as { heliosInstall?: InstallEvent }).heliosInstall ?? null);
+    window.addEventListener("helios-installable", on);
+    return () => window.removeEventListener("helios-installable", on);
+  }, []);
+  if (!ev) return null;
+  return () => { ev.prompt().then(() => ev.userChoice).finally(() => { (window as unknown as { heliosInstall?: InstallEvent }).heliosInstall = undefined; setEv(null); }); };
+}
+
 export function PhoneMore({ onOpen, onFull }: { onOpen: (v: string) => void; onFull: () => void }) {
+  const install = useInstall();
   const rows: [string, string, string][] = [["inbox", "inbox", "everything waiting for you"], ["queue", "queue", "what runs next"], ["runs", "runs", "everything that ran"],
     ["share", "share", "send files to argus"], ["power", "power", "wake · sleep · shut down"], ["models", "models", "tiers, calls, hand-ups"],
     ["settings", "settings", "quiet hours, summaries, power…"], ["logs", "logs", "what argus wrote"]];
@@ -199,6 +214,11 @@ export function PhoneMore({ onOpen, onFull }: { onOpen: (v: string) => void; onF
               <span className="ok">drwx</span><b>{name}/</b><span className="dim">{sub}</span><span aria-hidden="true">›</span>
             </button>
           ))}
+          {install && (
+            <button type="button" className="ls-row" onClick={install}>
+              <span className="warn">+app</span><b>install-app</b><span className="dim">argus on your home screen</span><span aria-hidden="true">›</span>
+            </button>
+          )}
           <button type="button" className="ls-row" onClick={onFull}>
             <span className="flow">-rwx</span><b>full-dashboard</b><span className="dim">the desktop layout</span><span aria-hidden="true">›</span>
           </button>
@@ -229,6 +249,17 @@ export function PhoneTabs({ tab, onTab }: { tab: PhoneTab; onTab: (t: PhoneTab) 
         <button key={t} type="button" aria-current={tab === t ? "page" : undefined} onClick={() => onTab(t)}>{t}</button>
       ))}
     </nav>
+  );
+}
+
+// When Argus doesn't answer (the PC is off, or Tailscale isn't connected on the phone).
+export function PhoneOffline({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="p-offline" role="status">
+      <b>can't reach argus</b>
+      <span>Is the PC on, and Tailscale connected on this phone?</span>
+      <button type="button" onClick={onRetry}>try again</button>
+    </div>
   );
 }
 

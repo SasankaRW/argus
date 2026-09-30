@@ -10,7 +10,7 @@ import { FitPad, mainParts, MapView, mergeEdges, Selection } from "./MapView";
 import { LogsView } from "./LogsView";
 import { MapFull } from "./MapFull";
 import { CommandLayer, Layout, LayoutSwitch, loadLayout, saveLayout } from "./Desk";
-import { PhoneHeader, PhoneHome, PhoneMore, PhoneTab, PhoneTabs } from "./Phone";
+import { PhoneHeader, PhoneHome, PhoneMore, PhoneOffline, PhoneTab, PhoneTabs } from "./Phone";
 import { Sheet } from "./Sheet";
 import { InboxView, ModelsView, SettingsView, useInboxCount } from "./Pages";
 import { PluginsView } from "./PluginsView";
@@ -47,11 +47,29 @@ function Icon({ d }: { d: string }) {
   );
 }
 
+// The Argus mark in small: a glowing core with a short corona and its orbit (the app icon is the full version).
 function Logo() {
   return (
-    <svg width="22" height="22" viewBox="0 0 26 26" fill="none" aria-hidden="true">
-      <circle cx="13" cy="13" r="5" fill="#F5A524" />
-      <path d="M13 2v3M13 21v3M2 13h3M21 13h3M5.2 5.2l2.1 2.1M18.7 18.7l2.1 2.1M5.2 20.8l2.1-2.1M18.7 7.3l2.1-2.1" stroke="#F5A524" strokeWidth="1.6" strokeLinecap="round" />
+    <svg width="24" height="24" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <defs>
+        <radialGradient id="lg-core" cx="38%" cy="32%" r="75%">
+          <stop offset="0" stopColor="#fff6dc" /><stop offset=".3" stopColor="#ffc85a" /><stop offset=".72" stopColor="#f5a524" /><stop offset="1" stopColor="#b35e08" />
+        </radialGradient>
+        <radialGradient id="lg-glow"><stop offset="0" stopColor="#f5a524" stopOpacity=".5" /><stop offset="1" stopColor="#f5a524" stopOpacity="0" /></radialGradient>
+        <linearGradient id="lg-orbit" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stopColor="#4cc2ff" stopOpacity=".1" /><stop offset="1" stopColor="#b9f0ff" /></linearGradient>
+      </defs>
+      <circle cx="16" cy="16" r="15" fill="url(#lg-glow)" />
+      <g stroke="#f5a524" strokeOpacity=".55" strokeWidth="1" strokeLinecap="round">
+        <path d="M16 3.5v3M16 25.5v3M3.5 16h3M25.5 16h3M7.2 7.2l2 2M22.8 22.8l2 2M7.2 24.8l2-2M22.8 9.2l2-2" />
+      </g>
+      <g transform="rotate(-18 16 16)">
+        <path d="M5 16a11 3.4 0 0 1 22 0" stroke="url(#lg-orbit)" strokeWidth="1.2" />
+      </g>
+      <circle cx="16" cy="16" r="5" fill="url(#lg-core)" />
+      <g transform="rotate(-18 16 16)">
+        <path d="M27 16a11 3.4 0 0 1-22 0" stroke="url(#lg-orbit)" strokeWidth="1.3" />
+        <circle cx="25.3" cy="17.6" r="1.3" fill="#e6fbff" />
+      </g>
     </svg>
   );
 }
@@ -263,6 +281,7 @@ export function App() {
       <div className="phone2">
         <div className="glow g1" aria-hidden="true" /><div className="glow g2" aria-hidden="true" />
         <PhoneHeader status={st} live={a.conn === "live"} />
+        {a.phase === "down" && <PhoneOffline onRetry={() => a.reconnect()} />}
         <main key={view} className="pmain2">
           {proot === "ari" ? (view.includes("/")
             ? <AriView conv={view.split("/")[1]} onBack={() => go("ari")} onNew={(c) => go(`ari/${c}`)} onSelect={setSel} onView={open} />
