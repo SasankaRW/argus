@@ -50,7 +50,8 @@ def test_due_once_per_night(tmp_path):
 
 def test_backup_api_and_the_pc_copy(tmp_path):
     dest = tmp_path / "pc-backups"
-    a = make(tmp_path, f"backup:\n  copy_to: '{dest.as_posix()}'\n  keep: 3\n")
+    # enabled: false: the nightly one (after 02:30) must not race the button in this test
+    a = make(tmp_path, f"backup:\n  enabled: false\n  copy_to: '{dest.as_posix()}'\n  keep: 3\n")
     with Server(a.open()) as srv:
         cl = client(srv.url)
         pc = Worker(cl, "pc", capabilities=["desktop"], watch_folders=False)

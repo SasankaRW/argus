@@ -42,7 +42,8 @@ argus = ["db/migrations/*.sql", "helios_dist/*", "helios_dist/**/*"]
 testpaths = ["tests"]
 pythonpath = ["core"]
 timeout = 120  # a hung test fails instead of hanging the run
-markers = ["brief: let the morning brief run (it depends on the clock)"]
+markers = ["brief: let the morning brief run (it depends on the clock)",
+           "nightly_backup: let the nightly backup run (it depends on the clock)"]
 
 [tool.ruff]
 line-length = 120

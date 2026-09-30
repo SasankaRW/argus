@@ -85,3 +85,15 @@ def _no_morning_brief(monkeypatch, request):
         import argus.context
 
         monkeypatch.setattr(argus.context, "brief_due", lambda *a, **k: None)
+
+
+@pytest.fixture(autouse=True)
+def _no_nightly_backup(monkeypatch, request):
+    """The nightly backup starts on the clock (after 02:30); outside test_backup it only adds surprise jobs."""
+    if request.node.get_closest_marker("nightly_backup") is None:
+        import argus.context
+
+        async def nothing(self):
+            return None
+
+        monkeypatch.setattr(argus.context.Argus, "backup_tick", nothing)
