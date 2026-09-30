@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import socket
 import threading
+import time
 import traceback
 import urllib.parse
 from typing import Any
@@ -91,10 +92,10 @@ class _Heartbeat(threading.Thread):
         self.client = client
         self.reporter = reporter
         self.every = every
-        self._stop = threading.Event()
+        self._halt = threading.Event()
 
     def run(self) -> None:
-        while not self._stop.wait(self.every):
+        while not self._halt.wait(self.every):
             try:
                 self.client.heartbeat(self.reporter.job_id, self.reporter.worker_id)
             except LeaseLostError:
@@ -105,7 +106,7 @@ class _Heartbeat(threading.Thread):
                 log.warning("heartbeat failed", extra={"job": self.reporter.job_id, "error": str(e)})
 
     def stop(self) -> None:
-        self._stop.set()
+        self._halt.set()
 
 
 class Worker:
@@ -184,7 +185,9 @@ class Worker:
             if e.status == 404:  # Argus forgot us (fresh database): register again
                 self.register()
                 return False
-            raise
+            log.warning("argus refused the claim", extra={"status": e.status, "error": str(e)})
+            self.stopping.wait(5)
+            return False
         if job is None:
             return False
         self.busy = True
@@ -206,6 +209,9 @@ class Worker:
             self.client.start(job_id, self.id)
         except LeaseLostError:
             jlog.warning("lease lost before start")
+            return "lost"
+        except (Unreachable, ApiError) as e:  # argus is restarting: the lease runs out and the job comes back
+            jlog.warning("could not start the job; argus will hand it out again", extra={"error": str(e)})
             return "lost"
 
         if wf is None:
@@ -233,6 +239,7 @@ class Worker:
         jlog.info("job started", extra={"attempt": job.get("attempt"), "checkpoints": len(ctx._done)})
         try:
             result = wf.fn(ctx)
+            ctx._flush_trace()
             if reporter.lease_lost:
                 raise LeaseLostError(409, {"error": "lease_lost"})
             self.client.succeed(job_id, self.id, result)
@@ -257,17 +264,46 @@ class Worker:
             jlog.error("job failed", extra={"error": detail, "trace": traceback.format_exc(limit=5)})
             return "failed"
         finally:
+            if ctx._unsent:
+                ctx._flush_trace()
             beat.stop()
 
     def _attach(self, ctx: Context, plugin: LoadedPlugin, job_id: str) -> None:
         """Give the job the services its manifest allows, and nothing more."""
         client, wid, pid = self.client, self.id, plugin.id
 
+        unsent: list[tuple[str, str | None, dict]] = []  # events argusd didn't take yet (it was restarting)
+        ctx._unsent = unsent
+
+        def send(kind: str, step: str | None, data: dict) -> bool:
+            for wait in (0, 1, 3):
+                time.sleep(wait)
+                try:
+                    client.trace(job_id, wid, kind, src=pid, dst=None, step=step, data=data)
+                    return True
+                except LeaseLostError:
+                    raise
+                except (Unreachable, ApiError) as e:
+                    err = str(e)
+            log.warning("could not record a plugin event yet; kept to send later", extra={"kind": kind, "error": err})
+            return False
+
         def trace(kind: str, data: dict) -> None:
-            try:
-                client.trace(job_id, wid, kind, src=pid, dst=None, step=ctx._step, data=data)
-            except (Unreachable, ApiError) as e:  # the undo log is best effort; the change itself stands
-                log.warning("could not record a plugin event", extra={"kind": kind, "error": str(e)})
+            """Record a change (the undo log). Kept and sent later when argusd can't take it now, never lost."""
+            while unsent and send(*unsent[0]):
+                unsent.pop(0)
+            item = (kind, ctx._step, data)
+            if unsent or not send(*item):
+                unsent.append(item)
+
+        def flush() -> None:
+            while unsent and send(*unsent[0]):
+                unsent.pop(0)
+            if unsent:
+                log.error("plugin events could not be recorded (undo won't list them)",
+                          extra={"lost": [k for k, _, _ in unsent]})
+
+        ctx._flush_trace = flush
 
         perms = plugin.perms
         ctx.plugin = plugin

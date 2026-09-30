@@ -458,26 +458,29 @@ def create_app(argus: Argus) -> FastAPI:
                         "fix": f, "can_undo": can and real and free, "can_fix": wrong and real and free})
         return job, out
 
+    change_lock = asyncio.Lock()
+
     @app.post("/jobs/{job_id}/changes/{event_id}/wrong", dependencies=guarded)
     async def wrong_change(job_id: str, event_id: str, body: Fix) -> dict:
         """The "Wrong" button: the plugin's correction workflow puts the file where it belongs and remembers it."""
-        job, changes = await _changes(job_id)
-        c = next((x for x in changes if x["event_id"] == event_id), None)
-        if c is None:
-            raise HTTPException(status_code=404, detail="no such change in this job")
-        if not c["can_fix"]:
-            if c["fix"]:
-                return {"id": c["fix"]["job_id"], "created": False}
-            raise HTTPException(status_code=409, detail="this change can't be corrected (dry-run, already undone, "
-                                                        "or the plugin has no Wrong button)")
-        p = argus.plugin_host.plugins[job.plugin]
-        wf = p.manifest.helios.wrong.workflow  # type: ignore[union-attr]
-        job_id2, created = await argus.jobs.enqueue(
-            job.plugin, wf, {"from": c["to"], "orig": c["from"], "value": body.value, "fix_of": event_id,
-                             "job": job_id},
-            needs=p.manifest.job_needs(), priority=PRIORITY_INTERACTIVE, dedupe_key=f"fix:{event_id}",
-            source="helios")
-        return {"id": job_id2, "created": created}
+        async with change_lock:  # Undo and Wrong on the same change: one at a time
+            job, changes = await _changes(job_id)
+            c = next((x for x in changes if x["event_id"] == event_id), None)
+            if c is None:
+                raise HTTPException(status_code=404, detail="no such change in this job")
+            if not c["can_fix"]:
+                if c["fix"]:
+                    return {"id": c["fix"]["job_id"], "created": False}
+                raise HTTPException(status_code=409, detail="this change can't be corrected (dry-run, already undone, "
+                                                            "or the plugin has no Wrong button)")
+            p = argus.plugin_host.plugins[job.plugin]
+            wf = p.manifest.helios.wrong.workflow  # type: ignore[union-attr]
+            job_id2, created = await argus.jobs.enqueue(
+                job.plugin, wf, {"from": c["to"], "orig": c["from"], "value": body.value, "fix_of": event_id,
+                                 "job": job_id},
+                needs=p.manifest.job_needs(), priority=PRIORITY_INTERACTIVE, dedupe_key=f"fix:{event_id}",
+                source="helios")
+            return {"id": job_id2, "created": created}
 
     # -------------------------------------------------------------- Ask Argus
 
@@ -549,7 +552,7 @@ def create_app(argus: Argus) -> FastAPI:
         """Save your version. Checked here for YAML; the plugin checks the meaning at its next job."""
         rules_of(pid)
         try:
-            parsed = yaml.safe_load(body.text)
+            parsed = await asyncio.to_thread(yaml.safe_load, body.text)
         except yaml.YAMLError as e:
             mark = getattr(e, "problem_mark", None)
             where = f" (line {mark.line + 1})" if mark else ""
@@ -577,7 +580,7 @@ def create_app(argus: Argus) -> FastAPI:
         try:
             return fn(*a)
         except ShareError as e:
-            raise HTTPException(status_code=404 if "no such" in str(e) or "bad" in str(e) else 422,
+            raise HTTPException(status_code=404 if "no such" in str(e) or "bad" in str(e) else e.status,
                                 detail=str(e)) from None
 
     @app.get("/share/targets", dependencies=guarded)
@@ -591,6 +594,9 @@ def create_app(argus: Argus) -> FastAPI:
     @app.put("/shares/{sid}/files", dependencies=guarded)
     async def add_share_file(sid: str, request: Request, name: str = Query(..., max_length=200),
                              type: str = Query("application/octet-stream", max_length=100)) -> dict:
+        meta = share_or_404(shares.meta, sid)  # before reading the body
+        if meta["job_id"]:
+            raise HTTPException(status_code=409, detail="already sent")
         data = bytearray()
         async for chunk in request.stream():
             data += chunk
@@ -605,10 +611,15 @@ def create_app(argus: Argus) -> FastAPI:
 
     @app.get("/shares/{sid}/files/{name}", dependencies=guarded)
     async def get_share_file(sid: str, name: str):
-        path = share_or_404(shares.file_path, sid, name)
-        meta = shares.meta(sid)
-        mime = next((f["type"] for f in meta["files"] if f["name"] == name), "application/octet-stream")
-        return FileResponse(path, media_type=mime or "application/octet-stream")
+        path, mime = share_or_404(shares.file_path, sid, name)
+        # only pictures and PDFs open in the browser; anything else (html, svg, ...) downloads, never runs here
+        inline = (mime.startswith("image/") and mime != "image/svg+xml") or mime == "application/pdf"
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="no such file in this share")
+        return FileResponse(path, media_type=mime if inline else "application/octet-stream", filename=name,
+                            content_disposition_type="inline" if inline else "attachment",
+                            headers={"X-Content-Type-Options": "nosniff",
+                                     "Content-Security-Policy": "sandbox; default-src 'none'"})
 
     @app.post("/shares/{sid}/send", dependencies=guarded)
     async def send_share(sid: str, body: SendShare) -> dict:
@@ -664,7 +675,8 @@ def create_app(argus: Argus) -> FastAPI:
         return out
 
     @app.get("/logs/{name}", dependencies=guarded)
-    async def log_read(name: str, after: int | None = None, lines: int = Query(300, ge=1, le=2000)) -> dict:
+    async def log_read(name: str, after: int | None = Query(None, ge=0),
+                       lines: int = Query(300, ge=1, le=2000)) -> dict:
         path = logview.sources(argus.cfg.log_dir).get(name)
         if path is None:
             raise HTTPException(status_code=404, detail=f"no log {name!r}")
@@ -677,21 +689,22 @@ def create_app(argus: Argus) -> FastAPI:
     @app.post("/jobs/{job_id}/changes/{event_id}/undo", dependencies=guarded)
     async def undo_change(job_id: str, event_id: str) -> dict:
         """Put one moved file back, through the plugin's own `undo` workflow (so its permissions still apply)."""
-        job, changes = await _changes(job_id)
-        c = next((x for x in changes if x["event_id"] == event_id), None)
-        if c is None:
-            raise HTTPException(status_code=404, detail="no such change in this job")
-        if not c["can_undo"]:
-            if c["undo"]:
-                return {"id": c["undo"]["job_id"], "created": False}
-            raise HTTPException(status_code=409, detail="this change can't be undone (dry-run, not a move, "
-                                                        "or the plugin has no undo workflow)")
-        p = argus.plugin_host.plugins[job.plugin]
-        job_id2, created = await argus.jobs.enqueue(
-            job.plugin, "undo", {"from": c["to"], "to": c["from"], "undo_of": event_id, "job": job_id},
-            needs=p.manifest.job_needs(), priority=PRIORITY_INTERACTIVE, dedupe_key=f"undo:{event_id}",
-            source="helios")
-        return {"id": job_id2, "created": created}
+        async with change_lock:  # Undo and Wrong on the same change: one at a time
+            job, changes = await _changes(job_id)
+            c = next((x for x in changes if x["event_id"] == event_id), None)
+            if c is None:
+                raise HTTPException(status_code=404, detail="no such change in this job")
+            if not c["can_undo"]:
+                if c["undo"]:
+                    return {"id": c["undo"]["job_id"], "created": False}
+                raise HTTPException(status_code=409, detail="this change can't be undone (dry-run, not a move, "
+                                                            "or the plugin has no undo workflow)")
+            p = argus.plugin_host.plugins[job.plugin]
+            job_id2, created = await argus.jobs.enqueue(
+                job.plugin, "undo", {"from": c["to"], "to": c["from"], "undo_of": event_id, "job": job_id},
+                needs=p.manifest.job_needs(), priority=PRIORITY_INTERACTIVE, dedupe_key=f"undo:{event_id}",
+                source="helios")
+            return {"id": job_id2, "created": created}
 
     @app.get("/jobs/{job_id}/events", dependencies=guarded)
     async def job_events(job_id: str) -> list[dict]:
@@ -1044,9 +1057,15 @@ def create_app(argus: Argus) -> FastAPI:
         if action == "cancel":
             await argus.power.hold()  # and no automatic shutdown for this idle stretch
             for j in await argus.jobs.list_jobs(None, 20, "power"):
-                if j.state.value in ("queued", "retry") and j.workflow in ("sleep", "shutdown", "restart"):
+                if j.state.value in ("queued", "retry") and j.workflow in ("sleep", "shutdown", "restart",
+                                                                            "auto_shutdown"):
                     await argus.jobs.cancel(j.id)
                     dropped.append(j.id)
+        needs = set(argus.cfg.power.pc_needs)
+        if not any(w["state"] == "online" and set(w["capabilities"]) & needs for w in await argus.registry.workers()):
+            if action == "cancel":  # the PC is off: nothing to cancel on it
+                return {"id": None, "created": False, "dropped": dropped}
+            raise HTTPException(status_code=409, detail="the PC is off")
         job_id, created = await argus.jobs.enqueue(
             "power", action, {"delay": argus.cfg.power.shutdown_delay_seconds}, needs=["desktop"], priority=100,
             dedupe_key=f"power:{action}", source="helios")

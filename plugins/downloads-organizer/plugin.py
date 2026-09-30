@@ -467,22 +467,20 @@ def take(ctx: Context):
     root = downloads(ctx)
     inp = ctx.input
 
-    def save():
-        saved = []
-        for f in inp.get("files") or []:
-            if ctx.shared is None:
-                raise PermanentError("no shared files available to this job")
-            saved.append(ctx.files.write_bytes(root / f["name"], ctx.shared(f["name"])))
-        if inp.get("url"):
-            name = _title_name(inp.get("title") or "", urllib.parse.urlparse(inp["url"]).hostname or "link")
-            saved.append(ctx.files.write_text(root / f"{name}.url", f"[InternetShortcut]\r\nURL={inp['url']}\r\n"))
-        if inp.get("text") and not inp.get("url"):
-            name = _title_name(inp.get("title") or inp["text"], "shared text")
-            body = inp["text"] + (f"\n\n{inp['note']}" if inp.get("note") else "")
-            saved.append(ctx.files.write_text(root / f"{name}.txt", body))
-        return saved
-
-    saved = ctx.step("save", save)
+    if (inp.get("files") or []) and ctx.shared is None:
+        raise PermanentError("no shared files available to this job")
+    saved = []
+    for i, f in enumerate(inp.get("files") or []):  # one step per file: a retry doesn't save one twice
+        saved.append(ctx.step(f"save {i + 1}", lambda f=f: ctx.files.write_bytes(root / f["name"],
+                                                                                  ctx.shared(f["name"]))))
+    if inp.get("url"):
+        name = _title_name(inp.get("title") or "", urllib.parse.urlparse(inp["url"]).hostname or "link")
+        saved.append(ctx.step("save link", ctx.files.write_text, root / f"{name}.url",
+                              f"[InternetShortcut]\r\nURL={inp['url']}\r\n"))
+    if inp.get("text") and not inp.get("url"):
+        name = _title_name(inp.get("title") or inp["text"], "shared text")
+        body = inp["text"] + (f"\n\n{inp['note']}" if inp.get("note") else "")
+        saved.append(ctx.step("save text", ctx.files.write_text, root / f"{name}.txt", body))
     if ctx.dry_run:
         return {"saved": saved, "mode": "dry-run: nothing was saved or sorted", "dry_run": True}
 

@@ -56,8 +56,12 @@ class Child:
         out = open(logs / f"{self.name}.out", "w")  # noqa: SIM115 - handed to the child
         err = open(logs / f"{self.name}-crash.log", "w")  # noqa: SIM115
         flags = subprocess.CREATE_NO_WINDOW if WIN else 0  # type: ignore[attr-defined]
-        self.proc = subprocess.Popen([sys.executable, *self.args], cwd=ROOT, stdout=out, stderr=err,
-                                     creationflags=flags)
+        try:
+            self.proc = subprocess.Popen([sys.executable, *self.args], cwd=ROOT, stdout=out, stderr=err,
+                                         creationflags=flags)
+        finally:  # the child has its own handles now
+            out.close()
+            err.close()
         self.started = time.monotonic()
         log.info("started", extra={"proc": self.name, "pid": self.proc.pid})
 
@@ -125,14 +129,18 @@ def main(argv: list[str] | None = None) -> int:
     commit, deps = head(), deps_hash()
     log.info("supervising", extra={"commit": (commit or "?")[:10], "processes": [c.name for c in children]})
     for c in children:
-        c.start()
+        c.check()
         time.sleep(2)  # argusd first
     changed_at: float | None = None
     last_look = time.monotonic()
     try:
         while True:
             for c in children:
-                c.check()
+                try:
+                    c.check()
+                except OSError as e:  # could not start it: try again later
+                    log.error("could not start", extra={"proc": c.name, "error": str(e)})
+                    c.next_start = time.monotonic() + 60
             if time.monotonic() - last_look >= args.interval:
                 last_look = time.monotonic()
                 now_commit = head()
@@ -145,14 +153,23 @@ def main(argv: list[str] | None = None) -> int:
                         log.info("new code; restarting", extra={"from": commit[:10], "to": now_commit[:10]})
                         if deps_hash() != deps:
                             log.info("dependencies changed; updating packages")
-                            subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-e", ".[dev,plugins]"],
-                                           cwd=ROOT, capture_output=True, timeout=900)
+                            try:
+                                r = subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-e",
+                                                    ".[dev,plugins]"], cwd=ROOT, capture_output=True, text=True,
+                                                   timeout=900)
+                                if r.returncode:
+                                    log.error("package update failed", extra={"error": r.stderr[-500:]})
+                            except (OSError, subprocess.SubprocessError) as e:
+                                log.error("package update failed", extra={"error": str(e)})
                             deps = deps_hash()
                         for c in reversed(children):
                             c.stop()
                         for c in children:
-                            c.fails, c.next_start = 0, 0.0
-                            c.start()
+                            c.fails, c.next_start, c.proc = 0, 0.0, None
+                            try:
+                                c.start()
+                            except OSError as e:
+                                log.error("could not start", extra={"proc": c.name, "error": str(e)})
                             time.sleep(2)
                         commit, changed_at = now_commit, None
             time.sleep(2)

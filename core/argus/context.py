@@ -91,6 +91,8 @@ class Argus:
         slot = datetime.fromtimestamp(now).replace(hour=h, minute=m, second=0, microsecond=0).timestamp()
         if now < slot:
             slot -= 86400
+        if self.last_backup and self.last_backup.get("at", 0) >= slot:
+            return False  # tried for this slot already (a failed one is not retried until the next)
         latest = self.backups.list()
         return not latest or latest[0]["made_at"] < slot
 
@@ -112,7 +114,8 @@ class Argus:
             insert_event(conn, now, kind, src="argus", dst="backup", data=res)
             if not res["ok"]:
                 add_message(conn, now, "ntfy", ntfy_message("Argus backup failed", str(res.get("problem"))[:300],
-                                                            priority="high", tags=["warning"]))
+                                                            priority="high", tags=["warning"]),
+                            dedupe_key=f"backup-failed:{time.strftime('%Y%m%d', time.localtime(now))}")
 
         await self.store.write(fn)
         if not res["ok"]:

@@ -42,7 +42,7 @@ export function PowerControls({ events, onSelect, compact = false }: { events: A
     try {
       const r = await api<{ id?: string; sent?: boolean }>(`/power/${a}`, { method: "POST" });
       setMsg(a === "wake" ? "Wake signal sent. The PC takes about a minute to come online."
-        : a === "cancel" ? "Cancelled." : p.pc_online ? `Sent to the PC.` : "Queued: runs when the PC is online.");
+        : a === "cancel" ? "Cancelled." : "Sent to the PC.");
       if (r.id && !compact) onSelect({ type: "job", id: r.id });
       reload();
     } catch (e) {

@@ -31,21 +31,27 @@ class Backups:
         self.dir.mkdir(parents=True, exist_ok=True)
         stamp = datetime.fromtimestamp(self.clock()).strftime("%Y%m%d-%H%M%S")
         target = self.dir / f"argus-{stamp}.db"
-        src = sqlite3.connect(self.db)
+        part = self.dir / f"argus-{stamp}.part"  # renamed to .db only once it passed its check
         try:
-            dst = sqlite3.connect(target)
+            src = sqlite3.connect(self.db)
             try:
-                src.backup(dst)
+                dst = sqlite3.connect(part)
+                try:
+                    src.backup(dst)
+                finally:
+                    dst.close()
             finally:
-                dst.close()
-        finally:
-            src.close()
-        check = self.verify(target)
+                src.close()
+        except BaseException:
+            part.unlink(missing_ok=True)
+            raise
+        check = self.verify(part)
         if not check["ok"]:
             bad = target.with_suffix(".bad")
-            target.replace(bad)
+            part.replace(bad)
             log.error("backup failed its check", extra={"file": bad.name, "problem": check.get("problem")})
             return {"ok": False, "file": bad.name, **check}
+        part.replace(target)
         removed = self.prune()
         log.info("backup made", extra={"file": target.name, "size": target.stat().st_size, "jobs": check["jobs"]})
         return {"ok": True, "file": target.name, "size": target.stat().st_size, "removed": removed, **check}

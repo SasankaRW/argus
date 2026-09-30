@@ -32,6 +32,7 @@ from .registry import _upsert_component
 
 log = logging.getLogger("argus.power")
 
+STALE_POWER_JOB = 300  # seconds a power button's job may wait for an offline PC
 WAKE_REPEAT = 600.0
 
 
@@ -55,10 +56,12 @@ class PowerManager:
         self.jobs = None  # JobStore, set by Argus: the shutdown is a job for the PC's worker
 
     def _pc_work(self, conn: sqlite3.Connection) -> tuple[int, int]:
-        """(PC jobs waiting to start, PC jobs running)."""
+        """(PC jobs waiting to start, PC jobs running). The power buttons' own jobs don't count: a queued shutdown
+        must not wake the PC or keep it "busy"."""
         needs = self.cfg.power.pc_needs
         waiting = running = 0
-        for r in conn.execute("SELECT state, needs FROM jobs WHERE state IN ('queued','retry','leased','running')"):
+        for r in conn.execute("SELECT state, needs FROM jobs WHERE state IN ('queued','retry','leased','running') "
+                              "AND plugin != 'power'"):
             if set(json.loads(r["needs"])) & set(needs):
                 if r["state"] in ("leased", "running"):
                     running += 1
@@ -98,6 +101,10 @@ class PowerManager:
                 insert_event(conn, now, "power.pc_online", src="pc", dst="power",
                              data={"woken_by_argus": self.by_argus})
             self.was_online = online
+            if not online and self.jobs is not None:  # a power job for a PC that went off must not run at next boot
+                for r in conn.execute("SELECT id FROM jobs WHERE plugin = 'power' AND state IN ('queued','retry') "
+                                      "AND created_at < ?", (now - STALE_POWER_JOB,)):
+                    self.jobs.cancel_in(conn, r["id"], "the PC went off before it ran")
             if waiting and not online and now - self.last_wake >= WAKE_REPEAT:
                 self.last_wake = now
                 if real and self.cfg.power.pc_mac:

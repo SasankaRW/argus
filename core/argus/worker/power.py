@@ -7,6 +7,7 @@ wait `power.shutdown_delay_seconds` (Windows shows its own warning), so "cancel"
 from __future__ import annotations
 
 import platform
+import re
 import subprocess
 
 from .workflows import Context, PermanentError, workflow
@@ -86,20 +87,45 @@ def cancel(ctx: Context):
     return {"pc": ctx.step("cancel", go)}
 
 
+def parse_quser(text: str) -> float | None:
+    """The shortest idle time (seconds) of the signed-in sessions in `quser` output; inf when nobody is signed in,
+    None when a session's idle time can't be read (then the caller must not shut down)."""
+    best = float("inf")
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    for ln in lines[1:]:  # first line: the headers
+        parts = ln.lstrip(">").split()
+        # USERNAME [SESSIONNAME] ID STATE IDLE-TIME LOGON-DATE LOGON-TIME...: the idle time follows the state
+        state_i = next((i for i, p in enumerate(parts) if p.lower() in ("active", "disc")), None)
+        if state_i is None or state_i + 1 >= len(parts):
+            return None
+        if parts[state_i].lower() != "active":
+            continue  # disconnected: nobody at the screen
+        raw = parts[state_i + 1]
+        if raw in (".", "none"):
+            return 0.0
+        m = re.fullmatch(r"(?:(\d+)\+)?(?:(\d+):)?(\d+)", raw)
+        if not m:
+            return None
+        days, hours, mins = (int(g) if g else 0 for g in m.groups())
+        best = min(best, ((days * 24 + hours) * 60 + mins) * 60.0)
+    return best
+
+
 def input_idle_seconds() -> float | None:
-    """How long nobody touched the keyboard or mouse (Windows), or None when unknown."""
+    """How long nobody touched the keyboard or mouse, or None when unknown (then no automatic shutdown).
+
+    Windows: from `quser` (works when the worker runs at boot in session 0, where GetLastInputInfo would only see
+    that session); inf when nobody is signed in. Elsewhere: unknown.
+    """
     if not WIN:
         return None
-    import ctypes
-
-    class LASTINPUTINFO(ctypes.Structure):
-        _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
-
-    lii = LASTINPUTINFO()
-    lii.cbSize = ctypes.sizeof(LASTINPUTINFO)
-    if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(lii)):  # type: ignore[attr-defined]
+    try:
+        p = subprocess.run(["quser"], capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
         return None
-    return (ctypes.windll.kernel32.GetTickCount() - lii.dwTime) / 1000.0  # type: ignore[attr-defined]
+    if p.returncode != 0:  # quser exits 1 with "No User exists for *" when nobody is signed in
+        return float("inf") if "no user exists" in (p.stderr + p.stdout).lower() else None
+    return parse_quser(p.stdout)
 
 
 @workflow(PLUGIN, "auto_shutdown")
@@ -109,13 +135,15 @@ def auto_shutdown(ctx: Context):
 
     def go():
         idle = input_idle_seconds()
-        if idle is not None and idle < need:
+        if idle is None:
+            return {"skipped": "can't tell whether someone is using the PC"}
+        if idle < need:
             return {"skipped": f"someone used the PC {round(idle / 60)} min ago"}
         d = _delay(ctx)
         if WIN:
             _run(["shutdown", "/s", "/t", str(d), "/c", "Argus: idle, shutting down (cancel in Helios)"])
         else:
             _run(["shutdown", "-h", f"+{max(1, round(d / 60))}"])
-        return {"pc": f"shutting down in {d} s", "input_idle_seconds": idle}
+        return {"pc": f"shutting down in {d} s", "input_idle_seconds": None if idle == float("inf") else idle}
 
     return ctx.step("shutdown", go)

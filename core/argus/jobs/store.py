@@ -516,14 +516,15 @@ class JobStore:
 
         return await self.store.write(fn)
 
-    async def cancel(self, job_id: str, reason: str = "cancelled") -> Job:
-        def fn(conn: sqlite3.Connection) -> Job:
-            now = self.clock()
-            job = self._get(conn, job_id)
-            return self._move(conn, job, S.CANCELLED, now, lease_owner=None, lease_until=None,
-                              finished_at=now, error=reason, event_data={"reason": reason})
+    def cancel_in(self, conn: sqlite3.Connection, job_id: str, reason: str = "cancelled") -> Job:
+        """`cancel` inside a caller's write transaction."""
+        now = self.clock()
+        job = self._get(conn, job_id)
+        return self._move(conn, job, S.CANCELLED, now, lease_owner=None, lease_until=None,
+                          finished_at=now, error=reason, event_data={"reason": reason})
 
-        return await self.store.write(fn)
+    async def cancel(self, job_id: str, reason: str = "cancelled") -> Job:
+        return await self.store.write(lambda conn: self.cancel_in(conn, job_id, reason))
 
     async def expire_leases(self) -> list[str]:
         """Watchdog: jobs whose worker stopped heartbeating go back to the queue (or dead-letter)."""
