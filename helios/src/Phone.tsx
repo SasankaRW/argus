@@ -1,7 +1,7 @@
-import { ReactNode, useEffect, useState } from "react";
-import { api, Approval, ArgusEvent, Job, Status, useTimeSaved } from "./api";
+import { ReactNode, useEffect, useRef, useState } from "react";
+import { api, Approval, ArgusEvent, Job, Status } from "./api";
 import { ApprovalCard } from "./Inspector";
-import { clock, tone } from "./format";
+import { clock } from "./format";
 
 // The phone's Helios: terminal widgets. Each tile is a small terminal window ("~/jobs", "~/ari") on a near-black
 // ground with soft colour glows; a floating pill tab bar at the thumb.
@@ -20,6 +20,53 @@ export function Tile({ path, dot = "var(--ok)", span = false, alert = false, chi
       </header>
       <div className="tt-b">{children}</div>
     </section>
+  );
+}
+
+type LogLine = { source: string; ts: string | null; level: string; msg: string };
+
+// A live log window: the newest lines from Argus's log files (the Logs page, in small), stuck to the bottom.
+export function MiniLog({ n = 40 }: { n?: number }) {
+  const [lines, setLines] = useState<LogLine[]>([]);
+  const offsets = useRef<Record<string, number>>({});
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    let stop = false;
+    const tick = async () => {
+      try {
+        const list = await api<{ name: string }[]>("/logs");
+        const fresh: LogLine[] = [];
+        for (const s of list) {
+          const after = offsets.current[s.name];
+          const r = await api<{ entries: LogLine[]; offset: number }>(
+            `/logs/${encodeURIComponent(s.name)}${after === undefined ? `?lines=${n}` : `?after=${after}`}`);
+          offsets.current[s.name] = r.offset;
+          fresh.push(...r.entries);
+        }
+        if (!stop && fresh.length) {
+          setLines((old) => {
+            const all = [...old, ...fresh];
+            if (!old.length) all.sort((a, b) => (a.ts ? Date.parse(a.ts) : 0) - (b.ts ? Date.parse(b.ts) : 0));
+            return all.slice(-n);
+          });
+        }
+      } catch { /* argusd restarting */ }
+    };
+    tick();
+    const i = window.setInterval(tick, 3000);
+    return () => { stop = true; window.clearInterval(i); };
+  }, [n]);
+  useEffect(() => { if (box.current) box.current.scrollTop = box.current.scrollHeight; }, [lines]);
+  const lvl = (l: string) => (/error|critical|fatal/.test(l) ? "bad" : /warn/.test(l) ? "warn" : "");
+  return (
+    <div ref={box} className="minilog">
+      {lines.length === 0 && <div className="dim">no logs yet</div>}
+      {lines.map((e, i) => (
+        <div key={i} className={lvl(e.level)}>
+          <span className="dim">{e.ts ? e.ts.slice(11, 19) : "--:--:--"}</span> <span className="src">{e.source.replace(/\.log$/, "")}</span> {e.msg}
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -64,7 +111,6 @@ export function PhoneHome({ status, events, onSelect, onAri, onOpen, onInbox, on
 }) {
   const [q, setQ] = useState("");
   const d = useHomeData(events);
-  const saved = useTimeSaved();
   const [busy, setBusy] = useState<string | null>(null);
   const online = status?.workers.filter((w) => w.state === "online") ?? [];
   const first = d.pending[0];
@@ -73,13 +119,11 @@ export function PhoneHome({ status, events, onSelect, onAri, onOpen, onInbox, on
     try { await api(`/approvals/${id}/decide`, { method: "POST", body: JSON.stringify({ answer, by: "phone" }) }); await d.reload(); }
     finally { setBusy(null); }
   };
-  const tail = events.filter((e) => /^(job\.(succeeded|dead|queued)|model\.escalated|approval\.|step\.failed)/.test(e.kind)).slice(-5).reverse();
-  const mark = (k: string) => (k.endsWith("succeeded") ? "✓" : k.includes("escalated") ? "↑" : k.startsWith("approval") ? "?" : k.includes("dead") || k.includes("failed") ? "✗" : "•");
   return (
     <div className="tgrid">
       <Tile path="~/ari" dot="var(--amber)" span>
         <p className="ari-last">› {d.lastAri ?? "hi, I'm Ari. Ask me anything, or tell me what to do."}</p>
-        <div className="prompt">
+        <div className="tprompt">
           {onAsk ? (
             <form className="prompt-in" onSubmit={(e) => { e.preventDefault(); if (q.trim()) { onAsk(q.trim()); setQ(""); } }}>
               <span className="caret">›</span>
@@ -87,7 +131,7 @@ export function PhoneHome({ status, events, onSelect, onAri, onOpen, onInbox, on
             </form>
           ) : (
             <button type="button" className="prompt-in" onClick={() => onAri(false)}>
-              <span className="caret">›</span><span className="ph">ask ari…</span><span className="cur" aria-hidden="true" />
+              <span className="caret">›</span><span className="tph">ask ari…</span><span className="cur" aria-hidden="true" />
             </button>
           )}
           <button type="button" className="prompt-mic" aria-label="Talk to Ari" onClick={() => onAri(true)}>
@@ -116,11 +160,6 @@ export function PhoneHome({ status, events, onSelect, onAri, onOpen, onInbox, on
         <Meter value={d.today ? d.ok / d.today : 0} />
       </Tile>
 
-      <Tile path="~/saved" dot="var(--flow)">
-        <div className="big flow">{saved?.seconds ? saved.text.replace(/\s/g, "") : "—"}</div>
-        <div className="sub">this week</div>
-        {saved?.plugins[0] && <div className="sub dim">top: {saved.plugins[0].plugin.replace(/-.*/, "")}</div>}
-      </Tile>
 
       {d.running.length > 0 && (
         <Tile path="~/running" dot="var(--flow)" span>
@@ -139,13 +178,8 @@ export function PhoneHome({ status, events, onSelect, onAri, onOpen, onInbox, on
         <div className="sub">queue <Meter value={Math.min(1, d.queued / 10)} n={6} color="var(--amber)" /> {d.queued}</div>
       </Tile>
 
-      <Tile path="~/tail -f" dot="var(--flow)" onOpen={() => onOpen("logs")}>
-        <div className="tail">
-          {tail.length === 0 && <div className="dim">quiet</div>}
-          {tail.map((e) => (
-            <div key={e.seq} className={tone(e.kind)}><span>{mark(e.kind)}</span> {(e.to ?? e.from ?? e.kind).replace(/-.*/, "")}</div>
-          ))}
-        </div>
+      <Tile path="~/logs" dot="var(--flow)" span onOpen={() => onOpen("logs")}>
+        <MiniLog />
       </Tile>
     </div>
   );

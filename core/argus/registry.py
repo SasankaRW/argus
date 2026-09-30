@@ -56,6 +56,36 @@ def _decode_worker(r: sqlite3.Row) -> dict[str, Any]:
     return d
 
 
+def _aliases(workers: dict[str, dict[str, Any]]) -> dict[str, str]:
+    """Names that are really another box on the map: a worker's fast lane ("<id>-now", a thread of the same worker
+    for Ari) and "pc" in power events (the PC's worker, when there is exactly one desktop worker)."""
+    alias = {w: w[:-4] for w in workers if w.endswith("-now") and w[:-4] in workers}
+    desktops = [w for w, d in workers.items() if w not in alias and "desktop" in d["capabilities"]]
+    if len(desktops) == 1:
+        alias["pc"] = desktops[0]
+    return alias
+
+
+def _fold_edges(edges: list[dict[str, Any]], alias: dict[str, str]) -> list[dict[str, Any]]:
+    """Lines with an aliased end drawn to the real box; lines that now join the same two boxes become one."""
+    if not alias:
+        return edges
+    out: dict[tuple[str, str], dict[str, Any]] = {}
+    for e in edges:
+        src, dst = alias.get(e["src"], e["src"]), alias.get(e["dst"], e["dst"])
+        if src == dst:
+            continue
+        have = out.get((src, dst))
+        if have is None:
+            out[(src, dst)] = {**e, "src": src, "dst": dst}
+            continue
+        have["count"] += e["count"]
+        have["first_seen"] = min(have["first_seen"], e["first_seen"])
+        if e["last_seen"] > have["last_seen"]:
+            have["last_seen"], have["last_kind"] = e["last_seen"], e["last_kind"]
+    return sorted(out.values(), key=lambda e: (e["src"], e["dst"]))
+
+
 class Registry:
     def __init__(self, store: Store, clock: Callable[[], float] = time.time):
         self.store = store
@@ -158,6 +188,9 @@ class Registry:
                 models = {r["tier"].lower(): dict(r) for r in conn.execute("SELECT * FROM model_state").fetchall()}
             finally:
                 conn.execute("COMMIT")
+            alias = _aliases(workers)
+            comps = [c for c in comps if c["id"] not in alias]
+            edges = _fold_edges(edges, alias)
             known = {c["id"] for c in comps}
             nodes = []
             for c in comps:
@@ -165,6 +198,9 @@ class Registry:
                         "meta": c["meta"], "first_seen": c["first_seen"]}
                 if c["kind"] == "worker" and c["id"] in workers:
                     node["state"] = workers[c["id"]]["state"]
+                    lane = workers.get(f"{c['id']}-now")
+                    if lane:
+                        node["fast_lane"] = lane["state"]
                 if c["kind"] == "plugin":
                     node["jobs"] = {"active": active.get(c["id"], 0), "queued": queued.get(c["id"], 0),
                                     "waiting": waiting.get(c["id"], 0)}

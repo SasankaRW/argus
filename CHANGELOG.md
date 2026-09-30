@@ -5,6 +5,10 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Helios (PC): every page gets the terminal-widgets look (rounded windows with "● ~/name" titles, mono type, soft glows, stat tiles); the header shows `sas@argus:~/page$`; the inspector opens only when you pick something, so pages use the full width.
+- Helios: the home "tail" tile is now a live log view (~/logs); the "saved" tile and stat are gone; the tile strip under the map fills the width; map "new" badges only for parts added in the last day.
+- Map: one box for the PC: the worker's fast lane and "pc" in power events are drawn as the PC's worker.
+- Fix: the header's ask box no longer picks up the phone prompt's style (the stray amber capsule).
 - Helios (PC): two home layouts, switched top right and remembered per browser: "desk" (the live map as the main focus with terminal tiles under it: Ari prompt, awaiting input, jobs, saved, PC, tail) and "command" (the map fills the screen, cards in the corners, one command bar: ask Ari or type /queue, /plugins…; Ctrl+K or / to jump to it). The map zooms in further to fill its space.
 - Ari: the listener names the microphone it uses in logs\ari.log.
 - Ari: "Hey Ari" on the PC no longer freezes while starting: once Whisper can't use the GPU, every model goes straight to the CPU (a second GPU try hung), and the GPU check gives up after 30 s.
