@@ -534,18 +534,20 @@ main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .aripill-wrap.open { transform: translate(-50%, 0) scale(1); opacity: 1; filter: none; pointer-events: auto; }
 .shell .aripill-wrap { top: 6px; }
 .aripill { --c: var(--amber); --c-soft: rgba(245, 165, 36, .55); position: relative; box-sizing: border-box; min-width: 58px; min-height: 48px; border-radius: 999px;
-  background: radial-gradient(120% 140% at 50% 0%, #15181e 0%, #07080a 60%, #040405 100%);
-  box-shadow: 0 18px 44px -12px rgba(0, 0, 0, .75), 0 4px 14px rgba(0, 0, 0, .35);
+  background: radial-gradient(90% 160% at 50% 115%, color-mix(in srgb, var(--c) 14%, #07080a) 0%, #07080a 65%),
+    #07080a;
+  background-blend-mode: normal;
+  box-shadow: 0 22px 50px -12px rgba(0, 0, 0, .7), 0 4px 14px rgba(0, 0, 0, .3);
   transition: width .6s cubic-bezier(.22, 1, .36, 1), height .55s cubic-bezier(.22, 1, .36, 1), --c .6s; }
 .aripill.ph-listening { --c: var(--flow); --c-soft: rgba(76, 194, 255, .55); }
 .aripill.ph-speaking, .aripill.ph-done { --c: var(--ok); --c-soft: rgba(61, 214, 140, .5); }
 /* the light around the edge: a blurred halo behind the capsule, so the edge glows instead of having a line */
 .ap-light { position: absolute; inset: -1px; border-radius: inherit; pointer-events: none; z-index: -1; transition: opacity .6s var(--ease); }
-.look-pulse .ap-light { box-shadow: 0 0 4px var(--c-soft), 0 0 14px 1px var(--c-soft), 0 0 36px 3px color-mix(in srgb, var(--c) 28%, transparent); opacity: .5; }
+.look-pulse .ap-light { box-shadow: 0 0 12px 1px var(--c-soft), 0 0 32px 4px color-mix(in srgb, var(--c) 45%, transparent), 0 0 70px 14px color-mix(in srgb, var(--c) 24%, transparent); opacity: .55; }
 .look-pulse.voice .ap-light { animation: ap-voice .95s ease-in-out infinite; }
 .look-pulse.ph-speaking .ap-light { animation-duration: .75s; }
 .look-pulse.busy .ap-light { animation: ap-slow 2.2s ease-in-out infinite; }
-.look-comet .ap-light { inset: -3px; padding: 3px; filter: blur(5px); opacity: .9;
+.look-comet .ap-light { inset: -8px; padding: 8px; filter: blur(13px); opacity: 1;
   background: conic-gradient(from var(--ap-a), transparent 0 55%, color-mix(in srgb, var(--c) 35%, transparent) 72%, var(--c) 88%, #fff 95%, transparent 99%);
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude;
   animation: ap-turn 2.2s linear infinite; }
@@ -553,11 +555,11 @@ main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .look-comet.ph-working .ap-light { animation-duration: 1.1s; }
 .look-comet.ph-done .ap-light { opacity: .45; animation-duration: 4s; }
 .look-comet::after { content: ""; position: absolute; inset: -1px; border-radius: inherit; z-index: -2; pointer-events: none;
-  box-shadow: 0 0 22px -2px color-mix(in srgb, var(--c) 35%, transparent); }
+  box-shadow: 0 0 34px 2px color-mix(in srgb, var(--c) 32%, transparent); }
 /* a faint light inside the edge, top brighter, so it reads as smooth glass rather than a flat shape */
 .ap-clip { position: absolute; inset: 0; border-radius: inherit; overflow: hidden; }
 .ap-inner { position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, .06), inset 0 0 14px color-mix(in srgb, var(--c) 16%, transparent); transition: box-shadow .6s; }
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, .06), inset 0 0 24px color-mix(in srgb, var(--c) 24%, transparent); transition: box-shadow .6s; }
 .ap-body { position: absolute; left: 9px; top: 8px; display: flex; align-items: center; gap: 6px; width: max-content; max-width: min(520px, calc(100vw - 40px)); }
 .ap-main { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 0 12px 0 0; border: 0; background: none; color: var(--tx); cursor: pointer; text-align: left; font: inherit; }
 .ap-orb { position: relative; flex: none; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center;
