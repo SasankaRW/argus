@@ -254,6 +254,7 @@ function Learning({ d, reload }: { d: Detail; reload: () => void }) {
             <span className="ok"><b>{p.correct}</b> correct</span><span className="bad"><b>{p.wrong}</b> wrong</span>
             {p.to_review > 0 && <span className="warn"><b>{p.to_review}</b> to review</span>}
           </div>
+          <Tests pkey={p.key} tests={p.correct} />
           {p.lessons.map((l) => (
             <div key={l.id} className={`lesson ${l.state}`}>
               <div className="lesson-h">
@@ -275,4 +276,72 @@ function Learning({ d, reload }: { d: Detail; reload: () => void }) {
       {msg && <div className="tip">{msg}</div>}
     </div>
   );
+}
+
+type EvalRun = { id: number; passed: number; total: number; tier: string | null; why: string; job_id: string | null; at: number };
+type TestSample = { id: number; input: unknown; output: unknown; correction: unknown; verdict: string | null };
+
+// A playbook's tests: answers you marked Correct (else ones the small model got right), replayed on the first local
+// tier with the lessons in use. "Run tests now" and the pass-rate history.
+function Tests({ pkey, tests }: { pkey: string; tests: number }) {
+  const [d, setD] = useState<{ tests: TestSample[]; runs: EvalRun[] } | null>(null);
+  const [job, setJob] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const load = () => api<{ tests: TestSample[]; runs: EvalRun[] }>(`/guidance/${encodeURIComponent(pkey)}/evals`).then(setD).catch(() => {});
+  useEffect(() => { load(); }, [pkey]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {  // a run in progress: look again every 2 s
+    if (!job) return;
+    const t = setInterval(async () => {
+      const j = await api<{ state: string; error: string | null }>(`/jobs/${job}`).catch(() => null);
+      if (j && ["succeeded", "dead", "cancelled"].includes(j.state)) {
+        setJob(null); setNote(j.state === "succeeded" ? null : `the run failed: ${(j.error ?? "").split("\n")[0]}`); load();
+      }
+    }, 2000);
+    return () => clearInterval(t);
+  }, [job]); // eslint-disable-line react-hooks/exhaustive-deps
+  const run = async () => {
+    setNote(null);
+    const r = await api<{ job_id: string | null; note?: string; tests?: number }>(`/guidance/${encodeURIComponent(pkey)}/evals`, { method: "POST" }).catch((e) => ({ job_id: null, note: String(e) }));
+    if (r.job_id) setJob(r.job_id); else setNote(r.note ?? "could not start");
+  };
+  const remove = async (t: TestSample) => {
+    await api(`/samples/${t.id}/verdict`, { method: "POST", body: JSON.stringify({ verdict: null }) }).catch(() => {});
+    load();
+  };
+  const last = d?.runs[d.runs.length - 1];
+  const pct = (r: EvalRun) => (r.total ? Math.round((r.passed / r.total) * 100) : 0);
+  return (
+    <div className="tests">
+      <div className="tests-h">
+        <span className="sect-i"># tests</span>
+        {last ? <span className={`mono ${pct(last) >= 90 ? "ok" : pct(last) >= 60 ? "warn" : "bad"}`}>{last.passed}/{last.total} passed</span>
+          : <span className="muted">{tests ? "not run yet" : "none yet: mark answers Correct on the plugin's runs"}</span>}
+        {last && <span className="muted mono">{last.tier ?? ""} · {last.why === "review" ? "nightly review" : "run by you"} · {new Date(last.at * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short" })}</span>}
+        <span className="grow" />
+        {d && d.tests.length > 0 && <button type="button" className="btn" onClick={() => setOpen(!open)}>{open ? "hide" : "show"} {d.tests.length} tests</button>}
+        <button type="button" className="primary" disabled={!!job || !d?.tests.length} onClick={run}>{job ? "running…" : "run tests now"}</button>
+      </div>
+      {d && d.runs.length > 1 && (
+        <div className="evalruns" aria-label="pass rate of the last runs">
+          {d.runs.map((r) => <i key={r.id} title={`${r.passed}/${r.total} · ${new Date(r.at * 1000).toLocaleString()}`}
+            className={pct(r) >= 90 ? "ok" : pct(r) >= 60 ? "warn" : "bad"} style={{ height: `${Math.max(6, pct(r))}%` }} />)}
+        </div>
+      )}
+      {note && <div className="tip bad">{note}</div>}
+      {open && d?.tests.map((t) => (
+        <div key={t.id} className="test-row">
+          <span className="mono test-in">{short(t.input)}</span>
+          <span className="muted">→</span>
+          <span className="mono test-out">{short(t.verdict === "correct" && t.correction != null ? t.correction : t.output)}</span>
+          {t.verdict === "correct" ? <button type="button" className="linkbtn" onClick={() => remove(t)}>remove</button> : <span className="muted">auto</span>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function short(v: unknown): string {
+  const s = typeof v === "string" ? v : JSON.stringify(v);
+  return s.length > 90 ? s.slice(0, 88) + "…" : s;
 }

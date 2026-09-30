@@ -298,6 +298,7 @@ function AriSettings() {
           {vs.hearing === "whisper" && <span className="muted">{vs.whisper_ready ? "Whisper hears you" : "Whisper: the PC is off, the browser hears you"}</span>}
         </div>
       </section>
+      <IslandSettings />
       <section className="panel">
         <div className="ph"><span className="pt">ari/schedules</span><span className="muted">{mine.length}</span></div>
         <div className="ari-sched">
@@ -369,5 +370,88 @@ function VoicePick() {
       <button type="button" className="btn" onClick={hear}>▶ hear it</button>
       {note && <span className="muted">{note}</span>}
     </span>
+  );
+}
+
+type IslandW = { id: string; on: boolean };
+type IslandS = { label: string; action: string };
+type IslandData = { widgets: IslandW[]; shortcuts: IslandS[]; widget_labels: Record<string, string>;
+  choices: { action: string; label: string; group: string }[]; max_shortcuts: number };
+
+// What Ari's island on the PC shows when you click it: widgets (on/off, order) and your shortcuts.
+function IslandSettings() {
+  const [d, setD] = useState<IslandData | null>(null);
+  const [w, setW] = useState<IslandW[]>([]);
+  const [sc, setSc] = useState<IslandS[]>([]);
+  const [msg, setMsg] = useState<string | null>(null);
+  const load = useCallback(() => {
+    api<IslandData>("/island").then((x) => { setD(x); setW(x.widgets); setSc(x.shortcuts); }).catch(() => {});
+  }, []);
+  useEffect(load, [load]);
+  if (!d) return null;
+  const dirty = JSON.stringify({ w, sc }) !== JSON.stringify({ w: d.widgets, sc: d.shortcuts });
+  const move = <T,>(list: T[], i: number, by: number) => {
+    const n = [...list];
+    const k = i + by;
+    if (k < 0 || k >= n.length) return list;
+    [n[i], n[k]] = [n[k], n[i]];
+    return n;
+  };
+  const save = async () => {
+    setMsg(null);
+    try {
+      const x = await api<IslandData>("/island", { method: "PUT", body: JSON.stringify({ widgets: w, shortcuts: sc }) });
+      setD(x); setW(x.widgets); setSc(x.shortcuts); setMsg("saved ✓");
+      setTimeout(() => setMsg(null), 2000);
+    } catch (e) { setMsg(e instanceof Error ? e.message : String(e)); }
+  };
+  const groups = [...new Set(d.choices.map((c) => c.group))];
+  return (
+    <section className="panel">
+      <div className="ph">
+        <span className="pt">ari/island</span>
+        <span className="muted">what the island on the PC shows when you click it</span>
+      </div>
+      <div className="isl-set">
+        <div className="sect">widgets</div>
+        {w.map((x, i) => (
+          <div key={x.id} className="isl-set-row">
+            <label><input type="checkbox" checked={x.on} onChange={(e) => setW(w.map((y) => (y.id === x.id ? { ...y, on: e.target.checked } : y)))} /> {d.widget_labels[x.id] ?? x.id}</label>
+            <span className="grow" />
+            <button type="button" className="btn mini" aria-label="Up" disabled={i === 0} onClick={() => setW(move(w, i, -1))}>↑</button>
+            <button type="button" className="btn mini" aria-label="Down" disabled={i === w.length - 1} onClick={() => setW(move(w, i, 1))}>↓</button>
+          </div>
+        ))}
+        <div className="sect">shortcuts <span className="muted">{sc.length}/{d.max_shortcuts}</span></div>
+        {sc.map((x, i) => {
+          const isUrl = x.action.startsWith("url:");
+          return (
+            <div key={i} className="isl-set-row sc">
+              <input value={x.label} maxLength={24} aria-label="Name" onChange={(e) => setSc(sc.map((y, k) => (k === i ? { ...y, label: e.target.value } : y)))} />
+              <select value={isUrl ? "url:" : x.action} aria-label="What it does"
+                onChange={(e) => setSc(sc.map((y, k) => (k === i ? { ...y, action: e.target.value === "url:" ? "url:https://" : e.target.value } : y)))}>
+                {!isUrl && !d.choices.some((c) => c.action === x.action) && <option value={x.action}>{x.action} (not found)</option>}
+                {groups.map((g) => (
+                  <optgroup key={g} label={g}>{d.choices.filter((c) => c.group === g).map((c) => <option key={c.action} value={c.action}>{c.label}</option>)}</optgroup>
+                ))}
+                <option value="url:">a website…</option>
+              </select>
+              {isUrl && <input value={x.action.slice(4)} aria-label="Website" placeholder="https://" onChange={(e) => setSc(sc.map((y, k) => (k === i ? { ...y, action: `url:${e.target.value}` } : y)))} />}
+              <button type="button" className="btn mini" aria-label="Up" disabled={i === 0} onClick={() => setSc(move(sc, i, -1))}>↑</button>
+              <button type="button" className="btn mini" aria-label="Down" disabled={i === sc.length - 1} onClick={() => setSc(move(sc, i, 1))}>↓</button>
+              <button type="button" className="btn mini" aria-label="Remove" onClick={() => setSc(sc.filter((_, k) => k !== i))}>×</button>
+            </div>
+          );
+        })}
+        <div className="isl-set-foot">
+          <button type="button" className="btn" disabled={sc.length >= d.max_shortcuts}
+            onClick={() => setSc([...sc, { label: "New shortcut", action: "show:inbox" }])}>+ shortcut</button>
+          <span className="grow" />
+          {msg && <span className={msg.endsWith("✓") ? "ok mono" : "bad"}>{msg}</span>}
+          <button type="button" className="btn" disabled={!dirty} onClick={() => { setW(d.widgets); setSc(d.shortcuts); }}>undo</button>
+          <button type="button" className="primary" disabled={!dirty} onClick={save}>save</button>
+        </div>
+      </div>
+    </section>
   );
 }

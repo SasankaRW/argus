@@ -66,6 +66,7 @@ from pydantic import BaseModel, Field
 from .. import ari as ari_mod
 from .. import ask as ask_mod
 from .. import daily, guidance, logview
+from .. import island as island_mod
 from .. import settings as settings_mod
 from ..approvals import ApprovalClosed, ApprovalError, ApprovalNotFound, BadToken
 from ..config import PRIORITY_INTERACTIVE
@@ -230,6 +231,10 @@ class SampleIn(BaseModel):
     output: Any = None
     tier: str | None = None
     escalated: bool = False
+
+
+class Replay(BaseModel):
+    tier: str = Field(min_length=1, max_length=20)
 
 
 class Verdict(BaseModel):
@@ -619,6 +624,51 @@ def create_app(argus: Argus) -> FastAPI:
             return {"job_id": job_id, "created": created}
         raise HTTPException(status_code=404, detail=f"unknown action {a!r}")
 
+    # -------------------------------------------------------------- Ari's island: widgets and shortcuts
+
+    async def island_choices() -> list[dict]:
+        acts = [{"action": a["id"], "label": a["label"], "group": "plugin buttons" if a["id"].startswith("run:")
+                 else "power" if a["id"].startswith("power:") else "phone"}
+                for a in ask_mod.catalog(argus.plugin_host) if not a["id"].startswith("show:")]
+        acts += [{"action": f"show:{k}", "label": f"Open {v}", "group": "Helios pages"}
+                 for k, v in island_mod.PAGES.items()]
+        acts += [{"action": f"routine:{n}", "label": n, "group": "routines"}
+                 for n in await argus.store.read(island_mod.routines)]
+        return acts
+
+    @app.get("/island", dependencies=guarded)
+    async def island_get() -> dict:
+        cfg = await argus.store.read(island_mod.load)
+        return {**cfg, "widget_labels": island_mod.WIDGETS, "choices": await island_choices(),
+                "max_shortcuts": island_mod.MAX_SHORTCUTS}
+
+    @app.put("/island", dependencies=guarded)
+    async def island_put(body: dict[str, Any]) -> dict:
+        actions = {c["action"] for c in await island_choices()}
+        try:
+            cfg = island_mod.check(body, actions)
+        except island_mod.IslandError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from None
+        await argus.store.write(lambda c: island_mod.save(c, cfg))
+        return await island_get()
+
+    @app.post("/island/run", dependencies=guarded)
+    async def island_run(body: AskDo) -> dict:
+        """A shortcut on the island: a routine or a website here, everything else as in Ask."""
+        a = body.action
+        if a.startswith("url:"):
+            if not re.fullmatch(r"url:https?://[^\s]{3,500}", a):
+                raise HTTPException(status_code=422, detail="not a website")
+            return {"open": a[4:]}
+        if a.startswith("routine:"):
+            try:
+                tool = tools.get("run_routine")
+                job_id, created = await tools.enqueue(tool, {"name": a[8:]}, parent=None, key=None)
+            except ToolError as e:
+                raise HTTPException(status_code=409, detail=str(e)) from None
+            return {"job_id": job_id, "created": created}
+        return await do_action(a)
+
     # -------------------------------------------------------------- find my phone
 
     async def ring_phone() -> dict:
@@ -698,6 +748,34 @@ def create_app(argus: Argus) -> FastAPI:
             raise HTTPException(status_code=404, detail="no such answer")
         return {"ok": True}
 
+    @app.get("/guidance/{key}/evals", dependencies=guarded)
+    async def playbook_evals(key: str) -> dict:
+        """A playbook's tests (the eval set) and the history of test runs (pass rate)."""
+        def fn(c):
+            return {"tests": [guidance.sample_json(r) for r in guidance.eval_samples(c, key)],
+                    "runs": guidance.runs(c, key)}
+
+        return await argus.store.read(fn)
+
+    @app.post("/guidance/{key}/evals", dependencies=guarded)
+    async def playbook_evals_run(key: str) -> dict:
+        """Run the tests now (the first local tier, with the lessons in force)."""
+        r = await argus.queue_evals(key)
+        if r is None:
+            raise HTTPException(status_code=404, detail="no such playbook")
+        return r
+
+    @app.post("/samples/{sample_id}/replay", dependencies=guarded)
+    async def sample_replay(sample_id: int, body: Replay) -> dict:
+        """Ask another tier the same question; the job's result has both answers."""
+        if body.tier not in argus.cfg.models.tiers:
+            have = ", ".join(argus.cfg.models.tiers)
+            raise HTTPException(status_code=422, detail=f"no tier {body.tier} (have {have})")
+        r = await argus.queue_replay(sample_id, body.tier)
+        if r is None:
+            raise HTTPException(status_code=404, detail="no such answer")
+        return r
+
     @app.post("/guidance/review", dependencies=guarded)
     async def guidance_review() -> dict:
         """Review now: Claude proposes lessons for playbooks with new mistakes; you approve them."""
@@ -730,6 +808,15 @@ def create_app(argus: Argus) -> FastAPI:
         "propose_lessons", "(guidance loop) keep proposed lessons for a playbook",
         {"key": {"type": "string"}, "text": {"type": "string"}, "evals": {"type": "object"},
          "job_id": {"type": "string"}}, ["key", "text"], fn=_propose, for_ari=False, for_mcp=False)
+    async def _record(x: dict) -> dict:
+        rid = await argus.store.write(lambda c: guidance.record_run(c, time.time(), str(x["key"]), x.get("run") or {},
+                                                                    str(x.get("why") or "manual"), x.get("job_id")))
+        return {"run": rid}
+
+    tools.builtin["record_evals"] = Tool(
+        "record_evals", "(guidance loop) keep the result of a test run",
+        {"key": {"type": "string"}, "run": {"type": "object"}, "why": {"type": "string"}, "job_id": {"type": "string"}},
+        ["key", "run"], fn=_record, for_ari=False, for_mcp=False)
     tools.builtin["decide_lessons"] = Tool(
         "decide_lessons", "(guidance loop) your answer to proposed lessons",
         {"lesson": {"type": "integer"}, "approve": {"type": "boolean"}}, ["lesson", "approve"], fn=_decide,

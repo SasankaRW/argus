@@ -84,9 +84,12 @@ def overview(conn: sqlite3.Connection, plugin: str | None = None) -> list[dict[s
         lessons = [{"id": r["id"], "text": r["text"], "state": r["state"], "evals": _p(r["evals"]),
                     "created_at": r["created_at"]} for r in conn.execute(
             "SELECT * FROM lessons WHERE playbook = ? AND state IN ('active', 'proposed') ORDER BY id", (p["key"],))]
+        run = conn.execute("SELECT passed, total, created_at FROM eval_runs WHERE playbook = ? ORDER BY id DESC"
+                           " LIMIT 1", (p["key"],)).fetchone()
         out.append({"key": p["key"], "plugin": p["plugin"], "name": p["name"], "samples": c[0] or 0,
                     "escalated": c[1] or 0, "correct": c[2] or 0, "wrong": c[3] or 0, "to_review": c[4] or 0,
-                    "lessons": lessons, "last_seen": p["last_seen"]})
+                    "lessons": lessons, "last_seen": p["last_seen"],
+                    "last_run": {"passed": run[0], "total": run[1], "at": run[2]} if run else None})
     return out
 
 
@@ -138,3 +141,34 @@ def decide(conn: sqlite3.Connection, lesson_id: int, approve: bool, now: float) 
 def drop_active(conn: sqlite3.Connection, lesson_id: int) -> bool:
     return conn.execute("UPDATE lessons SET state = 'replaced', decided_at = ? WHERE id = ? AND state = 'active'",
                         (time.time(), lesson_id)).rowcount > 0
+
+
+def eval_samples(conn: sqlite3.Connection, key: str, limit: int = 20) -> list[sqlite3.Row]:
+    """The eval set: answers you marked correct, else ones the first tier got right (newest first)."""
+    return conn.execute("SELECT * FROM samples WHERE playbook = ? AND (verdict = 'correct' OR (verdict IS NULL"
+                        " AND escalated = 0)) ORDER BY verdict IS NULL, id DESC LIMIT ?", (key, limit)).fetchall()
+
+
+def playbook_input(conn: sqlite3.Connection, key: str) -> dict[str, Any] | None:
+    """What a worker needs to replay this playbook: its text, schema, the lessons in force and the eval set."""
+    p = conn.execute("SELECT * FROM playbooks WHERE key = ?", (key,)).fetchone()
+    if p is None:
+        return None
+    current = conn.execute("SELECT text FROM lessons WHERE playbook = ? AND state = 'active'", (key,)).fetchone()
+    return {"key": key, "plugin": p["plugin"], "name": p["name"], "playbook": p["text"], "schema": _p(p["schema"]),
+            "lessons": current[0] if current else "", "evals": [sample_json(r) for r in eval_samples(conn, key)]}
+
+
+def record_run(conn: sqlite3.Connection, now: float, key: str, run: dict[str, Any], why: str,
+               job_id: str | None) -> int:
+    cur = conn.execute("INSERT INTO eval_runs (playbook, passed, total, failed, tier, why, job_id, created_at)"
+                       " VALUES (?,?,?,?,?,?,?,?)",
+                       (key, int(run.get("passed") or 0), int(run.get("total") or 0),
+                        json.dumps(run.get("failed") or []), run.get("tier"), why, job_id, now))
+    return int(cur.lastrowid or 0)
+
+
+def runs(conn: sqlite3.Connection, key: str, limit: int = 30) -> list[dict[str, Any]]:
+    rows = conn.execute("SELECT * FROM eval_runs WHERE playbook = ? ORDER BY id DESC LIMIT ?", (key, limit)).fetchall()
+    return [{"id": r["id"], "passed": r["passed"], "total": r["total"], "failed": _p(r["failed"]) or [],
+             "tier": r["tier"], "why": r["why"], "job_id": r["job_id"], "at": r["created_at"]} for r in reversed(rows)]
