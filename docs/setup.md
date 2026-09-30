@@ -244,6 +244,10 @@ daily cap.
   copied", "any action items in what I copied?". The screen is grabbed in memory (never saved) and looked at by
   the vision model (`V1`, e.g. `qwen2.5vl:7b`; without it, the text on screen via Tesseract goes to T1). Local
   models only: nothing on your screen or clipboard goes to Claude.
+- **Watchers** (`watchers`): "watch this page", "tell me when the RTX 5080 on <page> is under 280,000", "what am I
+  watching?", "stop watching the RTX". Checked every 3 hours (or **Check my watches now**); the phone hears when a
+  page changes or a price drops or goes under yours, with the page as the link. Name a product ("part") to watch
+  only that bit of the page. Public websites only (never the PC, the LAN or the tailnet); it only reads pages.
 
 They run in your logged-in Windows session (the worker `dev.ps1 up` starts has it; after the move to the laptop,
 `pc-worker.ps1 install` adds an "Argus desktop" task at logon). Like every plugin they start in dry-run: add them

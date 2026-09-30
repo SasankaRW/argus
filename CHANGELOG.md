@@ -5,6 +5,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Watchers (new plugin `watchers`): "watch this page", "tell me when <product> on <page> is under 280,000"; checked every 3 hours, the phone hears when a page changes or a price drops or goes under yours (once). A product name narrows the watch to that part of the page. `permissions.network: ["*"]` now means public websites only: never this machine, the LAN or the tailnet, also after a redirect.
 - Screen and clipboard (new plugin `screen`): "what's on my screen?" (the vision model V1 looks at a screen grab kept in memory, never saved; without V1 the text on screen goes to T1) and "summarise what I copied" (text or a copied picture). Local models only: nothing on the screen or clipboard goes to Claude.
 - Morning brief upgrade: today's weather first (`brief.weather`, Open-Meteo, no key; also in Helios > Settings); say "good morning" (or "brief me", "what's my day look like?") and Ari says the brief: weather, what waits for you, what failed overnight, today's first schedule. Ari's own chats no longer count as overnight jobs.
 - Laptop move prep: `pc-worker.ps1 check <laptop>` looks before the move (laptop answers, token accepted, the PC's Argus stopped, Ollama models, Fast Startup, the wired card's address); after the move a logon-time supervisor (`--desk-only`) keeps Ari's PC tools, "Hey Ari" and the island on the PC; the map shows the PC's session worker as the same PC.

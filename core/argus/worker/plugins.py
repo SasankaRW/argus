@@ -17,10 +17,12 @@ from __future__ import annotations
 
 import fnmatch
 import importlib.util
+import ipaddress
 import json
 import logging
 import os
 import shutil
+import socket
 import sys
 import time
 import urllib.error
@@ -251,21 +253,52 @@ class Files:
         self._trace("file.recycled", {"path": str(p), "dry_run": self.dry_run})
 
 
+def public_host(host: str) -> bool:
+    """True when every address the name resolves to is on the public internet (not this machine, the LAN, the
+    tailnet or link-local): what "*" in permissions.network allows."""
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except (OSError, UnicodeError):
+        return False
+    addrs = {i[4][0].split("%")[0] for i in infos}
+    return bool(addrs) and all(ipaddress.ip_address(a).is_global for a in addrs)
+
+
 class Http:
-    def __init__(self, plugin: str, hosts: list[str], trace, timeout: float = 15):
+    """ctx.http: only the hosts in permissions.network. "*" there means any public website (never this machine,
+    the LAN or the tailnet, also after a redirect), for plugins like watchers that visit pages you name."""
+
+    def __init__(self, plugin: str, hosts: list[str], trace, timeout: float = 15,
+                 is_public: Any = None):
         self.plugin = plugin
         self.hosts = {h.lower() for h in hosts}
+        self.any_public = "*" in self.hosts
         self._trace = trace
         self.timeout = timeout
+        self._public = is_public or (lambda host: public_host(host))  # looked up at call time (tests swap it)
+        http = self
+
+        class Redirects(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                http._check(newurl)  # a redirect must be allowed too
+                return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+        self._opener = urllib.request.build_opener(Redirects)
 
     def _check(self, url: str) -> str:
         u = urllib.parse.urlparse(url)
-        if u.scheme not in ("http", "https") or (u.hostname or "").lower() not in self.hosts:
-            raise PermissionDenied(f"{self.plugin} may not call {u.hostname!r} (add it under permissions.network)")
-        return url
+        host = (u.hostname or "").lower()
+        if u.scheme in ("http", "https") and host:
+            if host in self.hosts:
+                return url
+            if self.any_public and self._public(host):
+                return url
+        if self.any_public:
+            raise PermissionDenied(f"{self.plugin} may only visit public websites, not {host or url!r}")
+        raise PermissionDenied(f"{self.plugin} may not call {u.hostname!r} (add it under permissions.network)")
 
     def request(self, method: str, url: str, *, json_body: Any = None,
-                headers: dict | None = None) -> tuple[int, bytes]:
+                headers: dict | None = None, max_bytes: int | None = None) -> tuple[int, bytes]:
         self._check(url)
         data = json.dumps(json_body).encode() if json_body is not None else None
         req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
@@ -273,10 +306,10 @@ class Http:
             req.add_header("Content-Type", "application/json")
         self._trace("http.request", {"method": method, "host": urllib.parse.urlparse(url).hostname})
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as r:
-                return r.status, r.read()
+            with self._opener.open(req, timeout=self.timeout) as r:
+                return r.status, r.read(max_bytes) if max_bytes else r.read()
         except urllib.error.HTTPError as e:
-            return e.code, e.read()
+            return e.code, e.read(max_bytes) if max_bytes else e.read()
 
     def get_json(self, url: str, headers: dict | None = None) -> Any:
         status, body = self.request("GET", url, headers=headers)
