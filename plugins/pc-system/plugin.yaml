@@ -1,0 +1,32 @@
+id: pc-system
+name: PC status
+version: 1.0.0
+kind: workflow
+argus_api: ">=1.0 <2.0"
+description: Lets Ari tell how the PC is doing (CPU, memory, disks, GPU, what uses them) and read or set the clipboard.
+runs_on: desktop
+needs: [session]
+
+workflows: [status, clipboard_read, clipboard_write]
+
+permissions:
+  files: {read: [], write: [], delete: none}
+  models: []
+
+ari:
+  tools:
+    - name: pc_status
+      description: How the PC is doing - CPU, memory, free disk space, GPU use and temperature, and the programs using the most.
+      workflow: status
+    - name: read_clipboard
+      description: What text is on the PC's clipboard right now.
+      workflow: clipboard_read
+    - name: copy_to_clipboard
+      description: Put text on the PC's clipboard (replaces what is there).
+      workflow: clipboard_write
+      input: {text: {type: string, description: the text to copy}}
+      required: [text]
+      risky: true
+
+helios:
+  node: {label: PC status, group: pc}

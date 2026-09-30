@@ -22,6 +22,8 @@ def load(name: str):
 
 apps = load("pc-apps")
 media = load("pc-media")
+wins = load("pc-windows")
+system = load("pc-system")
 APPS = [{"name": n, "id": n.lower()} for n in
         ["Spotify", "Google Chrome", "Visual Studio Code", "Calculator", "Settings", "File Explorer",
          "Microsoft Teams", "Steam", "Steam Support Center", "Notepad"]]
@@ -50,7 +52,26 @@ def test_manifests_load_with_their_tools(tmp_path, monkeypatch):
     host = PluginHost(load_config(tmp_path / "argus.yaml"))
     host.load()
     assert not host.errors, host.errors
-    tools = {t.name for pid in ("pc-apps", "pc-media") for t in host.plugins[pid].manifest.ari.tools}
-    assert {"open_app", "open_file", "open_website", "close_app", "set_volume", "media_control"} <= tools
+    tools = {t.name for pid in ("pc-apps", "pc-media", "pc-windows", "pc-system")
+             for t in host.plugins[pid].manifest.ari.tools}
+    assert {"open_app", "open_file", "open_website", "close_app", "set_volume", "media_control", "switch_to_window",
+            "lock_pc", "take_screenshot", "pc_status", "read_clipboard", "copy_to_clipboard"} <= tools
     assert host.plugins["pc-apps"].manifest.job_needs() == ["desktop", "session"]
     assert [t.risky for t in host.plugins["pc-apps"].manifest.ari.tools if t.name == "close_app"] == [True]
+
+
+def test_window_picking():
+    rows = [{"Id": 1, "ProcessName": "chrome", "MainWindowTitle": "Argus - Google Chrome"},
+            {"Id": 2, "ProcessName": "Code", "MainWindowTitle": "plugin.py - argus - Visual Studio Code"},
+            {"Id": 3, "ProcessName": "Spotify", "MainWindowTitle": "Spotify Premium"}]
+    assert wins.pick("Chrome", rows)["Id"] == 1
+    assert wins.pick("vs code", rows)["Id"] == 2
+    assert wins.pick("spotify", rows)["Id"] == 3
+    assert wins.pick("steam", rows) is None
+
+
+def test_pc_status_reads_this_machine():
+    pytest.importorskip("psutil")
+    s = system.status()
+    assert 0 <= s["cpu_percent"] <= 100 and s["memory_total_gb"] > 0 and s["disks"]
+    assert len(s["most_memory"]) >= 1
