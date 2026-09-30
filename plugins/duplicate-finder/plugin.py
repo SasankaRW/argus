@@ -87,8 +87,10 @@ def mb(n: int) -> str:
 
 
 def short(path: str) -> str:
+    """How a path is shown to you: ~ for your home folder, forward slashes on every OS."""
     home = os.path.expanduser("~")
-    return "~" + path[len(home):] if path.startswith(home) else path
+    s = "~" + path[len(home):] if path.startswith(home) else path
+    return s.replace("\\", "/")
 
 
 @workflow(PLUGIN, "scan")
