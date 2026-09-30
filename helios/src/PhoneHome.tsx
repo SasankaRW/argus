@@ -8,9 +8,9 @@ import { PowerControls } from "./PowerView";
 import { prio, useQueue, waitText, whyText } from "./QueueView";
 
 // The phone's Helios: what needs you, what runs, what's next, what just finished. The full dashboard is one tap away.
-export function PhoneHome({ status, events, onSelect, onShare, onFull, onView }: {
+export function PhoneHome({ status, events, onSelect, onShare, onFull, onView, onAri }: {
   status: Status | null; events: ArgusEvent[]; onSelect: (s: Selection) => void; onShare: () => void; onFull: () => void;
-  onView: (v: string) => void;
+  onView: (v: string) => void; onAri: () => void;
 }) {
   const q = useQueue(events);
   const [pending, setPending] = useState<Approval[]>([]);
@@ -30,6 +30,11 @@ export function PhoneHome({ status, events, onSelect, onShare, onFull, onView }:
       </div>
 
       <AskBox big onSelect={onSelect} onView={onView} />
+
+      <button type="button" className="pshare pari" onClick={onAri}>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z" /></svg>
+        Talk to Ari
+      </button>
 
       <button type="button" className="pshare" onClick={onShare}>
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 15V3M7 8l5-5 5 5M5 13v6h14v-6" /></svg>

@@ -43,9 +43,19 @@ def deps_hash() -> str:
     return hashlib.sha256(p.read_bytes()).hexdigest() if p.exists() else ""
 
 
+def marker_path() -> Path:
+    """argusd's "running" marker: removed after a stop we asked for, so it isn't taken for a power cut."""
+    try:
+        from .config import load_config
+
+        return load_config(ROOT / "argus.yaml").db_path.parent / "argus.running"
+    except Exception:
+        return ROOT / "data" / "argus.running"
+
+
 class Child:
-    def __init__(self, name: str, args: list[str]):
-        self.name, self.args = name, args
+    def __init__(self, name: str, args: list[str], marker: Path | None = None):
+        self.name, self.args, self.marker = name, args, marker
         self.proc: subprocess.Popen | None = None
         self.fails = 0
         self.next_start = 0.0
@@ -80,6 +90,8 @@ class Child:
             self.proc.wait(timeout)
         except subprocess.TimeoutExpired:
             self.proc.kill()
+        if self.marker is not None:  # we stopped it on purpose (Windows can only kill it outright)
+            self.marker.unlink(missing_ok=True)
         log.info("stopped", extra={"proc": self.name})
 
     def check(self) -> None:
@@ -122,7 +134,7 @@ def main(argv: list[str] | None = None) -> int:
     env = parse_env_file(ROOT / ".env")
     token = os.environ.get("ARGUS_WORKER_TOKEN") or env.get("ARGUS_WORKER_TOKEN")
 
-    children = [] if args.no_argusd else [Child("argusd", ["-m", "argus"])]
+    children = [] if args.no_argusd else [Child("argusd", ["-m", "argus"], marker_path())]
     if not args.no_worker:
         children.append(Child("worker", ["-m", "argus.worker.cli", "--cap", "desktop", "--cap", "gpu",
                                          "--log-file", "logs/worker.log"]))

@@ -21,6 +21,8 @@ from .. import __version__
 from ..models import Router, build_providers
 from . import ask as _ask  # noqa: F401 - Ask Argus (the model part)
 from . import backup as _backup  # noqa: F401 - the PC's copy of the nightly backup
+from . import health as _health  # noqa: F401 - WSL and Docker on the PC
+from . import hear as _hear  # noqa: F401 - Ari's hearing (Whisper)
 from . import power as _power  # noqa: F401 - the built-in power buttons (sleep, shut down, ...)
 from .client import ApiError, ArgusClient, LeaseLostError, Unreachable
 from .plugins import Files, Http, LoadedPlugin, Secrets, Store
@@ -231,6 +233,8 @@ class Worker:
         info = job.get("plugin_info")
         if info and info["id"] in self.plugins:  # argusd's settings now (dry-run or live, config)
             self.plugins[info["id"]] = LoadedPlugin(info)
+        if job["plugin"] == "ari":  # built in: the recording to transcribe
+            ctx.shared = lambda name: self.client.get_bytes(f"/ari/audio/{urllib.parse.quote(name, safe='')}")
         if job["plugin"] == "backup":  # built in: fetch backups from argusd
             ctx.shared_backup = lambda name: self.client.get_bytes(f"/backups/files/{name}", timeout=600)
         plugin = self.plugins.get(job["plugin"])

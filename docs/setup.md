@@ -137,6 +137,45 @@ downloads", "what's running?", "anything waiting for me?", "shut down the PC". C
 anything else goes to T1 (T2 if needed), which answers from Argus's current state. A suggested action only runs
 when you tap **Do it**.
 
+## Ari
+
+Helios > **Ari** (and **Talk to Ari** on the phone): talk to Argus by typing or with the microphone. Ari answers
+(aloud if **Speak replies** is on), remembers the conversation, and asks before doing anything: say or tap **Yes**.
+
+- "What's running?", "anything waiting for me?", "sort my downloads", "shut down the PC".
+- A time makes a schedule, after your yes: "sort downloads every morning at 7", "every weekday at 9 name
+  screenshots", "remind me to call mum tomorrow at 5 pm" (a phone notification), "in 20 minutes remind me to check
+  the oven", "shut down the PC at 11 pm". They are listed under **Your schedules** (pause or delete there).
+- **"Hey Ari"**: tick it and, while Helios is open (on the PC, for example), say "Hey Ari, …". After Ari asks
+  "Shall I?", just say yes or no. The browser listens for the wake phrase (Chrome or Edge; allow the microphone).
+
+*Optional:* a natural voice and private hearing.
+
+```powershell
+pip install -e .[voice,hearing]                   # Piper (voice) and faster-whisper (hearing)
+python -m piper.download_voices en_US-lessac-medium --data-dir data\voices
+```
+
+```yaml
+ari:
+  voice: data/voices/en_US-lessac-medium.onnx     # Ari speaks with Piper instead of the browser's voice
+  hearing: whisper                                # the mic button records; Whisper on the PC writes it down
+  whisper_model: small.en
+```
+
+Whisper uses the GPU when CUDA 12 and cuDNN 9 are found, else the CPU (fine for short commands). While the PC is
+off, the browser hears you. Other voices: https://rhasspy.github.io/piper-samples/
+
+## What Argus tells you by itself
+
+- **Morning brief** (`brief.at`, 07:00): overnight results, failures, what waits for you, today's schedules, the
+  backup, the PC and Docker, yesterday's Claude calls. `POST /brief` sends one now to try it.
+- **After a power cut or crash**: "Argus is back": when it stopped, which jobs pick up from their last finished
+  step, which missed schedules run now. (Not after `dev.ps1 down` or an update: only when it didn't stop cleanly.)
+- **PC health** (`health.enabled: true`, `health.containers: [eclaire-app, eclaire-db]`): the PC's worker looks at
+  WSL and Docker every 30 minutes while the PC is on (it never wakes the PC for it) and tells the phone when a
+  container stops, reports unhealthy, or Docker stops answering, and again when it's fine.
+
 ## PC power buttons
 
 Helios > **Power** (and the **PC power** card on the phone): **Sleep**, **Restart**, **Shut down** (waits

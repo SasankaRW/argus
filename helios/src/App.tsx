@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { setToken, Status } from "./api";
+import { AriView } from "./AriView";
 import { AskBox } from "./AskBox";
 import { EventsPanel } from "./EventsPanel";
 import { uptime } from "./format";
@@ -13,9 +14,11 @@ import { QueueView } from "./QueueView";
 import { RulesView } from "./RulesView";
 import { RunsView } from "./RunsView";
 import { ShareView } from "./ShareView";
+import { pref, Speech, WakeListener } from "./voice";
 
 const NAV: { id: string; label: string; icon: string; soon?: string }[] = [
   { id: "map", label: "Live map", icon: "M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3zM9 3v15M15 6v15" },
+  { id: "ari", label: "Ari", icon: "M4 5h16v11H9l-5 4zM8 10h.01M12 10h.01M16 10h.01" },
   { id: "queue", label: "Queue", icon: "M4 6h10M4 12h10M4 18h10M18 6l2 2-2 2M18 14l2 2-2 2" },
   { id: "runs", label: "Runs", icon: "M4 6h16M4 12h11M4 18h14" },
   { id: "share", label: "Share", icon: "M12 15V3M7 8l5-5 5 5M5 13v6h14v-6" },
@@ -108,7 +111,7 @@ export function App() {
   const [flow, setFlow] = useState(true);
   const [relayout, setRelayout] = useState(0);
   const [triedLogin, setTriedLogin] = useState(false);
-  const parse = (h: string) => (["queue", "runs", "logs", "share", "power"].includes(h) || h.startsWith("rules/") ? h : "map");
+  const parse = (h: string) => (["queue", "runs", "logs", "share", "power", "ari"].includes(h) || h.startsWith("rules/") ? h : "map");
   const [view, setView] = useState<string>(() => parse(location.hash.slice(1)));
   useEffect(() => {  // the share menu opens /helios/#share on a page that may already be open
     const on = () => setView(parse(location.hash.slice(1)));
@@ -120,6 +123,29 @@ export function App() {
   const setFullView = (v: boolean) => { setFull(v); try { localStorage.setItem("helios.full", v ? "1" : "0"); } catch { /* private */ } };
   const phone = narrow && !full;
   const go = (v: string) => { setView(v); history.replaceState(null, "", v === "map" ? location.pathname : `#${v}`); };
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const [heard, setHeard] = useState(false);
+  useEffect(() => {  // "Hey Ari" while Helios is open (Ari > "Hey Ari" turns it on)
+    if (!Speech) return;
+    let wl: WakeListener | null = null;
+    const sync = () => {
+      if (pref("wake", false) && !wl) {
+        wl = new WakeListener((text) => {
+          setHeard(false);
+          if (viewRef.current === "ari") window.dispatchEvent(new CustomEvent("ari-command", { detail: text }));
+          else { try { sessionStorage.setItem("ari.command", text); } catch { /* private */ } setView("ari"); history.replaceState(null, "", "#ari"); }
+        }, () => { setHeard(true); setTimeout(() => setHeard(false), 8000); });
+        wl.start();
+      } else if (!pref("wake", false) && wl) { wl.stop(); wl = null; }
+    };
+    const arm = () => wl?.arm();
+    sync();
+    window.addEventListener("ari-pref", sync);
+    window.addEventListener("ari-arm", arm);
+    return () => { window.removeEventListener("ari-pref", sync); window.removeEventListener("ari-arm", arm); wl?.stop(); };
+  }, []);
+  const heardBadge = heard ? <div className="ari-heard" role="status">Ari is listening…</div> : null;
 
   if (a.phase === "login") return <Login bad={triedLogin} onDone={() => { setTriedLogin(true); a.reconnect(); }} />;
 
@@ -136,10 +162,13 @@ export function App() {
           <div className="psheet"><Inspector sel={sel} map={a.map} status={st} events={a.events} onSelect={setSel} /></div>
         ) : view === "share" ? (
           <ShareView onJob={(id) => { setSel({ type: "job", id }); }} onDone={() => go("map")} />
+        ) : view === "ari" ? (
+          <AriView onSelect={setSel} onView={(v) => (v === "share" ? go("share") : (setFullView(true), go(v)))} />
         ) : (
           <PhoneHome status={st} events={a.events} onSelect={setSel} onShare={() => go("share")} onFull={() => setFullView(true)}
-            onView={(v) => (v === "share" ? go("share") : (setFullView(true), go(v)))} />
+            onAri={() => go("ari")} onView={(v) => (v === "share" ? go("share") : (setFullView(true), go(v)))} />
         )}
+        {heardBadge}
       </div>
     );
   }
@@ -182,7 +211,9 @@ export function App() {
         : view === "share" ? <ShareView onJob={(id) => { setSel({ type: "job", id }); go("runs"); }} onDone={() => go("map")} />
         : view === "logs" ? <LogsView /> : (
         <div className="mid">
-          {view === "power" ? (
+          {view === "ari" ? (
+            <AriView onSelect={setSel} onView={(v) => go(v)} />
+          ) : view === "power" ? (
             <PowerView events={a.events} onSelect={setSel} />
           ) : view === "queue" ? (
             <QueueView events={a.events} onSelect={setSel} />
@@ -219,6 +250,7 @@ export function App() {
         )}
         {view !== "logs" && view !== "share" && !view.startsWith("rules/") && <EventsPanel events={a.events} conn={a.conn} onSelect={setSel} />}
       </main>
+      {heardBadge}
     </div>
   );
 }

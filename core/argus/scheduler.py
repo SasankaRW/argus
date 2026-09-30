@@ -20,7 +20,9 @@ from typing import Any
 from .config import Config, ScheduleConfig
 from .cron import next_run
 from .db import Store
+from .events import insert_event
 from .jobs.store import JobStore, QueueFull
+from .outbox import add_message, ntfy_message
 from .registry import ensure_component
 
 log = logging.getLogger("argus.scheduler")
@@ -37,6 +39,7 @@ class Scheduler:
         self.cfg = cfg
         self.clock = clock
         self.queued = 0
+        self.poke: Callable[[], None] = lambda: None  # wakes the outbox (set by Argus) after a reminder
 
     async def sync(self, schedules: list[ScheduleConfig] | None = None) -> None:
         """Make the table match the config: add new schedules, update changed ones, disable removed ones."""
@@ -46,7 +49,7 @@ class Scheduler:
             now = self.clock()
             if items:
                 ensure_component(conn, now, "scheduler", "service", "Scheduler", None)
-            known = {r["id"]: r for r in conn.execute("SELECT * FROM schedules").fetchall()}
+            known = {r["id"]: r for r in conn.execute("SELECT * FROM schedules WHERE owner = 'config'").fetchall()}
             for s in items:
                 spec = json.dumps(_spec(s), sort_keys=True)
                 row = known.pop(s.id, None)
@@ -93,15 +96,28 @@ class Scheduler:
             return False
         spec = json.loads(row["spec"])
         slot = int(now) if now_run else int(row["next_run_at"])
+        if row["plugin"] == "argus" and row["workflow"] == "remind":  # a reminder: straight to the phone, no job
+            text = str(spec.get("input", {}).get("text") or row["label"] or "Reminder")
+            add_message(conn, now, "ntfy", ntfy_message("Reminder", text[:500], priority="high", tags=["bell"]),
+                        dedupe_key=f"remind:{sid}:{slot}")
+            insert_event(conn, now, "schedule.reminded", src="scheduler", dst="phone", data={"schedule": sid})
+            self._advance(conn, sid, None, now_run=now_run, once=bool(spec.get("once")))
+            self.poke()
+            return True
         job_id, created = self.jobs.enqueue_in(
             conn, now, row["plugin"], row["workflow"], {**spec.get("input", {}), "_schedule": sid, "_slot": slot},
             needs=spec.get("needs", []), priority=spec.get("priority", 50), model_group=spec.get("model"),
             window=spec.get("window"), dedupe_key=f"schedule:{sid}", source="scheduler")
-        self._advance(conn, sid, job_id, now_run=now_run)
+        self._advance(conn, sid, job_id, now_run=now_run, once=bool(spec.get("once")))
         return created
 
-    def _advance(self, conn: sqlite3.Connection, sid: str, job_id: str | None, *, now_run: bool = False) -> None:
+    def _advance(self, conn: sqlite3.Connection, sid: str, job_id: str | None, *, now_run: bool = False,
+                 once: bool = False) -> None:
         now = self.clock()
+        if once and not now_run:  # a one-off ("tomorrow at 7"): done after its run
+            conn.execute("UPDATE schedules SET last_run_at = ?, last_job_id = COALESCE(?, last_job_id), enabled = 0,"
+                         " next_run_at = NULL, updated_at = ? WHERE id = ?", (now, job_id, now, sid))
+            return
         row = conn.execute("SELECT cron FROM schedules WHERE id = ?", (sid,)).fetchone()
         if now_run:  # "run now" does not move the regular clock
             conn.execute("UPDATE schedules SET last_run_at = ?, last_job_id = ?, updated_at = ? WHERE id = ?",
