@@ -25,11 +25,21 @@ export function VoiceTrain() {
   const audio = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {  // Ari stops listening while you record here (or it would answer the sentences you read)
-    const mine = !earsPaused();
-    if (!mine) return;
-    pauseEars(3).catch(() => {});
-    const keep = setInterval(() => { pauseEars(3).catch(() => {}); }, 60000);
-    return () => { clearInterval(keep); resumeEars().catch(() => {}); };
+    // A short pause renewed every 20 s while this page is open and showing: if the page is closed, hidden, asleep or
+    // forgotten in another tab, Ari is listening again within a minute, never stuck "not listening" mid-chat.
+    if (earsPaused()) return;  // you paused it yourself: leave it alone
+    let live = true;
+    const beat = () => { if (live && document.visibilityState === "visible") pauseEars(1).catch(() => {}); };
+    beat();
+    const keep = setInterval(beat, 20000);
+    const back = () => { if (document.visibilityState === "hidden") resumeEars().catch(() => {}); else beat(); };
+    document.addEventListener("visibilitychange", back);
+    return () => {
+      live = false;
+      clearInterval(keep);
+      document.removeEventListener("visibilitychange", back);
+      setTimeout(() => resumeEars().catch(() => {}), 300);  // after any request still in flight
+    };
   }, []);
 
   const load = useCallback(async (jump = false) => {

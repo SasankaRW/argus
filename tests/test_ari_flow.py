@@ -161,3 +161,24 @@ def test_pausing_ari_s_ears(tmp_path):
         assert cl.post("/ari/listening", {"on": True}) == {"listening": True, "until": None}
         ari_listen.hush_from(cl.get("/events?kinds=ari.listening&after=0")["events"])
         assert not ari_listen.paused()
+
+
+def test_times_said_in_words_like_a_transcript_writes_them():
+    import time as _t
+
+    from argus.ari import digits, parse_when
+
+    now = _t.time()
+    assert parse_when("remind me to call mum tomorrow at five pm", now).say == "tomorrow at 5 pm"
+    assert parse_when("sort downloads every morning at seven", now).say == "every day at 7 am"
+    assert parse_when("shut down the PC at eleven thirty tonight", now).say.endswith("at 11:30 pm")
+    assert parse_when("every thirty minutes check the lab", now).say == "every 30 minutes"
+    assert parse_when("remind me in half an hour to stretch", now) is not None
+    assert digits("at five oh five pm") == "at 5:05 pm"
+
+
+def test_typing_tools_only_when_asked_and_whatsapp_goes_straight():
+    t = {n: {} for n in ("type_text", "press_keys", "whatsapp_message", "open_app")}
+    assert set(offered(t, "open whatsapp", [{"text": "type hello"}])) == {"whatsapp_message", "open_app"}
+    assert "type_text" in offered(t, "type hello world", [])
+    assert straight_to(t, "Kaancha hi on WhatsApp") == ("whatsapp_message", {"to": "Kaancha", "text": "hi"})

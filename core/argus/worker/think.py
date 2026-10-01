@@ -69,7 +69,9 @@ SCREEN = re.compile(r"\b(?:screen|monitor|what am i (?:looking at|seeing)|this (
                     r"dialog|popup|code|chart|graph|picture|image|email|document|doc|app)|what does (?:this|it) say|"
                     r"what'?s this|can you see|look at (?:this|it|that))\b", re.I)
 CLIPBOARD = re.compile(r"\b(?:clipboard|copied|i copied|what i copied|paste[d]?)\b", re.I)
-SCREEN_TOOLS = {"look_at_screen": SCREEN, "summarise_clipboard": CLIPBOARD}
+TYPING = re.compile(r"^\W*(?:(?:please|can you|could you|will you|go ahead and)\s+)*(?:type|press|hit)\s+\S|"
+                    r"\b(?:type (?:this|that|it|out)\b.{0,20}\b(?:in|into)|keyboard shortcut|ctrl\s?\+|alt\s?\+)", re.I)
+SCREEN_TOOLS = {"look_at_screen": SCREEN, "summarise_clipboard": CLIPBOARD, "type_text": TYPING, "press_keys": TYPING}
 
 
 def offered(tools: dict[str, dict], text: str, history: list[dict]) -> dict[str, dict]:
@@ -77,7 +79,8 @@ def offered(tools: dict[str, dict], text: str, history: list[dict]) -> dict[str,
     chat just was). Fewer tools is also a shorter prompt, so a faster first step."""
     recent = " ".join(str(h.get("text") or "") for h in history[-2:])
     return {n: t for n, t in tools.items()
-            if n not in SCREEN_TOOLS or SCREEN_TOOLS[n].search(text) or SCREEN_TOOLS[n].search(recent)}
+            if n not in SCREEN_TOOLS or SCREEN_TOOLS[n].search(text)
+            or (SCREEN_TOOLS[n] is not TYPING and SCREEN_TOOLS[n].search(recent))}  # typing: only when asked now
 
 
 OPEN_APP = re.compile(r"^\W*(?:please\s+)?(?:open|launch|start)\s+(?:up\s+)?(?:the\s+)?(?P<app>[a-z][\w+ -]{1,28}?)"
@@ -86,11 +89,18 @@ NOT_APP = re.compile(r"^(?:a|an|my|some)\b|\b(?:file|folder|document|page|site|w
                      r"tab|timer|music|playlist|song|recording|backup|job|over|again)\b|[./\\:]", re.I)
 
 
+WHATSAPP = re.compile(r"^\W*(?:please\s+)?(?:(?:send|text|message|whatsapp)\s+)?(?P<to>[A-Z][\w']{1,20})\s+"
+                      r"(?P<text>[^.?!]{1,120}?)\s+(?:on|in|via|over)\s+whats\s?app\W*$", re.I)
+
+
 def straight_to(tools: dict[str, dict], text: str) -> tuple[str, dict] | None:
     """A message that plainly needs one tool: "open brave" (the app), "what's on my screen?" (the screen), "sum up
     what I copied" (the clipboard). That tool runs at once, with no model deciding first."""
     if len(text) > 200:
         return None
+    w = WHATSAPP.match(text)
+    if w and "whatsapp_message" in tools:
+        return "whatsapp_message", {"to": w.group("to").strip(), "text": w.group("text").strip()}
     m = OPEN_APP.match(text)
     if m and "open_app" in tools and not NOT_APP.search(m.group("app")):
         return "open_app", {"name": m.group("app").strip()}
