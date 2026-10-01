@@ -1,0 +1,13 @@
+# SearXNG for Argus: JSON on (Ari reads results as data), no rate-limiter (only this PC can reach it),
+# images and tracking off. Change secret_key to any long random string once.
+use_default_settings: true
+server:
+  secret_key: "change-me-to-a-long-random-string"
+  limiter: false
+  image_proxy: false
+  public_instance: false
+search:
+  safe_search: 1
+  formats: [html, json]
+ui:
+  query_in_title: false

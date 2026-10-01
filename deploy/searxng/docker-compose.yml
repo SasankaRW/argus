@@ -1,0 +1,17 @@
+# Your own search engine for Ari (plugin "web"). Listens on this PC only (127.0.0.1): nothing is reachable from
+# the network. Start:  docker compose up -d   (in this folder)   Stop:  docker compose down
+services:
+  searxng:
+    image: searxng/searxng:latest
+    container_name: argus-searxng
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8888:8080"
+    volumes:
+      - ./settings.yml:/etc/searxng/settings.yml:ro
+    environment:
+      - SEARXNG_BASE_URL=http://127.0.0.1:8888/
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETGID, SETUID]
+    read_only: false
+    security_opt: ["no-new-privileges:true"]

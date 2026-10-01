@@ -1,0 +1,36 @@
+id: web
+name: Web for Ari
+version: 1.0.0
+kind: workflow
+argus_api: ">=1.0 <2.0"
+description: Lets Ari's local models look things up - search with your own SearXNG, then read a page. Outbound only; what pages say is treated as untrusted (after it, anything that does something asks you first).
+runs_on: any
+
+workflows: [search, read]
+
+permissions:
+  files: {read: [], write: [], delete: none}
+  models: []
+  network: ["*", "127.0.0.1", "localhost"]   # pages: public websites only; 127.0.0.1: your SearXNG
+
+config:
+  searx_url: {type: text, default: "http://127.0.0.1:8888", label: Your SearXNG (deploy/searxng)}
+  results: {type: int, default: 5, label: Search results Ari reads}
+
+ari:
+  tools:
+    - name: web_search
+      description: Search the web (current things - news, weather, prices, scores, docs). Returns titles, links and snippets; use read_page for more.
+      workflow: search
+      untrusted: true
+      input: {query: {type: string, description: what to search for}}
+      required: [query]
+    - name: read_page
+      description: Read a web page (a link from web_search or the user) - its main text, shortened.
+      workflow: read
+      untrusted: true
+      input: {url: {type: string, description: the page's address}}
+      required: [url]
+
+helios:
+  node: {label: Web, group: assistant}

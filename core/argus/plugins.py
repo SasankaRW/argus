@@ -170,6 +170,7 @@ class AriTool(_M):
     required: list[str] = Field(default_factory=list)
     risky: bool = False  # true: Ari asks you first (closing apps, typing, changing files)
     private: bool = False  # true: what it returns stays local (your screen, clipboard): never sent to Claude
+    untrusted: bool = False  # true: it returns text from outside (web pages); after it, doing anything asks first
 
 
 class AriInfo(_M):

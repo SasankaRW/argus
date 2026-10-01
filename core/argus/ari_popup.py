@@ -39,7 +39,7 @@ SH_DROP = 3           # how far below the island it sits
 SH_ALPHA = 120        # how dark it is at its darkest
 IDLE = (84, 10)
 HOVER = (138, 22)
-DETAILS_W = 384
+DETAILS_W = 336
 MAX_W = 430
 MAX_H = 300
 W, H = MAX_W + 2 * 30 + 2 * MARGIN, MAX_H + MARGIN  # the window (room for the widest shoulders)
@@ -159,6 +159,16 @@ def target_size(mode: str, text: str, hover: bool, details_h: float) -> tuple[fl
     if mode in ("active", "done"):  # one look for both: Ari's answer stays in the same pill it spoke from
         return max(220, min(MAX_W, (70 if mode == "active" else 50) + len(text) * 7.0)), 36
     return HOVER if hover else IDLE
+
+
+def icon_for(action: str) -> str:
+    """The little picture on a shortcut chip, from what it does."""
+    kind, _, rest = action.partition(":")
+    if kind == "show":
+        return "inbox" if rest == "inbox" else "grid" if rest in ("", "map") else "chat" if rest == "ari" else "page"
+    if kind == "power":
+        return "moon" if rest in ("sleep", "hibernate") else "power"
+    return {"routine": "spark", "run": "bolt", "url": "globe", "phone": "bell", "helios": "page"}.get(kind, "dot")
 
 
 def next_schedule(schedules: list[dict]) -> dict | None:
@@ -289,8 +299,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
     F_TEXT = font(SANS, 13)
     F_SMALL = font(SANS, 12)
     F_LABEL = font(MONO, 11)
-    F_CLOCK = font(DISPLAY, 26, 300)
-    F_CHIP = font(SANS, 12, 500)
+    F_CLOCK = font(DISPLAY, 21, 400)
+    F_CHIP = font(SANS, 11.5, 500)
 
     class Island(QWidget):
         def __init__(self) -> None:
@@ -601,77 +611,94 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             order = [w["id"] for w in info.widgets if w.get("on")]
             fade = max(0.0, min(1.0, (self.spring.h - 70) / 40))
             qp.setOpacity(fade)
-            x0, x1 = body.x() + 18, body.right() - 18
-            y = body.y() + 14
-            # header: the time (if on), Talk, and a small "…" for Helios's settings
-            talk = QRectF(x1 - 74, y + 1, 74, 30)
-            more = QRectF(talk.x() - 34, y + 1, 30, 30)
+            x0, x1 = body.x() + 16, body.right() - 16
+            y = body.y() + 12
+            # header: the time and date on the left; Talk (a round mic key) and "···" (Helios) on the right
+            talk = QRectF(x1 - 30, y, 30, 30)
+            more = QRectF(talk.x() - 36, y, 30, 30)
             if "clock" in on:
                 now = time.localtime()
                 qp.setFont(F_CLOCK)
-                qp.setPen(QColor("#ffffff"))
+                qp.setPen(QColor("#f4f5f6"))
                 tstr = time.strftime("%H:%M", now)
                 tw = QFontMetrics(F_CLOCK).horizontalAdvance(tstr)
-                qp.drawText(QRectF(x0, y - 2, tw + 4, 34), Qt.AlignmentFlag.AlignVCenter, tstr)
+                qp.drawText(QRectF(x0, y, tw + 4, 30), Qt.AlignmentFlag.AlignVCenter, tstr)
                 qp.setFont(F_SMALL)
-                qp.setPen(QColor("#8b939c"))
-                qp.drawText(QRectF(x0 + tw + 10, y - 1, more.x() - x0 - tw - 12, 34), Qt.AlignmentFlag.AlignVCenter,
+                qp.setPen(QColor("#6f7680"))
+                qp.drawText(QRectF(x0 + tw + 9, y + 1, more.x() - x0 - tw - 12, 30), Qt.AlignmentFlag.AlignVCenter,
                             time.strftime("%a %d %b", now))
             else:
                 qp.setFont(F_TEXT)
                 qp.setPen(QColor("#e4e6e8"))
-                qp.drawText(QRectF(x0, y, 120, 32), Qt.AlignmentFlag.AlignVCenter, "ari")
-            self.button(qp, talk, "talk", "●  Talk", fill="#1a2a20" if self.hot != "talk" else "#223a2a",
-                        color="#39ff9c", radius=15)
-            self.button(qp, more, "helios:#ari", "···", color="#8b939c", radius=15)
+                qp.drawText(QRectF(x0, y, 120, 30), Qt.AlignmentFlag.AlignVCenter, "Ari")
+            self.round_key(qp, more, "helios:#ari", "more")
+            self.round_key(qp, talk, "talk", "mic")
             y += 42
+            # status rows in one quiet card
             st = info.status or {}
             jobs = st.get("jobs") or {}
+            rows: list[tuple[str, str, str, str | None]] = []  # dot, text, right, click key
             for wid in order:
                 if wid == "status":
                     running = (jobs.get("running") or 0) + (jobs.get("leased") or 0)
                     queued = (jobs.get("queued") or 0) + (jobs.get("retry") or 0)
                     ok = st.get("status") == "ok"
-                    y = self.line(qp, x0, x1, y, "#39ff9c" if ok else "#f5a524", "all good" if ok else "needs a look",
-                                  f"{running} running · {queued} queued")
-                elif wid == "inbox":
-                    if info.waiting:
-                        r = QRectF(x0 - 6, y - 1, x1 - x0 + 12, 24)
-                        self.buttons.append((r, "show:inbox"))
-                        y = self.line(qp, x0, x1, y, "#f5a524", f"{info.waiting} waiting for you", "inbox ›",
-                                      hot=self.hot == "show:inbox")
+                    right = "idle" if not running and not queued else \
+                        " · ".join(x for x in (f"{running} running" if running else "",
+                                               f"{queued} queued" if queued else "") if x)
+                    rows.append(("#34d399" if ok else "#f5a524", "All good" if ok else "Needs a look", right, None))
+                elif wid == "inbox" and info.waiting:
+                    rows.append(("#f5a524", f"{info.waiting} waiting for you", "›", "show:inbox"))
                 elif wid == "next" and info.next and info.next.get("next_run_at"):
                     nxt = info.next
                     at = time.localtime(nxt["next_run_at"])
                     same_day = time.strftime("%Y%m%d", at) == time.strftime("%Y%m%d")
-                    when = time.strftime("%H:%M" if same_day else "%a %H:%M", at)
-                    y = self.line(qp, x0, x1, y, "#4cc2ff", nxt.get("label") or f"{nxt['plugin']} · {nxt['workflow']}",
-                                  when)
-                elif wid == "last" and info.last:
-                    qp.setFont(F_SMALL)
-                    qp.setPen(QColor("#c9ced3"))
-                    qp.drawText(QRectF(x0, y + 2, x1 - x0, 34), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
-                                two_lines("ari › " + info.last, QFontMetrics(F_SMALL), int(x1 - x0)))
-                    y += 38
-                elif wid == "shortcuts" and info.shortcuts:
-                    y += 6
-                    fm = QFontMetrics(F_CHIP)
-                    cx = x0
-                    for sc in info.shortcuts:
-                        label = fm.elidedText(sc["label"], Qt.TextElideMode.ElideRight, 120)
-                        cw = fm.horizontalAdvance(label) + 22
-                        if cx + cw > x1 and cx > x0:
-                            cx, y = x0, y + 34
-                        self.button(qp, QRectF(cx, y, cw, 28), "sc:" + sc["action"], label, radius=14)
-                        cx += cw + 6
-                    y += 34
+                    rows.append(("#60a5fa", nxt.get("label") or f"{nxt['plugin']} · {nxt['workflow']}",
+                                 time.strftime("%H:%M" if same_day else "%a %H:%M", at), None))
+            if rows:
+                ch = 30 * len(rows)
+                card = QRectF(x0 - 4, y, x1 - x0 + 8, ch)
+                qp.setPen(QPen(QColor(255, 255, 255, 14), 1))
+                qp.setBrush(QColor("#0f1012"))
+                qp.drawRoundedRect(card, 12, 12)
+                for i, (dot, text, right, key) in enumerate(rows):
+                    ry = y + 30 * i
+                    if i:
+                        qp.setPen(QPen(QColor(255, 255, 255, 10), 1))
+                        qp.drawLine(QPointF(x0 + 8, ry), QPointF(x1 - 4, ry))
+                    if key:
+                        r = QRectF(card.x(), ry, card.width(), 30)
+                        self.buttons.append((r, key))
+                        if self.hot == key:
+                            qp.setPen(Qt.PenStyle.NoPen)
+                            qp.setBrush(QColor(255, 255, 255, 8))
+                            qp.drawRoundedRect(r.adjusted(2, 2, -2, -2), 9, 9)
+                    self.line(qp, x0 + 6, x1 - 4, ry + 4, dot, text, right, hot=self.hot == key and key is not None)
+                y += ch + 10
+            if "last" in on and info.last:
+                qp.setFont(F_SMALL)
+                qp.setPen(QColor("#a9afb6"))
+                qp.drawText(QRectF(x0, y, x1 - x0, 34), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+                            two_lines("Ari: " + info.last, QFontMetrics(F_SMALL), int(x1 - x0)))
+                y += 40
+            if "shortcuts" in on and info.shortcuts:
+                fm = QFontMetrics(F_CHIP)
+                cx = x0 - 4
+                for sc in info.shortcuts:
+                    label = fm.elidedText(sc["label"], Qt.TextElideMode.ElideRight, 110)
+                    cw = fm.horizontalAdvance(label) + 40
+                    if cx + cw > x1 + 4 and cx > x0:
+                        cx, y = x0 - 4, y + 32
+                    self.chip(qp, QRectF(cx, y, cw, 26), "sc:" + sc["action"], label)
+                    cx += cw + 6
+                y += 32
             if self.flash_text:
                 qp.setFont(F_SMALL)
                 qp.setPen(QColor("#39ff9c"))
                 qp.drawText(QRectF(x0, y + 2, x1 - x0, 18), Qt.AlignmentFlag.AlignLeft, self.flash_text)
                 y += 22
             qp.setOpacity(1)
-            h = y - body.y() + 10
+            h = y - body.y() + 6
             if abs(h - self.details_h) > 1:
                 self.details_h = h
                 QTimer.singleShot(0, self.kick)
@@ -680,17 +707,135 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                  hot: bool = False) -> float:
             qp.setPen(Qt.PenStyle.NoPen)
             qp.setBrush(QColor(dot))
-            qp.drawEllipse(QPointF(x0 + 3.5, y + 11), 3.5, 3.5)
-            fm = QFontMetrics(F_TEXT)
+            qp.drawEllipse(QPointF(x0 + 3, y + 11), 3, 3)
             qp.setFont(F_SMALL)
-            rw = QFontMetrics(F_SMALL).horizontalAdvance(right) + 4
-            qp.setPen(QColor("#e4e6e8" if hot else "#7d8691"))
-            qp.drawText(QRectF(x1 - rw, y, rw, 22), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, right)
+            fs = QFontMetrics(F_SMALL)
+            rw = fs.horizontalAdvance(right) + 4
+            qp.setPen(QColor("#e4e6e8" if hot else "#6f7680"))
+            qp.drawText(QRectF(x1 - rw - 4, y, rw, 22), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                        right)
             qp.setFont(F_TEXT)
-            qp.setPen(QColor("#e4e6e8"))
-            left = fm.elidedText(text, Qt.TextElideMode.ElideRight, int(x1 - x0 - 16 - rw - 8))
+            qp.setPen(QColor("#e8eaec"))
+            left = QFontMetrics(F_TEXT).elidedText(text, Qt.TextElideMode.ElideRight, int(x1 - x0 - 16 - rw - 10))
             qp.drawText(QRectF(x0 + 14, y, x1 - x0 - 14 - rw, 22), Qt.AlignmentFlag.AlignVCenter, left)
             return y + 26
+
+        def chip(self, qp: Any, rect: Any, key: str, text: str) -> None:
+            hot = self.hot == key
+            qp.setPen(QPen(QColor(255, 255, 255, 26 if hot else 16), 1))
+            qp.setBrush(QColor("#1c1e22" if hot else "#141518"))
+            qp.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), rect.height() / 2, rect.height() / 2)
+            ink = QColor("#f1f2f3" if hot else "#c4c8ce")
+            self.glyph(qp, QPointF(rect.x() + 15, rect.center().y()), icon_for(key[3:]), QColor("#9aa1aa") if not hot
+                       else ink)
+            qp.setPen(ink)
+            qp.setFont(F_CHIP)
+            qp.drawText(rect.adjusted(28, 0, -10, 0), Qt.AlignmentFlag.AlignVCenter, text)
+            self.buttons.append((rect, key))
+
+        def glyph(self, qp: Any, c: Any, kind: str, color: Any) -> None:
+            """A 12 px line icon centred on c."""
+            qp.save()
+            qp.translate(c)
+            pen = QPen(color, 1.3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+            qp.setPen(pen)
+            qp.setBrush(Qt.BrushStyle.NoBrush)
+            path = QPainterPath()
+            if kind == "inbox":
+                path.moveTo(-5.5, 0.5)
+                path.lineTo(-3.5, -4.5)
+                path.lineTo(3.5, -4.5)
+                path.lineTo(5.5, 0.5)
+                path.lineTo(5.5, 4.5)
+                path.lineTo(-5.5, 4.5)
+                path.closeSubpath()
+                path.moveTo(-5.5, 0.5)
+                path.lineTo(-2, 0.5)
+                path.lineTo(-1, 2)
+                path.lineTo(1, 2)
+                path.lineTo(2, 0.5)
+                path.lineTo(5.5, 0.5)
+            elif kind == "grid":
+                for dx, dy in ((-5, -5), (1, -5), (-5, 1), (1, 1)):
+                    path.addRoundedRect(QRectF(dx, dy, 4, 4), 1, 1)
+            elif kind == "chat":
+                path.addRoundedRect(QRectF(-5.5, -4.5, 11, 8), 3, 3)
+                path.moveTo(-2.5, 3.5)
+                path.lineTo(-3.5, 6)
+                path.lineTo(0, 3.5)
+            elif kind == "page":
+                path.addRoundedRect(QRectF(-4.5, -5.5, 9, 11), 1.5, 1.5)
+                path.moveTo(-2, -2)
+                path.lineTo(2, -2)
+                path.moveTo(-2, 1)
+                path.lineTo(2, 1)
+            elif kind == "moon":
+                path.moveTo(2.5, -5)
+                path.cubicTo(-5, -5.5, -6, 5.5, 0.5, 5.5)
+                path.cubicTo(3, 5.5, 5, 3.5, 5.5, 2)
+                path.cubicTo(1, 3, -1.5, -2, 2.5, -5)
+            elif kind == "power":
+                path.moveTo(0, -5.5)
+                path.lineTo(0, 0)
+                path.arcMoveTo(QRectF(-5, -4.5, 10, 10), 60)
+                path.arcTo(QRectF(-5, -4.5, 10, 10), 60, -300)
+            elif kind == "spark":
+                path.moveTo(0, -5.5)
+                path.cubicTo(0.5, -1, 1, -0.5, 5.5, 0)
+                path.cubicTo(1, 0.5, 0.5, 1, 0, 5.5)
+                path.cubicTo(-0.5, 1, -1, 0.5, -5.5, 0)
+                path.cubicTo(-1, -0.5, -0.5, -1, 0, -5.5)
+            elif kind == "bolt":
+                path.moveTo(1, -5.5)
+                path.lineTo(-3.5, 1)
+                path.lineTo(0, 1)
+                path.lineTo(-1, 5.5)
+                path.lineTo(3.5, -1)
+                path.lineTo(0, -1)
+                path.closeSubpath()
+            elif kind == "globe":
+                path.addEllipse(QPointF(0, 0), 5.5, 5.5)
+                path.addEllipse(QPointF(0, 0), 2.3, 5.5)
+                path.moveTo(-5.5, 0)
+                path.lineTo(5.5, 0)
+            elif kind == "bell":
+                path.moveTo(-4.5, 3)
+                path.cubicTo(-3.5, 2, -3.5, 0, -3.5, -1)
+                path.cubicTo(-3.5, -6, 3.5, -6, 3.5, -1)
+                path.cubicTo(3.5, 0, 3.5, 2, 4.5, 3)
+                path.closeSubpath()
+                path.moveTo(-1.2, 5)
+                path.lineTo(1.2, 5)
+            else:
+                path.addEllipse(QPointF(0, 0), 2, 2)
+            qp.drawPath(path)
+            qp.restore()
+
+        def round_key(self, qp: Any, rect: Any, key: str, icon: str) -> None:
+            """A round key: Talk (a green mic) or "···" (Helios)."""
+            hot = self.hot == key
+            talk = icon == "mic"
+            edge = QColor(52, 211, 153, 110 if hot else 70) if talk else QColor(255, 255, 255, 26 if hot else 16)
+            qp.setPen(QPen(edge, 1))
+            qp.setBrush(QColor("#11261c" if talk and hot else "#0e1d16" if talk else "#1c1e22" if hot else "#141518"))
+            qp.drawEllipse(rect.adjusted(0.5, 0.5, -0.5, -0.5))
+            c = rect.center()
+            if talk:
+                pen = QPen(QColor("#4ade80" if hot else "#34d399"), 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+                qp.setPen(pen)
+                qp.setBrush(Qt.BrushStyle.NoBrush)
+                qp.drawRoundedRect(QRectF(c.x() - 3, c.y() - 7.5, 6, 10), 3, 3)
+                arc = QPainterPath()
+                arc.moveTo(c.x() - 5.5, c.y() - 0.5)
+                arc.cubicTo(c.x() - 5.5, c.y() + 5.5, c.x() + 5.5, c.y() + 5.5, c.x() + 5.5, c.y() - 0.5)
+                qp.drawPath(arc)
+                qp.drawLine(QPointF(c.x(), c.y() + 4), QPointF(c.x(), c.y() + 7))
+            else:
+                qp.setPen(Qt.PenStyle.NoPen)
+                qp.setBrush(QColor("#d4d7dc" if hot else "#8b929b"))
+                for dx in (-5, 0, 5):
+                    qp.drawEllipse(QPointF(c.x() + dx, c.y()), 1.4, 1.4)
+            self.buttons.append((rect, key))
 
         # -------------------------------------------------------------- mouse
 

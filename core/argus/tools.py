@@ -35,6 +35,7 @@ class Tool:
     required: list[str] = field(default_factory=list)
     risky: bool = False
     private: bool = False  # its results never go to Claude (Ari's thinking stays local; not offered over MCP)
+    untrusted: bool = False  # it returns outside text (web pages): after it, Ari asks before doing anything
     plugin: str | None = None  # a plugin tool: runs as a job of plugin.workflow
     workflow: str | None = None
     fn: Callable[[dict[str, Any]], Awaitable[Any]] | None = None  # a built-in tool
@@ -48,7 +49,8 @@ class Tool:
         """What the model sees."""
         args = {k: v.get("description") or v.get("type", "") for k, v in self.props.items()}
         return {"name": self.name, "does": self.description, "args": args, "required": self.required,
-                **({"asks_first": True} if self.risky else {}), **({"private": True} if self.private else {})}
+                **({"asks_first": True} if self.risky else {}), **({"private": True} if self.private else {}),
+                **({"untrusted": True} if self.untrusted else {})}
 
 
 def check_args(tool: Tool, args: Any) -> dict[str, Any]:
@@ -76,7 +78,7 @@ class Tools:
         for pid, p in sorted(self.argus.plugin_host.plugins.items()):
             for t in p.manifest.ari.tools:
                 out.setdefault(t.name, Tool(t.name, t.description, dict(t.input), list(t.required), t.risky,
-                                            plugin=pid, workflow=t.workflow, private=t.private,
+                                            plugin=pid, workflow=t.workflow, private=t.private, untrusted=t.untrusted,
                                             for_mcp=not t.private))
         return out
 
