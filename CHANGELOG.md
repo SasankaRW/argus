@@ -5,6 +5,9 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Ari no longer makes up answers: a web search must be about what you asked, and when a tool fails Ari says so instead of inventing a result.
+- With many tools, Ari is offered the ones that fit your message (a phone request gets the phone's tools, and PC-only tools are refused for the phone).
+- The map shows the phone once: the Argus app and the phone Tailscale sees are one box.
 - Ari treats "I'm tired", "just wanna talk", "never mind, thank you" and "how's it doing" as talk, even mid-sentence, instead of reaching for a tool; and it no longer repeats the same reply (like an apology) message after message.
 - Ari no longer plays a beeping tone while an answer is being worked out.
 - Ari no longer offers to type into the window in front unless you ask to type or press keys; "Kaancha hi on WhatsApp" goes straight to a WhatsApp message.

@@ -193,3 +193,24 @@ def test_talk_said_mid_sentence_is_still_talk_and_ari_never_repeats_itself():
     said = ["Sorry about that! I'll make sure to use the correct tool next time. How can I assist you?"]
     assert _same("Sorry about that! I'll make sure to use the correct tool next time. How can I assist you now?", said)
     assert not _same("Long day, huh? Want to talk about it?", said)
+
+
+def test_no_made_up_searches_or_answers_after_a_failed_tool():
+    from argus.worker.think import FAILED, _about
+
+    assert not _about("best budget laptop for college students 2025", "can you turn down my volume on my phone")
+    assert _about("weather Kandy", "what's the weather in kandy?")
+    assert _about("python release", "latest Python release?")
+    assert FAILED.search("Sorry, I couldn't look that up right now.")
+    assert not FAILED.search("Based on the latest information, the best budget laptops are...")
+
+
+def test_with_many_tools_the_ones_that_fit_are_offered():
+    from argus.worker.think import closest
+
+    tools = {f"tool_{i}": {"description": f"does thing number {i}"} for i in range(40)}
+    tools |= {"phone_torch": {"description": "Turn the phone's torch (flashlight) on or off"},
+              "set_volume": {"description": "Set the PC's volume"}, "web_search": {"description": "Search the web"}}
+    got = closest(tools, "can you turn on the flashlight on my phone")
+    assert "phone_torch" in got and "web_search" in got and "tool_3" not in got
+    assert closest(tools, "zzz qqq") == tools  # nothing fits: all of them

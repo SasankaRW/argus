@@ -78,9 +78,53 @@ def offered(tools: dict[str, dict], text: str, history: list[dict]) -> dict[str,
     """The tools worth offering for this message: the screen / clipboard ones only when it's about them (or the
     chat just was). Fewer tools is also a shorter prompt, so a faster first step."""
     recent = " ".join(str(h.get("text") or "") for h in history[-2:])
-    return {n: t for n, t in tools.items()
-            if n not in SCREEN_TOOLS or SCREEN_TOOLS[n].search(text)
-            or (SCREEN_TOOLS[n] is not TYPING and SCREEN_TOOLS[n].search(recent))}  # typing: only when asked now
+    ok = {n: t for n, t in tools.items()
+          if n not in SCREEN_TOOLS or SCREEN_TOOLS[n].search(text)
+          or (SCREEN_TOOLS[n] is not TYPING and SCREEN_TOOLS[n].search(recent))}  # typing: only when asked now
+    return closest(ok, f"{text} {recent}") if len(ok) > MANY else ok
+
+
+PC_ONLY = {"set_volume", "media_control", "open_app", "close_app", "list_apps", "take_screenshot", "lock_pc",
+           "pc_status", "switch_to_window", "show_desktop", "type_text", "press_keys", "open_website", "open_file"}
+MANY = 24  # more tools than this and a small local model picks badly: offer the ones that fit the message
+ALWAYS = ("web_search", "read_page", "remember", "recall_memory", "weather", "argus_status")
+_ALSO = {"flashlight": "torch", "light": "torch", "loud": "volume", "quiet": "volume", "louder": "volume",
+         "mute": "volume", "sound": "volume", "mobile": "phone", "cell": "phone", "alarm": "timer",
+         "song": "media", "music": "media", "pause": "media", "lookup": "search", "google": "search",
+         "message": "whatsapp", "text": "whatsapp", "launch": "open", "start": "open", "shut": "close",
+         "computer": "pc", "laptop": "pc", "todo": "issue", "task": "issue", "ticket": "issue",
+         "pdf": "pdf", "photo": "image", "picture": "image", "remind": "schedule"}
+
+
+def _words(x: str) -> set[str]:
+    out = set()
+    for w in re.findall(r"[a-z]+", x.lower().replace("_", " ")):
+        if len(w) > 2 and w not in _COMMON:
+            w = w[:-1] if w.endswith("s") and len(w) > 4 else w
+            out.add(w)
+            if w in _ALSO:
+                out.add(_ALSO[w])
+    return out
+
+
+def closest(tools: dict[str, dict], text: str, keep: int = 14) -> dict[str, dict]:
+    """The tools whose name or description share the most words with the message (and the last two turns), plus a
+    few that are always useful. A message about the phone gets the phone's tools, not the PC's."""
+    want = _words(text)
+    phone = "phone" in want
+
+    def score(n: str, t: dict) -> float:
+        name, desc = _words(n), _words(str(t.get("description") or ""))
+        sc = 3 * len(want & name) + len(want & desc)
+        if phone and n.startswith("phone_"):
+            sc += 2
+        return sc
+
+    ranked = sorted(((score(n, t), n) for n, t in tools.items()), key=lambda x: -x[0])
+    pick = {n for sc, n in ranked[:keep] if sc > 0}
+    if not pick:  # nothing fits by its words: let the model see them all
+        return tools
+    return {n: t for n, t in tools.items() if n in pick or n in ALWAYS}
 
 
 OPEN_APP = re.compile(r"^\W*(?:please\s+)?(?:open|launch|start)\s+(?:up\s+)?(?:the\s+)?(?P<app>[a-z][\w+ -]{1,28}?)"
@@ -144,6 +188,22 @@ You can put ONE sound where it really fits: [laugh], [chuckle], [sigh], [gasp] o
 "[laugh]"). Pick the mood you'd say it in: neutral, cheerful, excited, playful, calm, sympathetic or serious (match
 theirs: tired -> calm or sympathetic, good news -> excited).
 Answer as JSON {"reply": "...", "mood": "...", "remember": ""}."""
+
+
+FAILED = re.compile(r"\b(?:couldn'?t|can'?t|cannot|failed|isn'?t (?:answering|working|available|running)|"
+                    r"not (?:able|working|available|answering)|unable|didn'?t work|no luck|wasn'?t able|error|down)\b",
+                    re.I)
+_COMMON = {"the", "a", "an", "and", "or", "for", "to", "of", "in", "on", "my", "me", "you", "your", "can", "could",
+           "what", "whats", "is", "are", "it", "this", "that", "please", "hey", "ari", "best", "how", "do", "i",
+           "with", "about", "latest", "new", "now", "today", "2024", "2025", "2026"}
+
+
+def _about(query: str, asked: str) -> bool:
+    """A search that has something to do with what was asked (one real word in common, roughly)."""
+    def words(x: str) -> set[str]:
+        return {w.rstrip("s") for w in re.findall(r"[a-z0-9']+", x.lower().replace("'", "")) if w not in _COMMON}
+    q = words(query)
+    return not q or bool(q & words(asked))
 
 
 def _same(reply: str, before: list[str]) -> bool:
@@ -269,6 +329,8 @@ def think(ctx: Context):
             "now": ctx.input.get("now") or time.strftime("%A %d %B %Y, %H:%M"),
             "tools": list(tools.values())}
     done: list[dict[str, Any]] = []
+    asked = " ".join([text] + [str(h.get("text") or "") for h in base["conversation_so_far"][-4:]
+                               if h.get("role") in ("you", "user")])
     said_before = [str(h.get("text") or "") for h in base["conversation_so_far"] if h.get("who") in ("ari", "assistant")
                    or h.get("role") in ("ari", "assistant")]
 
@@ -284,8 +346,18 @@ def think(ctx: Context):
                 return f"{s.tool} needs {', '.join(missing)}"
             if any(d["tool"] == s.tool and d["args"] == s.args for d in done):
                 return "you already used that tool with these arguments; use its result and reply"
+            if (re.search(r"\b(?:phone|mobile)\b", text, re.I) and not s.tool.startswith("phone")
+                    and s.tool in PC_ONLY):
+                return (f"{s.tool} works on the PC, not the phone: use a phone_ tool, or say plainly the phone can't "
+                        "do that yet")
+            if s.tool == "web_search" and not _about(str(s.args.get("query") or ""), asked):
+                return f"search for what they asked ({text!r}), not something else; or reply if no search is needed"
         elif not s.need_web and not s.reply.strip():
             return "give a reply, a tool, or need_web"
+        elif done and all("error" in d for d in done) and not s.need_web and not FAILED.search(s.reply):
+            d = done[-1]
+            return (f"{d['tool']} failed ({str(d['error'])[:120]}), so you have no result: say plainly that it didn't "
+                    "work, or set need_web true; never make up an answer")
         elif PROMISE.match(s.reply) and not done:
             return ("don't say what you will do: use the tool for it now, or say plainly that you can't do that "
                     "(and what you can do instead)")

@@ -33,3 +33,10 @@ def test_the_session_worker_after_the_move_is_the_same_pc():
                "desktop-saspc-now": w(["session"])}
     assert _aliases(workers) == {"desktop-saspc": "worker-saspc", "desktop-saspc-now": "worker-saspc",
                                  "pc": "worker-saspc"}
+
+
+def test_the_phone_app_and_the_phone_tailscale_sees_are_one_box():
+    from argus.registry import _aliases
+
+    ws = {"worker-saspc": {"capabilities": ["desktop"]}, "phone-pixel-8a": {"capabilities": ["phone"]}}
+    assert _aliases(ws)["phone"] == "phone-pixel-8a"
