@@ -74,9 +74,36 @@ def _hm(m: re.Match, part: str | None) -> tuple[int, int] | None:
     return h, mi
 
 
+_ONES = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve thirteen "
+                                     "fourteen fifteen sixteen seventeen eighteen nineteen".split())}
+_TENS = {"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50}
+_NUM = (r"(?:(?:twenty|thirty|forty|fifty)(?:[\s-](?:one|two|three|four|five|six|seven|eight|nine))?|"
+        r"zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|"
+        r"sixteen|seventeen|eighteen|nineteen)")
+
+
+def _num(w: str) -> int:
+    parts = re.split(r"[\s-]", w.strip().lower())
+    return sum(_TENS.get(p, _ONES.get(p, 0)) for p in parts)
+
+
+def digits(text: str) -> str:
+    """Spoken numbers as digits, as a voice transcript writes them: "at eleven thirty" -> "at 11:30", "at five
+    oh five" -> "at 5:05", "in twenty minutes" -> "in 20 minutes", "half an hour" -> "30 minutes"."""
+    t = re.sub(r"\bhalf an hour\b", "30 minutes", text, flags=re.I)
+    t = re.sub(r"\ban hour\b", "1 hour", t, flags=re.I)
+    t = re.sub(rf"\b({_NUM})\s+(?:oh\s+({_NUM})|((?:twenty|thirty|forty|fifty)(?:[\s-][a-z]+)?|ten|eleven|"
+               rf"twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen))\b(?=\s*(?:am|pm|a\.m|"
+               rf"p\.m|tonight|today|tomorrow|in the|o'?clock|$|[.,!?]|\s+(?:to|and|every|on|for)\b))",
+               lambda m: (f"{_num(m.group(1))}:{_num(m.group(2) or m.group(3)):02d}"
+                          if 1 <= _num(m.group(1)) <= 23 and _num(m.group(2) or m.group(3)) < 60 else m.group(0)),
+               t, flags=re.I)
+    return re.sub(rf"\b{_NUM}\b", lambda m: str(_num(m.group(0))), t, flags=re.I)
+
+
 def parse_when(text: str, now: float) -> When | None:
-    """Find a time in plain words. None when there is none."""
-    t = " " + text.lower().strip() + " "
+    """Find a time in plain words ("at 5 pm", or as spoken: "at five pm"). None when there is none."""
+    t = " " + digits(text).lower().strip() + " "
     t = re.sub(r"[?!,]", " ", t)
     at = re.search(rf"\b(?:at|@|by)\s*{TIME}(?=\s)", t) or re.search(TIME_AP, t)
     part_m = re.search(r"\b(morning|afternoon|evening|night|tonight)s?\b", t)
