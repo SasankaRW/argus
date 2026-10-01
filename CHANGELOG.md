@@ -5,6 +5,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Helios build updated (the plugin page says "your phone" for phone plugins).
 - Tracker and Life Hub for Ari (connector plugins `tracker`, `lifehub`): work summary, list/add/move issues, the timer; the shopping list and wishlist; this month's money (read only, private: never sent to Claude). Adding or moving issues asks first. `permissions.network` can name a setting ("config:url"), so a connector reaches exactly the address you set.
 - Argus for Android (`android/`): Helios full screen plus phone tools for Ari (new plugin `phone`: battery and network, ring loudly, Do Not Disturb, torch, timer, open an app or a link). The phone connects to Argus as a worker with the capability `phone` (outgoing only, over Tailscale); a setup page for the address, token and phone permissions. Build once in Android Studio (android/README.md). Plugins can now say `runs_on: phone`.
 - New Ari skills: read later (save a page from Ari or the phone's share menu: text + local summary in Documents/read-later, "what did I save about ..."), file tools (merge PDFs, pictures to PDF, pages out of a PDF, smaller copies of pictures; new files beside the originals, Ari asks first), weekly review (Sunday's summary has your week and suggests scheduling what you keep doing by hand; "how was my week?").
