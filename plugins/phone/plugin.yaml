@@ -1,0 +1,52 @@
+id: phone
+name: Phone
+version: 1.0.0
+kind: workflow
+argus_api: ">=1.0 <2.0"
+description: Lets Ari do things on your phone through the Argus app (android/) - battery and network, ring it loudly, Do Not Disturb, the torch, a timer, open an app or a link.
+runs_on: phone
+
+workflows: [status, ring, dnd, torch, timer, open_app, open_url]
+
+permissions:
+  files: {read: [], write: [], delete: none}
+  models: []
+
+ari:
+  tools:
+    - name: phone_status
+      description: How the phone is doing - battery, charging, network, free storage, ringer mode.
+      workflow: status
+    - name: ring_phone_now
+      description: Ring the phone loudly for 20 seconds, even on silent (to find it).
+      workflow: ring
+    - name: phone_dnd
+      description: Turn the phone's Do Not Disturb on or off.
+      workflow: dnd
+      input: {state: {type: string, description: '"on" or "off"'}}
+      required: [state]
+    - name: phone_torch
+      description: Turn the phone's torch (flashlight) on or off.
+      workflow: torch
+      input: {state: {type: string, description: '"on" or "off"'}}
+      required: [state]
+    - name: phone_timer
+      description: Start a timer on the phone.
+      workflow: timer
+      input:
+        minutes: {type: integer, description: how many minutes}
+        label: {type: string, description: "what it's for (optional)"}
+      required: [minutes]
+    - name: phone_open_app
+      description: Open an app on the phone by its name (Spotify, Maps, ...).
+      workflow: open_app
+      input: {name: {type: string, description: the app's name}}
+      required: [name]
+    - name: phone_open_link
+      description: Open a web link on the phone.
+      workflow: open_url
+      input: {url: {type: string, description: the link}}
+      required: [url]
+
+helios:
+  node: {label: Phone, group: pc}

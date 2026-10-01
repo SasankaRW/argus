@@ -184,7 +184,7 @@ function Overview({ d }: { d: Detail }) {
         <p>Deletes: {perms.files.delete === "recycle_bin" ? "to the Recycle Bin only" : "never"}</p>
         {perms.models.length > 0 && <p>Models: {perms.models.join(", ")}</p>}
         {perms.network.length > 0 && <p>Internet: {perms.network.includes("*") ? "any public website (never your PC, LAN or tailnet)" : perms.network.join(", ")}</p>}
-        <p className="muted">Runs on: {d.runs_on === "desktop" ? "the PC" : d.runs_on}{d.needs.includes("session") ? " (your Windows session)" : ""}</p>
+        <p className="muted">Runs on: {d.runs_on === "desktop" ? "the PC" : d.runs_on === "phone" ? "your phone (the Argus app)" : d.runs_on}{d.needs.includes("session") ? " (your Windows session)" : ""}</p>
       </div>
     </div>
   );

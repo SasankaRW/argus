@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Argus iris (as in Helios): an amber ring around a dark pupil, centred in the 108dp adaptive canvas. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#00000000" android:strokeColor="#F5A524" android:strokeWidth="5"
+        android:pathData="M54,30 a24,24 0 1,0 0.01,0 z" />
+    <path android:fillColor="#F5A524"
+        android:pathData="M54,42 a12,12 0 1,0 0.01,0 z" />
+    <path android:fillColor="#07090C"
+        android:pathData="M54,48 a6,6 0 1,0 0.01,0 z" />
+    <path android:fillColor="#FFF4DD"
+        android:pathData="M58.5,46.5 a2.2,2.2 0 1,0 0.01,0 z" />
+</vector>

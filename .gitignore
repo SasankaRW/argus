@@ -11,3 +11,9 @@ logs/
 build/
 dist/
 node_modules/
+# Android Studio
+android/.gradle/
+android/.idea/
+android/local.properties
+android/**/build/
+android/.kotlin/

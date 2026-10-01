@@ -5,6 +5,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Argus for Android (`android/`): Helios full screen plus phone tools for Ari (new plugin `phone`: battery and network, ring loudly, Do Not Disturb, torch, timer, open an app or a link). The phone connects to Argus as a worker with the capability `phone` (outgoing only, over Tailscale); a setup page for the address, token and phone permissions. Build once in Android Studio (android/README.md). Plugins can now say `runs_on: phone`.
 - New Ari skills: read later (save a page from Ari or the phone's share menu: text + local summary in Documents/read-later, "what did I save about ..."), file tools (merge PDFs, pictures to PDF, pages out of a PDF, smaller copies of pictures; new files beside the originals, Ari asks first), weekly review (Sunday's summary has your week and suggests scheduling what you keep doing by hand; "how was my week?").
 - Web for Ari (new plugin `web`): the local models search your own SearXNG (`deploy/searxng`, 127.0.0.1 only) and read pages, so current questions no longer need Claude (it stays the fallback). Outbound only; pages are public websites only (checked again after redirects and on the actual connection); web text is marked untrusted, and after it anything that does something asks you first.
 - Island: shortcut chips have small line icons by what they do (a page, a routine, a plugin button, sleep, a website, the phone).
