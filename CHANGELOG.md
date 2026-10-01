@@ -5,6 +5,11 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Ari's expressive voice:** `ari.voice_engine: expressive` runs Chatterbox-Turbo on the PC's GPU (in its own
+  Python environment; the supervisor starts it): replies carry a mood and real sounds ("[cheerful] Oh nice!
+  [laugh]") that set how Ari sounds, sounding like the Piper voice (or `ari.voice_clip`), with Piper as the
+  fallback. Ari talks more like a person in casual chat (fillers, the odd self-correction), and says a short
+  "hmm, let me check" while a slower answer is on its way. The screen shows only the words.
 - **Pause listening:** a button in Helios (Ari chat and Ari settings) stops Ari listening everywhere, the PC's
   microphone and every Helios, until you resume (`POST /ari/listening`); the voice training page pauses it by
   itself while it's open, so Ari doesn't answer the sentences you read.

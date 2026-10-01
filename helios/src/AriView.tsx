@@ -3,6 +3,7 @@ import { api } from "./api";
 import type { Selection } from "./MapView";
 import { ariNow, ariSet, pauseEars, resumeEars, setPillLook, useAri, useEars, usePillLook } from "./ariState";
 import { canSpeak, listen, pref, setPref, speak, Speech, stopSpeaking, voiceStatus, VoiceStatus } from "./voice";
+import { plain } from "./spoken";
 
 type Turn = { id: number; role: "you" | "ari"; text: string | null; action: string | null; label?: string | null;
   pending: { kind: string; action: string } | null; job_id: string | null; created_at: number;
@@ -227,7 +228,7 @@ export function AriView({ conv, onBack, onNew, onSelect, onView, compact = false
           <div key={t.id} className={`msg ${t.role}`}>
             <span className="who">{t.role === "you" ? "you" : "ari"}</span>
             <div className="bubble">
-              {t.text ?? <span className="waiting"><span className="typing" aria-label="Ari is thinking"><i /><i /><i /></span>{ari.phase === "working" && ari.text && <span className="doing">{ari.text}…</span>}</span>}
+              {t.text !== null ? plain(t.text) : <span className="waiting"><span className="typing" aria-label="Ari is thinking"><i /><i /><i /></span>{ari.phase === "working" && ari.text && <span className="doing">{ari.text}…</span>}</span>}
               {t.used && t.used.length > 0 && (
                 <div className="used">{t.used.map((u, i) => <span key={i} className={u.ok ? "" : "bad"}>{u.tool.replace(/_/g, " ")}</span>)}</div>
               )}

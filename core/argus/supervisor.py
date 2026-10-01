@@ -64,6 +64,27 @@ def ari_on(what: str) -> bool:
         return False
 
 
+def load_ari():
+    from .config import load_config
+
+    return load_config(ROOT / "argus.yaml").ari
+
+
+def expressive_on() -> bool:
+    """ari.voice_engine: expressive, and its Python environment exists."""
+    try:
+        a = load_ari()
+        return a.voice_engine == "expressive" and (ROOT / a.expressive_python).exists()
+    except Exception:
+        return False
+
+
+def port_of(url: str) -> int:
+    from urllib.parse import urlparse
+
+    return urlparse(url).port or 8611
+
+
 def listen_on() -> bool:
     return ari_on("listen")
 
@@ -82,7 +103,10 @@ class Child:
         err = open(logs / f"{self.name}-crash.log", "w")  # noqa: SIM115
         flags = subprocess.CREATE_NO_WINDOW if WIN else 0  # type: ignore[attr-defined]
         try:
-            self.proc = subprocess.Popen([sys.executable, *self.args], cwd=ROOT, stdout=out, stderr=err,
+            # "exe:<path>" first: another Python (the expressive voice's own environment)
+            argv = ([str(ROOT / self.args[0][4:]), *self.args[1:]] if self.args and self.args[0].startswith("exe:")
+                    else [sys.executable, *self.args])
+            self.proc = subprocess.Popen(argv, cwd=ROOT, stdout=out, stderr=err,
                                          creationflags=flags)
         finally:  # the child has its own handles now
             out.close()
@@ -152,6 +176,10 @@ def plan(args: argparse.Namespace) -> list[tuple[str, list[str]]]:
         desk = not args.no_worker and not args.no_session
     if desk and listen_on():  # "Hey Ari" on this PC's microphone
         out.append(("ari-listen", ["-m", "argus.ari_listen", "--log-file", "logs/ari.log"]))
+    if desk and expressive_on():  # Ari's expressive voice (Chatterbox, in its own Python environment)
+        a = load_ari()
+        out.append(("ari-voice", [f"exe:{a.expressive_python}", "core/argus/voice_server.py", "--model",
+                                  a.expressive_model, "--port", str(port_of(a.expressive_url)), "--warm"]))
     if desk and ari_on("popup"):  # Ari's island at the top of the screen
         out.append(("ari-popup", ["-m", "argus.ari_popup"]))
     if not args.no_worker and not args.desk_only:

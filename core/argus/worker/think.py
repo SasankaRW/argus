@@ -24,6 +24,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from ..expressive import tidy
 from ..models import EscalationExhausted
 from .workflows import Context, PermanentError, ToolFailed, workflow
 
@@ -37,6 +38,8 @@ class Step(BaseModel):
     need_web: bool = Field(False, description="true when the answer needs current information from the internet")
     remember: str = Field("", description="with a reply: a lasting fact the user just told you about themselves "
                                           "worth keeping (else empty)")
+    mood: str = Field("", description="with a reply: how to say it: neutral, cheerful, excited, playful, calm, "
+                                      "sympathetic or serious")
 
 
 SENSITIVE = re.compile(r"\b(password|passcode|pin|otp|cvv|card|account number|bank|salary|loan|debt|diagnos|"
@@ -117,7 +120,12 @@ Talk like a person, not a help desk: never say "as an AI", never "I can't comple
 emoji. Match their mood and slang. React to what they said, share a light opinion or a joke when it fits, and
 sometimes ask something back. Use what you know about them ("you_remember") naturally, without reciting it.
 If they tell you a lasting fact about themselves, put it in "remember" as a short sentence.
-Answer as JSON {"reply": "...", "remember": ""}."""
+Sound like speech, not writing: it's fine to start with "oh", "hmm", "well" or "haha", to
+trail off or correct yourself once in a while ("it was, uh, Tuesday? no, Wednesday"), as people do; don't overdo it.
+You can put ONE sound where it really fits: [laugh], [chuckle], [sigh], [gasp] or [groan] (e.g. after a joke,
+"[laugh]"). Pick the mood you'd say it in: neutral, cheerful, excited, playful, calm, sympathetic or serious (match
+theirs: tired -> calm or sympathetic, good news -> excited).
+Answer as JSON {"reply": "...", "mood": "...", "remember": ""}."""
 
 
 def chatty(text: str) -> bool:
@@ -189,6 +197,8 @@ How to decide:
   routine, a project) that isn't in "you_remember", put it in "remember" as a short sentence with your reply
   ("prefers tea, no sugar", "sister Nimali lives in Kandy"). Never passwords, money, health or one-off things.
 - When "last_step" is true you must reply now: say what you did and what you found so far.
+- Say it like a person would: a natural "okay", "done", "hmm" is fine, and a "mood" for how to say it (neutral,
+  cheerful, excited, playful, calm, sympathetic or serious). A sound ([laugh], [sigh]) only in casual talk.
 - Reply naturally about what happened ("Opened Spotify and turned it down."). If a tool failed, say what went wrong
   in plain words.
 Answer with the JSON only."""
@@ -269,7 +279,7 @@ def think(ctx: Context):
 
         try:
             c = ctx.step("chat", chat)
-            reply = spoken(c["reply"])
+            reply = tidy(spoken(c["reply"]), c.get("mood") or "")
             fact = worth_keeping(c.get("remember") or "", base["you_remember"])
             if fact:
                 return {"reply": f"{reply} Want me to remember that?", "used": [], "tier": c.get("tier"),
@@ -359,7 +369,7 @@ def think(ctx: Context):
                 if s["reply"]:
                     return {"reply": spoken(s["reply"]), "used": done}
                 return {"reply": "That needs the internet, and I can't reach Claude right now.", "used": done}
-        reply = spoken(s["reply"])
+        reply = tidy(spoken(s["reply"]), s.get("mood") or "")
         fact = worth_keeping(s.get("remember") or "", base["you_remember"])
         if fact:  # Ari offers to remember it; your yes saves it
             return {"reply": f"{reply} Want me to remember that?".strip(), "used": done, "tier": s.get("tier"),

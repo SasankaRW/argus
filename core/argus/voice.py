@@ -100,8 +100,13 @@ class Voice:
         return self._voice
 
     def say(self, text: str) -> bytes:
-        """WAV audio of `text` (one call at a time; loading the voice the first time takes a second)."""
-        text = re.sub(r"\s+", " ", text).strip()[:1000]
+        """WAV audio of `text` (one call at a time; loading the voice the first time takes a second). A mood tag
+        ("[calm] ...") nudges the speed; [laugh] and the like are left out (Piper can't)."""
+        from .expressive import PIPER_SPEED, mood_of, plain
+
+        mood, _ = mood_of(text)
+        nudge = PIPER_SPEED.get(mood, 1.0)
+        text = re.sub(r"\s+", " ", plain(text)).strip()[:1000]
         if not text:
             raise ValueError("nothing to say")
         with self._lock:
@@ -112,9 +117,55 @@ class Voice:
                     try:
                         from piper import SynthesisConfig  # type: ignore[import-not-found]
 
-                        v.synthesize_wav(text, wf, syn_config=SynthesisConfig(length_scale=1.0 / self.speed))
+                        v.synthesize_wav(text, wf,
+                                         syn_config=SynthesisConfig(length_scale=1.0 / (self.speed * nudge)))
                     except ImportError:
                         v.synthesize_wav(text, wf)
                 else:  # older piper-tts
                     v.synthesize(text, wf)
             return buf.getvalue()
+
+
+CLIP_TEXT = ("Hi, I'm Ari. I keep an eye on things around here, and I'm always happy to help. "
+             "Ask me anything, whenever you like. Honestly, it's nice to have someone to talk to.")
+
+
+class Expressive:
+    """The expressive voice server (voice_server.py) as argusd sees it: a WAV for a text, or None when it can't
+    (not running, still loading, failed), and argusd then uses Piper."""
+
+    def __init__(self, url: str, clip: Path | None, piper: Voice, timeout: float = 30):
+        self.url, self.clip, self.piper, self.timeout = url.rstrip("/"), clip, piper, timeout
+        self._down_until = 0.0
+
+    def ensure_clip(self) -> Path | None:
+        """The voice to sound like: ari.voice_clip, else made once from the Piper voice (so Ari keeps its voice)."""
+        if self.clip is None or self.clip.exists():
+            return self.clip
+        try:
+            self.clip.parent.mkdir(parents=True, exist_ok=True)
+            self.clip.write_bytes(self.piper.say(CLIP_TEXT))
+            log.info("voice clip made from the Piper voice", extra={"clip": str(self.clip)})
+            return self.clip
+        except Exception as e:  # noqa: BLE001 - no Piper voice: Chatterbox's own voice
+            log.info("no voice clip", extra={"error": str(e)[:200]})
+            return None
+
+    def say(self, text: str) -> bytes | None:
+        import json
+        import time
+        import urllib.request
+
+        if time.time() < self._down_until:
+            return None
+        clip = self.ensure_clip()
+        body = json.dumps({"text": text, "clip": str(clip.resolve()) if clip else ""}).encode()
+        req = urllib.request.Request(self.url + "/say", data=body, method="POST",
+                                     headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as r:  # noqa: S310 - our own local service
+                return r.read()
+        except Exception as e:  # noqa: BLE001 - down or failed: Piper for the next 60 s, then try again
+            self._down_until = time.time() + 60
+            log.warning("expressive voice unavailable, using Piper", extra={"error": str(e)[:200]})
+            return None
