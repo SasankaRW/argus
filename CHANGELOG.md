@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Helios buttons reworked: one system everywhere. Main actions are dark keys with amber text and a hairline amber edge (no flat yellow slabs), "no"/secondary buttons are quiet outlines, the mic is a round key, your chat bubbles are a warm tint, Dry-run chips are neutral (Live stays green), one focus ring for the keyboard.
+- Island, opened: more compact (336 px), the time smaller, Talk is a round green mic key next to a round "···", status rows sit in one quiet card ("idle" instead of "0 running · 0 queued"), shortcut chips are smaller with a hairline edge.
 - Island: Ari's answer stays in the same slim pill it spoke from (no switch to a bigger, different-looking box); the shadow is a real soft blur that fades out, smaller, with no hard ends.
 - CI: Pillow is a dev dependency (the screen plugin's tests use it).
 - Plugins: schedules read in words ("every 3 hours", "weekdays at 09:00"; the cron line is on hover).

@@ -413,8 +413,8 @@ main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .prow-name { font-weight: 600; font-size: 13.5px; }
 .prow-desc { grid-column: 1 / -1; font-size: 12px; color: var(--tx2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pchip { align-self: center; font-size: 10.5px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line2); color: var(--tx2); margin-left: 6px; }
-.pchip.live { color: var(--ok); border-color: var(--ok); }
-.pchip.dry { color: var(--amber); border-color: var(--amber); }
+.pchip.live { color: var(--ok); border-color: rgba(61, 214, 140, .4); background: rgba(61, 214, 140, .06); }
+.pchip.dry { color: var(--tx3); border-color: var(--line2); font-weight: 500; }
 .perr { display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; font-size: 12px; color: var(--tx2); }
 .pdetail { padding: 18px 22px; overflow-y: auto; max-height: calc(100vh - 120px); }
 .pd-title { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
@@ -982,3 +982,71 @@ main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .findphone p { margin: 4px 0 10px; font-size: 12.5px; line-height: 1.55; color: var(--tx2); }
 .findphone .appr-actions { justify-content: flex-start; }
 .findphone .appr-actions .primary, .findphone .appr-actions .btn { height: 34px; padding: 0 14px; }
+
+/* ===================================================================== buttons v2
+   One system for every button. Primary: a dark, lit key with amber text and a hairline amber edge (no flat yellow
+   slabs); secondary: quiet outline; ghost: text only. Same radius, type and motion everywhere. */
+:root {
+  --b-h: 32px; --b-r: 9px;
+  --b-font: 500 12.5px/1 var(--mono);
+  --b-amber: #ffbd4a;
+  --b-amber-line: rgba(245, 165, 36, .38);
+  --b-amber-glow: rgba(245, 165, 36, .16);
+  --b-motion: background-color .16s ease, border-color .16s ease, color .16s ease, box-shadow .2s ease, transform .1s ease;
+}
+
+.primary.primary, .shell .primary, .btn.primary-btn, .pd-buttons .primary, .k-yes.k-yes {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  height: var(--b-h); padding: 0 14px; border-radius: var(--b-r);
+  border: 1px solid var(--b-amber-line) !important;
+  background: linear-gradient(180deg, #1d1810 0%, #15110b 100%) !important;
+  color: var(--b-amber) !important;
+  font: var(--b-font); letter-spacing: .01em;
+  box-shadow: inset 0 1px 0 rgba(255, 220, 160, .07), 0 1px 2px rgba(0, 0, 0, .5);
+  cursor: pointer; white-space: nowrap; transition: var(--b-motion);
+}
+.primary.primary:hover:not(:disabled), .shell .primary:hover:not(:disabled), .btn.primary-btn:hover:not(:disabled),
+.k-yes.k-yes:hover:not(:disabled) {
+  border-color: rgba(245, 165, 36, .7) !important; color: #ffd27f !important;
+  background: linear-gradient(180deg, #241c10 0%, #1a140b 100%) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 220, 160, .1), 0 0 0 3px var(--b-amber-glow), 0 4px 14px -6px rgba(245, 165, 36, .45);
+}
+.primary.primary:disabled, .shell .primary:disabled, .btn.primary-btn:disabled, .k-yes.k-yes:disabled {
+  opacity: .42; box-shadow: none; cursor: default;
+}
+
+.btn.btn { height: 28px; border-radius: 8px; font: 500 11.5px/1 var(--mono); transition: var(--b-motion);
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.btn.btn:hover:not(:disabled) { background: #151a22; border-color: #3a4454; color: var(--tx); }
+
+/* the "no" next to a "yes": quiet, never a second amber thing */
+.k-no.k-no { border: 1px solid var(--line2); background: transparent; color: var(--tx2); font: var(--b-font);
+  border-radius: var(--b-r); transition: var(--b-motion); }
+.k-no.k-no:hover:not(:disabled) { color: var(--tx); border-color: #3a4454; background: #12161d; }
+.k-yes.k-yes, .k-no.k-no { height: 40px; padding: 0 16px; }
+.cmd-yn .k-yes.k-yes, .cmd-yn .k-no.k-no { height: 36px; }
+
+/* the microphone: a round dark key with an amber ring, lit when listening */
+.prompt-mic.prompt-mic { border-radius: 50%; background: radial-gradient(circle at 50% 35%, #231b0f, #120e08);
+  color: var(--b-amber); border: 1px solid var(--b-amber-line);
+  box-shadow: inset 0 1px 0 rgba(255, 220, 160, .08), 0 0 0 0 transparent; transition: var(--b-motion); }
+.prompt-mic.prompt-mic:hover { border-color: rgba(245, 165, 36, .7); box-shadow: 0 0 0 4px var(--b-amber-glow); }
+
+/* share: the one big action on the phone */
+.pshare.pshare { border: 1px solid var(--b-amber-line); background: linear-gradient(180deg, #1d1810, #15110b);
+  color: var(--b-amber); font: 600 14px var(--mono); box-shadow: inset 0 1px 0 rgba(255, 220, 160, .07); }
+
+/* chips: neutral until hovered */
+.chip.chip { transition: var(--b-motion); }
+.chip.chip:hover { border-color: rgba(245, 165, 36, .45); color: #ffe2ae; background: rgba(245, 165, 36, .05); }
+
+/* your chat bubble: warm tint, not a yellow block */
+.bubble.you { background: rgba(245, 165, 36, .1); color: #fff4dd; border: 1px solid rgba(245, 165, 36, .3); }
+.ari-heard { background: #15110b; color: var(--b-amber); border: 1px solid var(--b-amber-line); font-family: var(--mono); font-weight: 500; }
+.dotbadge { background: rgba(245, 165, 36, .16); color: var(--b-amber); border: 1px solid var(--b-amber-line); }
+
+/* keyboard focus: one clear ring everywhere */
+button:focus-visible, .chip:focus-visible, a:focus-visible {
+  outline: 2px solid rgba(245, 165, 36, .7); outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) { .primary, .btn, .chip, .k-yes, .k-no, .prompt-mic { transition: none; } }
