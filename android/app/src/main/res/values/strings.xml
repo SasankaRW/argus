@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Argus</string>
+    <string name="shortcut_settings">Connection and permissions</string>
+    <string name="shortcut_short">Connection</string>
+</resources>

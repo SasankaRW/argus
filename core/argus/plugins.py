@@ -190,7 +190,7 @@ class Manifest(_M):
     kind: Literal["workflow", "connector", "trigger"]
     argus_api: str
     description: str = ""
-    runs_on: Literal["laptop", "desktop", "any"] = "any"
+    runs_on: Literal["laptop", "desktop", "phone", "any"] = "any"  # phone: the Argus app runs its workflows
     needs: list[str] = Field(default_factory=list)
     triggers: list[Trigger] = Field(default_factory=list)
     workflows: list[str] = Field(default_factory=list)  # names; defaults to those the triggers use
@@ -220,7 +220,7 @@ class Manifest(_M):
 
     def job_needs(self) -> list[str]:
         """What a worker must offer to run this plugin's jobs."""
-        extra = ["desktop"] if self.runs_on == "desktop" else ["laptop"] if self.runs_on == "laptop" else []
+        extra = {"desktop": ["desktop"], "laptop": ["laptop"], "phone": ["phone"]}.get(self.runs_on, [])
         return sorted(set([n for n in self.needs if n != "none"] + extra))
 
 
@@ -321,7 +321,7 @@ def discover(cfg: Config) -> tuple[list[Plugin], dict[str, str]]:
             if m.id in seen:
                 errors[str(folder)] = f"plugin id {m.id} is used twice"
                 continue
-            if not (folder / "plugin.py").exists():
+            if not (folder / "plugin.py").exists() and m.runs_on != "phone":  # the phone app has its own code
                 errors[str(folder)] = "plugin.py is missing"
                 continue
             seen.add(m.id)

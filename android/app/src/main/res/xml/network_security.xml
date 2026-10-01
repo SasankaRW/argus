@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Argus is reached over Tailscale (encrypted end to end), often by plain http://pc:8600; the https address from
+     "tailscale serve" works too. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
