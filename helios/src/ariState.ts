@@ -47,6 +47,10 @@ const NICE: Record<string, string> = { search_my_files: "searching your files", 
 // Follow Ari from the event stream: ari.state events, and the steps of the answer being worked on.
 export function ariFromEvents(evs: Ev[]) {
   for (const e of evs) {
+    if (e.kind === "ari.listening") {
+      setEars(e.data?.listening !== false, (e.data?.until as number | null) ?? null);
+      continue;
+    }
     if (e.kind === "ari.state") {
       const phase = String(e.data?.phase ?? "idle") as AriPhase;
       const text = String(e.data?.text ?? "");
@@ -82,4 +86,32 @@ export function setPillLook(l: PillLook) {
 }
 export function usePillLook(): PillLook {
   return useSyncExternalStore((f) => { window.addEventListener("ari-look", f); return () => window.removeEventListener("ari-look", f); }, pillLook);
+}
+
+// Ari's ears: paused with the button (or while you train your voice), on every screen and the PC's microphone.
+let hushUntil = 0;  // ms; Infinity = until turned back on
+let hushTimer: ReturnType<typeof setTimeout> | undefined;
+export const earsPaused = () => hushUntil > Date.now();
+export function setEars(listening: boolean, until: number | null) {
+  hushUntil = listening ? 0 : until ? until * 1000 : Infinity;
+  clearTimeout(hushTimer);
+  if (!listening && until) hushTimer = setTimeout(() => setEars(true, null), Math.max(0, until * 1000 - Date.now()) + 50);
+  window.dispatchEvent(new CustomEvent("ari-ears"));
+  window.dispatchEvent(new CustomEvent("ari-pref"));  // the "Hey Ari" listener in Helios follows it
+}
+export function useEars(): { paused: boolean; until: number } {
+  const get = () => (earsPaused() ? hushUntil : 0);
+  const v = useSyncExternalStore((f) => { window.addEventListener("ari-ears", f); return () => window.removeEventListener("ari-ears", f); }, get);
+  return { paused: v > 0, until: v };
+}
+export async function pauseEars(minutes: number | null) {
+  const r = await api<{ listening: boolean; until: number | null }>("/ari/listening", { method: "POST", body: JSON.stringify({ on: false, minutes }) });
+  setEars(r.listening, r.until);
+}
+export async function resumeEars() {
+  const r = await api<{ listening: boolean; until: number | null }>("/ari/listening", { method: "POST", body: JSON.stringify({ on: true }) });
+  setEars(r.listening, r.until);
+}
+export function loadEars() {
+  api<{ listening: boolean; until: number | null }>("/ari/listening").then((r) => setEars(r.listening, r.until)).catch(() => {});
 }

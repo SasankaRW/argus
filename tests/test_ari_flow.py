@@ -144,3 +144,20 @@ def test_old_chats_and_old_questions_dont_leak(tmp_path):
     os.utime(conv_file, (old, old))
     cl = AriClient("http://127.0.0.1:9", None, conv_file)
     assert cl.conv == "old-chat" and _t.time() - cl.used > cl.NEW_CHAT_S  # the next message starts a new chat
+
+
+def test_pausing_ari_s_ears(tmp_path):
+    from argus import ari_listen
+
+    with Server(make(tmp_path).open()) as srv:
+        cl = client(srv.url)
+        assert cl.get("/ari/listening") == {"listening": True, "until": None}
+        r = cl.post("/ari/listening", {"on": False, "minutes": 3})
+        assert r["listening"] is False and r["until"] > 0
+        assert cl.post("/ari/listening", {"on": False})["until"] is None  # until turned back on
+        evs = cl.get("/events?kinds=ari.listening&after=0")["events"]
+        ari_listen.hush_from(evs)
+        assert ari_listen.paused()
+        assert cl.post("/ari/listening", {"on": True}) == {"listening": True, "until": None}
+        ari_listen.hush_from(cl.get("/events?kinds=ari.listening&after=0")["events"])
+        assert not ari_listen.paused()

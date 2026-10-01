@@ -22,7 +22,7 @@ import { ShareView } from "./ShareView";
 import { VoiceTrain } from "./VoiceTrain";
 import { pref, setPref, setVoiceStatus, voiceStatus, VoiceStatus, WakeListener } from "./voice";
 import { AriPill } from "./AriPill";
-import { ariFromEvents, ariSet, ariTell } from "./ariState";
+import { ariFromEvents, ariSet, ariTell, earsPaused, loadEars } from "./ariState";
 
 const CMD_PAD: FitPad = { top: "340px", right: "40px", bottom: "150px", left: "40px" };  // below the corner cards, above the command bar
 
@@ -218,7 +218,7 @@ export function App() {
     };
     const stopWl = () => { wl?.stop(); wl = null; release?.(); release = null; waiting?.abort(); waiting = null; };
     const sync = () => {
-      const want = pref("wake", false) && !pcListens;
+      const want = pref("wake", false) && !pcListens && !earsPaused();
       if (want && !wl && !waiting) {
         const locks = (navigator as Navigator & { locks?: LockManager }).locks;
         if (!locks) { startWl(); return; }
@@ -250,6 +250,7 @@ export function App() {
     };
     const restart = () => { stopWl(); sync(); };  // Whisper became (un)available
     checkPc();
+    loadEars();
     const pcTimer = setInterval(checkPc, 30000);
     const arm = () => wl?.arm();
     api<VoiceStatus>("/ari-voice").then(setVoiceStatus).catch(() => {}).finally(sync);

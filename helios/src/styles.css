@@ -1071,3 +1071,4 @@ button:focus-visible, .chip:focus-visible, a:focus-visible {
 .vt-tips .ok { color: var(--tx, #e6f0ec); }
 .vt-tips code { font-size: 12px; }
 @media (max-width: 640px) { .vt-text { font-size: 19px; } .voice-train .vt-body { padding: 14px; } }
+.btn.ears.off { color: #ffb4b4; border-color: rgba(255, 93, 93, .45); }

@@ -5,6 +5,9 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Pause listening:** a button in Helios (Ari chat and Ari settings) stops Ari listening everywhere, the PC's
+  microphone and every Helios, until you resume (`POST /ari/listening`); the voice training page pauses it by
+  itself while it's open, so Ari doesn't answer the sentences you read.
 - **Train Ari on your voice:** Helios > Ari > *train on my voice* shows about 300 sentences to read (commands,
   chat, numbers, your names); `python -m argus.voice_train --apply` fine-tunes Whisper with LoRA on the PC's GPU,
   tests it on held-out sentences and switches Ari to it only when it makes fewer mistakes.

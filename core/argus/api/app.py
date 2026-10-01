@@ -209,6 +209,11 @@ class AriStateIn(BaseModel):
     by: str = Field("", max_length=40)
 
 
+class AriListening(BaseModel):
+    on: bool
+    minutes: float | None = Field(None, gt=0, le=24 * 60)  # paused for this long (None: until turned back on)
+
+
 class AriSpeak(BaseModel):
     text: str = Field(min_length=1, max_length=1000)
 
@@ -910,6 +915,26 @@ def create_app(argus: Argus) -> FastAPI:
         return {"ok": True}
 
     listener = {"seen": 0.0}
+    hush = {"until": 0.0}  # Ari isn't listening (anywhere) until then; 0 = listening
+
+    def listening_now() -> dict:
+        until = hush["until"]
+        paused = until > time.time()
+        return {"listening": not paused, "until": until if paused and until < 1e12 else None}
+
+    @app.get("/ari/listening", dependencies=guarded)
+    async def ari_listening() -> dict:
+        """Is Ari listening for "Hey Ari"? (paused while you train your voice, or with the pause button)"""
+        return listening_now()
+
+    @app.post("/ari/listening", dependencies=guarded)
+    async def ari_listening_set(body: AriListening) -> dict:
+        """Pause Ari's ears everywhere (the PC's microphone, Helios), for a while or until turned back on."""
+        hush["until"] = 0.0 if body.on else (time.time() + body.minutes * 60 if body.minutes else 1e13)
+        now = listening_now()
+        await argus.store.write(lambda c: insert_event(c, time.time(), "ari.listening", src="helios", dst="ari",
+                                                       data=now))
+        return now
 
     @app.post("/ari/listener", dependencies=guarded)
     async def ari_listener_here() -> dict:

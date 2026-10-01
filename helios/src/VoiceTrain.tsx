@@ -2,6 +2,7 @@
 // `python -m argus.voice_train --apply` fine-tunes Whisper on them (argus/voice_train.py).
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, getToken } from "./api";
+import { earsPaused, pauseEars, resumeEars } from "./ariState";
 
 type Sentence = { id: string; text: string; kind: string; done: boolean; seconds: number | null };
 type State = { sentences: Sentence[]; recorded: number; seconds: number; goal_seconds: number; model: string };
@@ -22,6 +23,14 @@ export function VoiceTrain() {
   const started = useRef(0);
   const raf = useRef(0);
   const audio = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {  // Ari stops listening while you record here (or it would answer the sentences you read)
+    const mine = !earsPaused();
+    if (!mine) return;
+    pauseEars(3).catch(() => {});
+    const keep = setInterval(() => { pauseEars(3).catch(() => {}); }, 60000);
+    return () => { clearInterval(keep); resumeEars().catch(() => {}); };
+  }, []);
 
   const load = useCallback(async (jump = false) => {
     const s = await api<State>("/voice-train");
@@ -138,6 +147,7 @@ export function VoiceTrain() {
         )}
         {err && <div className="tip bad">{err}</div>}
         <div className="vt-tips">
+          <p className="ok">Ari isn't listening while this page is open, so it won't answer what you read.</p>
           <p>Read each sentence the way you talk to Ari, at your desk, with the microphone Ari listens on. Mistakes are fine: just record it again. Names matter most, so say them the way you say them.</p>
           {enough
             ? <p className="ok">Enough to train. On the PC: <code>python -m argus.voice_train --apply</code> (about 20–60 minutes on the GPU). It only switches Ari to the new model if it makes fewer mistakes than <code>{st.model}</code>.</p>
