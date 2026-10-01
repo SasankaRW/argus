@@ -7,6 +7,7 @@ reached (permissions.network "config:url").
 from __future__ import annotations
 
 import json
+import time
 import urllib.parse
 from typing import Any
 
@@ -133,3 +134,27 @@ def timer(ctx: Context):
         return {"started": t["key"], "title": t["title"]}
 
     return ctx.step("timer", go)
+
+
+@workflow(PLUGIN, "check")
+def check(ctx: Context):
+    """Issues that just became overdue: one phone message each (important, so Ari may also say it at the PC)."""
+    today = time.strftime("%Y-%m-%d")
+
+    def go():
+        s = call(ctx, "GET", "/api/summary") or {}
+        overdue = [f for f in s.get("focus") or [] if f.get("due_date") and str(f["due_date"]) < today
+                   and f.get("status") != "done"]
+        told = ctx.store.get("told") or {}
+        fresh = [f for f in overdue if f["key"] not in told]
+        for f in fresh:
+            told[f["key"]] = today
+        if fresh and not ctx.dry_run:
+            names = "; ".join(f"{f['key']} {f['title']}" for f in fresh[:3])
+            ctx.notify("Overdue in Tracker" if len(fresh) == 1 else f"{len(fresh)} issues overdue in Tracker",
+                       names + ("…" if len(fresh) > 3 else ""), priority="high", tags=["alarm_clock"])
+        keep = {f["key"] for f in overdue}
+        ctx.store.set("told", {k: v for k, v in told.items() if k in keep})  # done ones can be told again later
+        return {"overdue": [f["key"] for f in overdue], "told_now": [f["key"] for f in fresh]}
+
+    return ctx.step("check", go)

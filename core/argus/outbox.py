@@ -53,7 +53,20 @@ def add_message(conn: sqlite3.Connection, now: float, kind: str, payload: dict[s
         " VALUES (?,?,?,?,'pending',?,?,?,?)",
         (oid, kind, dedupe_key, _dumps(payload), send_at or now, job_id, now, now),
     )
+    if kind == "ntfy" and _prio(payload.get("priority")) >= 4:  # important: Ari may say it out loud at the PC
+        from .events import insert_event
+
+        insert_event(conn, now, "ari.notice", job_id=job_id, src="argus", dst="ari",
+                     data={"title": str(payload.get("title") or "")[:200],
+                           "text": str(payload.get("message") or "")[:400]})
     return oid
+
+
+def _prio(v: Any) -> int:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return {"max": 5, "urgent": 5, "high": 4, "default": 3, "low": 2, "min": 1}.get(str(v), 3)
 
 
 def ntfy_message(title: str, message: str, *, priority: str = "default", tags: list[str] | None = None,

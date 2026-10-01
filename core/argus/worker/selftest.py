@@ -23,6 +23,7 @@ SAFE: dict[str, dict[str, Any]] = {
     "repo_status": {},
     "list_watches": {},
     "find_file": {"name": "readme"},
+    "search_everything": {"query": "readme"},
     "search_my_files": {"query": "argus"},
 }
 DEEP: dict[str, dict[str, Any]] = {"look_at_screen": {"question": "Which app is in front? One sentence."}}

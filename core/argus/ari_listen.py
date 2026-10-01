@@ -87,6 +87,43 @@ def wake_rest(text: str) -> str | None:
     return text.strip()[m.end():].strip(" ,.!?")
 
 
+STOP = re.compile(r"^(?:(?:ok(?:ay)?|no|hey)[\s,.]+)?(?:stop|wait|enough|quiet|be quiet|shut up|cancel|"
+                  r"never ?mind|hold on|pause)\b", re.I)
+
+
+def _norm(s: str) -> str:
+    return " ".join(re.sub(r"[^\w\s]", " ", s.lower()).split())
+
+
+def barge(heard: str, speaking: str) -> tuple[str, str] | None:
+    """Something said while Ari talks: ("stop", "") to stop it, ("wake", rest) for "Hey Ari, …" (rest may be a new
+    command), or None (Ari's own voice coming back through the mic, or other talk)."""
+    h = _norm(heard)
+    if not h or h in _norm(speaking):  # the mic hearing Ari's own words
+        return None
+    if STOP.match(heard.strip()):
+        return ("stop", "")
+    rest = wake_rest(heard)
+    if rest is not None:
+        return ("wake", rest)
+    return None
+
+
+def speak_hours_ok(hours: str, now: time.struct_time) -> bool:
+    a, b = hours.split("-")
+    m = now.tm_hour * 60 + now.tm_min
+    lo, hi = (int(x[:2]) * 60 + int(x[3:]) for x in (a, b))
+    return lo <= m < hi if lo <= hi else (m >= lo or m < hi)
+
+
+def notice_text(title: str, text: str) -> str:
+    """An important phone message, as one or two short spoken sentences."""
+    first = re.split(r"(?<=[.!?])\s|\n", " ".join(text.split("\n")[:2]).strip())[0] if text.strip() else ""
+    t = title.strip().rstrip(".")
+    said = t if not first or first.lower().startswith(t.lower()) else f"{t}. {first}"
+    return ("Heads up: " + (said if said else first)).strip()[:220]
+
+
 # ------------------------------------------------------------------ the conversation loop (no audio in here)
 
 @dataclass
@@ -94,11 +131,14 @@ class Listener:
     transcribe_wake: Callable[[object], str]  # short clip -> text (small model)
     transcribe: Callable[[object], str]  # command clip -> text (better model)
     say: Callable[[str], dict]  # text -> Ari's answer {reply, pending, ...}
-    speak: Callable[[str], None]
+    speak: Callable[[str], float | None]  # starts speaking; returns how long it takes (s)
     chime: Callable[[], None] = lambda: None
     report: Callable[[str], None] = lambda phase: None  # what Ari is doing, for the Ari pill / the PC's popup
+    stop_speaking: Callable[[], None] = lambda: None
     wake_max_ms: int = 4000
     follow_s: float = 8.0
+    follow_up: bool = True  # after any answer, the next few seconds need no "Hey Ari"
+    follow_up_s: float = 6.0
     armed_until: float = 0.0  # a command without the wake phrase is taken until then
     clock: Callable[[], float] = time.monotonic
 
@@ -146,12 +186,35 @@ class Listener:
             self.speak("Sorry, I can't reach Argus right now.")
             return text
         reply = ans.get("reply") or ""
-        if reply:
-            self.speak(reply)
+        took = float(self.speak(reply) or 0.0) if reply else 0.0
         if ans.get("pending"):
-            self.armed_until = self.clock() + self.follow_s  # "Shall I?": answer without the wake phrase
+            self.armed_until = self.clock() + took + self.follow_s  # "Shall I?": answer without the wake phrase
             self.report("listening")
+        elif self.follow_up and reply:
+            self.armed_until = self.clock() + took + self.follow_up_s  # "and tomorrow?" without "Hey Ari"
         return text
+
+    def interrupt(self, blocks: list, speaking: str) -> str | None:
+        """A clip heard while Ari talks: "stop" stops it; "Hey Ari, …" stops it and takes the new command.
+        Returns what was acted on, or None."""
+        import numpy as np
+
+        audio = np.concatenate(blocks)
+        if len(audio) * 1000 // RATE > self.wake_max_ms:
+            return None
+        hit = barge(self.transcribe_wake(audio), speaking)
+        if hit is None:
+            return None
+        kind, rest = hit
+        self.stop_speaking()
+        log.info("interrupted", extra={"by": kind, "rest": rest})
+        if kind == "wake" and len(rest.replace(" ", "")) > 2:
+            self._send(rest)
+            return rest
+        self.chime()
+        self.report("listening")
+        self.armed_until = self.clock() + self.follow_s
+        return kind
 
 
 # ------------------------------------------------------------------ talking to argusd
@@ -164,10 +227,10 @@ class AriClient:
         except Exception:  # argusd restarting
             pass
 
-    def wakes(self, after: int) -> tuple[list[dict], int]:
-        """Talk-button presses since event `after`: (events, the newest seq)."""
+    def wakes(self, after: int, kinds: str = "ari.wake") -> tuple[list[dict], int]:
+        """Talk-button presses (and important notices) since event `after`: (events, the newest seq)."""
         try:
-            r = json.loads(self._req("GET", f"/events?kinds=ari.wake&after={max(after, 0)}&limit=20", None,
+            r = json.loads(self._req("GET", f"/events?kinds={kinds}&after={max(after, 0)}&limit=20", None,
                                      timeout=5))
         except Exception:
             return [], after
@@ -244,13 +307,33 @@ def mic_blocks(device=None) -> Iterator:
             yield q.get()
 
 
-def play_wav(data: bytes) -> None:
+def play_wav(data: bytes, blocking: bool = True) -> float:
+    """Play a WAV; returns its length in seconds. Not blocking: it plays while the mic keeps listening (so you
+    can interrupt), and sounddevice.stop() cuts it off."""
     import numpy as np
     import sounddevice as sd  # type: ignore[import-not-found]
 
     with wave.open(io.BytesIO(data)) as w:
         frames = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32) / 32768
-        sd.play(frames, w.getframerate(), blocking=True)
+        rate = w.getframerate()
+    sd.play(frames, rate, blocking=blocking)
+    return len(frames) / rate
+
+
+def idle_seconds() -> float:
+    """How long since the last key press or mouse move on this PC (Windows); 0 elsewhere."""
+    if os.name != "nt":
+        return 0.0
+    import ctypes
+
+    class LastInput(ctypes.Structure):
+        _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
+
+    li = LastInput()
+    li.cbSize = ctypes.sizeof(li)
+    if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(li)):  # type: ignore[attr-defined]
+        return 0.0
+    return (ctypes.windll.kernel32.GetTickCount() - li.dwTime) / 1000.0  # type: ignore[attr-defined]
 
 
 def chime() -> None:
@@ -297,17 +380,39 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     client = AriClient(args.url, token, cfg.db_path.parent / "ari-listen.conv")
 
-    quiet_until = [0.0]  # what the mic heard while Ari was speaking is Ari's own voice: dropped
+    quiet_until = [0.0]  # just after Ari stops talking, the room's echo is dropped
+    talking = {"until": 0.0, "text": "", "n": 0}  # while Ari speaks: only "stop" / "Hey Ari" are listened for
+    out_lock = threading.Lock()
 
-    def speak(text: str) -> None:
+    def speak(text: str) -> float:
         wav = client.voice(text)
-        if wav:
-            client.state("speaking", text)
-            play_wav(wav)
-            client.state("done", text)
-        else:
+        if not wav:
             print(f"Ari: {text}", flush=True)
-        quiet_until[0] = time.monotonic() + 0.3
+            return 0.0
+        with out_lock:
+            client.state("speaking", text)
+            took = play_wav(wav, blocking=False)
+            talking.update(until=time.monotonic() + took, text=text, n=talking["n"] + 1)
+            n = talking["n"]
+        quiet_until[0] = time.monotonic() + took + 0.3
+
+        def finished() -> None:
+            time.sleep(took)
+            if talking["n"] == n and talking["until"]:
+                talking["until"] = 0.0
+                client.state("done", text)
+
+        threading.Thread(target=finished, daemon=True).start()
+        return took
+
+    def stop_speaking() -> None:
+        import sounddevice as sd  # type: ignore[import-not-found]
+
+        with out_lock:
+            sd.stop()
+            talking["until"] = 0.0
+            quiet_until[0] = time.monotonic() + 0.2
+        client.state("done", talking["text"])
 
     def ding() -> None:
         chime()
@@ -317,21 +422,31 @@ def main(argv: list[str] | None = None) -> int:
     wake_t = whisper(cfg.ari.listen_wake_model)
     cmd_t = whisper(cfg.ari.whisper_model) if cfg.ari.whisper_model != cfg.ari.listen_wake_model else wake_t
     listener = Listener(transcribe_wake=wake_t, transcribe=cmd_t, say=client.say, speak=speak, chime=ding,
-                        report=client.state)
+                        report=client.state, stop_speaking=stop_speaking, follow_up=cfg.ari.follow_up)
     seg = Segmenter()
+    echo_seg = Segmenter(ratio=5.0)  # while Ari talks: only clearly louder speech (you, not the speakers)
+    spoke_up = [0.0]
 
     def talk_button() -> None:
-        """The island's Talk button (event ari.wake): listen now. Also tells Argus this listener runs."""
+        """The island's Talk button (event ari.wake): listen now; important notices (ari.notice): say them when
+        you're at the PC, within ari.speak_hours, at most one every 10 minutes. Tells Argus this listener runs."""
         seq, last = -1, 0.0
         while True:
             if time.monotonic() - last > 30:
                 client.here()
                 last = time.monotonic()
-            evs, seq = client.wakes(seq)
-            if evs:
+            evs, seq = client.wakes(seq, "ari.wake,ari.notice")
+            if any(e.get("kind") == "ari.wake" for e in evs):
                 log.info("talk button")
                 listener.wake()
                 quiet_until[0] = time.monotonic() + 0.2
+            notes = [e for e in evs if e.get("kind") == "ari.notice"]
+            if notes and cfg.ari.speak_up and speak_hours_ok(cfg.ari.speak_hours, time.localtime()) \
+                    and idle_seconds() < 300 and time.monotonic() - spoke_up[0] > 600 and not talking["until"]:
+                d = notes[-1].get("data") or {}
+                spoke_up[0] = time.monotonic()
+                log.info("speaking up", extra={"title": d.get("title")})
+                speak(notice_text(str(d.get("title") or ""), str(d.get("text") or "")))
             time.sleep(0.8)
 
     threading.Thread(target=talk_button, daemon=True, name="talk-button").start()
@@ -354,8 +469,18 @@ def main(argv: list[str] | None = None) -> int:
             if time.monotonic() - since > 60:  # once a minute: is the microphone hearing anything at all?
                 log.info("microphone level", extra={"loudest": round(loudest, 4), "background": round(seg.floor, 4)})
                 loudest, since = 0.0, time.monotonic()
+            if talking["until"] and at < talking["until"]:  # Ari is talking: listen only for "stop" / "Hey Ari"
+                seg = Segmenter(floor=seg.floor)
+                c = echo_seg.feed(block)
+                if c is not None:
+                    try:
+                        listener.interrupt(c, talking["text"])
+                    except Exception as e:  # noqa: BLE001 - keep listening
+                        log.warning("interrupt failed", extra={"error": str(e)})
+                continue
             if at < quiet_until[0]:
                 seg = Segmenter(floor=seg.floor)  # forget a half-heard clip too
+                echo_seg = Segmenter(floor=echo_seg.floor, ratio=5.0)
                 continue
             clip = seg.feed(block)
             if clip is not None:

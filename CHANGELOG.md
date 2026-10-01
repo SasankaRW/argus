@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Ari, more natural: carry on without "Hey Ari" for a few seconds after an answer; say "stop" or "Hey Ari, …" to interrupt; it offers to remember lasting facts you mention (your yes keeps them); harder questions start on the bigger local model; important messages (overdue Tracker issues, price drops, failed backups, reminders) are said out loud at the PC while you're there, 08:00-22:00, at most one every 10 minutes.
+- Everything search (new plugin `everything`): Ari finds any file on the PC instantly through Everything's es.exe; blocked folders never show.
 - Helios build updated (the plugin page says "your phone" for phone plugins).
 - Tracker and Life Hub for Ari (connector plugins `tracker`, `lifehub`): work summary, list/add/move issues, the timer; the shopping list and wishlist; this month's money (read only, private: never sent to Claude). Adding or moving issues asks first. `permissions.network` can name a setting ("config:url"), so a connector reaches exactly the address you set.
 - Argus for Android (`android/`): Helios full screen plus phone tools for Ari (new plugin `phone`: battery and network, ring loudly, Do Not Disturb, torch, timer, open an app or a link). The phone connects to Argus as a worker with the capability `phone` (outgoing only, over Tailscale); a setup page for the address, token and phone permissions. Build once in Android Studio (android/README.md). Plugins can now say `runs_on: phone`.

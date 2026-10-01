@@ -15,7 +15,7 @@ from test_worker import Server, client, wait_for
 
 ROOT = Path(__file__).resolve().parents[1]
 TICKETS = [{"id": 7, "key": "ACME-12", "title": "Checkout broken", "status": "todo", "priority": 1,
-            "due_date": "2026-10-03", "timer_running": False},
+            "due_date": "2020-01-02", "timer_running": False},
            {"id": 8, "key": "SITE-3", "title": "Footer", "status": "done", "priority": 3, "due_date": None}]
 
 
@@ -35,7 +35,7 @@ class Fake:
                 if p == "/api/summary":
                     return self.send(200, {"open": 1, "urgent": 1, "overdue": 0, "due_week": 1,
                                            "hours_this_month": 12.5, "timer": None,
-                                           "focus": [dict(TICKETS[0], due_date="2026-10-03")]})
+                                           "focus": [dict(TICKETS[0])]})
                 if p == "/api/tickets":
                     return self.send(200, TICKETS)
                 if p == "/api/tickets/quick":

@@ -6,7 +6,10 @@ argus_api: ">=1.0 <2.0"
 description: 'Lets Ari use your Tracker (G:\Projects\tracker): what needs you, list issues, add one ("ACME bug P1 checkout broken @fri"), move one, start or stop the timer.'
 runs_on: any
 
-workflows: [summary, issues, add, move, timer]
+triggers:
+  - schedule: {workflow: check, cron: "12 9-19 * * *"}   # hourly in the day: overdue issues reach you (once each)
+
+workflows: [summary, issues, add, move, timer, check]
 
 permissions:
   files: {read: [], write: [], delete: none}

@@ -200,3 +200,29 @@ def test_after_web_text_doing_anything_asks_first(tmp_path):
         assert last["pending"]["name"] == "shout" and last["text"].startswith("Shall I")
         shouts = [j for j in cl.get("/jobs?plugin=echo-tool") if (j.get("input") or {}).get("text") == "pwned"]
         assert shouts == []
+
+
+def test_what_is_worth_remembering_and_which_model_first():
+    from argus.worker.think import model_order, worth_keeping
+    assert worth_keeping("Prefers tea, no sugar.", []) == "Prefers tea, no sugar"
+    assert worth_keeping("my bank pin is 4411", []) == "" and worth_keeping("card 4111111111111111", []) == ""
+    assert worth_keeping("prefers tea no sugar", [{"fact": "prefers tea, no sugar"}]) == ""  # known already
+    assert worth_keeping("ok", []) == ""
+    assert model_order("what's the time?", ["T1", "T2"]) == ["T1", "T2"]
+    assert model_order("explain how WireGuard differs from IPsec", ["T1", "T2"]) == ["T2", "T1"]
+    assert model_order("x" * 200, ["T1"]) == ["T1"]
+
+
+def test_ari_offers_to_remember_and_a_yes_keeps_it(tmp_path):
+    replies = {"qwen2.5-coder:7b": [{"reply": "Nice, Kandy is lovely.", "remember": "sister Nimali lives in Kandy"}]}
+    with FakeOllama(replies) as ol, Server(make(tmp_path).open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop", "session"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        r = cl.post("/ari", {"text": "my sister Nimali just moved to Kandy"})
+        last = settle(cl, w, r["conv"])
+        assert last["text"] == "Nice, Kandy is lovely. Want me to remember that?"
+        assert last["pending"] == {"kind": "remember", "fact": "sister Nimali lives in Kandy"}
+        yes = cl.post("/ari", {"text": "yes", "conv": r["conv"]})
+        assert yes["reply"] == "Got it, I'll remember that."
+        assert any(m["fact"] == "sister Nimali lives in Kandy" for m in cl.get("/ari-memory"))
