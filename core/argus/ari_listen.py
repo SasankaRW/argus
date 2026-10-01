@@ -289,7 +289,7 @@ class AriClient:
 
 # ------------------------------------------------------------------ audio in and out (sounddevice)
 
-def mic_blocks(device=None) -> Iterator:
+def mic_blocks(device=None, block: int = BLOCK) -> Iterator:
     import queue
 
     import sounddevice as sd  # type: ignore[import-not-found]
@@ -302,7 +302,7 @@ def mic_blocks(device=None) -> Iterator:
         except queue.Full:
             pass
 
-    with sd.InputStream(samplerate=RATE, channels=1, dtype="float32", blocksize=BLOCK, device=device, callback=cb):
+    with sd.InputStream(samplerate=RATE, channels=1, dtype="float32", blocksize=block, device=device, callback=cb):
         while True:
             yield q.get()
 
@@ -358,6 +358,107 @@ def whisper(name: str) -> Callable[[object], str]:
             return " ".join(s.text.strip() for s in segs).strip()
 
     return run
+
+
+def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device) -> int:
+    """Talking with Ari as a conversation (ari.live; voice_live.py says how)."""
+    import numpy as np
+    import sounddevice as sd  # type: ignore[import-not-found]
+
+    from . import voice_live as vl
+
+    models = cfg.db_path.parent / "models"
+    sil = vl.silero_path()
+    try:
+        vad = vl.Silero(sil) if sil else vl.LoudnessVad()
+    except Exception as e:  # noqa: BLE001 - onnxruntime missing or broken: the loudness gate still works
+        log.warning("no Silero VAD", extra={"error": str(e)[:200]})
+        vad = vl.LoudnessVad()
+    st_path = vl.ensure_smart_turn(models)
+    finished = None
+    if st_path:
+        try:
+            finished = vl.SmartTurn(st_path)
+        except Exception as e:  # noqa: BLE001
+            log.warning("no smart turn", extra={"error": str(e)[:200]})
+    log.info("live conversation", extra={"vad": type(vad).__name__, "smart_turn": bool(finished)})
+
+    def open_stream(rate: int, cb: Callable):
+        s = sd.OutputStream(samplerate=rate, channels=1, dtype="float32", callback=cb, blocksize=0)
+        s.start()
+        return s
+
+    def synth(text: str):
+        wav = client.voice(text)
+        if not wav:
+            print(f"Ari: {text}", flush=True)
+            return None
+        return vl.wav_samples(wav)
+
+    player = vl.Player(synth, open_stream, report=client.state)
+    gate = vl.EchoGate()
+
+    def ask(text: str) -> dict:
+        t = threading.Timer(1.2, player.thinking, args=(True,))  # a soft pulse if the answer takes a while
+        t.start()
+        try:
+            return client.say(text)
+        finally:
+            t.cancel()
+            if not player.busy:
+                player.thinking(False)
+
+    talk = vl.Talk(turns=vl.Turns(finished=finished), transcribe=cmd_t, transcribe_wake=wake_t, wake_rest=wake_rest,
+                   ask=ask, player=player, report=client.state, chime=lambda: player.cue(vl.chime_samples(), RATE),
+                   idle_s=float(cfg.ari.talk_idle_s), on_false_barge=gate.fooled)
+    spoke_up = [0.0]
+
+    def side() -> None:
+        """The Talk button, important notices (as in the classic mode) and the "done talking" report."""
+        seq, last = -1, 0.0
+        while True:
+            if time.monotonic() - last > 30:
+                client.here()
+                last = time.monotonic()
+            evs, seq = client.wakes(seq, "ari.wake,ari.notice")
+            if any(e.get("kind") == "ari.wake" for e in evs):
+                log.info("talk button")
+                talk.wake()
+            notes = [e for e in evs if e.get("kind") == "ari.notice"]
+            if notes and cfg.ari.speak_up and speak_hours_ok(cfg.ari.speak_hours, time.localtime()) \
+                    and idle_seconds() < 300 and time.monotonic() - spoke_up[0] > 600 and not player.busy \
+                    and not talk.in_conversation:
+                d = notes[-1].get("data") or {}
+                spoke_up[0] = time.monotonic()
+                log.info("speaking up", extra={"title": d.get("title")})
+                player.say(vl.sentences(notice_text(str(d.get("title") or ""), str(d.get("text") or ""))))
+            for _ in range(8):
+                player.poll()
+                talk.tick()
+                time.sleep(0.1)
+
+    threading.Thread(target=side, daemon=True, name="ari-side").start()
+    print("Listening for \"Hey Ari\" (Ctrl+C to stop). Then just talk; \"thanks Ari\" ends it.", flush=True)
+    loudest, since = 0.0, time.monotonic()
+    try:
+        for at, frame in mic_blocks(device, vl.FRAME):
+            if time.monotonic() - at > 1.0:  # heard while Ari was busy thinking: too old to act on
+                continue
+            loudest = max(loudest, float(np.sqrt(np.mean(np.square(frame)))))
+            if time.monotonic() - since > 60:
+                log.info("microphone level", extra={"loudest": round(loudest, 4)})
+                loudest, since = 0.0, time.monotonic()
+            voice = vad(frame)
+            if not gate(frame, player.busy and not talk.paused_for_barge):
+                voice = 0.0
+            try:
+                talk.frame(frame, voice)
+            except Exception as e:  # noqa: BLE001 - never stop listening because of one turn
+                log.warning("turn failed", extra={"error": str(e)[:200]})
+                talk.turns.reset()
+    except KeyboardInterrupt:
+        pass
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -421,6 +522,9 @@ def main(argv: list[str] | None = None) -> int:
     log.info("loading Whisper", extra={"wake": cfg.ari.listen_wake_model, "command": cfg.ari.whisper_model})
     wake_t = whisper(cfg.ari.listen_wake_model)
     cmd_t = whisper(cfg.ari.whisper_model) if cfg.ari.whisper_model != cfg.ari.listen_wake_model else wake_t
+    device = int(args.device) if args.device and args.device.isdigit() else args.device
+    if cfg.ari.live:
+        return live(cfg, client, wake_t, cmd_t, device)
     listener = Listener(transcribe_wake=wake_t, transcribe=cmd_t, say=client.say, speak=speak, chime=ding,
                         report=client.state, stop_speaking=stop_speaking, follow_up=cfg.ari.follow_up)
     seg = Segmenter()
@@ -450,7 +554,6 @@ def main(argv: list[str] | None = None) -> int:
             time.sleep(0.8)
 
     threading.Thread(target=talk_button, daemon=True, name="talk-button").start()
-    device = int(args.device) if args.device and args.device.isdigit() else args.device
     log.info("listening for Hey Ari", extra={"device": device})
     print("Listening for \"Hey Ari\" (Ctrl+C to stop).", flush=True)
     try:

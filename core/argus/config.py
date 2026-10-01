@@ -273,6 +273,11 @@ class AriConfig(_Strict):
     listen: bool = False
     listen_wake_model: str = "tiny.en"  # listens for the wake phrase (small and fast; the command uses whisper_model)
     follow_up: bool = True  # after Ari answers, keep listening a few seconds: carry on without "Hey Ari"
+    # Talk like a conversation: after "Hey Ari" just talk back and forth, talk over Ari to interrupt, "thanks Ari"
+    # ends it (also after talk_idle_s of quiet). Knows when you've finished a sentence (Smart Turn, downloaded
+    # once). false: the classic mode (every request starts with "Hey Ari").
+    live: bool = True
+    talk_idle_s: int = Field(20, ge=5, le=300)
     # Ari says important things out loud at the PC (an overdue issue, a price drop, a failed backup): only while
     # you're at the PC, only between these hours, at most one every 10 minutes.
     speak_up: bool = True

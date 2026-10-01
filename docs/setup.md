@@ -255,8 +255,13 @@ daily cap.
 - **Ari speaks up**: an important message (a price under yours, an issue overdue, a failed backup, a reminder)
   is also said out loud at the PC, only while you're using it, between `ari.speak_hours` (08:00-22:00), at most
   one every 10 minutes (`ari.speak_up: false` turns it off). Tracker issues that become overdue are told once.
-- **Talking with Ari**: after an answer you have a few seconds to carry on without "Hey Ari" ("and tomorrow?";
-  `ari.follow_up`). While Ari talks, say "stop" (or "Hey Ari, …" with a new question) to cut it off.
+- **Talking with Ari** (`ari.live`, on): after "Hey Ari" it's a conversation. Just talk back and forth; talk over
+  Ari to interrupt (it pauses at once; if it was only "mm-hm" or its own voice coming back, it carries on);
+  "thanks Ari" or "that's all" ends it, or 20 s of quiet (`ari.talk_idle_s`). Ari knows when you've finished a
+  sentence rather than just paused (Smart Turn, an 8 MB model taken once from PyPI and checked; Silero VAD from
+  faster-whisper). Answers are spoken a sentence at a time, with a soft pulse while Ari thinks. Headphones make
+  interrupting easiest; with speakers, Ari learns how loud its own echo is. `ari.live: false` is the classic mode
+  (every request starts with "Hey Ari"; a few seconds of follow-up, `ari.follow_up`).
 - **Remembering**: when you mention a lasting fact (a person, a place, a preference), Ari asks "Want me to
   remember that?"; yes keeps it (never passwords, money or health).
 - **Tracker** (`tracker`) and **Life Hub** (`lifehub`): "what's urgent at work?", "add an issue: ACME bug P1

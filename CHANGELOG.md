@@ -5,6 +5,10 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Talk with Ari like a conversation** (`ari.live`, on by default): after "Hey Ari" you just talk back and forth;
+  talking over Ari pauses it at once, and it carries on if that was only "mm-hm" or its own echo; "thanks Ari"
+  ends it, or `ari.talk_idle_s` of quiet. Knows when you've finished a sentence (Smart Turn v3.2, Silero VAD),
+  speaks answers sentence by sentence, and pulses softly while thinking. `ari.live: false` keeps the classic mode.
 - Ari, more natural: carry on without "Hey Ari" for a few seconds after an answer; say "stop" or "Hey Ari, …" to interrupt; it offers to remember lasting facts you mention (your yes keeps them); harder questions start on the bigger local model; important messages (overdue Tracker issues, price drops, failed backups, reminders) are said out loud at the PC while you're there, 08:00-22:00, at most one every 10 minutes.
 - Everything search (new plugin `everything`): Ari finds any file on the PC instantly through Everything's es.exe; blocked folders never show.
 - Helios build updated (the plugin page says "your phone" for phone plugins).
