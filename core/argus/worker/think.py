@@ -119,6 +119,14 @@ CHATTY = re.compile(r"^\W*(?:hi|hey|hello|hiya|yo|sup|good (?:night|evening|afte
                     r"do you (?:like|love|think|ever)|let'?s (?:talk|chat)|you(?:'re| are) |guess what|"
                     r"nothing much|not much|i (?:love|like|hate) |that'?s (?:cool|funny|nice|great|awesome)|"
                     r"nice|cool|awesome|bro\b|dude\b|good (?:job|one))", re.I)
+# Said anywhere in a short message, these are talk too ("ugh, just wanna talk with you, I'm tired", "never mind,
+# thank you", "how's it doing")
+FEELING = re.compile(r"\b(?:i'?m (?:so |really |kinda |a bit |pretty )?(?:tired|bored|sad|happy|sleepy|"
+                     r"exhausted|stressed|lonely|done|fine|good|okay|ok|great)|i feel|"
+                     r"just (?:wanna|want to|wanted to) (?:talk|chat)|"
+                     r"talk (?:with|to) (?:you|me)|never ?mind|nvm|thank(?:s| you)|how'?s it (?:going|doing)|"
+                     r"how (?:are|r) (?:you|u|things)|how was your|miss(?:ed)? you|good (?:morning|night)|"
+                     r"you there|forget it|no worries|all good)\b", re.I)
 TASKY = re.compile(r"\b(?:open|close|find|search|show|list|play|pause|set|turn|send|message|text|remind|schedule|"
                    r"run|start|stop|add|delete|move|copy|weather|screen|file|folder|note|status|issue|backup|"
                    r"download|shut|restart|volume|timer)\b", re.I)
@@ -138,10 +146,18 @@ theirs: tired -> calm or sympathetic, good news -> excited).
 Answer as JSON {"reply": "...", "mood": "...", "remember": ""}."""
 
 
+def _same(reply: str, before: list[str]) -> bool:
+    """The same reply as one Ari gave earlier in this chat (words compared, case and punctuation aside)."""
+    def words(x: str) -> set[str]:
+        return set(re.findall(r"[a-z']+", x.lower()))
+    w = words(reply)
+    return bool(w) and any(len(w & words(b)) >= 0.8 * max(len(w), len(words(b))) for b in before if b.strip())
+
+
 def chatty(text: str) -> bool:
     """Just talking ("hey Ari, how's it going?", "I'm bored", "tell me a joke"), not asking for something done."""
     t = text.strip()
-    return len(t) <= 160 and bool(CHATTY.match(t)) and not TASKY.search(t)
+    return len(t) <= 160 and bool(CHATTY.match(t) or FEELING.search(t)) and not TASKY.search(t)
 
 
 PROMISE = re.compile(r"^\W*(?:(?:ok(?:ay)?|sure|alright)[,.!]?\s*)?(?:i'?ll|i will|i am going to|i'?m going to|"
@@ -253,6 +269,8 @@ def think(ctx: Context):
             "now": ctx.input.get("now") or time.strftime("%A %d %B %Y, %H:%M"),
             "tools": list(tools.values())}
     done: list[dict[str, Any]] = []
+    said_before = [str(h.get("text") or "") for h in base["conversation_so_far"] if h.get("who") in ("ari", "assistant")
+                   or h.get("role") in ("ari", "assistant")]
 
     def check(s: Step, inp) -> str | None:
         last = '"last_step": true' in str(inp)
@@ -271,6 +289,8 @@ def think(ctx: Context):
         elif PROMISE.match(s.reply) and not done:
             return ("don't say what you will do: use the tool for it now, or say plainly that you can't do that "
                     "(and what you can do instead)")
+        if s.reply.strip() and _same(s.reply, said_before):
+            return "you said that already: answer this message itself, don't repeat or apologise for earlier replies"
         if len(s.reply) > 600:
             return "too long: 1-3 short sentences"
         return None
@@ -279,11 +299,16 @@ def think(ctx: Context):
         """Something private (the screen, the clipboard) is in this chat: Claude never sees it."""
         return any(d.get("private") for d in done) or any(h.get("private") for h in base["conversation_so_far"])
 
+    def chat_ok(s: Step) -> str | None:
+        if not s.reply.strip():
+            return "say something back"
+        return "you said that already: say something new" if _same(s.reply, said_before) else None
+
     if chatty(text):  # small talk: one friendly answer, no tools, the better local model first
         def chat() -> dict:
             s = ctx.llm(CHAT, json.dumps({k: base[k] for k in ("message", "conversation_so_far", "you_remember",
                                                                  "now")}, ensure_ascii=False),
-                        schema=Step, check=lambda s, _i: None if s.reply.strip() else "say something back",
+                        schema=Step, check=lambda s, _i: chat_ok(s),
                         tiers=list(reversed(ctx.local_tiers())) or None, claude_last=not private())
             return {**s.model_dump(), "tier": ctx.last_answer.tier}
 

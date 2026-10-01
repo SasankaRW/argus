@@ -5,6 +5,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Ari treats "I'm tired", "just wanna talk", "never mind, thank you" and "how's it doing" as talk, even mid-sentence, instead of reaching for a tool; and it no longer repeats the same reply (like an apology) message after message.
 - Ari no longer plays a beeping tone while an answer is being worked out.
 - Ari no longer offers to type into the window in front unless you ask to type or press keys; "Kaancha hi on WhatsApp" goes straight to a WhatsApp message.
 - The voice-training page pauses Ari for one minute at a time while it is open and showing, so Ari can't get stuck "not listening" after you leave.

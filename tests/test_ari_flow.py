@@ -182,3 +182,14 @@ def test_typing_tools_only_when_asked_and_whatsapp_goes_straight():
     assert set(offered(t, "open whatsapp", [{"text": "type hello"}])) == {"whatsapp_message", "open_app"}
     assert "type_text" in offered(t, "type hello world", [])
     assert straight_to(t, "Kaancha hi on WhatsApp") == ("whatsapp_message", {"to": "Kaancha", "text": "hi"})
+
+
+def test_talk_said_mid_sentence_is_still_talk_and_ari_never_repeats_itself():
+    from argus.worker.think import _same, chatty
+
+    for t in ("How's it doing", "Just wanna talk with you, I'm tired", "Never mind, thank you", "ugh I'm so tired"):
+        assert chatty(t), t
+    assert not chatty("I'm tired, set a timer for 20 minutes") and not chatty("what's on my screen")
+    said = ["Sorry about that! I'll make sure to use the correct tool next time. How can I assist you?"]
+    assert _same("Sorry about that! I'll make sure to use the correct tool next time. How can I assist you now?", said)
+    assert not _same("Long day, huh? Want to talk about it?", said)
