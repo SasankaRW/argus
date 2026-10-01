@@ -249,6 +249,11 @@ daily cap.
   fallback. Set it up once: `cd deploy\searxng`, put a random `secret_key` in settings.yml, `docker compose up -d`
   (it listens on 127.0.0.1:8888 only). Outbound only; pages are public websites only (never the PC, LAN or
   tailnet); what a page says is untrusted, so after reading the web, anything that does something asks you first.
+- **Tracker** (`tracker`) and **Life Hub** (`lifehub`): "what's urgent at work?", "add an issue: ACME bug P1
+  checkout broken @fri" (asks first), "move ACME-12 to done", "start the timer on ACME-12"; "add milk to the
+  shopping list", "what's on my wishlist?", "how's my money this month?" (read only, never sent to Claude). Put
+  Tracker's and Life Hub's `API_KEY` in Argus's .env as `TRACKER_API_KEY` / `LIFEHUB_API_KEY`, and their
+  addresses in each plugin's settings (default http://127.0.0.1:8080 and :8081; the laptop's name after the move).
 - **Read later** (in `web`): "save this for later" or the phone's share menu: the page's text and a short local
   summary go to Documents/read-later (searchable); "what did I save about Kandy?".
 - **File tools** (`file-tools`): "merge these PDFs", "make a PDF of these photos", "pages 2-5 of the contract",

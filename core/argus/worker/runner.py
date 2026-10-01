@@ -38,6 +38,23 @@ from .workflows import REGISTRY, Context, PermanentError, WaitSignal, WorkflowRe
 log = logging.getLogger("argus.worker")
 
 
+def network_hosts(network: list[str], config: dict) -> list[str]:
+    """permissions.network, with "config:<setting>" replaced by the host in that setting (a URL you set, e.g. where
+    your Tracker runs), so a plugin may call exactly the address you gave it and nothing else."""
+    import urllib.parse as up
+
+    out = []
+    for h in network:
+        if h.startswith("config:"):
+            v = str(config.get(h[7:]) or "")
+            host = up.urlparse(v).hostname if "://" in v else v.split(":")[0]
+            if host:
+                out.append(host)
+        else:
+            out.append(h)
+    return out
+
+
 class _JobReporter:
     def __init__(self, client: ArgusClient, job_id: str, worker_id: str):
         self.client = client
@@ -367,7 +384,7 @@ class Worker:
         ctx._lessons = dict(plugin.info.get("lessons") or {})
         ctx.dry_run = plugin.dry_run
         ctx.files = Files(pid, perms.get("files") or {}, self.path_rules, plugin.dry_run, trace)
-        ctx.http = Http(pid, perms.get("network") or [], trace)
+        ctx.http = Http(pid, network_hosts(perms.get("network") or [], ctx.config), trace)
         ctx.secrets = Secrets(pid, perms.get("secrets") or [])
         ctx.store = Store(client, pid)
         ctx.data_dir = Path(os.environ.get("ARGUS_PLUGIN_DATA", "data/plugins")).resolve() / pid  # made on first use
