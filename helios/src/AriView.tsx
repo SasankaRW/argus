@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import type { Selection } from "./MapView";
-import { ariNow, ariSet, setPillLook, usePillLook } from "./ariState";
+import { ariNow, ariSet, setPillLook, useAri, usePillLook } from "./ariState";
 import { canSpeak, listen, pref, setPref, speak, Speech, stopSpeaking, voiceStatus, VoiceStatus } from "./voice";
 
 type Turn = { id: number; role: "you" | "ari"; text: string | null; action: string | null; label?: string | null;
@@ -96,6 +96,7 @@ export function AriView({ conv, onBack, onNew, onSelect, onView, compact = false
   onSelect: (s: Selection) => void; onView: (v: string) => void; compact?: boolean;
 }) {
   const [turns, setTurns] = useState<Turn[]>([]);
+  const ari = useAri();  // what Ari is doing right now ("looking at your screen"), shown in the waiting bubble
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -222,7 +223,7 @@ export function AriView({ conv, onBack, onNew, onSelect, onView, compact = false
           <div key={t.id} className={`msg ${t.role}`}>
             <span className="who">{t.role === "you" ? "you" : "ari"}</span>
             <div className="bubble">
-              {t.text ?? <span className="typing" aria-label="Ari is thinking"><i /><i /><i /></span>}
+              {t.text ?? <span className="waiting"><span className="typing" aria-label="Ari is thinking"><i /><i /><i /></span>{ari.phase === "working" && ari.text && <span className="doing">{ari.text}…</span>}</span>}
               {t.used && t.used.length > 0 && (
                 <div className="used">{t.used.map((u, i) => <span key={i} className={u.ok ? "" : "bad"}>{u.tool.replace(/_/g, " ")}</span>)}</div>
               )}

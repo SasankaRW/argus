@@ -60,6 +60,34 @@ HARD = re.compile(r"\b(why|explain|compare|plan|analy[sz]e|summari[sz]e|write|dr
                   r"step by step|how (?:do|does|can|should) i|what if|recommend)\b", re.I)
 
 
+# The screen and the clipboard are slow (a vision model) and private: they are only offered when the message is
+# about them, and a plain "what's on my screen?" goes straight to the screen, with no model deciding first.
+SCREEN = re.compile(r"\b(?:screen|monitor|what am i (?:looking at|seeing)|this (?:error|window|page|tab|message|"
+                    r"dialog|popup|code|chart|graph|picture|image|email|document|doc|app)|what does (?:this|it) say|"
+                    r"what'?s this|can you see|look at (?:this|it|that))\b", re.I)
+CLIPBOARD = re.compile(r"\b(?:clipboard|copied|i copied|what i copied|paste[d]?)\b", re.I)
+SCREEN_TOOLS = {"look_at_screen": SCREEN, "summarise_clipboard": CLIPBOARD}
+
+
+def offered(tools: dict[str, dict], text: str, history: list[dict]) -> dict[str, dict]:
+    """The tools worth offering for this message: the screen / clipboard ones only when it's about them (or the
+    chat just was). Fewer tools is also a shorter prompt, so a faster first step."""
+    recent = " ".join(str(h.get("text") or "") for h in history[-2:])
+    return {n: t for n, t in tools.items()
+            if n not in SCREEN_TOOLS or SCREEN_TOOLS[n].search(text) or SCREEN_TOOLS[n].search(recent)}
+
+
+def straight_to(tools: dict[str, dict], text: str) -> tuple[str, dict] | None:
+    """A message that is plainly about the screen or the clipboard: that tool, at once, with the message."""
+    if len(text) > 200:
+        return None
+    if "look_at_screen" in tools and SCREEN.search(text):
+        return "look_at_screen", {"question": text}
+    if "summarise_clipboard" in tools and CLIPBOARD.search(text):
+        return "summarise_clipboard", {"how": text}
+    return None
+
+
 def model_order(text: str, local: list[str]) -> list[str]:
     """Quick asks start on the small, fast model; harder ones (explain, compare, plan, several things at once, long
     messages) start on the bigger one, so they aren't first answered badly and then again."""
@@ -84,6 +112,7 @@ How to decide:
   asks you to remember something, use the remember tool; to forget something, recall_memory then forget_memory.
 - The user's own things (their files, notes, documents, projects, what Argus did, their schedules, their phone,
   their PC): use a tool first; never make up the user's data. If the tools find nothing, say so.
+- Only look at the screen or the clipboard when the user asks about them; never for a general question.
 - Doing things on the PC (open an app, a file or a site, volume, music, windows): use the tool. Several things
   asked: one tool per step, then reply once everything is done.
 - General knowledge (how something works, definitions, maths, advice): answer yourself if you are sure.
@@ -101,7 +130,7 @@ How to decide:
   later (save_for_later, reading_list), PDFs and pictures (merge_pdfs, images_to_pdf, pdf_pages, shrink_images:
   find the files first with find_file), how the week went (weekly_review), work issues
   (work_summary, list_issues, add_issue, move_issue, issue_timer), the shopping list and wishlist (shopping_list,
-  add_to_list), money this month (money_this_month), the PC (apps, windows, volume, media,
+  add_to_list), money this month (money_this_month), the weather (weather), the PC (apps, windows, volume, media,
   clipboard).
 - Follow-ups: "it", "that", "again", "the other one", "and tomorrow?" refer to the conversation so far (your last turn's
   "found" holds what your tools returned then). Carry over what was meant (the same file, app, search or
@@ -151,7 +180,7 @@ def think(ctx: Context):
     text = str(ctx.input.get("text") or "").strip()
     if not text:
         raise PermanentError("nothing said")
-    tools = {t["name"]: t for t in ctx.input.get("tools") or []}
+    tools = offered({t["name"]: t for t in ctx.input.get("tools") or []}, text, ctx.input.get("history") or [])
     base = {"message": text, "conversation_so_far": (ctx.input.get("history") or [])[-8:],
             "you_remember": ctx.input.get("you_remember") or [],
             "now": ctx.input.get("now") or time.strftime("%A %d %B %Y, %H:%M"),
@@ -179,6 +208,22 @@ def think(ctx: Context):
     def private() -> bool:
         """Something private (the screen, the clipboard) is in this chat: Claude never sees it."""
         return any(d.get("private") for d in done) or any(h.get("private") for h in base["conversation_so_far"])
+
+    direct = straight_to(tools, text)
+    if direct is not None:  # one flow: look (or read the clipboard) right away; its answer is the reply
+        name, args = direct
+
+        def use_direct() -> dict:
+            try:
+                return {"tool": name, "args": args, "result": _clip(ctx.tool(name, args)), "private": True}
+            except ToolFailed as e:
+                return {"tool": name, "args": args, "error": str(e)[:300], "private": True}
+
+        got = ctx.step(f"tool 1: {name}", use_direct)
+        res = got.get("result")
+        if isinstance(res, dict) and str(res.get("answer") or "").strip():
+            return {"reply": spoken(str(res["answer"])), "used": [got]}
+        done.append(got)  # it failed or said nothing useful: let the model take it from here
 
     for i in range(MAX_STEPS):
         def decide(i=i) -> dict:

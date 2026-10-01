@@ -5,6 +5,12 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Ari feels like one flow:** the screen and clipboard tools are only offered when you ask about them (a weather
+  question no longer looks at your screen), and "what's on my screen?" / "what does this error say?" goes straight
+  to the screen: no model step first, its answer is the reply. Such questions no longer hit Argus's own "errors"
+  rule. While Ari works, the chat bubble says what it's doing ("looking at your screen…").
+- **Weather in a second:** "how's the weather?", "will it rain tomorrow in Galle?" are answered at once from
+  Open-Meteo (your town from `brief.weather`); the think loop has a `weather` tool too.
 - Fix: the MCP endpoint reads the request before refusing a wrong token (Windows reset the connection instead of answering 401).
 - **Talk with Ari like a conversation** (`ari.live`, on by default): after "Hey Ari" you just talk back and forth;
   talking over Ari pauses it at once, and it carries on if that was only "mm-hm" or its own echo; "thanks Ari"

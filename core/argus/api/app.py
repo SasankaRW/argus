@@ -82,6 +82,7 @@ from ..shares import ShareError, ShareStore, kinds_of
 from ..tools import Tool, ToolError, Tools
 from ..triggers import BadSignature, TriggerError, UnknownTrigger
 from ..voice import CATALOG, Voice, VoiceUnavailable, download, installed
+from ..worker import think as think_mod
 from . import approval_page, mcp
 from .home import HOME_HTML
 
@@ -948,6 +949,11 @@ def create_app(argus: Argus) -> FastAPI:
 
         if ari_mod.BRIEF.match(text):  # "good morning": the morning brief, spoken
             return await reply(await argus.spoken_brief())
+        wx = ari_mod.weather_ask(text)
+        if wx is not None:  # "how's the weather?", "will it rain tomorrow in Kandy?": Open-Meteo, no model
+            said = await argus.weather_say(*wx)
+            if said:
+                return await reply(said)
         actions = ask_mod.catalog(argus.plugin_host)
         m = ari_mod.REMEMBER.match(text)
         if m and not ari_mod.parse_when(text, time.time()):  # "remember that ..." (not "remind me at ...")
@@ -969,7 +975,9 @@ def create_app(argus: Argus) -> FastAPI:
             return await reply(f"{where['text']} Want me to ring it?", "phone:ring",
                                {"kind": "action", "action": "phone:ring"})
         snap = await ask_mod.snapshot(argus)
-        hit = ask_mod.rules(text, actions, snap)
+        # about the screen or the clipboard ("what does this error say?"): not Argus's own errors
+        about_screen = think_mod.SCREEN.search(text) or think_mod.CLIPBOARD.search(text)
+        hit = None if about_screen else ask_mod.rules(text, actions, snap)
         if hit is not None:
             act = hit.get("action")
             if act and not act.startswith("show:"):  # something to do: wait for your yes

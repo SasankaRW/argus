@@ -61,30 +61,36 @@ class Weather:
     def today(self, name: str) -> dict[str, Any] | None:
         """Today's low, high, chance of rain and sky; None when the place is unknown. Kept for an hour, so
         "good morning" answers at once after the first time."""
+        return self.day(name, 0)
+
+    def day(self, name: str, offset: int = 0) -> dict[str, Any] | None:
+        """Today (0) or tomorrow (1), as `today` says. Both days come with one request, kept for an hour."""
         key = (name.strip().lower(), time.strftime("%Y-%m-%d %H"))
         if key not in self._today:
-            self._today = {key: self._fetch_today(name)}
-        return self._today[key]
+            self._today = {key: self._fetch(name)}
+        days = self._today[key]
+        return None if days is None else days[min(max(offset, 0), len(days) - 1)]
 
-    def _fetch_today(self, name: str) -> dict[str, Any] | None:
+    def _fetch(self, name: str) -> list[dict[str, Any]] | None:
         p = self.place(name)
         if p is None:
             return None
         lat, lon, spelled = p
         q = urllib.parse.urlencode({
-            "latitude": f"{lat:.3f}", "longitude": f"{lon:.3f}", "timezone": "auto", "forecast_days": 1,
+            "latitude": f"{lat:.3f}", "longitude": f"{lon:.3f}", "timezone": "auto", "forecast_days": 2,
             "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
             "current": "temperature_2m"})
         d = self.fetch(f"{FORECAST}?{q}") or {}
         day = d.get("daily") or {}
 
-        def first(k: str) -> Any:
-            v = day.get(k) or [None]
-            return v[0]
+        def nth(k: str, i: int) -> Any:
+            v = day.get(k) or []
+            return v[i] if i < len(v) else None
 
-        return {"place": spelled, "code": first("weather_code"), "low": first("temperature_2m_min"),
-                "high": first("temperature_2m_max"), "rain": first("precipitation_probability_max"),
-                "now": (d.get("current") or {}).get("temperature_2m")}
+        n = max(1, min(2, len(day.get("weather_code") or [None])))
+        return [{"place": spelled, "code": nth("weather_code", i), "low": nth("temperature_2m_min", i),
+                 "high": nth("temperature_2m_max", i), "rain": nth("precipitation_probability_max", i),
+                 "now": (d.get("current") or {}).get("temperature_2m") if i == 0 else None} for i in range(n)]
 
 
 def words(w: dict[str, Any]) -> str:
@@ -101,3 +107,22 @@ def words(w: dict[str, Any]) -> str:
     elif rain is not None and rain >= 60:
         parts.append(f"{round(rain)}% chance")
     return f"{w['place']}: " + ", ".join(parts) + "." if parts else ""
+
+
+def spoken(w: dict[str, Any], when: str = "today") -> str:
+    """ "Colombo today: 25 to 31 degrees, thunderstorms, 80% chance of rain. It's 28 now." """
+    sky = CODES.get(int(w["code"]), "") if w.get("code") is not None else ""
+    parts = []
+    if w.get("low") is not None and w.get("high") is not None:
+        parts.append(f"{round(w['low'])} to {round(w['high'])} degrees")
+    if sky:
+        parts.append(sky)
+    rain = w.get("rain")
+    if rain is not None and rain >= 30:
+        parts.append(f"{round(rain)}% chance of rain")
+    elif rain is not None and not any(x in sky for x in ("rain", "shower", "drizzle", "thunder")):
+        parts.append("no rain expected")
+    out = f"{w['place']} {when}: " + ", ".join(parts) + "." if parts else f"No forecast for {w['place']} right now."
+    if w.get("now") is not None and when == "today":
+        out += f" It's {round(w['now'])} now."
+    return out

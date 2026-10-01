@@ -297,6 +297,26 @@ BRIEF = re.compile(r"^\s*(?:(?:good\s+)?morning(?:[,\s]+ari)?|brief\s+me"
 
 # ------------------------------------------------------------------ what you asked Ari to remember
 
+WEATHER = re.compile(r"\b(?:weather|forecast|temperature|umbrella|(?:will|is) it (?:rain|be (?:hot|cold|sunny))|"
+                     r"raining|going to rain)\b", re.I)
+_PLACE = re.compile(r"\b(?:in|at|for)\s+(?P<p>[A-Za-z][\w .,'-]{1,40}?)\s*(?:today|tomorrow|now|right now|"
+                    r"this (?:morning|afternoon|evening)|tonight)?\s*[?.!]*\s*$", re.I)
+
+
+def weather_ask(text: str) -> tuple[str, int] | None:
+    """("Kandy" or "" for the usual place, 0 today / 1 tomorrow) when this is a plain weather question."""
+    t = text.strip()
+    if not WEATHER.search(t) or len(t) > 70 or re.match(r"\W*(?:why|explain|what (?:is|are) (?:a |the )?"
+                                                       r"(?:weather|forecast)s?\b|how (?:do|does|are|is) "
+                                                       r"(?:the )?(?:weather|forecast))", t, re.I):
+        return None
+    m = _PLACE.search(t)
+    place = m.group("p").strip(" ,.") if m else ""
+    if place.lower() in {"the morning", "the evening", "the afternoon", "the weekend", "my area", "here", "home"}:
+        place = ""
+    return place, 1 if re.search(r"\btomorrow\b", t, re.I) else 0
+
+
 REMEMBER = re.compile(r"^\s*(?:please\s+)?(?:remember|note|keep in mind|don'?t forget)\s+(?:that\s+)?(?P<fact>.{3,})$",
                       re.I)
 
