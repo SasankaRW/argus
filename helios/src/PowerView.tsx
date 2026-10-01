@@ -62,7 +62,7 @@ export function PowerControls({ events, onSelect, compact = false }: { events: A
         <div className="tip">
           Auto power ({p.mode}): {p.state === "busy" ? "PC has work" : p.state === "would_shutdown" ? "would shut it down now (idle)"
             : p.state === "held" ? "kept on until the PC has work again" : p.state === "warned" ? "warned on the phone; shutting down soon"
-            : p.state === "shutting_down" ? "shutting down" : p.state === "idle" && p.idle_since ? `idle since ${ago(p.idle_since)}; shuts down after ${p.idle_minutes} min${p.mode === "real" && !p.woken_by_argus ? " (only when Argus woke it)" : ""}` : p.state}
+            : p.state === "shutting_down" ? "shutting down" : p.state === "idle" && p.idle_since ? `idle for ${ago(p.idle_since).replace(/ ago$/, "")}; shuts down after ${p.idle_minutes} min${p.mode === "real" && !p.woken_by_argus ? " (only when Argus woke it)" : ""}` : p.state}
           {p.mode === "simulated" ? " — only logged while developing; these buttons act for real." : ""}
         </div>
       )}

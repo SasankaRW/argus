@@ -21,8 +21,11 @@ function summary(j: Job): string {
   if ("would_move" in r) return `dry-run: ${n("would_move")} would move${n("skipped") ? `, ${n("skipped")} skipped` : ""}`;
   if ("moved" in r) return `${n("moved")} moved${n("skipped") ? `, ${n("skipped")} skipped` : ""}`;
   if ("back_to" in r) return `put back: ${String(r.back_to).split(/[\\/]/).pop()}`;
+  if (typeof r.say === "string") return r.say;  // a tool's own sentence (watchers, the tools test)
+  if (typeof r.answer === "string") return r.answer;
+  const show = (v: unknown) => Array.isArray(v) ? String(v.length) : v && typeof v === "object" ? "…" : String(v);
   const keys = Object.keys(r).slice(0, 3);
-  return keys.map((k) => `${k}: ${typeof r[k] === "object" ? "…" : String(r[k])}`).join(" · ");
+  return keys.map((k) => `${k}: ${show(r[k])}`).join(" · ");
 }
 
 export function RunsView({ events, selected, onSelect }: { events: ArgusEvent[]; selected: string | null; onSelect: (s: Selection) => void }) {

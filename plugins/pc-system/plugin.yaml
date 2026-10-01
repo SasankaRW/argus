@@ -21,6 +21,7 @@ ari:
     - name: read_clipboard
       description: What text is on the PC's clipboard right now.
       workflow: clipboard_read
+      private: true
     - name: copy_to_clipboard
       description: Put text on the PC's clipboard (replaces what is there).
       workflow: clipboard_write

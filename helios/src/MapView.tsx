@@ -39,10 +39,10 @@ function sub(n: MapNode): string {
   }
   if (n.id === "power") {
     const m = n.meta as { state?: string; mode?: string; idle_since?: number };
-    const sim = m.mode === "simulated" ? " (sim)" : "";
+    const sim = m.mode === "simulated" ? " · sim" : "";
     if (m.state === "busy") return `PC busy${sim}`;
     if (m.state === "would_shutdown") return `would shut down${sim}`;
-    if (m.state === "idle") return `idle${m.idle_since ? ` ${ago(m.idle_since)}` : ""}${sim}`;
+    if (m.state === "idle") return `idle${m.idle_since ? ` ${ago(m.idle_since).replace(/ ago$/, "")}` : ""}${sim}`;
     return `watching${sim}`;
   }
   if (n.id === "approvals") return n.pending ? `${n.pending} waiting for you` : "nothing to decide";

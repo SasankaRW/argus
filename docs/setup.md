@@ -206,7 +206,11 @@ other screens (the phone) shows the same pill at the top of the page.
 ## What Argus tells you by itself
 
 - **Morning brief** (`brief.at`, 07:00): overnight results, failures, what waits for you, today's schedules, the
-  backup, the PC and Docker, yesterday's Claude calls. `POST /brief` sends one now to try it.
+  backup, the PC and Docker, yesterday's Claude calls. `POST /brief` sends one now to try it. With
+  `brief.weather: Colombo` (or Helios > Settings) today's forecast comes first (Open-Meteo: free, no key; only the
+  town and its coordinates leave the machine). Say **"good morning"** to Ari (or "brief me", "what's my day look
+  like?") and Ari says it: the weather, what waits for you, what failed overnight, the first thing on today's
+  schedule.
 - **Evening summary** (`summary.at`, 20:00, a quiet notification): today's jobs, about how much time they saved
   you, what failed or waits; on Sundays the week's total too. `POST /summary` sends one now.
 - **Time saved**: each plugin estimates the minutes a job saved you (moving a file ~20 s, naming a screenshot
@@ -236,6 +240,14 @@ daily cap.
   first; never types passwords).
 - **PC status** (`pc-system`): "how's the PC doing?", "what's using my GPU?", "how much space is left on G?",
   "what's on my clipboard?", "copy that to the clipboard" (asks first).
+- **Screen and clipboard** (`screen`): "what's on my screen?", "what does this error say?", "summarise what I
+  copied", "any action items in what I copied?". The screen is grabbed in memory (never saved) and looked at by
+  the vision model (`V1`, e.g. `qwen2.5vl:7b`; without it, the text on screen via Tesseract goes to T1). Local
+  models only: nothing on your screen or clipboard goes to Claude.
+- **Watchers** (`watchers`): "watch this page", "tell me when the RTX 5080 on <page> is under 280,000", "what am I
+  watching?", "stop watching the RTX". Checked every 3 hours (or **Check my watches now**); the phone hears when a
+  page changes or a price drops or goes under yours, with the page as the link. Name a product ("part") to watch
+  only that bit of the page. Public websites only (never the PC, the LAN or the tailnet); it only reads pages.
 
 They run in your logged-in Windows session (the worker `dev.ps1 up` starts has it; after the move to the laptop,
 `pc-worker.ps1 install` adds an "Argus desktop" task at logon). Like every plugin they start in dry-run: add them

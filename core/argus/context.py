@@ -12,7 +12,16 @@ from . import settings as settings_mod
 from .approvals import Approvals
 from .backup import Backups
 from .config import PRIORITY_BATCH, PRIORITY_INTERACTIVE, Config, ScheduleConfig
-from .daily import Marker, brief_due, compose_brief, compose_summary, last_health, resume_summary
+from .daily import (
+    Marker,
+    brief_due,
+    brief_parts,
+    compose_brief,
+    compose_summary,
+    last_health,
+    resume_summary,
+    say_brief,
+)
 from .db import Store
 from .events import EventHub, insert_event, prune_events
 from .jobs import JobStore, Watchdog
@@ -25,6 +34,7 @@ from .registry import Registry
 from .relay import ReplyRelay
 from .scheduler import Scheduler
 from .triggers import Triggers
+from .weather import Weather, words
 
 log = logging.getLogger("argus")
 
@@ -68,6 +78,7 @@ class Argus:
         self.started_at: float | None = None
         self._next_prune = 0.0
         self.pruned_events = 0
+        self.weather = Weather()
         self.base_settings = settings_mod.base_values(cfg)  # argus.yaml's values, before Helios's overrides
 
     def open(self) -> Argus:
@@ -241,15 +252,34 @@ class Argus:
         self.outbox.poke()
         return out
 
-    async def send_brief(self, day: str | None = None) -> dict:
-        """The morning brief to the phone (once per day; `POST /brief` sends one now)."""
+    async def weather_line(self) -> str:
+        """Today's weather in one line for the brief, or "" (no place set, unknown place, or no connection)."""
+        place = self.cfg.brief.weather.strip()
+        if not place:
+            return ""
+        try:
+            w = await asyncio.wait_for(asyncio.to_thread(self.weather.today, place), 15)
+        except Exception as e:  # the brief goes without it
+            log.warning("no weather for the brief", extra={"place": place, "error": str(e)[:200]})
+            return ""
+        if w is None:
+            log.warning("no such place for the weather", extra={"place": place})
+            return ""
+        return words(w)
+
+    async def _brief_inputs(self) -> dict:
         needs = set(self.cfg.power.pc_needs)
         pc = any(w["state"] == "online" and set(w["capabilities"]) & needs for w in await self.registry.workers())
+        return {"last_backup": self.last_backup, "pc_online": pc, "claude_cap": self.cfg.claude.calls_per_day,
+                "weather": await self.weather_line()}
+
+    async def send_brief(self, day: str | None = None) -> dict:
+        """The morning brief to the phone (once per day; `POST /brief` sends one now)."""
+        inputs = await self._brief_inputs()
 
         def fn(conn):
             now = time.time()
-            title, text = compose_brief(conn, now, last_backup=self.last_backup, pc_online=pc,
-                                        health=last_health(conn), claude_cap=self.cfg.claude.calls_per_day)
+            title, text = compose_brief(conn, now, health=last_health(conn), **inputs)
             key = f"brief:{day}" if day else f"brief:now:{int(now)}"
             oid = add_message(conn, now, "ntfy", ntfy_message(title, text, tags=["sunrise"]), dedupe_key=key)
             return {"title": title, "text": text, "queued": oid is not None}
@@ -259,6 +289,13 @@ class Argus:
             self.brief_sent = day
         self.outbox.poke()
         return out
+
+    async def spoken_brief(self) -> str:
+        """The brief as Ari says it ("good morning")."""
+        inputs = await self._brief_inputs()
+        now = time.time()
+        parts = await self.store.read(lambda c: brief_parts(c, now, health=last_health(c), **inputs))
+        return say_brief(parts, now)
 
     def _backup_due(self, now: float) -> bool:
         """Tonight's slot has passed and the newest backup is older than it."""

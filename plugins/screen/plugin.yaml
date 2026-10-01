@@ -1,0 +1,33 @@
+id: screen
+name: Screen and clipboard
+version: 1.0.0
+kind: workflow
+argus_api: ">=1.0 <2.0"
+description: 'Lets Ari look at your screen ("what''s on my screen?") and sum up what you copied. Local models only: nothing on your screen or clipboard goes to Claude.'
+runs_on: desktop
+needs: [session]
+
+workflows: [look, clipboard]
+
+permissions:
+  files: {read: [], write: [], delete: none}
+  models: [T1, T2, V1]       # V1 looks at the picture; without it, the text on screen (Tesseract) goes to T1
+
+config:
+  max_side: {type: int, default: 1280, label: Longest side of the picture the vision model gets (pixels)}
+
+ari:
+  tools:
+    - name: look_at_screen
+      description: "Look at the PC's screen right now and answer about it (\"what's on my screen?\", \"what does this error say?\"). Nothing is saved."
+      workflow: look
+      private: true
+      input: {question: {type: string, description: "what the user wants to know about the screen (default: what's on it)"}}
+    - name: summarise_clipboard
+      description: "Sum up what the user copied (text, or a picture): \"summarise what I copied\", \"what are the action items in this?\"."
+      workflow: clipboard
+      private: true
+      input: {how: {type: string, description: "what kind of summary (default: the gist in 2-3 sentences)"}}
+
+helios:
+  node: {label: Screen, group: pc}

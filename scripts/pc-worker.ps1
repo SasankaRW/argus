@@ -2,6 +2,7 @@
 #   .\scripts\pc-worker.ps1 install http://laptop:8600    start the worker (and Ollama) at boot, without logging in
 #   .\scripts\pc-worker.ps1 remove                        undo
 #   .\scripts\pc-worker.ps1 status
+#   .\scripts\pc-worker.ps1 check http://laptop:8600       is everything ready for the move? (changes nothing)
 # The worker runs under the supervisor (restarts it, and restarts on new code after "git pull").
 # Put the laptop's ARGUS_WORKER_TOKEN in this folder's .env first.
 param(
@@ -36,18 +37,23 @@ switch ($Command) {
             Write-Host "[ok] '$OllamaTask' starts Ollama at boot"
         } else { Write-Host "[--] Ollama not found: install it (winget install Ollama.Ollama) and run install again" }
 
-        # Ari's PC tools (open apps, volume, ...) need your logged-in session: a second worker, at logon, visible
-        # to you only through what it opens.
-        $DCmd = "`$env:ARGUS_URL='$Url'; Set-Location '$Root'; & '$Py' -m argus.worker.cli --cap session --id desktop-$env:COMPUTERNAME --log-file logs/desktop.log"
+        # Ari's PC tools (open apps, volume, ...), "Hey Ari" and the island need your logged-in session: a second
+        # supervisor at logon runs them (a session-only worker, the listener, the island), talking to the laptop.
+        $DCmd = "`$env:ARGUS_URL='$Url'; Set-Location '$Root'; & '$Py' -m argus.supervisor --no-argusd --desk-only"
         $DAct = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -WindowStyle Hidden -Command `"$DCmd`""
         $Logon = New-ScheduledTaskTrigger -AtLogOn -User $User
         $DPrincipal = New-ScheduledTaskPrincipal -UserId $User -LogonType Interactive -RunLevel Limited
         Register-ScheduledTask -TaskName $DesktopTask -Action $DAct -Trigger $Logon -Principal $DPrincipal -Settings $Settings -Force | Out-Null
-        Write-Host "[ok] '$DesktopTask' starts when you log in (Ari's PC tools: open apps, volume, ...)"
+        Write-Host "[ok] '$DesktopTask' starts when you log in (Ari's PC tools, Hey Ari, the island)"
 
         Start-ScheduledTask -TaskName $Task
         Write-Host "Started. It shows up in Helios (on the laptop) within a minute. Logs: $Root\logs\worker.log"
         Write-Host "Also: BIOS Wake-on-LAN on, network card 'Wake on Magic Packet' on, Fast Startup off."
+    }
+    "check" {
+        if (-not $Url) { throw "Usage: .\scripts\pc-worker.ps1 check http://<laptop>:8600" }
+        Set-Location $Root
+        & $Py -m argus.movecheck $Url
     }
     "remove" {
         foreach ($T in @($Task, $OllamaTask, $DesktopTask)) {

@@ -131,6 +131,12 @@ class Listener:
         self.armed_until = self.clock() + self.follow_s
         return None
 
+    def wake(self) -> None:
+        """Listen now without the wake phrase (the island's Talk button): the next thing said is the command."""
+        self.chime()
+        self.report("listening")
+        self.armed_until = self.clock() + self.follow_s
+
     def _send(self, text: str) -> str:
         log.info("heard", extra={"text": text})
         try:
@@ -151,6 +157,25 @@ class Listener:
 # ------------------------------------------------------------------ talking to argusd
 
 class AriClient:
+    def here(self) -> None:
+        """Tell Argus this listener runs (so the island's Talk button can use it)."""
+        try:
+            self._req("POST", "/ari/listener", {}, timeout=5)
+        except Exception:  # argusd restarting
+            pass
+
+    def wakes(self, after: int) -> tuple[list[dict], int]:
+        """Talk-button presses since event `after`: (events, the newest seq)."""
+        try:
+            r = json.loads(self._req("GET", f"/events?kinds=ari.wake&after={max(after, 0)}&limit=20", None,
+                                     timeout=5))
+        except Exception:
+            return [], after
+        if after < 0:  # the first look: only what comes from now on
+            return [], int(r.get("seq") or 0)
+        evs = r.get("events") or []
+        return evs, max([after] + [int(e["seq"]) for e in evs])
+
     def __init__(self, url: str, token: str | None, conv_file: Path):
         self.url, self.token, self.conv_file = url.rstrip("/"), token, conv_file
         try:
@@ -294,6 +319,22 @@ def main(argv: list[str] | None = None) -> int:
     listener = Listener(transcribe_wake=wake_t, transcribe=cmd_t, say=client.say, speak=speak, chime=ding,
                         report=client.state)
     seg = Segmenter()
+
+    def talk_button() -> None:
+        """The island's Talk button (event ari.wake): listen now. Also tells Argus this listener runs."""
+        seq, last = -1, 0.0
+        while True:
+            if time.monotonic() - last > 30:
+                client.here()
+                last = time.monotonic()
+            evs, seq = client.wakes(seq)
+            if evs:
+                log.info("talk button")
+                listener.wake()
+                quiet_until[0] = time.monotonic() + 0.2
+            time.sleep(0.8)
+
+    threading.Thread(target=talk_button, daemon=True, name="talk-button").start()
     device = int(args.device) if args.device and args.device.isdigit() else args.device
     log.info("listening for Hey Ari", extra={"device": device})
     print("Listening for \"Hey Ari\" (Ctrl+C to stop).", flush=True)

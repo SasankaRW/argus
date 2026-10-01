@@ -685,7 +685,8 @@ class JobStore:
                 queued.append({**brief(j), "position": len(queued) + 1, "why": why, "until": until,
                                "error": j.error if j.state.value == "retry" else None})
             return {"running": running, "queued": queued, "waiting": waiting, "gpu_model": self.gpu_model,
-                    "workers_online": len(online)}
+                    "workers_online": len({w.get("id", "").removesuffix("-now") for w in workers
+                                           if w.get("state") == "online"})}  # a fast lane is its worker
 
         return await self.store.read(fn)
 

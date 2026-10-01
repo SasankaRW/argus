@@ -1,0 +1,48 @@
+id: watchers
+name: Watchers
+version: 1.0.0
+kind: workflow
+argus_api: ">=1.0 <2.0"
+description: 'Watches web pages for you: tells the phone when a page changes, or when a price drops (or goes under the price you name). "Watch this page", "tell me when the RTX 5080 on this page is under 250,000".'
+runs_on: any                  # the laptop after the move: checking never wakes the PC
+
+triggers:
+  - schedule: {workflow: check, cron: "17 */3 * * *"}   # every 3 hours
+  - manual: {workflow: check, label: Check my watches now}
+
+workflows: [add, list, remove, check]
+
+permissions:
+  files: {read: [], write: [], delete: none}
+  models: []
+  network: ["*"]              # any public website you name; never this machine, the LAN or the tailnet
+
+config:
+  max_watches: {type: int, default: 25, label: Watches at most}
+
+ari:
+  tools:
+    - name: watch_page
+      description: 'Watch a web page: tell the user when it changes (kind "change"), or when its price drops or goes under a price (kind "price", with "below").'
+      workflow: add
+      input:
+        url: {type: string, description: the page's address}
+        kind: {type: string, description: '"change" (default) or "price"'}
+        below: {type: number, description: "tell when the price is under this (price watches; optional)"}
+        part: {type: string, description: "words near the part of the page to watch, e.g. a product name (optional)"}
+        name: {type: string, description: a short name for the watch (optional)}
+      required: [url]
+    - name: list_watches
+      description: The pages being watched, with their last price or when they last changed.
+      workflow: list
+    - name: stop_watching
+      description: Stop watching a page (by its name or address).
+      workflow: remove
+      input: {name: {type: string, description: the watch's name or the page's address}}
+      required: [name]
+
+share:                        # Helios > Share: a link from the phone; a price in the note watches for under it
+  - {workflow: add, label: "Watch this page (a price in the note: tell me when it's under)", accepts: [url]}
+
+helios:
+  node: {label: Watchers, group: assistant}

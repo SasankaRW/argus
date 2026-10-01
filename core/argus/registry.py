@@ -58,8 +58,13 @@ def _decode_worker(r: sqlite3.Row) -> dict[str, Any]:
 
 def _aliases(workers: dict[str, dict[str, Any]]) -> dict[str, str]:
     """Names that are really another box on the map: a worker's fast lane ("<id>-now", a thread of the same worker
-    for Ari) and "pc" in power events (the PC's worker, when there is exactly one desktop worker)."""
+    for Ari), "desktop-<host>" (the PC's session worker after the move, beside its boot-time "worker-<host>") and
+    "pc" in power events (the PC's worker, when there is exactly one desktop worker)."""
     alias = {w: w[:-4] for w in workers if w.endswith("-now") and w[:-4] in workers}
+    for w in workers:
+        base = w[:-4] if w.endswith("-now") else w
+        if base.startswith("desktop-") and "worker-" + base[8:] in workers:
+            alias[w] = "worker-" + base[8:]
     desktops = [w for w, d in workers.items() if w not in alias and "desktop" in d["capabilities"]]
     if len(desktops) == 1:
         alias["pc"] = desktops[0]

@@ -26,6 +26,20 @@ const TABS = ["Overview", "Settings", "Runs", "Learning"] as const;
 type Tab = typeof TABS[number];
 
 function mins(s: number) { const m = Math.round(s / 60); return m < 1 ? "—" : m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`; }
+// Common cron lines in words ("17 */3 * * *" -> "every 3 hours"); anything else stays as written.
+export function cronWords(c: string): string {
+  const [m, h, dom, mon, dow] = c.trim().split(/\s+/);
+  if ([dom, mon].some((x) => x !== "*") || !/^\d+$/.test(m ?? "")) return c;
+  const at = (hh: string) => `${hh.padStart(2, "0")}:${m.padStart(2, "0")}`;
+  const days = dow === "*" ? "" : dow === "1-5" ? " on weekdays" : dow === "0,6" || dow === "6,0" ? " at weekends" : null;
+  if (days === null) return c;
+  if (h === "*") return `every hour at :${m.padStart(2, "0")}${days}`;
+  const every = h.match(/^\*\/(\d+)$/);
+  if (every) return `every ${every[1]} hours${days}`;
+  if (/^\d+$/.test(h)) return `${dow === "*" ? "every day" : dow === "1-5" ? "weekdays" : "weekends"} at ${at(h)}`;
+  return c;
+}
+
 function when(t: number | null) { return t ? new Date(t * 1000).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" }) : "—"; }
 
 // Every plugin with its own controls: what it does, its buttons, live or dry-run, settings, runs, and what its
@@ -152,7 +166,7 @@ function Overview({ d }: { d: Detail }) {
       <div className="card">
         <h4>When it runs</h4>
         {d.buttons.length === 0 && d.schedules.length === 0 && d.watches.length === 0 && d.tools.length > 0 && <p className="muted">When Ari needs it.</p>}
-        {d.schedules.map((s) => <p key={s.id}><span className="mono">{s.cron}</span> · {s.workflow} · next {when(s.next_run_at)}</p>)}
+        {d.schedules.map((s) => <p key={s.id} title={s.cron}>{cronWords(s.cron)} · {s.workflow} · next {when(s.next_run_at)}</p>)}
         {d.watches.map((w, i) => <p key={i}>New files in {w.paths.join(", ")}</p>)}
         {d.buttons.map((b) => <p key={b.workflow}>“{b.label}” button</p>)}
         {d.share.map((s, i) => <p key={i}>Phone's share menu: {s.label}</p>)}
@@ -169,7 +183,7 @@ function Overview({ d }: { d: Detail }) {
         {perms.files.write.length > 0 && <p>Changes: {perms.files.write.join(", ")}</p>}
         <p>Deletes: {perms.files.delete === "recycle_bin" ? "to the Recycle Bin only" : "never"}</p>
         {perms.models.length > 0 && <p>Models: {perms.models.join(", ")}</p>}
-        {perms.network.length > 0 && <p>Internet: {perms.network.join(", ")}</p>}
+        {perms.network.length > 0 && <p>Internet: {perms.network.includes("*") ? "any public website (never your PC, LAN or tailnet)" : perms.network.join(", ")}</p>}
         <p className="muted">Runs on: {d.runs_on === "desktop" ? "the PC" : d.runs_on}{d.needs.includes("session") ? " (your Windows session)" : ""}</p>
       </div>
     </div>

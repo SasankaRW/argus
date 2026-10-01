@@ -26,3 +26,10 @@ def test_fast_lane_and_pc_fold_into_the_pc_worker():
 
 def test_two_desktops_leave_pc_alone():
     assert _aliases({"a": w(["desktop"]), "b": w(["desktop"])}) == {}
+
+
+def test_the_session_worker_after_the_move_is_the_same_pc():
+    workers = {"worker-saspc": w(["desktop", "gpu"]), "desktop-saspc": w(["session"]),
+               "desktop-saspc-now": w(["session"])}
+    assert _aliases(workers) == {"desktop-saspc": "worker-saspc", "desktop-saspc-now": "worker-saspc",
+                                 "pc": "worker-saspc"}

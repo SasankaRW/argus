@@ -110,46 +110,104 @@ def compose_summary(conn: sqlite3.Connection, now: float) -> tuple[str, str]:
     return "Today with Argus", "\n".join(lines)
 
 
-def compose_brief(conn: sqlite3.Connection, now: float, *, last_backup: dict | None, pc_online: bool,
-                  health: dict | None, claude_cap: int) -> tuple[str, str]:
-    """(title, text) of the morning brief. Plain lines, most important first."""
+def brief_parts(conn: sqlite3.Connection, now: float, *, last_backup: dict | None, pc_online: bool,
+                health: dict | None, claude_cap: int, weather: str = "") -> dict[str, Any]:
+    """What the morning brief says, before it is worded for the phone (compose_brief) or for Ari (say_brief)."""
     since = now - 12 * 3600
-    lines: list[str] = []
-    done = conn.execute("SELECT COUNT(*) FROM jobs WHERE state = 'succeeded' AND finished_at >= ?",
-                        (since,)).fetchone()[0]
+    done = conn.execute("SELECT COUNT(*) FROM jobs WHERE state = 'succeeded' AND finished_at >= ?"
+                        " AND plugin NOT IN ('ask', 'ari')", (since,)).fetchone()[0]
     dead = conn.execute("SELECT plugin, workflow FROM jobs WHERE state = 'dead' AND finished_at >= ?"
                         " ORDER BY finished_at", (since,)).fetchall()
-    s = f"Overnight: {done} job{'s' if done != 1 else ''} done"
-    if dead:
-        names = sorted({_name(r) for r in dead})
-        s += f", {len(dead)} failed ({', '.join(names[:3])}{'…' if len(names) > 3 else ''})"
-    lines.append(s + ".")
-    waiting = conn.execute("SELECT title FROM approvals WHERE state = 'pending' ORDER BY created_at").fetchall()
-    if waiting:
-        lines.append(f"Waiting for you: {len(waiting)} (" + "; ".join(r[0] for r in waiting[:3]) + ").")
+    waiting = [r[0] for r in conn.execute("SELECT title FROM approvals WHERE state = 'pending' ORDER BY created_at")]
     end_of_day = datetime.fromtimestamp(now).replace(hour=23, minute=59).timestamp()
     today = conn.execute("SELECT label, plugin, workflow, next_run_at FROM schedules WHERE enabled = 1"
                          " AND next_run_at <= ? ORDER BY next_run_at", (end_of_day,)).fetchall()
-    if today:
-        items = [f"{_hhmm(r['next_run_at'])} {(r['label'] or _name(r)).split(': ', 1)[-1]}" for r in today[:5]]
-        lines.append("Today: " + "; ".join(items) + ("…" if len(today) > 5 else "") + ".")
-    if last_backup:
-        if last_backup.get("ok"):
-            lines.append(f"Backup at {_hhmm(last_backup['at'])}: OK.")
-        else:
-            lines.append(f"Backup FAILED: {str(last_backup.get('problem'))[:100]}.")
-    lines.append(f"PC: {'on' if pc_online else 'off'}.")
-    if health and health.get("problems"):
-        lines.append("Docker/WSL: " + "; ".join(health["problems"][:3]) + ".")
-    elif health and health.get("docker"):
-        lines.append(f"Docker: {health['docker'].get('running', 0)} running, all fine.")
     y = (datetime.fromtimestamp(now) - timedelta(days=1)).strftime("%Y-%m-%d")
     row = conn.execute("SELECT used FROM budget WHERE day = ? AND key = ?", (y, CLAUDE_BUDGET)).fetchone()
-    if row and row[0]:
-        lines.append(f"Claude yesterday: {row[0]} of {claude_cap} calls.")
-    title = "Good morning" + (" - something needs you" if dead or waiting or (health or {}).get("problems")
-                              else "")
+    return {
+        "weather": weather, "done": done, "dead": sorted({_name(r) for r in dead}), "dead_n": len(dead),
+        "waiting": waiting,
+        "today": [(_hhmm(r["next_run_at"]), (r["label"] or _name(r)).split(": ", 1)[-1]) for r in today],
+        "backup": last_backup, "pc": pc_online, "health": health or {},
+        "claude": (row[0] if row and row[0] else 0, claude_cap),
+    }
+
+
+def compose_brief(conn: sqlite3.Connection, now: float, *, last_backup: dict | None, pc_online: bool,
+                  health: dict | None, claude_cap: int, weather: str = "") -> tuple[str, str]:
+    """(title, text) of the morning brief for the phone. Plain lines, most important first."""
+    p = brief_parts(conn, now, last_backup=last_backup, pc_online=pc_online, health=health, claude_cap=claude_cap,
+                    weather=weather)
+    lines: list[str] = []
+    if p["weather"]:
+        lines.append(p["weather"])
+    s = f"Overnight: {p['done']} job{'s' if p['done'] != 1 else ''} done"
+    if p["dead_n"]:
+        names = p["dead"]
+        s += f", {p['dead_n']} failed ({', '.join(names[:3])}{'…' if len(names) > 3 else ''})"
+    lines.append(s + ".")
+    if p["waiting"]:
+        lines.append(f"Waiting for you: {len(p['waiting'])} (" + "; ".join(p["waiting"][:3]) + ").")
+    if p["today"]:
+        items = [f"{t} {what}" for t, what in p["today"][:5]]
+        lines.append("Today: " + "; ".join(items) + ("…" if len(p["today"]) > 5 else "") + ".")
+    b = p["backup"]
+    if b:
+        if b.get("ok"):
+            lines.append(f"Backup at {_hhmm(b['at'])}: OK.")
+        else:
+            lines.append(f"Backup FAILED: {str(b.get('problem'))[:100]}.")
+    lines.append(f"PC: {'on' if p['pc'] else 'off'}.")
+    h = p["health"]
+    if h.get("problems"):
+        lines.append("Docker/WSL: " + "; ".join(h["problems"][:3]) + ".")
+    elif h.get("docker"):
+        lines.append(f"Docker: {h['docker'].get('running', 0)} running, all fine.")
+    used, cap = p["claude"]
+    if used:
+        lines.append(f"Claude yesterday: {used} of {cap} calls.")
+    title = "Good morning" + (" - something needs you" if p["dead_n"] or p["waiting"] or h.get("problems") else "")
     return title, "\n".join(lines)
+
+
+def _num(n: int) -> str:
+    small = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"]
+    return small[n] if 0 <= n < len(small) else str(n)
+
+
+def _count(n: int, one: str, many: str) -> str:
+    return f"{_num(n)} {one if n == 1 else many}"
+
+
+def say_brief(p: dict[str, Any], now: float) -> str:
+    """The brief as Ari says it on "good morning": short sentences, the things that need you first, the rest only
+    when something is wrong."""
+    d = datetime.fromtimestamp(now)
+    hello = "Good morning" if d.hour < 12 else "Good afternoon" if d.hour < 18 else "Good evening"
+    out = [f"{hello}. It's {clock(d.hour, d.minute)}."]
+    if p["weather"]:
+        out.append(p["weather"])
+    if p["waiting"]:
+        first = p["waiting"][0]
+        out.append(f"{_count(len(p['waiting']), 'thing waits', 'things wait').capitalize()} for you"
+                   + (f", starting with {first}." if len(p["waiting"]) > 1 else f": {first}."))
+    if p["dead_n"]:
+        what = (f"{_count(p['done'], 'job', 'jobs')} ran and {_num(p['dead_n'])}" if p["done"]
+                else _count(p["dead_n"], "job", "jobs"))
+        out.append(f"Overnight {what} failed: {', '.join(p['dead'][:2])}.")
+    elif p["done"]:
+        out.append(f"Overnight {_count(p['done'], 'job', 'jobs')} ran, all fine.")
+    if p["today"]:
+        (t, what), rest = p["today"][0], len(p["today"]) - 1
+        out.append(f"Today: {what} at {t}" + (f", and {_num(rest)} more." if rest else "."))
+    b = p["backup"]
+    if b and not b.get("ok"):
+        out.append("Last night's backup failed.")
+    if p["health"].get("problems"):
+        out.append(f"Docker needs a look: {p['health']['problems'][0]}.")
+    if len(out) == 1 or (len(out) == 2 and p["weather"]):
+        out.append("Nothing needs you.")
+    return " ".join(out)
 
 
 def last_health(conn: sqlite3.Connection) -> dict | None:

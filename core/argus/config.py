@@ -290,6 +290,7 @@ class GuidanceConfig(_Strict):
 class BriefConfig(_Strict):
     enabled: bool = True
     at: str = Field("07:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")  # local time: the phone gets the morning brief
+    weather: str = Field("", max_length=80)  # a town ("Colombo", "Kandy, LK"): today's forecast in the brief
 
 
 class SummaryConfig(_Strict):

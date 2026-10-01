@@ -250,8 +250,32 @@ def close_question(conn: sqlite3.Connection, turn_id: int) -> None:
     conn.execute("UPDATE ari_turns SET pending = NULL WHERE id = ?", (turn_id,))
 
 
-def history(conn: sqlite3.Connection, conv: str) -> list[dict[str, str]]:
-    return [{"role": t["role"], "text": t["text"]} for t in turns(conn, conv, HISTORY) if t["text"]]
+def history(conn: sqlite3.Connection, conv: str) -> list[dict[str, Any]]:
+    """The chat so far for the model. Ari's last answer also carries what its tools found (clipped), so a
+    follow-up like "open it" or "and the other one?" knows what "it" was."""
+    out: list[dict[str, Any]] = [{"role": t["role"], "text": t["text"], "job_id": t.get("job_id")}
+                                 for t in turns(conn, conv, HISTORY) if t["text"]]
+    last = next((t for t in reversed(out) if t["role"] == "ari" and t["job_id"]), None)
+    for t in out:
+        if t["role"] != "ari" or not t["job_id"]:
+            continue
+        row = conn.execute("SELECT result FROM jobs WHERE id = ?", (t["job_id"],)).fetchone()
+        try:
+            used = (json.loads(row[0]) or {}).get("used") if row and row[0] else None
+        except (ValueError, AttributeError):
+            used = None
+        if not isinstance(used, list):
+            continue
+        if any(isinstance(u, dict) and u.get("private") for u in used):
+            t["private"] = True  # the screen or clipboard was in this chat: Ari's thinking stays local
+        public = [u for u in used if isinstance(u, dict) and not u.get("private")]
+        if t is last and public:
+            found = [{k: u[k] for k in ("tool", "args", "result", "error") if k in u} for u in public[-3:]]
+            s = json.dumps(found, ensure_ascii=False, default=str)
+            t["found"] = found if len(s) <= 1200 else s[:1200] + "…"
+    for t in out:
+        t.pop("job_id")
+    return out
 
 
 def add_schedule(conn: sqlite3.Connection, now: float, when: When, action: str, *, plugin: str, workflow: str,
@@ -265,6 +289,11 @@ def add_schedule(conn: sqlite3.Connection, now: float, when: When, action: str, 
                  (sid, plugin, workflow, when.cron, json.dumps(spec, sort_keys=True), nxt, now, now, label[:200]))
     return {"id": sid, "cron": when.cron, "next_run_at": nxt, "label": label}
 
+
+# "good morning" (and "brief me", "what's my day look like?"): the morning brief, spoken
+BRIEF = re.compile(r"^\s*(?:(?:good\s+)?morning(?:[,\s]+ari)?|brief\s+me"
+                   r"|what'?s\s+(?:on\s+)?(?:my|the)\s+day(?:\s+look\s+like)?"
+                   r"|how'?s\s+my\s+day(?:\s+looking)?)\s*[.!?]*\s*$", re.I)
 
 # ------------------------------------------------------------------ what you asked Ari to remember
 

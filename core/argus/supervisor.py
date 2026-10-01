@@ -16,6 +16,7 @@ import hashlib
 import json
 import logging
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -136,6 +137,29 @@ def busy(url: str, token: str | None) -> bool:
         return False
 
 
+def plan(args: argparse.Namespace) -> list[tuple[str, list[str]]]:
+    """Which processes this supervisor keeps running, from its flags and argus.yaml's ari.listen / ari.popup.
+
+    "Hey Ari" and the island belong to the PC you sit at: the machine with a worker in your session. They talk to
+    Argus over ARGUS_URL, so they stay on the PC when Argus itself moves to the laptop."""
+    if args.desk_only:  # at logon on the PC after the move; the boot-time worker (--no-session) does the GPU work
+        host = (socket.gethostname() or "pc").lower()  # as the boot-time worker names itself: worker-<host>
+        out = [("desktop", ["-m", "argus.worker.cli", "--cap", "session", "--id", f"desktop-{host}",
+                            "--log-file", "logs/desktop.log"])]
+        desk = True
+    else:
+        out = [] if args.no_argusd else [("argusd", ["-m", "argus"])]
+        desk = not args.no_worker and not args.no_session
+    if desk and listen_on():  # "Hey Ari" on this PC's microphone
+        out.append(("ari-listen", ["-m", "argus.ari_listen", "--log-file", "logs/ari.log"]))
+    if desk and ari_on("popup"):  # Ari's island at the top of the screen
+        out.append(("ari-popup", ["-m", "argus.ari_popup"]))
+    if not args.no_worker and not args.desk_only:
+        caps = ["--cap", "desktop", "--cap", "gpu"] + ([] if args.no_session else ["--cap", "session"])
+        out.append(("worker", ["-m", "argus.worker.cli", *caps, "--log-file", "logs/worker.log"]))
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="argus-supervisor")
     p.add_argument("--interval", type=float, default=60, help="seconds between checks for new code")
@@ -145,19 +169,15 @@ def main(argv: list[str] | None = None) -> int:
                    help="the worker is not in your logged-in Windows session (started at boot): no PC-app tools")
     p.add_argument("--no-argusd", action="store_true",
                    help="the worker only (the PC after the move: set ARGUS_URL to the laptop, e.g. http://laptop:8600)")
+    p.add_argument("--desk-only", action="store_true",
+                   help="your logged-in session only (the PC after the move, started at logon): Ari's PC tools, "
+                        "\"Hey Ari\" and the island; Argus and the GPU worker run elsewhere")
     args = p.parse_args(argv)
-    setup_logging("INFO", ROOT / "logs" / "supervisor.log")
+    setup_logging("INFO", ROOT / "logs" / ("supervisor-desk.log" if args.desk_only else "supervisor.log"))
     env = parse_env_file(ROOT / ".env")
     token = os.environ.get("ARGUS_WORKER_TOKEN") or env.get("ARGUS_WORKER_TOKEN")
 
-    children = [] if args.no_argusd else [Child("argusd", ["-m", "argus"], marker_path())]
-    if not args.no_argusd and listen_on():  # "Hey Ari" on this PC's microphone
-        children.append(Child("ari-listen", ["-m", "argus.ari_listen", "--log-file", "logs/ari.log"]))
-    if not args.no_argusd and not args.no_session and ari_on("popup"):  # Ari's popup over the whole screen
-        children.append(Child("ari-popup", ["-m", "argus.ari_popup"]))
-    if not args.no_worker:
-        caps = ["--cap", "desktop", "--cap", "gpu"] + ([] if args.no_session else ["--cap", "session"])
-        children.append(Child("worker", ["-m", "argus.worker.cli", *caps, "--log-file", "logs/worker.log"]))
+    children = [Child(name, argv, marker_path() if name == "argusd" else None) for name, argv in plan(args)]
     commit, deps = head(), deps_hash()
     log.info("supervising", extra={"commit": (commit or "?")[:10], "processes": [c.name for c in children]})
     for c in children:
@@ -183,7 +203,7 @@ def main(argv: list[str] | None = None) -> int:
                         log.info("new code; waiting for running jobs", extra={"commit": now_commit[:10]})
                     else:
                         log.info("new code; restarting", extra={"from": commit[:10], "to": now_commit[:10]})
-                        if deps_hash() != deps:
+                        if deps_hash() != deps and not args.desk_only:  # the boot supervisor updates packages
                             log.info("dependencies changed; updating packages")
                             try:
                                 r = subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-e",
