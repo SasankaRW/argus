@@ -161,6 +161,16 @@ def target_size(mode: str, text: str, hover: bool, details_h: float) -> tuple[fl
     return HOVER if hover else IDLE
 
 
+def icon_for(action: str) -> str:
+    """The little picture on a shortcut chip, from what it does."""
+    kind, _, rest = action.partition(":")
+    if kind == "show":
+        return "inbox" if rest == "inbox" else "grid" if rest in ("", "map") else "chat" if rest == "ari" else "page"
+    if kind == "power":
+        return "moon" if rest in ("sleep", "hibernate") else "power"
+    return {"routine": "spark", "run": "bolt", "url": "globe", "phone": "bell", "helios": "page"}.get(kind, "dot")
+
+
 def next_schedule(schedules: list[dict]) -> dict | None:
     live = [s for s in schedules if s.get("enabled") and s.get("next_run_at")]
     return min(live, key=lambda s: s["next_run_at"]) if live else None
@@ -676,7 +686,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 cx = x0 - 4
                 for sc in info.shortcuts:
                     label = fm.elidedText(sc["label"], Qt.TextElideMode.ElideRight, 110)
-                    cw = fm.horizontalAdvance(label) + 22
+                    cw = fm.horizontalAdvance(label) + 40
                     if cx + cw > x1 + 4 and cx > x0:
                         cx, y = x0 - 4, y + 32
                     self.chip(qp, QRectF(cx, y, cw, 26), "sc:" + sc["action"], label)
@@ -715,10 +725,91 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             qp.setPen(QPen(QColor(255, 255, 255, 26 if hot else 16), 1))
             qp.setBrush(QColor("#1c1e22" if hot else "#141518"))
             qp.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), rect.height() / 2, rect.height() / 2)
-            qp.setPen(QColor("#f1f2f3" if hot else "#c4c8ce"))
+            ink = QColor("#f1f2f3" if hot else "#c4c8ce")
+            self.glyph(qp, QPointF(rect.x() + 15, rect.center().y()), icon_for(key[3:]), QColor("#9aa1aa") if not hot
+                       else ink)
+            qp.setPen(ink)
             qp.setFont(F_CHIP)
-            qp.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
+            qp.drawText(rect.adjusted(28, 0, -10, 0), Qt.AlignmentFlag.AlignVCenter, text)
             self.buttons.append((rect, key))
+
+        def glyph(self, qp: Any, c: Any, kind: str, color: Any) -> None:
+            """A 12 px line icon centred on c."""
+            qp.save()
+            qp.translate(c)
+            pen = QPen(color, 1.3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+            qp.setPen(pen)
+            qp.setBrush(Qt.BrushStyle.NoBrush)
+            path = QPainterPath()
+            if kind == "inbox":
+                path.moveTo(-5.5, 0.5)
+                path.lineTo(-3.5, -4.5)
+                path.lineTo(3.5, -4.5)
+                path.lineTo(5.5, 0.5)
+                path.lineTo(5.5, 4.5)
+                path.lineTo(-5.5, 4.5)
+                path.closeSubpath()
+                path.moveTo(-5.5, 0.5)
+                path.lineTo(-2, 0.5)
+                path.lineTo(-1, 2)
+                path.lineTo(1, 2)
+                path.lineTo(2, 0.5)
+                path.lineTo(5.5, 0.5)
+            elif kind == "grid":
+                for dx, dy in ((-5, -5), (1, -5), (-5, 1), (1, 1)):
+                    path.addRoundedRect(QRectF(dx, dy, 4, 4), 1, 1)
+            elif kind == "chat":
+                path.addRoundedRect(QRectF(-5.5, -4.5, 11, 8), 3, 3)
+                path.moveTo(-2.5, 3.5)
+                path.lineTo(-3.5, 6)
+                path.lineTo(0, 3.5)
+            elif kind == "page":
+                path.addRoundedRect(QRectF(-4.5, -5.5, 9, 11), 1.5, 1.5)
+                path.moveTo(-2, -2)
+                path.lineTo(2, -2)
+                path.moveTo(-2, 1)
+                path.lineTo(2, 1)
+            elif kind == "moon":
+                path.moveTo(2.5, -5)
+                path.cubicTo(-5, -5.5, -6, 5.5, 0.5, 5.5)
+                path.cubicTo(3, 5.5, 5, 3.5, 5.5, 2)
+                path.cubicTo(1, 3, -1.5, -2, 2.5, -5)
+            elif kind == "power":
+                path.moveTo(0, -5.5)
+                path.lineTo(0, 0)
+                path.arcMoveTo(QRectF(-5, -4.5, 10, 10), 60)
+                path.arcTo(QRectF(-5, -4.5, 10, 10), 60, -300)
+            elif kind == "spark":
+                path.moveTo(0, -5.5)
+                path.cubicTo(0.5, -1, 1, -0.5, 5.5, 0)
+                path.cubicTo(1, 0.5, 0.5, 1, 0, 5.5)
+                path.cubicTo(-0.5, 1, -1, 0.5, -5.5, 0)
+                path.cubicTo(-1, -0.5, -0.5, -1, 0, -5.5)
+            elif kind == "bolt":
+                path.moveTo(1, -5.5)
+                path.lineTo(-3.5, 1)
+                path.lineTo(0, 1)
+                path.lineTo(-1, 5.5)
+                path.lineTo(3.5, -1)
+                path.lineTo(0, -1)
+                path.closeSubpath()
+            elif kind == "globe":
+                path.addEllipse(QPointF(0, 0), 5.5, 5.5)
+                path.addEllipse(QPointF(0, 0), 2.3, 5.5)
+                path.moveTo(-5.5, 0)
+                path.lineTo(5.5, 0)
+            elif kind == "bell":
+                path.moveTo(-4.5, 3)
+                path.cubicTo(-3.5, 2, -3.5, 0, -3.5, -1)
+                path.cubicTo(-3.5, -6, 3.5, -6, 3.5, -1)
+                path.cubicTo(3.5, 0, 3.5, 2, 4.5, 3)
+                path.closeSubpath()
+                path.moveTo(-1.2, 5)
+                path.lineTo(1.2, 5)
+            else:
+                path.addEllipse(QPointF(0, 0), 2, 2)
+            qp.drawPath(path)
+            qp.restore()
 
         def round_key(self, qp: Any, rect: Any, key: str, icon: str) -> None:
             """A round key: Talk (a green mic) or "···" (Helios)."""

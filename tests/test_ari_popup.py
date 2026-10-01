@@ -105,3 +105,10 @@ def test_hey_ari_on_the_pc_reports_listening():
     lis.clip(clip)  # the wake phrase alone: a chime, then listening
     lis.clip(clip)  # the command; Ari asks "Shall I?": listening for the answer
     assert told == ["listening", "listening"]
+
+
+def test_shortcut_icons_follow_what_they_do():
+    from argus.ari_popup import icon_for
+    assert [icon_for(a) for a in ("show:inbox", "show:map", "routine:work mode", "run:downloads-organizer:sort",
+                                  "power:sleep", "power:shutdown", "url:https://x.y", "phone:ring", "odd")] == \
+        ["inbox", "grid", "spark", "bolt", "moon", "power", "globe", "bell", "dot"]
