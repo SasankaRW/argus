@@ -6,16 +6,17 @@ argus_api: ">=1.0 <2.0"
 description: Lets Ari's local models look things up - search with your own SearXNG, then read a page. Outbound only; what pages say is treated as untrusted (after it, anything that does something asks you first).
 runs_on: any
 
-workflows: [search, read]
+workflows: [search, read, save, saved]
 
 permissions:
-  files: {read: [], write: [], delete: none}
-  models: []
+  files: {read: ["~/Documents/read-later"], write: ["~/Documents/read-later"], delete: none}
+  models: [T1, T2]            # the short summary of a saved page (local only)
   network: ["*", "127.0.0.1", "localhost"]   # pages: public websites only; 127.0.0.1: your SearXNG
 
 config:
   searx_url: {type: text, default: "http://127.0.0.1:8888", label: Your SearXNG (deploy/searxng)}
   results: {type: int, default: 5, label: Search results Ari reads}
+  folder: {type: path, default: "~/Documents/read-later", label: Read-later folder}
 
 ari:
   tools:
@@ -31,6 +32,19 @@ ari:
       untrusted: true
       input: {url: {type: string, description: the page's address}}
       required: [url]
+
+    - name: save_for_later
+      description: 'Save a web page to read later ("save this for later"): its text and a short summary go into Documents/read-later, searchable by Ari.'
+      workflow: save
+      input: {url: {type: string, description: the page's address}}
+      required: [url]
+    - name: reading_list
+      description: The pages saved to read later, newest first, with their summaries; optionally only those mentioning some words.
+      workflow: saved
+      input: {query: {type: string, description: "words to look for (optional)"}}
+
+share:
+  - {workflow: save, label: Save to read later (summary on the PC), accepts: [url]}
 
 helios:
   node: {label: Web, group: assistant}

@@ -11,6 +11,7 @@ import argus.worker.plugins as wplugins
 from argus.config import load_config
 from argus.context import Argus
 from argus.worker import Worker
+from fakes import FakeOllama
 from test_worker import Server, client, wait_for
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,9 +40,15 @@ def serve(routes):
 
 
 def setup(tmp_path, monkeypatch, searx):
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     (tmp_path / "argus.yaml").write_text(
         "logging:\n  file: null\njobs:\n  watchdog_interval_seconds: 0.1\n"
-        f"plugins:\n  dirs: ['{(ROOT / 'plugins').as_posix()}']\n  config:\n    web: {{searx_url: '{searx}'}}\n",
+        "models:\n  tiers:\n    T1: {provider: ollama, model: 'qwen2.5-coder:7b'}\n  chain: [T1]\n"
+        f"plugins:\n  dirs: ['{(ROOT / 'plugins').as_posix()}']\n  live: [web]\n"
+        f"  config:\n    web: {{searx_url: '{searx}'}}\n",
         encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     return Argus(load_config(tmp_path / "argus.yaml"))
@@ -83,3 +90,25 @@ def test_searx_must_be_on_this_machine(tmp_path, monkeypatch):
         w.register()
         j = run(cl, w, "search", query="x")
         assert j["state"] == "dead" and "127.0.0.1" in j["error"]
+
+
+def test_save_for_later_writes_a_summary_and_lists_it(tmp_path, monkeypatch):
+    base = serve({"/page": (200, PAGE)})
+    replies = {"qwen2.5-coder:7b": [{"summary": "Kandy gets afternoon thunderstorms, about 29 degrees.",
+                                     "tags": ["weather", "kandy"]}]}
+    with FakeOllama(replies) as ol, Server(setup(tmp_path, monkeypatch, base).open()) as srv:
+        monkeypatch.setattr(wplugins, "public_host", lambda host: True)
+        monkeypatch.setattr(wplugins, "public_address", lambda ip: True)
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["cpu"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        r = run(cl, w, "save", url=base + "/page")
+        assert r["state"] == "succeeded", r["error"]
+        assert r["result"]["say"].startswith('Saved "Kandy forecast" for later. Kandy gets')
+        files = list((tmp_path / "home" / "Documents" / "read-later").glob("*.md"))
+        assert len(files) == 1 and files[0].name.endswith("Kandy forecast.md")
+        body = files[0].read_text(encoding="utf-8")
+        assert "> Kandy gets afternoon thunderstorms" in body and "steal" not in body
+        listed = run(cl, w, "saved", query="weather")["result"]["pages"]
+        assert [p["title"] for p in listed] == ["Kandy forecast"]
+        assert run(cl, w, "saved", query="football")["result"]["pages"] == []
