@@ -262,6 +262,14 @@ daily cap.
   faster-whisper). Answers are spoken a sentence at a time, with a soft pulse while Ari thinks. Headphones make
   interrupting easiest; with speakers, Ari learns how loud its own echo is. `ari.live: false` is the classic mode
   (every request starts with "Hey Ari"; a few seconds of follow-up, `ari.follow_up`).
+- **Your words** (`ari.vocabulary`, `ari.heard_as`): Whisper is told the names to expect (yours, the people and
+  places Ari remembers, apps like WhatsApp), and common mishearings are put right ("open what's up" -> WhatsApp).
+  Add your own: `vocabulary: [Kaancha, Nimali]`, `heard_as: {kancha: Kaancha}`.
+- **Just talking**: "how are you?", "I'm bored", "tell me a joke": Ari chats back like a friend, no tools.
+- **WhatsApp** (`pc-apps`): "text Kaancha hi on WhatsApp" opens WhatsApp with the message typed (after your yes);
+  you press Enter. Tell Ari their number once ("remember Kaancha's WhatsApp is +94...") to go straight to the chat.
+- **One Ari at a time**: only one "Hey Ari" listens (the PC's listener, else one Helios tab), and only the screen
+  you asked on reads the answer out.
 - **Remembering**: when you mention a lasting fact (a person, a place, a preference), Ari asks "Want me to
   remember that?"; yes keeps it (never passwords, money or health).
 - **Tracker** (`tracker`) and **Life Hub** (`lifehub`): "what's urgent at work?", "add an issue: ACME bug P1

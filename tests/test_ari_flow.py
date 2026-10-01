@@ -79,3 +79,39 @@ def test_open_an_app_needs_no_model():
     assert straight_to(t, "Launch VS Code please") == ("open_app", {"name": "VS Code"})
     for no in ["open the file report.pdf", "open it", "start a timer", "open youtube.com", "start the backup"]:
         assert straight_to(t, no) is None, no
+
+
+def test_whisper_mishearings_are_put_right():
+    from argus.vocab import fix, prompt, words
+
+    assert fix("Now, bro, open what's up and say hi to Kancha", {"kancha": "Kaancha"}) == \
+        "Now, bro, open WhatsApp and say hi to Kaancha"
+    assert fix("what's up with the server?") == "what's up with the server?"
+    names = words(["Kaancha"], ["sister Nimali lives in Kandy"])
+    assert names[:3] == ["Kaancha", "Nimali", "Kandy"] and "WhatsApp" in prompt(names)
+
+
+def test_promises_are_not_answers():
+    from argus.worker.think import PROMISE, spoken
+
+    assert PROMISE.match("I will open the web page") and PROMISE.match("Okay, I'll send it")
+    assert not PROMISE.match("I'll need their number first.") and not PROMISE.match("It's 5 pm.")
+    assert spoken("I will open the web page at https://web.whatsapp.com.") == "I will open the web page."
+
+
+
+def test_small_talk_is_just_talk(tmp_path):
+    from argus.worker.think import chatty
+
+    assert chatty("how are you") and chatty("I'm bored") and chatty("tell me a joke")
+    assert not chatty("how's the weather") and not chatty("hi, set a timer for 5 minutes")
+    with FakeOllama({"qwen2.5-coder:7b": [{"reply": "Living the dream in your PC. You?"}]}) as ol, \
+            Server(make(tmp_path).open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop", "session"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        r = cl.post("/ari", {"text": "how are you doing?"})
+        last = settle(cl, w, r["conv"])
+        assert last["text"] == "Living the dream in your PC. You?"
+        assert "companion" in ol.requests[0]["messages"][0]["content"]  # the chat persona, no tool list
+        assert [s["name"] for s in cl.get(f"/jobs/{r['job_id']}")["steps"]] == ["chat"]

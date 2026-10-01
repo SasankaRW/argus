@@ -97,6 +97,7 @@ export function AriView({ conv, onBack, onNew, onSelect, onView, compact = false
 }) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const ari = useAri();  // what Ari is doing right now ("looking at your screen"), shown in the waiting bubble
+  const asked = useRef(0);  // when this screen last asked something (only then does it speak the answer)
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -136,7 +137,8 @@ export function AriView({ conv, onBack, onNew, onSelect, onView, compact = false
     for (const t of turns) {
       if (t.role !== "ari" || t.text === null || spoken.current.has(t.id)) continue;
       spoken.current.add(t.id);
-      if (talk) {
+      // only the screen you asked on reads the answer out (other tabs, the phone, the PC's listener stay quiet)
+      if (talk && Date.now() - asked.current < 180000) {
         speak(t.text).then(() => { if (t.pending) window.dispatchEvent(new CustomEvent("ari-arm")); });
       }
     }
@@ -152,6 +154,7 @@ export function AriView({ conv, onBack, onNew, onSelect, onView, compact = false
 
   const send = useCallback(async (q: string) => {
     if (!q.trim()) return;
+    asked.current = Date.now();
     setBusy(true); setErr(null); setText(""); stopSpeaking();
     try {
       const r = await api<Said>("/ari", { method: "POST", body: JSON.stringify({ text: q, conv }) });
@@ -161,6 +164,7 @@ export function AriView({ conv, onBack, onNew, onSelect, onView, compact = false
   }, [conv, load, after]);
 
   const answer = async (yes: boolean) => {
+    asked.current = Date.now();
     setBusy(true); setErr(null); stopSpeaking();
     try {
       const r = await api<Said>(`/ari/${conv}/answer`, { method: "POST", body: JSON.stringify({ yes }) });

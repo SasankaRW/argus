@@ -81,9 +81,11 @@ def decode(audio: bytes):
     return np.concatenate([c.reshape(-1) for c in chunks]).astype(np.float32) / 32768.0
 
 
-def transcribe(audio: bytes, name: str) -> str:
+def transcribe(audio: bytes, name: str, prompt: str = "") -> str:
+    """Speech to text. `prompt` names the words to expect (argus.vocab), which steers Whisper's spelling."""
     segments, _info = model(name).transcribe(decode(audio), language="en", beam_size=1, vad_filter=True,
-                                             condition_on_previous_text=False)
+                                             condition_on_previous_text=False, initial_prompt=prompt or None,
+                                             hotwords=prompt or None)
     return " ".join(s.text.strip() for s in segments).strip()
 
 
@@ -93,5 +95,5 @@ def transcribe_job(ctx: Context):
     if not name or ctx.shared is None:
         raise PermanentError("no recording")
     audio = ctx.shared(name)
-    text = transcribe(audio, str(ctx.input.get("model") or "small.en"))
+    text = transcribe(audio, str(ctx.input.get("model") or "small.en"), str(ctx.input.get("prompt") or ""))
     return {"text": text}

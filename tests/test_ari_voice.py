@@ -68,8 +68,8 @@ def test_no_voice_set_means_the_browser(tmp_path, monkeypatch):
 def test_whisper_on_the_pc(tmp_path, monkeypatch):
     got = {}
 
-    def fake(audio, name):
-        got["audio"], got["model"] = audio, name
+    def fake(audio, name, prompt=""):
+        got["audio"], got["model"], got["prompt"] = audio, name, prompt
         return "sort my downloads"
 
     monkeypatch.setattr(hear, "transcribe", fake)
@@ -89,7 +89,8 @@ def test_whisper_on_the_pc(tmp_path, monkeypatch):
         t.start()
         wait_for(lambda: w.run_once(wait=1))
         t.join(10)
-    assert b"sort my downloads" in out["r"] and got == {"audio": b"OggS-audio", "model": "base.en"}
+    assert b"sort my downloads" in out["r"] and (got["audio"], got["model"]) == (b"OggS-audio", "base.en")
+    assert "WhatsApp" in got["prompt"]  # Whisper is told the names to expect (argus.vocab)
     assert not list((tmp_path / "data" / "ari").glob("*")) if (tmp_path / "data" / "ari").exists() else True
 
 

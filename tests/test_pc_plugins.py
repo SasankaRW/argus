@@ -88,3 +88,8 @@ def test_shortcuts_parse_and_passwords_are_refused():
         with pytest.raises(Exception):  # noqa: B017 - PermanentError from the plugin module
             keys.parse_keys(bad)
     assert keys.SECRET.search("my password is hunter2") and not keys.SECRET.search("Dear Sam, thanks!")
+
+
+def test_whatsapp_link():
+    assert apps.whatsapp_url("hi there", "+94 77 123 4567") == "whatsapp://send?phone=94771234567&text=hi%20there"
+    assert apps.whatsapp_url("hi") == "whatsapp://send?text=hi"
