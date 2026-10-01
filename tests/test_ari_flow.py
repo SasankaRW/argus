@@ -168,7 +168,7 @@ def test_times_said_in_words_like_a_transcript_writes_them():
 
     from argus.ari import digits, parse_when
 
-    now = _t.time()
+    now = _t.mktime((2026, 10, 1, 15, 0, 0, 0, 0, -1))  # a fixed afternoon: "tonight" must not depend on the clock
     assert parse_when("remind me to call mum tomorrow at five pm", now).say == "tomorrow at 5 pm"
     assert parse_when("sort downloads every morning at seven", now).say == "every day at 7 am"
     assert parse_when("shut down the PC at eleven thirty tonight", now).say.endswith("at 11:30 pm")

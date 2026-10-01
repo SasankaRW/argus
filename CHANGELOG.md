@@ -5,6 +5,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Ari no longer plays a beeping tone while an answer is being worked out.
 - Ari no longer offers to type into the window in front unless you ask to type or press keys; "Kaancha hi on WhatsApp" goes straight to a WhatsApp message.
 - The voice-training page pauses Ari for one minute at a time while it is open and showing, so Ari can't get stuck "not listening" after you leave.
 - The WhatsApp tool's description no longer carries a sample message that Ari could repeat as if you had said it.

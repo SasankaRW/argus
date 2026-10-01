@@ -13,7 +13,7 @@ What modern voice agents do (Pipecat, LiveKit Agents, OpenAI Realtime), done loc
    What you said is written down: Ari's own words coming back, or just "mm" / "yeah", and it carries on where it
    paused (false-interruption recovery); anything else stops it, and what you said is the next turn.
 5. Sentence by sentence: the answer is spoken a sentence at a time, the first one as soon as it is ready.
-6. A soft "thinking" tone when an answer takes more than a second and a bit, so silence never feels dead.
+6. No beeping while an answer takes a while: a short spoken "hmm, let me check" at most.
 
 Everything here is plain logic with the audio, models and Argus passed in, so it can be tested without sound.
 """
@@ -476,13 +476,6 @@ class Player:
                         self._pos = 0
                 if n and not self._chunks and not self._making:
                     self._ended_at = self.clock()
-            if self._thinking and not self._chunks:
-                i = np.arange(self._think_t, self._think_t + frames)
-                period = int(1.6 * self.rate)
-                ph = (i % period) / self.rate  # a soft 0.35 s swell every 1.6 s
-                env = np.where(ph < 0.35, np.sin(np.pi * ph / 0.35) ** 2, 0.0)
-                out += (0.05 * env * np.sin(2 * np.pi * 440 * i / self.rate)).astype(np.float32)
-                self._think_t += frames
             m = 0
             while m < frames and self._cues:
                 c = self._cues[0]
@@ -582,7 +575,7 @@ class Player:
                 self._ended_at = self.clock()
 
     def thinking(self, on: bool) -> None:
-        """A soft pulse while Ari works on an answer (stops by itself when the answer starts)."""
+        """Ari is working on an answer (silent: no beeping; the Helios pill and the spoken filler show it)."""
         if on:
             self._ensure(self.rate)
         with self._lock:
