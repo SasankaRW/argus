@@ -80,6 +80,8 @@ def register(app: FastAPI, argus, auth_ok: Callable[[Request], Awaitable[bool]],
     @app.post("/mcp")
     async def mcp(request: Request) -> Response:
         if not await auth_ok(request):
+            if int(request.headers.get("content-length") or 0) <= 1_000_000:
+                await request.body()  # read it first: on Windows, answering before the body is read resets the socket
             return JSONResponse({"error": "missing or wrong token"}, status_code=401,
                                 headers={"WWW-Authenticate": "Bearer"})
         try:

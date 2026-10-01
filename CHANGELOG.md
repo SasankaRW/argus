@@ -5,6 +5,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Fix: the MCP endpoint reads the request before refusing a wrong token (Windows reset the connection instead of answering 401).
 - **Talk with Ari like a conversation** (`ari.live`, on by default): after "Hey Ari" you just talk back and forth;
   talking over Ari pauses it at once, and it carries on if that was only "mm-hm" or its own echo; "thanks Ari"
   ends it, or `ari.talk_idle_s` of quiet. Knows when you've finished a sentence (Smart Turn v3.2, Silero VAD),
