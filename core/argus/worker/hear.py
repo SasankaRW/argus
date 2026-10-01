@@ -18,9 +18,43 @@ _lock = threading.Lock()
 _gpu = {"ok": True}  # once the GPU fails, later models go straight to the CPU (a second try can hang forever)
 
 
+def cuda_dlls() -> list[str]:
+    """Windows: CTranslate2 (faster-whisper) needs CUDA 12's cuBLAS and cuDNN 9 DLLs. PyTorch's CUDA build and the
+    nvidia-* pip packages carry them; make them findable (no separate CUDA install needed). Returns the folders."""
+    import os
+    import sys
+    from importlib.util import find_spec
+
+    if os.name != "nt" or not hasattr(os, "add_dll_directory"):
+        return []
+    dirs = []
+    spec = find_spec("torch")
+    if spec and spec.origin:
+        dirs.append(os.path.join(os.path.dirname(spec.origin), "lib"))
+    for sp in sys.path:
+        nv = os.path.join(sp, "nvidia")
+        if os.path.isdir(nv):
+            dirs += [os.path.join(nv, d, "bin") for d in os.listdir(nv)]
+    found = []
+    for d in dirs:
+        if os.path.isdir(d) and d not in _dll_dirs:
+            try:
+                os.add_dll_directory(d)
+                os.environ["PATH"] = d + os.pathsep + os.environ.get("PATH", "")
+                _dll_dirs.add(d)
+                found.append(d)
+            except OSError:
+                pass
+    return found
+
+
+_dll_dirs: set[str] = set()
+
+
 def model(name: str):
     with _lock:
         if name not in _models:
+            cuda_dlls()
             try:
                 from faster_whisper import WhisperModel  # type: ignore[import-not-found]
             except ImportError:
