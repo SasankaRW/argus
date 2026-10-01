@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-timeout>=2.3", "httpx>=0.27", "ruff>=0.5", "numpy>=1.24"]  # numpy: ari-listen tests
+dev = ["pytest>=8", "pytest-timeout>=2.3", "httpx>=0.27", "ruff>=0.5", "numpy>=1.24", "pillow>=10"]  # numpy: ari-listen tests; pillow: screen tests
 # used by plugins when present: Recycle Bin deletes, image resizing, OCR (Tesseract itself is a separate install)
 plugins = ["send2trash>=1.8", "pillow>=10", "pytesseract>=0.3", "pypdf>=4", "numpy>=1.24", "psutil>=5.9"]
 # Ari: a natural voice (Piper, where argusd runs) and hearing (Whisper, on the PC's worker)

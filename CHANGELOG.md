@@ -5,6 +5,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- CI: Pillow is a dev dependency (the screen plugin's tests use it).
 - Plugins: schedules read in words ("every 3 hours", "weekdays at 09:00"; the cron line is on hover).
 - Code review fixes: tools marked `private` (screen, clipboard) keep the chat local, so Claude never sees them, a web search gets only the question, and they aren't offered over MCP. Watchers also check the address they actually connect to, so DNS rebinding can't reach the LAN. The logon supervisor leaves package updates to the boot one. A watch added during a check is kept, and a page read without a price keeps the last price (no repeat alerts). The page reader is linear on broken HTML. The weather is kept for an hour. Replies keep snake_case names.
 - Polish pass over every page: the Logs header's source switch no longer loses its border (a Plugins style leaked into it) and the log fills the page; Models shows network errors in plain words and keeps tile headers on one line; the home tile counts machines, not worker threads (a fast lane is its worker, in the queue and status too); the power box says "idle 5 min · sim"; the island's shortcut editor stacks name and action so nothing is cut off; the voice picker fits the phone; Runs shows a tool's own sentence and list counts instead of "…"; settings with text get a proper box; watchers takes shared links from the phone (a price in the note: "under 250,000") and prints Rs amounts cleanly.
