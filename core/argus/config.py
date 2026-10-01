@@ -278,6 +278,11 @@ class AriConfig(_Strict):
     # once). false: the classic mode (every request starts with "Hey Ari").
     live: bool = True
     talk_idle_s: int = Field(20, ge=5, le=300)
+    # Names Ari should expect to hear (people, apps, places): Whisper is biased towards these spellings. Names in
+    # what Ari remembers are added by themselves.
+    vocabulary: list[str] = Field(default_factory=list)
+    # What Whisper writes -> what you meant, e.g. {"kancha": "Kaancha"} (whole words, any case)
+    heard_as: dict[str, str] = Field(default_factory=dict)
     # Ari says important things out loud at the PC (an overdue issue, a price drop, a failed backup): only while
     # you're at the PC, only between these hours, at most one every 10 minutes.
     speak_up: bool = True

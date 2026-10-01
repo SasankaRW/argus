@@ -25,7 +25,8 @@ WIN = platform.system() == "Windows"
 ALIASES = {"vscode": "visual studio code", "vs code": "visual studio code", "code": "visual studio code",
            "word": "word", "excel": "excel", "browser": "chrome", "files": "file explorer",
            "explorer": "file explorer", "terminal": "terminal", "settings": "settings", "calc": "calculator",
-           "task manager": "task manager", "notepad": "notepad", "paint": "paint", "camera": "camera"}
+           "task manager": "task manager", "notepad": "notepad", "paint": "paint", "camera": "camera",
+           "what's up": "whatsapp", "whats up": "whatsapp", "whatsapp": "whatsapp"}
 
 
 def _ps(script: str, timeout: float = 20) -> str:
@@ -138,6 +139,40 @@ def open_url(ctx: Context):
             raise PermanentError("opening websites works on Windows only")
         os.startfile(url)  # type: ignore[attr-defined]  # the default browser
         return {"opened": url}
+
+    return ctx.step("open", go)
+
+
+def whatsapp_url(text: str, phone: str = "") -> str:
+    """whatsapp:// link that opens WhatsApp with the message typed (to that number, or WhatsApp asks which chat)."""
+    digits = re.sub(r"\D", "", phone)
+    q = {"text": text}
+    if 8 <= len(digits) <= 15:
+        q = {"phone": digits, **q}
+    return "whatsapp://send?" + urllib.parse.urlencode(q, quote_via=urllib.parse.quote)
+
+
+@workflow(PLUGIN, "whatsapp")
+def whatsapp(ctx: Context):
+    to = str(ctx.input.get("to") or "").strip()
+    text = str(ctx.input.get("text") or "").strip()
+    if not text:
+        raise PermanentError("what should the message say?")
+    url = whatsapp_url(text, str(ctx.input.get("phone") or ""))
+    direct = "phone=" in url
+
+    def go():
+        if ctx.dry_run:
+            return {"would_open": url, "dry_run": True}
+        if not WIN:
+            raise PermanentError("WhatsApp messages work on Windows only")
+        try:
+            os.startfile(url)  # type: ignore[attr-defined]  # WhatsApp (desktop or Store app) takes whatsapp://
+        except OSError:
+            raise PermanentError("WhatsApp isn't installed on this PC (Microsoft Store: WhatsApp)") from None
+        return {"ready": True, "to": to, "text": text,
+                "next": "the message is typed in their chat: press Enter to send" if direct else
+                        f"pick {to or 'the chat'} in WhatsApp, then press Enter to send"}
 
     return ctx.step("open", go)
 

@@ -273,6 +273,13 @@ class AriClient:
             return {"reply": "That's taking a while; the answer will be in Helios."}
         return r
 
+    def vocabulary(self) -> None:
+        """The names to expect and the usual mishearings (argus.vocab), into VOCAB. Best effort."""
+        try:
+            VOCAB.update(json.loads(self._req("GET", "/ari/vocabulary", None, timeout=5)))
+        except Exception:  # argusd restarting: keep what we had
+            pass
+
     def state(self, phase: str, text: str = "") -> None:
         """Tell Argus what Ari is doing here (the Ari pill in Helios and the popup follow it). Best effort."""
         try:
@@ -345,17 +352,24 @@ def chime() -> None:
     sd.play(tone.astype(np.float32), RATE, blocking=True)
 
 
+VOCAB: dict = {"prompt": "", "heard_as": {}}  # filled from Argus (GET /ari/vocabulary), refreshed every 10 min
+
+
 def whisper(name: str) -> Callable[[object], str]:
+    from . import vocab
     from .worker.hear import model
 
     m = model(name)
     lock = threading.Lock()
 
     def run(audio) -> str:
+        p = VOCAB.get("prompt") or None
         with lock:
             segs, _ = m.transcribe(audio, language="en", beam_size=1, vad_filter=False,  # type: ignore[attr-defined]
-                                   condition_on_previous_text=False, without_timestamps=True)
-            return " ".join(s.text.strip() for s in segs).strip()
+                                   condition_on_previous_text=False, without_timestamps=True,
+                                   initial_prompt=p, hotwords=p)
+            text = " ".join(s.text.strip() for s in segs).strip()
+        return vocab.fix(text, VOCAB.get("heard_as") or {})
 
     return run
 
@@ -412,6 +426,7 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device) -> i
                    ask=ask, player=player, report=client.state, chime=lambda: player.cue(vl.chime_samples(), RATE),
                    idle_s=float(cfg.ari.talk_idle_s), on_false_barge=gate.fooled)
     spoke_up = [0.0]
+    voc_at = [time.monotonic()]
 
     def side() -> None:
         """The Talk button, important notices (as in the classic mode) and the "done talking" report."""
@@ -419,6 +434,9 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device) -> i
         while True:
             if time.monotonic() - last > 30:
                 client.here()
+                if time.monotonic() - voc_at[0] > 600:
+                    client.vocabulary()
+                    voc_at[0] = time.monotonic()
                 last = time.monotonic()
             evs, seq = client.wakes(seq, "ari.wake,ari.notice")
             if any(e.get("kind") == "ari.wake" for e in evs):
@@ -461,6 +479,26 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device) -> i
     return 0
 
 
+LOCK_PORT = 8619
+
+
+def only_one():
+    """Hold a local port for as long as this listener runs: a second ari-listen (a restart that overlapped, a second
+    `dev.ps1 up`) can't take it, and quits instead of answering "Hey Ari" a second time. None when taken."""
+    import socket
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    if os.name == "nt":
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)  # type: ignore[attr-defined]
+    try:
+        s.bind(("127.0.0.1", LOCK_PORT))
+        s.listen(1)
+    except OSError:
+        s.close()
+        return None
+    return s
+
+
 def main(argv: list[str] | None = None) -> int:
     from .config import load_config, parse_env_file
     from .logs import setup_logging
@@ -470,6 +508,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--device", default=None, help="microphone (name or number; `python -m sounddevice` lists them)")
     p.add_argument("--log-file", default="logs/ari.log")
     args = p.parse_args(argv)
+    lock = only_one()
+    if lock is None:
+        print("ari-listen is already running on this PC (two would both answer).", file=sys.stderr)
+        return 0
     setup_logging("INFO", Path(args.log_file))
     cfg = load_config()
     token = os.environ.get("ARGUS_WORKER_TOKEN") or parse_env_file(Path(".env")).get("ARGUS_WORKER_TOKEN")
@@ -519,7 +561,9 @@ def main(argv: list[str] | None = None) -> int:
         chime()
         quiet_until[0] = time.monotonic() + 0.2
 
-    log.info("loading Whisper", extra={"wake": cfg.ari.listen_wake_model, "command": cfg.ari.whisper_model})
+    client.vocabulary()
+    log.info("loading Whisper", extra={"wake": cfg.ari.listen_wake_model, "command": cfg.ari.whisper_model,
+                                       "expects": VOCAB.get("prompt", "")[:120]})
     wake_t = whisper(cfg.ari.listen_wake_model)
     cmd_t = whisper(cfg.ari.whisper_model) if cfg.ari.whisper_model != cfg.ari.listen_wake_model else wake_t
     device = int(args.device) if args.device and args.device.isdigit() else args.device

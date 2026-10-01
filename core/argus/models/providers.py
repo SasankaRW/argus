@@ -14,6 +14,7 @@ import base64
 import contextlib
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -60,6 +61,8 @@ class OllamaProvider:
             "keep_alive": self.keep_alive,
             "options": {"temperature": 0},
         }
+        if re.search(r"qwen3(?!-coder)|deepseek-r1", self.model, re.I):
+            body["think"] = False  # these think out loud first by default: many seconds before a short answer
         if schema is not None:
             body["format"] = schema  # Ollama structured outputs: the reply is constrained to this JSON schema
         req = urllib.request.Request(f"{self.url}/api/chat", data=json.dumps(body).encode(), method="POST",

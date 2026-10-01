@@ -35,6 +35,7 @@ from .relay import ReplyRelay
 from .scheduler import Scheduler
 from .triggers import Triggers
 from .weather import Weather, words
+from .weather import spoken as weather_spoken
 
 log = logging.getLogger("argus")
 
@@ -274,6 +275,20 @@ class Argus:
             log.warning("no such place for the weather", extra={"place": place})
             return ""
         return words(w)
+
+    async def weather_say(self, place: str = "", offset: int = 0) -> str | None:
+        """Ari's spoken weather for a place (default: brief.weather), today or tomorrow; None when it can't."""
+        place = place.strip() or self.cfg.brief.weather.strip()
+        if not place:
+            return None
+        try:
+            w = await asyncio.wait_for(asyncio.to_thread(self.weather.day, place, offset), 15)
+        except Exception as e:  # no connection: let the model try
+            log.warning("no weather", extra={"place": place, "error": str(e)[:200]})
+            return None
+        if w is None:
+            return f"I couldn't find a place called {place}."
+        return weather_spoken(w, "tomorrow" if offset else "today")
 
     async def _brief_inputs(self) -> dict:
         needs = set(self.cfg.power.pc_needs)

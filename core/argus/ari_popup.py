@@ -47,7 +47,10 @@ W, H = MAX_W + 2 * 30 + 2 * MARGIN, MAX_H + MARGIN  # the window (room for the w
 WORDS = {"listening": "listening", "thinking": "thinking", "working": "on it", "speaking": "speaking"}
 NICE = {"search_my_files": "searching your files", "find_file": "looking for the file", "open_app": "opening it",
         "set_volume": "setting the volume", "argus_status": "checking Argus", "add_note": "writing it down",
-        "run_routine": "running the routine", "lab_status": "checking the lab", "repo_status": "checking your repos"}
+        "run_routine": "running the routine", "lab_status": "checking the lab", "repo_status": "checking your repos",
+        "look_at_screen": "looking at your screen", "summarise_clipboard": "reading what you copied",
+        "weather": "checking the weather", "web_search": "searching the web", "read_page": "reading the page",
+        "search_everything": "finding the file"}
 TONE = {"listening": "#39ff9c", "done": "#39ff9c", "working": "#4cc2ff", "thinking": "#f5a524",
         "speaking": "#f5a524", "idle": "#f5a524"}
 

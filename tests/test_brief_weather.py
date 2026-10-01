@@ -99,3 +99,28 @@ def test_no_connection_no_weather_but_the_brief_still_goes(tmp_path):
     with Server(a.open()) as srv:
         cl = client(srv.url)
         assert cl.post("/brief", {})["text"].startswith("Overnight:")
+
+
+TWO_DAYS = {"daily": {"weather_code": [95, 0], "temperature_2m_min": [21.4, 20.2], "temperature_2m_max": [29.6, 31.0],
+                      "precipitation_probability_max": [80, 5]}, "current": {"temperature_2m": 23.0}}
+
+
+def test_ari_answers_the_weather_at_once_today_or_tomorrow(tmp_path):
+    from argus.ari import weather_ask
+    from argus.weather import spoken
+
+    assert weather_ask("How's the weather today?") == ("", 0)
+    assert weather_ask("will it rain tomorrow in Galle?") == ("Galle", 1)
+    assert weather_ask("Explain how weather forecasts are made") is None
+    assert weather_ask("open spotify") is None
+    w = Weather(lambda url: GEO if "geocoding" in url else TWO_DAYS)
+    assert spoken(w.day("Kandy, LK", 0)) == ("Kandy today: 21 to 30 degrees, thunderstorms, 80% chance of rain. "
+                                             "It's 23 now.")
+    assert spoken(w.day("Kandy, LK", 1), "tomorrow") == "Kandy tomorrow: 20 to 31 degrees, clear, no rain expected."
+    a = make(tmp_path)
+    a.weather = Weather(lambda url: GEO if "geocoding" in url else TWO_DAYS)
+    with Server(a.open()) as srv:
+        cl = client(srv.url)
+        r = cl.post("/ari", {"text": "How's the weather tomorrow?"})
+        assert r["reply"] == "Kandy tomorrow: 20 to 31 degrees, clear, no rain expected." and not r.get("job_id")
+        assert "weather" in {t["name"] for t in cl.get("/tools")}

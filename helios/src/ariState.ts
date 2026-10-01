@@ -40,7 +40,9 @@ type Ev = { kind: string; job_id: string | null; step: string | null; data: Reco
 let thinkJob: string | null = null;
 const TOOL = /^tool \d+: (.+)$/;
 const NICE: Record<string, string> = { search_my_files: "searching your files", find_file: "looking for the file",
-  open_app: "opening it", set_volume: "setting the volume", argus_status: "checking Argus" };
+  open_app: "opening it", set_volume: "setting the volume", argus_status: "checking Argus",
+  look_at_screen: "looking at your screen", summarise_clipboard: "reading what you copied", weather: "checking the weather",
+  web_search: "searching the web", read_page: "reading the page", search_everything: "finding the file" };
 
 // Follow Ari from the event stream: ari.state events, and the steps of the answer being worked on.
 export function ariFromEvents(evs: Ev[]) {

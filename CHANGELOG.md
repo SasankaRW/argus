@@ -5,6 +5,21 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **One Ari at a time:** a second `ari-listen` quits instead of answering too; Helios doesn't listen for "Hey Ari"
+  when the PC's listener runs, and only one Helios tab listens; only the screen you asked on speaks the answer.
+- **Your words:** Whisper is told the names to expect (`ari.vocabulary` plus names Ari remembers) and mishearings
+  are fixed (`ari.heard_as`; "open what's up" -> "open WhatsApp").
+- **Casual talk:** small talk gets a friendly, playful answer with no tools; replies can't just promise ("I will
+  open…") without doing it; links are dropped from spoken replies cleanly.
+- **WhatsApp:** `whatsapp_message` opens WhatsApp with the message typed (asks first); qwen3 models answer without
+  their slow thinking step.
+- **"Open Brave"** and similar plain app requests open the app at once, without a model step.
+- **Ari feels like one flow:** the screen and clipboard tools are only offered when you ask about them (a weather
+  question no longer looks at your screen), and "what's on my screen?" / "what does this error say?" goes straight
+  to the screen: no model step first, its answer is the reply. Such questions no longer hit Argus's own "errors"
+  rule. While Ari works, the chat bubble says what it's doing ("looking at your screen…").
+- **Weather in a second:** "how's the weather?", "will it rain tomorrow in Galle?" are answered at once from
+  Open-Meteo (your town from `brief.weather`); the think loop has a `weather` tool too.
 - Fix: the MCP endpoint reads the request before refusing a wrong token (Windows reset the connection instead of answering 401).
 - **Talk with Ari like a conversation** (`ari.live`, on by default): after "Hey Ari" you just talk back and forth;
   talking over Ari pauses it at once, and it carries on if that was only "mm-hm" or its own echo; "thanks Ari"

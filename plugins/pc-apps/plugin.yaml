@@ -36,6 +36,17 @@ ari:
       input: {name: {type: string, description: the app's name}}
       required: [name]
       risky: true
+    - name: whatsapp_message
+      description: "Send someone a WhatsApp message from the PC: opens WhatsApp with the message typed (to their
+        number when known, from what you remember about them; else WhatsApp asks which chat), and the user presses
+        Enter to send. \"text Kaancha hi on WhatsApp\"."
+      workflow: whatsapp
+      input:
+        to: {type: string, description: the person's name}
+        text: {type: string, description: the message}
+        phone: {type: string, description: "their number with country code (e.g. +94771234567), if you know it"}
+      required: [to, text]
+      risky: true
     - name: list_apps
       description: The apps installed on the PC that Ari can open (names only).
       workflow: list_apps

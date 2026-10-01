@@ -60,6 +60,76 @@ HARD = re.compile(r"\b(why|explain|compare|plan|analy[sz]e|summari[sz]e|write|dr
                   r"step by step|how (?:do|does|can|should) i|what if|recommend)\b", re.I)
 
 
+# The screen and the clipboard are slow (a vision model) and private: they are only offered when the message is
+# about them, and a plain "what's on my screen?" goes straight to the screen, with no model deciding first.
+SCREEN = re.compile(r"\b(?:screen|monitor|what am i (?:looking at|seeing)|this (?:error|window|page|tab|message|"
+                    r"dialog|popup|code|chart|graph|picture|image|email|document|doc|app)|what does (?:this|it) say|"
+                    r"what'?s this|can you see|look at (?:this|it|that))\b", re.I)
+CLIPBOARD = re.compile(r"\b(?:clipboard|copied|i copied|what i copied|paste[d]?)\b", re.I)
+SCREEN_TOOLS = {"look_at_screen": SCREEN, "summarise_clipboard": CLIPBOARD}
+
+
+def offered(tools: dict[str, dict], text: str, history: list[dict]) -> dict[str, dict]:
+    """The tools worth offering for this message: the screen / clipboard ones only when it's about them (or the
+    chat just was). Fewer tools is also a shorter prompt, so a faster first step."""
+    recent = " ".join(str(h.get("text") or "") for h in history[-2:])
+    return {n: t for n, t in tools.items()
+            if n not in SCREEN_TOOLS or SCREEN_TOOLS[n].search(text) or SCREEN_TOOLS[n].search(recent)}
+
+
+OPEN_APP = re.compile(r"^\W*(?:please\s+)?(?:open|launch|start)\s+(?:up\s+)?(?:the\s+)?(?P<app>[a-z][\w+ -]{1,28}?)"
+                      r"(?:\s+app)?(?:\s+(?:for me|please))?\W*$", re.I)
+NOT_APP = re.compile(r"^(?:a|an|my|some)\b|\b(?:file|folder|document|page|site|website|link|it|that|this|them|routine|"
+                     r"tab|timer|music|playlist|song|recording|backup|job|over|again)\b|[./\\:]", re.I)
+
+
+def straight_to(tools: dict[str, dict], text: str) -> tuple[str, dict] | None:
+    """A message that plainly needs one tool: "open brave" (the app), "what's on my screen?" (the screen), "sum up
+    what I copied" (the clipboard). That tool runs at once, with no model deciding first."""
+    if len(text) > 200:
+        return None
+    m = OPEN_APP.match(text)
+    if m and "open_app" in tools and not NOT_APP.search(m.group("app")):
+        return "open_app", {"name": m.group("app").strip()}
+    if "look_at_screen" in tools and SCREEN.search(text):
+        return "look_at_screen", {"question": text}
+    if "summarise_clipboard" in tools and CLIPBOARD.search(text):
+        return "summarise_clipboard", {"how": text}
+    return None
+
+
+# Small talk: no tools, no task, just Ari being good company.
+CHATTY = re.compile(r"^\W*(?:hi|hey|hello|hiya|yo|sup|good (?:night|evening|afternoon)|how (?:are|r) (?:you|u)|"
+                    r"how'?s (?:it going|your day|life)|what'?s up\W*$|wassup|thanks|thank you|cheers|lol|haha|"
+                    r"tell me (?:a joke|something (?:fun|funny|interesting))|i'?m (?:bored|tired|back|home|happy|sad|"
+                    r"hungry|sleepy)|who are you|what are you|are you (?:real|there|awake|ok)|what do you think|"
+                    r"do you (?:like|love|think|ever)|let'?s (?:talk|chat)|you(?:'re| are) |guess what|"
+                    r"nothing much|not much|i (?:love|like|hate) |that'?s (?:cool|funny|nice|great|awesome)|"
+                    r"nice|cool|awesome|bro\b|dude\b|good (?:job|one))", re.I)
+TASKY = re.compile(r"\b(?:open|close|find|search|show|list|play|pause|set|turn|send|message|text|remind|schedule|"
+                   r"run|start|stop|add|delete|move|copy|weather|screen|file|folder|note|status|issue|backup|"
+                   r"download|shut|restart|volume|timer)\b", re.I)
+
+CHAT = """You are Ari, the user's personal assistant and friend, living on their own computer (home system "Argus").
+Right now it's just casual talk. Be a good companion: warm, relaxed, a bit playful and witty, curious about them.
+Talk like a person, not a help desk: never say "as an AI", never "I can't complete that request", no offers of
+"anything else I can help with". Short and natural (it is read aloud): 1-3 sentences, no lists, no markdown, no
+emoji. Match their mood and slang. React to what they said, share a light opinion or a joke when it fits, and
+sometimes ask something back. Use what you know about them ("you_remember") naturally, without reciting it.
+If they tell you a lasting fact about themselves, put it in "remember" as a short sentence.
+Answer as JSON {"reply": "...", "remember": ""}."""
+
+
+def chatty(text: str) -> bool:
+    """Just talking ("hey Ari, how's it going?", "I'm bored", "tell me a joke"), not asking for something done."""
+    t = text.strip()
+    return len(t) <= 160 and bool(CHATTY.match(t)) and not TASKY.search(t)
+
+
+PROMISE = re.compile(r"^\W*(?:(?:ok(?:ay)?|sure|alright)[,.!]?\s*)?(?:i'?ll|i will|i am going to|i'?m going to|"
+                     r"let me)\b(?!\s+(?:need|remember|keep|know|check with you))", re.I)
+
+
 def model_order(text: str, local: list[str]) -> list[str]:
     """Quick asks start on the small, fast model; harder ones (explain, compare, plan, several things at once, long
     messages) start on the bigger one, so they aren't first answered badly and then again."""
@@ -84,6 +154,9 @@ How to decide:
   asks you to remember something, use the remember tool; to forget something, recall_memory then forget_memory.
 - The user's own things (their files, notes, documents, projects, what Argus did, their schedules, their phone,
   their PC): use a tool first; never make up the user's data. If the tools find nothing, say so.
+- Casual talk (greetings, jokes, how are you, banter, their day): just talk back like a friend: warm, a bit
+  playful, curious. Never "I can't complete that request" for small talk.
+- Only look at the screen or the clipboard when the user asks about them; never for a general question.
 - Doing things on the PC (open an app, a file or a site, volume, music, windows): use the tool. Several things
   asked: one tool per step, then reply once everything is done.
 - General knowledge (how something works, definitions, maths, advice): answer yourself if you are sure.
@@ -101,7 +174,8 @@ How to decide:
   later (save_for_later, reading_list), PDFs and pictures (merge_pdfs, images_to_pdf, pdf_pages, shrink_images:
   find the files first with find_file), how the week went (weekly_review), work issues
   (work_summary, list_issues, add_issue, move_issue, issue_timer), the shopping list and wishlist (shopping_list,
-  add_to_list), money this month (money_this_month), the PC (apps, windows, volume, media,
+  add_to_list), money this month (money_this_month), the weather (weather), WhatsApp messages
+  (whatsapp_message: open_app is not needed first), the PC (apps, windows, volume, media,
   clipboard).
 - Follow-ups: "it", "that", "again", "the other one", "and tomorrow?" refer to the conversation so far (your last turn's
   "found" holds what your tools returned then). Carry over what was meant (the same file, app, search or
@@ -127,7 +201,7 @@ def spoken(text: str, limit: int = 600) -> str:
     """A reply fit to be read aloud: no markdown, links, bullets or code; short."""
     t = re.sub(r"```.*?```", " ", text, flags=re.S)
     t = re.sub(r"\[([^\]]+)\]\((?:[^)]+)\)", r"\1", t)          # [text](link) -> text
-    t = re.sub(r"https?://\S+", "", t)
+    t = re.sub(r"\s*(?:\b(?:at|on|from|to|here)\s+)?https?://\S+?(?=[.,!?]?(?:\s|$))", "", t)  # "at <link>" goes
     t = re.sub(r"(?m)^\s*(?:[-*\u2022]|\d+[.)])\s+", "", t)       # bullets and numbered lists
     t = re.sub(r"(?m)^\s*#+\s*", "", t)
     t = re.sub(r"(?<!\w)(\*{1,3}|`+|_{1,3})(?=\S)(.+?)(?<=\S)\1(?!\w)", r"\2", t)  # **bold**, `code`; not snake_case
@@ -151,7 +225,7 @@ def think(ctx: Context):
     text = str(ctx.input.get("text") or "").strip()
     if not text:
         raise PermanentError("nothing said")
-    tools = {t["name"]: t for t in ctx.input.get("tools") or []}
+    tools = offered({t["name"]: t for t in ctx.input.get("tools") or []}, text, ctx.input.get("history") or [])
     base = {"message": text, "conversation_so_far": (ctx.input.get("history") or [])[-8:],
             "you_remember": ctx.input.get("you_remember") or [],
             "now": ctx.input.get("now") or time.strftime("%A %d %B %Y, %H:%M"),
@@ -172,6 +246,9 @@ def think(ctx: Context):
                 return "you already used that tool with these arguments; use its result and reply"
         elif not s.need_web and not s.reply.strip():
             return "give a reply, a tool, or need_web"
+        elif PROMISE.match(s.reply) and not done:
+            return ("don't say what you will do: use the tool for it now, or say plainly that you can't do that "
+                    "(and what you can do instead)")
         if len(s.reply) > 600:
             return "too long: 1-3 short sentences"
         return None
@@ -179,6 +256,51 @@ def think(ctx: Context):
     def private() -> bool:
         """Something private (the screen, the clipboard) is in this chat: Claude never sees it."""
         return any(d.get("private") for d in done) or any(h.get("private") for h in base["conversation_so_far"])
+
+    if chatty(text):  # small talk: one friendly answer, no tools, the better local model first
+        def chat() -> dict:
+            s = ctx.llm(CHAT, json.dumps({k: base[k] for k in ("message", "conversation_so_far", "you_remember",
+                                                                 "now")}, ensure_ascii=False),
+                        schema=Step, check=lambda s, _i: None if s.reply.strip() else "say something back",
+                        tiers=list(reversed(ctx.local_tiers())) or None, claude_last=not private())
+            return {**s.model_dump(), "tier": ctx.last_answer.tier}
+
+        try:
+            c = ctx.step("chat", chat)
+            reply = spoken(c["reply"])
+            fact = worth_keeping(c.get("remember") or "", base["you_remember"])
+            if fact:
+                return {"reply": f"{reply} Want me to remember that?", "used": [], "tier": c.get("tier"),
+                        "pending": {"kind": "remember", "fact": fact}}
+            return {"reply": reply, "used": [], "tier": c.get("tier")}
+        except EscalationExhausted:
+            pass  # fall through to the usual way
+
+    direct = straight_to(tools, text)
+    if direct is not None:  # one flow: open the app / look / read the clipboard right away; that is the reply
+        name, args = direct
+
+        def use_direct() -> dict:
+            try:
+                return {"tool": name, "args": args, "result": _clip(ctx.tool(name, args)), "private": True}
+            except ToolFailed as e:
+                return {"tool": name, "args": args, "error": str(e)[:300], "private": True}
+
+        def use_direct_app() -> dict:
+            try:
+                return {"tool": name, "args": args, "result": _clip(ctx.tool(name, args))}
+            except ToolFailed as e:
+                return {"tool": name, "args": args, "error": str(e)[:300]}
+
+        got = ctx.step(f"tool 1: {name}", use_direct_app if name == "open_app" else use_direct)
+        res = got.get("result")
+        if name == "open_app" and "error" not in got:
+            app = args["name"].strip()
+            return {"reply": f"Opening {app[:1].upper()}{app[1:]}.",
+                    "used": [got]}
+        if isinstance(res, dict) and str(res.get("answer") or "").strip():
+            return {"reply": spoken(str(res["answer"])), "used": [got]}
+        done.append(got)  # it failed or said nothing useful: let the model take it from here
 
     for i in range(MAX_STEPS):
         def decide(i=i) -> dict:
@@ -200,7 +322,11 @@ def think(ctx: Context):
             # after web text came in, anything that does something waits for the user's yes (a page can't drive Ari)
             tainted = any(d.get("untrusted") for d in done) and not t.get("untrusted") and not t.get("read_only")
             if t.get("asks_first") or tainted:
-                ask = s["reply"].strip() or f"Shall I {t['does'][0].lower()}{t['does'][1:].rstrip('.')}?"
+                does = re.split(r"[:(]", t["does"])[0].strip().rstrip(".")
+                if s["tool"] == "whatsapp_message":
+                    does = f"message {s['args'].get('to', 'them')} \"{s['args'].get('text', '')}\" on WhatsApp"
+                said = s["reply"].strip()
+                ask = said if said.endswith("?") else f"Shall I {does[0].lower()}{does[1:]}?"
                 return {"reply": ask, "pending": {"kind": "tool", "name": s["tool"], "args": s["args"]}, "used": done}
 
             def use(s=s, t=t) -> dict:

@@ -203,6 +203,12 @@ class Tools:
         async def saved(x: dict) -> Any:
             return await a.store.read(lambda c: daily.time_saved(c, time.time(), min(int(x.get("days") or 7), 366)))
 
+        async def weather(a: dict) -> Any:
+            said = await self.argus.weather_say(str(a.get("place") or ""), 1 if a.get("tomorrow") else 0)
+            if said is None:
+                raise ToolError("no town set (Settings > Weather in the brief) or no connection")
+            return {"forecast": said, "source": "Open-Meteo"}
+
         async def week(_: dict) -> Any:
             labels = a.button_labels()
             return await a.store.read(lambda c: daily.week_review(c, time.time(), labels))
@@ -257,6 +263,9 @@ class Tools:
                  {"days": {"type": "integer", "description": "how many days back (default 7)"}}, fn=saved),
             Tool("weekly_review", "The user's week with Argus: jobs done, failures, time saved, and things they keep "
                  "doing by hand that could be scheduled (with what to say to schedule them).", fn=week),
+            Tool("weather", "The weather today or tomorrow for a town (default: the user's town).",
+                 {"place": {"type": "string", "description": "a town, e.g. Kandy (empty: the user's town)"},
+                  "tomorrow": {"type": "boolean", "description": "true for tomorrow"}}, fn=weather),
             Tool("list_buttons", "The plugin buttons Argus can run (ids for run_button).", fn=buttons),
             Tool("run_button", "Run a plugin's button now, e.g. run:downloads-organizer:sort (sort Downloads).",
                  {"id": {"type": "string", "description": "the button id from list_buttons"}}, ["id"], risky=True,

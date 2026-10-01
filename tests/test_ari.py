@@ -99,7 +99,7 @@ def test_actions_wait_for_yes_and_the_model_gets_the_conversation(tmp_path, monk
         d = cl.post(f"/ari/{conv}/answer", {"yes": True})
         assert d["reply"] == "Done." and cl.get(f"/jobs/{d['job_id']}")["workflow"] == "sort"
         cl.post(f"/jobs/{d['job_id']}/cancel")  # (the sort job would run first)
-        m = cl.post("/ari", {"text": "hello there, who are you?", "conv": conv})
+        m = cl.post("/ari", {"text": "please sort the downloads again, and who are you?", "conv": conv})
         assert m["reply"] is None and m["job_id"]
         assert w.run_once(wait=2)
         t = wait_for(lambda: (x := cl.get(f"/ari/{conv}")["turns"][-1])["text"] and x)

@@ -65,7 +65,7 @@ from pydantic import BaseModel, Field
 
 from .. import ari as ari_mod
 from .. import ask as ask_mod
-from .. import daily, guidance, logview
+from .. import daily, guidance, logview, vocab
 from .. import island as island_mod
 from .. import settings as settings_mod
 from ..approvals import ApprovalClosed, ApprovalError, ApprovalNotFound, BadToken
@@ -82,6 +82,7 @@ from ..shares import ShareError, ShareStore, kinds_of
 from ..tools import Tool, ToolError, Tools
 from ..triggers import BadSignature, TriggerError, UnknownTrigger
 from ..voice import CATALOG, Voice, VoiceUnavailable, download, installed
+from ..worker import think as think_mod
 from . import approval_page, mcp
 from .home import HOME_HTML
 
@@ -865,7 +866,9 @@ def create_app(argus: Argus) -> FastAPI:
         elif q["kind"] == "tool":
             try:
                 res = await tools.run_now(q["name"], q.get("args") or {})
-                reply, out = "Done.", {"tool": q["name"], "result": res}
+                nxt = str(res.get("next") or "") if isinstance(res, dict) else ""
+                reply = f"It's ready: {nxt}." if nxt else "Done."  # "It's ready: press Enter to send."
+                out = {"tool": q["name"], "result": res}
             except ToolError as e:
                 reply, out = f"I couldn't: {e}.", {}
         elif q["kind"] == "remember":
@@ -913,6 +916,18 @@ def create_app(argus: Argus) -> FastAPI:
         listener["seen"] = time.time()
         return {"ok": True}
 
+    @app.get("/ari/vocabulary", dependencies=guarded)
+    async def vocabulary() -> dict:
+        """The words Whisper should expect (ari.vocabulary + names Ari remembers) and the fixes (ari.heard_as)."""
+        facts = await argus.store.read(lambda c: [m["fact"] for m in ari_mod.memories(c)])
+        names = vocab.words(argus.cfg.ari.vocabulary, facts)
+        return {"words": names, "prompt": vocab.prompt(names), "heard_as": argus.cfg.ari.heard_as}
+
+    @app.get("/ari/listener", dependencies=guarded)
+    async def ari_listener_running() -> dict:
+        """Is the PC's "Hey Ari" listener running? (Helios on that PC then doesn't listen for "Hey Ari" too.)"""
+        return {"listener": time.time() - listener["seen"] < 75}
+
     @app.post("/ari/wake", dependencies=guarded)
     async def ari_wake() -> dict:
         """The island's Talk button: the PC's listener starts listening now, no "Hey Ari" needed. {listener: false}
@@ -932,6 +947,7 @@ def create_app(argus: Argus) -> FastAPI:
     async def ari_say(body: AriSay) -> dict:
         """Say something to Ari. Returns the reply at once, or a turn that fills in (poll GET /ari/{conv})."""
         conv = body.conv or new_id().lower()
+        body.text = vocab.fix(body.text, argus.cfg.ari.heard_as)  # "open what's up" -> "open WhatsApp"
         text = ari_mod.WAKE.sub("", body.text).strip() or body.text.strip()
         q = await argus.store.read(lambda c: ari_mod.open_question(c, conv))
         await argus.store.write(lambda c: ari_mod.add_turn(c, conv, "you", body.text.strip()))
@@ -948,6 +964,11 @@ def create_app(argus: Argus) -> FastAPI:
 
         if ari_mod.BRIEF.match(text):  # "good morning": the morning brief, spoken
             return await reply(await argus.spoken_brief())
+        wx = ari_mod.weather_ask(text)
+        if wx is not None:  # "how's the weather?", "will it rain tomorrow in Kandy?": Open-Meteo, no model
+            said = await argus.weather_say(*wx)
+            if said:
+                return await reply(said)
         actions = ask_mod.catalog(argus.plugin_host)
         m = ari_mod.REMEMBER.match(text)
         if m and not ari_mod.parse_when(text, time.time()):  # "remember that ..." (not "remind me at ...")
@@ -969,7 +990,9 @@ def create_app(argus: Argus) -> FastAPI:
             return await reply(f"{where['text']} Want me to ring it?", "phone:ring",
                                {"kind": "action", "action": "phone:ring"})
         snap = await ask_mod.snapshot(argus)
-        hit = ask_mod.rules(text, actions, snap)
+        # about the screen or the clipboard ("what does this error say?"): not Argus's own errors
+        about_screen = think_mod.SCREEN.search(text) or think_mod.CLIPBOARD.search(text)
+        hit = None if about_screen else ask_mod.rules(text, actions, snap)
         if hit is not None:
             act = hit.get("action")
             if act and not act.startswith("show:"):  # something to do: wait for your yes
@@ -1155,8 +1178,10 @@ def create_app(argus: Argus) -> FastAPI:
         audio_dir.mkdir(parents=True, exist_ok=True)
         await asyncio.to_thread((audio_dir / name).write_bytes, bytes(data))
         try:
+            voc = await vocabulary()
             job_id, _ = await argus.jobs.enqueue("ari", "transcribe", {"audio": name,
-                                                                      "model": argus.cfg.ari.whisper_model},
+                                                                      "model": argus.cfg.ari.whisper_model,
+                                                                      "prompt": voc["prompt"]},
                                                  needs=["gpu"], priority=95, source="helios")
             for _ in range(120):  # up to 60 s (the first time loads the model)
                 j = await argus.jobs.get(job_id)

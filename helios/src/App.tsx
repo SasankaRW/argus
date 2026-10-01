@@ -203,9 +203,33 @@ export function App() {
     const badge = (msg: string | null, ms = 8000) => {
       clearTimeout(hide); setHeard(msg); if (msg) hide = setTimeout(() => setHeard(null), ms);
     };
+    // Only ONE "Hey Ari" may listen, or several Aris answer at once: not here when the PC's own listener runs on this
+    // machine, and only in one Helios tab per browser (a Web Lock; another tab takes over when this one closes).
+    let pcListens = false;
+    let waiting: AbortController | null = null;
+    let release: (() => void) | null = null;
+    const local = ["127.0.0.1", "localhost", "[::1]"].includes(location.hostname);
+    const checkPc = () => {
+      if (!local) return;
+      api<{ listener: boolean }>("/ari/listener").then((r) => {
+        if (r.listener !== pcListens) { pcListens = r.listener; sync(); }
+      }).catch(() => {});
+    };
+    const stopWl = () => { wl?.stop(); wl = null; release?.(); release = null; waiting?.abort(); waiting = null; };
     const sync = () => {
-      const want = pref("wake", false);
-      if (want && !wl) {
+      const want = pref("wake", false) && !pcListens;
+      if (want && !wl && !waiting) {
+        const locks = (navigator as Navigator & { locks?: LockManager }).locks;
+        if (!locks) { startWl(); return; }
+        waiting = new AbortController();
+        locks.request("helios-hey-ari", { signal: waiting.signal }, () => new Promise<void>((done) => {
+          waiting = null; release = done; startWl();
+        })).catch(() => {});
+      } else if (!want && (wl || waiting)) stopWl();
+    };
+    const startWl = () => {
+      if (wl) return;
+      {
         wl = new WakeListener({
           onCommand: (text) => {
             badge(null);
@@ -221,9 +245,11 @@ export function App() {
           onError: (msg) => { badge(msg, 15000); setPref("wake", false); },
         });
         wl.start();
-      } else if (!want && wl) { wl.stop(); wl = null; }
+      }
     };
-    const restart = () => { if (wl) { wl.stop(); wl = null; } sync(); };  // Whisper became (un)available
+    const restart = () => { stopWl(); sync(); };  // Whisper became (un)available
+    checkPc();
+    const pcTimer = setInterval(checkPc, 30000);
     const arm = () => wl?.arm();
     api<VoiceStatus>("/ari-voice").then(setVoiceStatus).catch(() => {}).finally(sync);
     window.addEventListener("ari-pref", sync);
@@ -231,7 +257,7 @@ export function App() {
     window.addEventListener("ari-arm", arm);
     return () => {
       window.removeEventListener("ari-pref", sync); window.removeEventListener("ari-status", restart);
-      window.removeEventListener("ari-arm", arm); wl?.stop(); clearTimeout(hide);
+      window.removeEventListener("ari-arm", arm); stopWl(); clearTimeout(hide); clearInterval(pcTimer);
     };
   }, []);
   // The Ari pill follows Ari from the event stream (answers from any screen, the PC's "Hey Ari"). On the PC that
