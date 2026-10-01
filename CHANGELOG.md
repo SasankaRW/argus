@@ -14,6 +14,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
   [laugh]") that set how Ari sounds, sounding like the Piper voice (or `ari.voice_clip`), with Piper as the
   fallback. Ari talks more like a person in casual chat (fillers, the odd self-correction), and says a short
   "hmm, let me check" while a slower answer is on its way. The screen shows only the words.
+- Fix: times said in words ("at five pm", "at eleven thirty tonight", "in twenty minutes") are understood: your trained Whisper writes numbers as words, and before this "at seven" was read as the default 8 am.
+- Fix: voice training (and Whisper on the worker) find CUDA's cuBLAS / cuDNN in PyTorch's CUDA build on Windows, and fall back to the CPU instead of failing.
 - **Pause listening:** a button in Helios (Ari chat and Ari settings) stops Ari listening everywhere, the PC's
   microphone and every Helios, until you resume (`POST /ari/listening`); the voice training page pauses it by
   itself while it's open, so Ari doesn't answer the sentences you read.

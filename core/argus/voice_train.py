@@ -112,17 +112,17 @@ def audio_of(item: dict):
 # ------------------------------------------------------------------ transcribing with faster-whisper
 
 def transcribe_all(model_name: str, items: list[dict], audio: dict[str, Any]) -> list[str]:
-    from faster_whisper import WhisperModel  # type: ignore[import-not-found]
+    """faster-whisper on the test sentences: the GPU when CTranslate2 finds CUDA's libraries (PyTorch's own are
+    used), else the CPU (fine for a test set)."""
+    from .worker import hear
 
-    try:
-        m = WhisperModel(model_name, device="cuda", compute_type="float16")
-    except Exception:  # noqa: BLE001 - no CUDA for CTranslate2: the CPU is fine for a test set
-        m = WhisperModel(model_name, device="cpu", compute_type="int8")
+    m = hear.model(model_name)
     out = []
     for x in items:
         segs, _ = m.transcribe(audio[x["id"]], language="en", beam_size=1, condition_on_previous_text=False,
                                without_timestamps=True, max_new_tokens=120)
         out.append(" ".join(s.text.strip() for s in segs).strip())
+    hear._models.pop(model_name, None)  # free it for the next one
     del m
     return out
 
