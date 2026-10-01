@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 .venv/
+.venv-voice/
 .env
 argus.yaml
 data/

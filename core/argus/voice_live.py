@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import io
 import logging
+import random
 import re
 import threading
 import time
@@ -33,6 +34,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from .expressive import mood_of
 
 log = logging.getLogger("argus.voice_live")
 RATE = 16000
@@ -368,7 +371,9 @@ class Talk:
             ans = {"reply": "Sorry, I can't reach Argus right now."}
         reply = (ans.get("reply") or "").strip()
         if reply:
-            self.player.say(sentences(reply))
+            mood, words = mood_of(reply)  # "[cheerful] ...": every sentence gets the mood, for the expressive voice
+            parts = sentences(words)
+            self.player.say([f"[{mood}] {p}" for p in parts] if mood != "neutral" else parts)
         self._keep_talking(pending=bool(ans.get("pending")))
         return command
 
@@ -458,7 +463,7 @@ class Player:
         np = self.np
         out = np.zeros(frames, dtype=np.float32)
         with self._lock:
-            if not self._paused:
+            if not self._paused and not self._cues:  # a cue (the chime, "hmm, let me check") first
                 n = 0
                 while n < frames and self._chunks:
                     c = self._chunks[0]
@@ -495,7 +500,7 @@ class Player:
     def busy(self) -> bool:
         """Talking (or about to, or the room still ringing). False while paused only to the sound card."""
         with self._lock:
-            if self._chunks or self._making:
+            if self._chunks or self._making or self._cues:
                 return True
             return self.clock() - self._ended_at < self.TAIL_S
 
@@ -593,6 +598,12 @@ class Player:
         with self._lock:
             self._cues.append(a)
 
+    def filler(self, samples, rate: int) -> None:
+        """A short spoken filler while Ari works ("hmm, let me check"): like a cue, then the soft pulse."""
+        self.cue(samples, rate)
+        with self._lock:
+            self._thinking, self._think_t = True, 0
+
     def poll(self) -> None:
         """Call often: tells Argus when Ari has finished talking."""
         busy = self.busy
@@ -619,3 +630,40 @@ def wav_samples(data: bytes) -> tuple[Any, int]:
     with wave.open(io.BytesIO(data)) as w:
         a = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32) / 32768
         return a, w.getframerate()
+
+
+FILLERS = ["[calm] Hmm, let me check.", "[calm] One sec.", "[calm] Okay, give me a moment.",
+           "[calm] Mm, let me see.", "[cheerful] On it."]
+
+
+class Fillers:
+    """A few short fillers, made once in the background with Ari's voice, so one plays at once when an answer takes a
+    moment (better than silence or a tone). `synth(text)` -> (samples, rate) or None."""
+
+    def __init__(self, synth, texts: list[str] | None = None, rng: random.Random | None = None):
+        self.ready: list[tuple] = []
+        self.rng = rng or random.Random()
+        self._last = -1
+        threading.Thread(target=self._make, args=(synth, texts or FILLERS), daemon=True, name="fillers").start()
+
+    def _make(self, synth, texts, tries: int = 10, wait: float = 30) -> None:
+        for _ in range(tries):  # Argus may still be starting
+            for t in texts:
+                try:
+                    got = synth(t)
+                except Exception:  # noqa: BLE001 - no voice yet: the pulse alone
+                    got = None
+                if got is not None:
+                    self.ready.append(got)
+            if self.ready:
+                return
+            time.sleep(wait)
+
+    def pick(self):
+        if not self.ready:
+            return None
+        i = self.rng.randrange(len(self.ready))
+        if i == self._last and len(self.ready) > 1:
+            i = (i + 1) % len(self.ready)
+        self._last = i
+        return self.ready[i]

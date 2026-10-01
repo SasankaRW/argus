@@ -2,6 +2,7 @@
 // can report; the pill shows the latest. "done" shows the answer for a moment, then the pill folds away.
 import { useSyncExternalStore } from "react";
 import { api } from "./api";
+import { plain } from "./spoken";
 
 export type AriPhase = "idle" | "listening" | "thinking" | "working" | "speaking" | "done";
 export type AriState = { phase: AriPhase; text: string; at: number; remote?: boolean };
@@ -12,6 +13,7 @@ let fold: ReturnType<typeof setTimeout> | undefined;
 
 export function ariSet(phase: AriPhase, text = "", remote = false) {
   clearTimeout(fold);
+  text = plain(text);
   state = { phase, text, at: Date.now(), remote };
   subs.forEach((f) => f());
   if (phase === "done") fold = setTimeout(() => ariSet("idle"), Math.min(9000, 3500 + text.length * 40));

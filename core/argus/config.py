@@ -265,6 +265,13 @@ class AriConfig(_Strict):
     # Empty: the browser's own voice.
     # Get one: python -m piper.download_voices en_US-lessac-medium --data-dir data/voices
     voice: str = ""
+    # "expressive": Chatterbox on the PC's GPU (moods, real laughs and sighs; its own Python environment, see
+    # docs/setup.md), with the Piper voice above as the fallback. "piper": Piper only.
+    voice_engine: Literal["piper", "expressive"] = "piper"
+    expressive_url: str = "http://127.0.0.1:8611"
+    expressive_python: str = ".venv-voice/Scripts/python.exe"  # the environment Chatterbox is installed in
+    expressive_model: Literal["turbo", "standard"] = "turbo"
+    voice_clip: str = ""  # 5-15 s of the voice Ari should sound like (empty: a clip made from the Piper voice)
     # How Ari hears you: "browser" (the browser's speech recognition) or "whisper" (Whisper on the PC: private and
     # better with accents; the browser is used while the PC is off).
     hearing: Literal["browser", "whisper"] = "browser"

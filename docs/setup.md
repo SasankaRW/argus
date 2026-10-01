@@ -265,6 +265,25 @@ daily cap.
 - **Your words** (`ari.vocabulary`, `ari.heard_as`): Whisper is told the names to expect (yours, the people and
   places Ari remembers, apps like WhatsApp), and common mishearings are put right ("open what's up" -> WhatsApp).
   Add your own: `vocabulary: [Kaancha, Nimali]`, `heard_as: {kancha: Kaancha}`.
+- **Ari's expressive voice** (`ari.voice_engine: expressive`): Chatterbox-Turbo (Resemble AI, MIT) on the GPU
+  laughs, sighs and changes its tone with the mood of each reply ("[cheerful] Oh nice! [laugh]"; on screen you
+  only see the words). It lives in its own Python environment, since it pins its own PyTorch:
+
+  ```powershell
+  python -m venv .venv-voice
+  .venv-voice\Scripts\pip install chatterbox-tts
+  .venv-voice\Scripts\pip install --force-reinstall torch torchaudio --index-url https://download.pytorch.org/whl/cu128
+  ```
+
+  ```yaml
+  ari:
+    voice_engine: expressive    # the supervisor starts it (logs\ari-voice.out); Piper stays the fallback
+  ```
+
+  It sounds like your Piper voice (a 10 s clip is made from it once: `data/voices/ari-clip.wav`), or like any
+  clip you set as `ari.voice_clip`. `expressive_model: standard` is slower but has stronger moods. Every clip
+  Chatterbox makes carries Resemble's inaudible watermark. While an answer takes a moment, Ari says a short
+  "hmm, let me check" instead of staying silent.
 - **Train Ari on your voice** (Helios > Ari > *train on my voice*): read sentences aloud (about 300, 20 minutes;
   your names from `ari.vocabulary` and from what Ari remembers are in many of them). Then, on the PC:
 

@@ -443,11 +443,28 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device) -> i
             return None
         return vl.wav_samples(wav)
 
+    def synth_quiet(text: str):
+        wav = client.voice(text)
+        return vl.wav_samples(wav) if wav else None
+
     player = vl.Player(synth, open_stream, report=client.state)
     gate = vl.EchoGate()
 
+    fillers = vl.Fillers(synth_quiet)
+
+    def wait_sound(chat: bool) -> None:
+        """An answer taking a while: a short "hmm, let me check" (then the soft pulse), or just the pulse (small talk
+        doesn't need "let me check")."""
+        f = None if chat else fillers.pick()
+        if f is not None:
+            player.filler(*f)
+        else:
+            player.thinking(True)
+
     def ask(text: str) -> dict:
-        t = threading.Timer(1.2, player.thinking, args=(True,))  # a soft pulse if the answer takes a while
+        from .worker.think import chatty
+
+        t = threading.Timer(1.2, wait_sound, args=(chatty(text),))
         t.start()
         try:
             return client.say(text)

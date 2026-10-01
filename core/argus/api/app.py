@@ -73,6 +73,7 @@ from ..config import PRIORITY_INTERACTIVE
 from ..context import Argus
 from ..cron import next_run
 from ..events import EventFilter, insert_event, read_events
+from ..expressive import plain
 from ..ids import new_id
 from ..jobs import InvalidTransition, Job, JobNotFound, JobState, LeaseLost, QueueFull, Step
 from ..outbox import PRIORITIES, add_message, ntfy_message
@@ -81,7 +82,7 @@ from ..presence import describe_phone
 from ..shares import ShareError, ShareStore, kinds_of
 from ..tools import Tool, ToolError, Tools
 from ..triggers import BadSignature, TriggerError, UnknownTrigger
-from ..voice import CATALOG, Voice, VoiceUnavailable, download, installed
+from ..voice import CATALOG, Expressive, Voice, VoiceUnavailable, download, installed
 from ..voice_samples import Samples
 from ..worker import think as think_mod
 from . import approval_page, mcp
@@ -904,14 +905,15 @@ def create_app(argus: Argus) -> FastAPI:
 
     def ari_state(c, phase: str, text: str = "", job_id: str | None = None, by: str = "argus") -> None:
         """What Ari is doing (event ari.state): the Ari pill in Helios and the PC's popup follow it."""
-        insert_event(c, time.time(), "ari.state", job_id=job_id, data={"phase": phase, "text": text[:300], "by": by})
+        insert_event(c, time.time(), "ari.state", job_id=job_id, data={"phase": phase, "text": plain(text)[:300],
+                                                                       "by": by})
 
     overlays: dict[str, float] = {}  # host -> last ping from the PC's Ari popup
 
     @app.post("/ari/state", dependencies=guarded)
     async def ari_state_set(body: AriStateIn) -> dict:
         """Report what Ari is doing where you are (listening, speaking) so every Ari pill shows it."""
-        await argus.store.write(lambda c: ari_state(c, body.phase, body.text, by=body.by or "client"))
+        await argus.store.write(lambda c: ari_state(c, body.phase, plain(body.text), by=body.by or "client"))
         return {"ok": True}
 
     listener = {"seen": 0.0}
@@ -1176,12 +1178,29 @@ def create_app(argus: Argus) -> FastAPI:
             (value, time.time(), time.time())))
         return await ari_voices()
 
+    _expr: dict = {}
+
+    def expressive():
+        """The expressive voice client, made again when its settings change."""
+        a = argus.cfg.ari
+        key = (a.expressive_url, a.voice_clip)
+        if _expr.get("key") != key:
+            clip = Path(a.voice_clip).expanduser() if a.voice_clip else voices_dir / "ari-clip.wav"
+            if not clip.is_absolute():
+                clip = argus.cfg.base_dir / clip
+            _expr.update(key=key, client=Expressive(a.expressive_url, clip, voice))
+        return _expr["client"]
+
     @app.post("/ari-voice/say", dependencies=guarded)
     async def ari_say_audio(body: AriSpeak) -> Response:
         """Ari's natural voice: WAV audio of the text (Piper). 409 when none is set up: use the browser's voice."""
         await use_picked_voice()
         try:
-            wav = await asyncio.to_thread(voice.say, body.text)
+            wav = None
+            if argus.cfg.ari.voice_engine == "expressive":
+                wav = await asyncio.to_thread(expressive().say, body.text)
+            if wav is None:
+                wav = await asyncio.to_thread(voice.say, body.text)
         except VoiceUnavailable as e:
             raise HTTPException(status_code=409, detail=str(e)) from None
         return Response(wav, media_type="audio/wav", headers={"Cache-Control": "no-store"})

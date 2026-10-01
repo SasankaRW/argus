@@ -94,9 +94,12 @@ def test_loads_recordings_from_the_folder(tmp_path):
 def test_the_real_training_code_runs_end_to_end(tmp_path):
     """LoRA training, merging, conversion for faster-whisper and transcribing with it, on a tiny random model. In its
     own process: PyTorch and CTranslate2 loaded next to the rest of the test suite's libraries can crash."""
+    import os
     import subprocess
     import sys
 
+    if not os.environ.get("ARGUS_SLOW_TESTS"):
+        pytest.skip("set ARGUS_SLOW_TESTS=1 (needs PyTorch, transformers, peft; about a minute)")
     for mod in ("torch", "transformers", "peft", "ctranslate2", "faster_whisper"):
         pytest.importorskip(mod)
     here = Path(__file__).parent

@@ -5,6 +5,7 @@
 
 import { getToken } from "./api";
 import { ariNow, ariReport, ariSet, ariTell, setServerLook } from "./ariState";
+import { plain } from "./spoken";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const W = window as any;
@@ -68,12 +69,13 @@ async function speakPiper(text: string): Promise<boolean> {
 }
 
 export async function speak(text: string): Promise<void> {
-  const clean = text.replace(/[*_`#>]/g, "").trim();
+  const voiced = text.replace(/[*_`#>]/g, "").trim();  // the mood and [laugh] stay for Ari's expressive voice
+  const clean = plain(voiced);
   if (!clean) return;
   speaking++;
   ariTell("speaking", clean);
   try {
-    if (status.voice && pref("piper", true) && await speakPiper(clean)) return;
+    if (status.voice && pref("piper", true) && await speakPiper(voiced)) return;
     await speakBrowser(clean);
   } finally {
     speaking--;
