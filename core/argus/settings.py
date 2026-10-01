@@ -38,6 +38,8 @@ FIELDS: list[tuple[str, str, str]] = [
     ("backup.at", "Backups", "Back up at"),
     ("backup.keep", "Backups", "Backups to keep"),
     ("ari.pill", "Ari", "Ari's pill look"),
+    ("ari.whisper_model", "Ari", "Whisper model for what you say (small.en, or your trained one: "
+                                 "data/models/whisper-mine)"),
 ]
 NAMES = {k for k, _, _ in FIELDS}
 

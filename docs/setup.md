@@ -265,6 +265,20 @@ daily cap.
 - **Your words** (`ari.vocabulary`, `ari.heard_as`): Whisper is told the names to expect (yours, the people and
   places Ari remembers, apps like WhatsApp), and common mishearings are put right ("open what's up" -> WhatsApp).
   Add your own: `vocabulary: [Kaancha, Nimali]`, `heard_as: {kancha: Kaancha}`.
+- **Train Ari on your voice** (Helios > Ari > *train on my voice*): read sentences aloud (about 300, 20 minutes;
+  your names from `ari.vocabulary` and from what Ari remembers are in many of them). Then, on the PC:
+
+  ```powershell
+  pip install torch --index-url https://download.pytorch.org/whl/cu128   # PyTorch for the RTX 50 series
+  pip install -e .[train]
+  python -m argus.voice_train --apply
+  ```
+
+  It fine-tunes Whisper (`ari.whisper_model`, small.en) with LoRA on the GPU (Ollama's models are unloaded
+  first), tests it on sentences it didn't learn from, and keeps it only if it makes fewer mistakes than before:
+  `data/models/whisper-mine`, which `--apply` makes Ari use (Helios > Settings > Ari's Whisper model; restart
+  ari-listen for the microphone). Record more and run it again any time; the recordings stay in
+  `data/voice-train`. With Argus on the laptop: `python -m argus.voice_train --from http://laptop:8600`.
 - **Just talking**: "how are you?", "I'm bored", "tell me a joke": Ari chats back like a friend, no tools.
 - **WhatsApp** (`pc-apps`): "text Kaancha hi on WhatsApp" opens WhatsApp with the message typed (after your yes);
   you press Enter. Tell Ari their number once ("remember Kaancha's WhatsApp is +94...") to go straight to the chat.

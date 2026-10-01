@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import type { Selection } from "./MapView";
-import { ariNow, ariSet, setPillLook, useAri, usePillLook } from "./ariState";
+import { ariNow, ariSet, pauseEars, resumeEars, setPillLook, useAri, useEars, usePillLook } from "./ariState";
 import { canSpeak, listen, pref, setPref, speak, Speech, stopSpeaking, voiceStatus, VoiceStatus } from "./voice";
 
 type Turn = { id: number; role: "you" | "ari"; text: string | null; action: string | null; label?: string | null;
@@ -254,9 +254,23 @@ export function AriView({ conv, onBack, onNew, onSelect, onView, compact = false
       <div className="ari-opts">
         {canSpeak && <label><input type="checkbox" checked={talk} onChange={(e) => toggle("speak", e.target.checked, setTalk)} /> speak replies</label>}
         {Speech && <label title="While Helios is open: say &quot;Hey Ari&quot;, then what you want"><input type="checkbox" checked={wake} onChange={(e) => toggle("wake", e.target.checked, setWake)} /> &ldquo;hey ari&rdquo;</label>}
+        <EarsButton />
       </div>
     </section>
   );
+}
+
+// Pause Ari's ears everywhere (this PC's microphone and every Helios), e.g. while others talk or you record.
+export function EarsButton() {
+  const ears = useEars();
+  const [busy, setBusy] = useState(false);
+  const go = async (f: () => Promise<void>) => { setBusy(true); try { await f(); } catch { /* offline */ } finally { setBusy(false); } };
+  const left = ears.paused && Number.isFinite(ears.until) ? Math.max(1, Math.round((ears.until - Date.now()) / 60000)) : null;
+  return ears.paused
+    ? <button type="button" className="btn ears off" disabled={busy} onClick={() => go(resumeEars)} title="Ari is not listening anywhere">
+        not listening{left ? ` · ${left} min` : ""} · resume</button>
+    : <button type="button" className="btn ears" disabled={busy} onClick={() => go(() => pauseEars(null))} title="Stop Ari listening (the PC's microphone and Helios) until you turn it back on">
+        pause listening</button>;
 }
 
 // Ari's settings (voice, pill), your schedules and what Ari remembers: on the chat list page.
@@ -288,6 +302,8 @@ function AriSettings() {
       <section className="panel">
         <div className="ph"><span className="pt">ari/settings</span></div>
         <div className="ari-set">
+          <a className="btn" href="#voice" title="Read sentences aloud so Ari learns your accent and names">train on my voice</a>
+          <EarsButton />
           <span className="pill-pick" role="group" aria-label="Ari pill look">pill
             {(["pulse", "comet"] as const).map((l) => (
               <button key={l} type="button" className="btn" aria-pressed={look === l}

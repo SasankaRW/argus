@@ -36,6 +36,7 @@ TIME = r"(?:(?P<h>\d{1,2})(?:[:.](?P<m>\d{2}))?\s*(?P<ap>a\.?\s?m\.?|p\.?\s?m\.?
 TIME_AP = (r"\b(?:(?P<h>\d{1,2})(?:[:.](?P<m>\d{2}))?\s*(?P<ap>a\.?\s?m\.?|p\.?\s?m\.?)|(?P<word>noon|midday|midnight))"
            r"(?=\s)")
 HISTORY = 8  # turns the model sees
+HISTORY_S = 30 * 60  # ... from the last half hour only: an old chat doesn't steer a new question
 
 
 @dataclass
@@ -237,11 +238,12 @@ def turns(conn: sqlite3.Connection, conv: str, limit: int = 200) -> list[dict[st
     return out
 
 
-def open_question(conn: sqlite3.Connection, conv: str) -> dict[str, Any] | None:
-    """The last thing Ari asked you to confirm, if it is still open (the newest Ari turn has it)."""
-    r = conn.execute("SELECT id, pending FROM ari_turns WHERE conv = ? AND role = 'ari' ORDER BY id DESC LIMIT 1",
-                     (conv,)).fetchone()
-    if r and r["pending"]:
+def open_question(conn: sqlite3.Connection, conv: str, max_age: float | None = None) -> dict[str, Any] | None:
+    """The last thing Ari asked you to confirm, if it is still open (the newest Ari turn has it) and, with `max_age`,
+    asked within that many seconds: a "yes" an hour later is about something new, not that old question."""
+    r = conn.execute("SELECT id, pending, created_at FROM ari_turns WHERE conv = ? AND role = 'ari'"
+                     " ORDER BY id DESC LIMIT 1", (conv,)).fetchone()
+    if r and r["pending"] and (max_age is None or time.time() - float(r["created_at"] or 0) <= max_age):
         return {"turn": r["id"], **json.loads(r["pending"])}
     return None
 
@@ -253,8 +255,10 @@ def close_question(conn: sqlite3.Connection, turn_id: int) -> None:
 def history(conn: sqlite3.Connection, conv: str) -> list[dict[str, Any]]:
     """The chat so far for the model. Ari's last answer also carries what its tools found (clipped), so a
     follow-up like "open it" or "and the other one?" knows what "it" was."""
+    recent = time.time() - HISTORY_S
     out: list[dict[str, Any]] = [{"role": t["role"], "text": t["text"], "job_id": t.get("job_id")}
-                                 for t in turns(conn, conv, HISTORY) if t["text"]]
+                                 for t in turns(conn, conv, HISTORY)
+                                 if t["text"] and float(t.get("created_at") or 0) >= recent]
     last = next((t for t in reversed(out) if t["role"] == "ari" and t["job_id"]), None)
     for t in out:
         if t["role"] != "ari" or not t["job_id"]:

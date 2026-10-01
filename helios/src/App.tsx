@@ -19,9 +19,10 @@ import { QueueView } from "./QueueView";
 import { RulesView } from "./RulesView";
 import { RunsView } from "./RunsView";
 import { ShareView } from "./ShareView";
+import { VoiceTrain } from "./VoiceTrain";
 import { pref, setPref, setVoiceStatus, voiceStatus, VoiceStatus, WakeListener } from "./voice";
 import { AriPill } from "./AriPill";
-import { ariFromEvents, ariSet, ariTell } from "./ariState";
+import { ariFromEvents, ariSet, ariTell, earsPaused, loadEars } from "./ariState";
 
 const CMD_PAD: FitPad = { top: "340px", right: "40px", bottom: "150px", left: "40px" };  // below the corner cards, above the command bar
 
@@ -172,7 +173,7 @@ export function App() {
   const [wide, setWide] = useState(() => { try { return localStorage.getItem("helios.rail") === "wide"; } catch { return false; } });
   const setWideRail = (v: boolean) => { setWide(v); try { localStorage.setItem("helios.rail", v ? "wide" : "icons"); } catch { /* private */ } };
   const [triedLogin, setTriedLogin] = useState(false);
-  const parse = (h: string) => (["queue", "runs", "logs", "share", "power", "ari", "plugins", "more", "inbox", "models", "settings"].includes(h) || h.startsWith("rules/") || h.startsWith("plugins/") || h.startsWith("ari/") ? h : "map");
+  const parse = (h: string) => (["queue", "runs", "logs", "share", "power", "ari", "plugins", "more", "inbox", "models", "settings", "voice"].includes(h) || h.startsWith("rules/") || h.startsWith("plugins/") || h.startsWith("ari/") ? h : "map");
   const [view, setView] = useState<string>(() => parse(location.hash.slice(1)));
   useEffect(() => {  // the share menu opens /helios/#share on a page that may already be open
     const on = () => setView(parse(location.hash.slice(1)));
@@ -217,7 +218,7 @@ export function App() {
     };
     const stopWl = () => { wl?.stop(); wl = null; release?.(); release = null; waiting?.abort(); waiting = null; };
     const sync = () => {
-      const want = pref("wake", false) && !pcListens;
+      const want = pref("wake", false) && !pcListens && !earsPaused();
       if (want && !wl && !waiting) {
         const locks = (navigator as Navigator & { locks?: LockManager }).locks;
         if (!locks) { startWl(); return; }
@@ -249,6 +250,7 @@ export function App() {
     };
     const restart = () => { stopWl(); sync(); };  // Whisper became (un)available
     checkPc();
+    loadEars();
     const pcTimer = setInterval(checkPc, 30000);
     const arm = () => wl?.arm();
     api<VoiceStatus>("/ari-voice").then(setVoiceStatus).catch(() => {}).finally(sync);
@@ -315,6 +317,7 @@ export function App() {
           : proot === "logs" ? <LogsView />
           : proot === "inbox" ? <InboxView events={a.events} onOpenChat={(c) => go(`ari/${c}`)} />
           : proot === "settings" ? <SettingsView />
+          : proot === "voice" ? <VoiceTrain />
           : proot === "models" ? <ModelsView events={a.events} />
           : proot === "more" ? <PhoneMore onOpen={open} onFull={() => setFullView(true)} />
           : <PhoneHome status={st} events={a.events} onSelect={setSel} onOpen={open} onInbox={() => go("inbox")}
@@ -431,6 +434,7 @@ export function App() {
         : view === "logs" ? <LogsView />
         : view === "inbox" ? <InboxView events={a.events} onOpenChat={(c) => go(`ari/${c}`)} />
         : view === "settings" ? <SettingsView />
+        : view === "voice" ? <VoiceTrain />
         : view === "models" ? <ModelsView events={a.events} />
         : root === "map" ? (
           cmd ? stage : (

@@ -243,8 +243,9 @@ class AriClient:
         self.url, self.token, self.conv_file = url.rstrip("/"), token, conv_file
         try:
             self.conv = conv_file.read_text().strip() or None
+            self.used = conv_file.stat().st_mtime  # when we last talked (touched on every message)
         except OSError:
-            self.conv = None
+            self.conv, self.used = None, time.time()
 
     def _req(self, method: str, path: str, body: dict | None = None, timeout: float = 30) -> bytes:
         req = urllib.request.Request(self.url + path, method=method,
@@ -254,7 +255,16 @@ class AriClient:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.read()
 
+    NEW_CHAT_S = 30 * 60
+
     def say(self, text: str) -> dict:
+        if self.conv and time.time() - self.used > self.NEW_CHAT_S:
+            self.conv = None  # a while since we last talked: a fresh chat, so old ones don't leak into this one
+        self.used = time.time()
+        try:
+            self.conv_file.touch()
+        except OSError:
+            pass
         r = json.loads(self._req("POST", "/ari", {"text": text, **({"conv": self.conv} if self.conv else {})}))
         if r.get("conv") and r["conv"] != self.conv:
             self.conv = r["conv"]
@@ -272,6 +282,14 @@ class AriClient:
                     return {"reply": last["text"], "pending": last.get("pending")}
             return {"reply": "That's taking a while; the answer will be in Helios."}
         return r
+
+    def ears(self) -> None:
+        """Is Ari paused right now? (asked once at start; then ari.listening events say)."""
+        try:
+            d = json.loads(self._req("GET", "/ari/listening", None, timeout=5))
+            EARS["until"] = 0.0 if d.get("listening", True) else float(d.get("until") or 1e13)
+        except Exception:
+            pass
 
     def vocabulary(self) -> None:
         """The names to expect and the usual mishearings (argus.vocab), into VOCAB. Best effort."""
@@ -350,6 +368,22 @@ def chime() -> None:
     t = np.linspace(0, 0.12, int(RATE * 0.12), endpoint=False)
     tone = np.concatenate([np.sin(2 * np.pi * 880 * t), np.sin(2 * np.pi * 1320 * t)]) * 0.2
     sd.play(tone.astype(np.float32), RATE, blocking=True)
+
+
+EARS: dict = {"until": 0.0}  # paused until then (Helios's pause button, the voice training page)
+
+
+def paused() -> bool:
+    return EARS["until"] > time.time()
+
+
+def hush_from(evs: list[dict]) -> None:
+    """Pause / resume from ari.listening events (the newest wins)."""
+    for e in evs:
+        if e.get("kind") == "ari.listening":
+            d = e.get("data") or {}
+            EARS["until"] = 0.0 if d.get("listening", True) else float(d.get("until") or 1e13)
+            log.info("listening" if not paused() else "listening paused")
 
 
 VOCAB: dict = {"prompt": "", "heard_as": {}}  # filled from Argus (GET /ari/vocabulary), refreshed every 10 min
@@ -438,12 +472,13 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device) -> i
                     client.vocabulary()
                     voc_at[0] = time.monotonic()
                 last = time.monotonic()
-            evs, seq = client.wakes(seq, "ari.wake,ari.notice")
+            evs, seq = client.wakes(seq, "ari.wake,ari.notice,ari.listening")
+            hush_from(evs)
             if any(e.get("kind") == "ari.wake" for e in evs):
                 log.info("talk button")
                 talk.wake()
             notes = [e for e in evs if e.get("kind") == "ari.notice"]
-            if notes and cfg.ari.speak_up and speak_hours_ok(cfg.ari.speak_hours, time.localtime()) \
+            if notes and cfg.ari.speak_up and not paused() and speak_hours_ok(cfg.ari.speak_hours, time.localtime()) \
                     and idle_seconds() < 300 and time.monotonic() - spoke_up[0] > 600 and not player.busy \
                     and not talk.in_conversation:
                 d = notes[-1].get("data") or {}
@@ -466,6 +501,11 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device) -> i
             if time.monotonic() - since > 60:
                 log.info("microphone level", extra={"loudest": round(loudest, 4)})
                 loudest, since = 0.0, time.monotonic()
+            if paused():  # the pause button / voice training: hear nothing, say nothing new
+                if talk.turns.talking or talk.in_conversation:
+                    talk.turns.reset()
+                    talk.in_talk_until = 0.0
+                continue
             voice = vad(frame)
             if not gate(frame, player.busy and not talk.paused_for_barge):
                 voice = 0.0
@@ -562,10 +602,12 @@ def main(argv: list[str] | None = None) -> int:
         quiet_until[0] = time.monotonic() + 0.2
 
     client.vocabulary()
+    client.ears()
     log.info("loading Whisper", extra={"wake": cfg.ari.listen_wake_model, "command": cfg.ari.whisper_model,
                                        "expects": VOCAB.get("prompt", "")[:120]})
     wake_t = whisper(cfg.ari.listen_wake_model)
-    cmd_t = whisper(cfg.ari.whisper_model) if cfg.ari.whisper_model != cfg.ari.listen_wake_model else wake_t
+    heard_with = str(VOCAB.get("whisper_model") or cfg.ari.whisper_model)  # Helios > Settings (a trained model)
+    cmd_t = whisper(heard_with) if heard_with != cfg.ari.listen_wake_model else wake_t
     device = int(args.device) if args.device and args.device.isdigit() else args.device
     if cfg.ari.live:
         return live(cfg, client, wake_t, cmd_t, device)
@@ -583,13 +625,14 @@ def main(argv: list[str] | None = None) -> int:
             if time.monotonic() - last > 30:
                 client.here()
                 last = time.monotonic()
-            evs, seq = client.wakes(seq, "ari.wake,ari.notice")
+            evs, seq = client.wakes(seq, "ari.wake,ari.notice,ari.listening")
+            hush_from(evs)
             if any(e.get("kind") == "ari.wake" for e in evs):
                 log.info("talk button")
                 listener.wake()
                 quiet_until[0] = time.monotonic() + 0.2
             notes = [e for e in evs if e.get("kind") == "ari.notice"]
-            if notes and cfg.ari.speak_up and speak_hours_ok(cfg.ari.speak_hours, time.localtime()) \
+            if notes and cfg.ari.speak_up and not paused() and speak_hours_ok(cfg.ari.speak_hours, time.localtime()) \
                     and idle_seconds() < 300 and time.monotonic() - spoke_up[0] > 600 and not talking["until"]:
                 d = notes[-1].get("data") or {}
                 spoke_up[0] = time.monotonic()
@@ -616,6 +659,9 @@ def main(argv: list[str] | None = None) -> int:
             if time.monotonic() - since > 60:  # once a minute: is the microphone hearing anything at all?
                 log.info("microphone level", extra={"loudest": round(loudest, 4), "background": round(seg.floor, 4)})
                 loudest, since = 0.0, time.monotonic()
+            if paused():
+                seg = Segmenter(floor=seg.floor)
+                continue
             if talking["until"] and at < talking["until"]:  # Ari is talking: listen only for "stop" / "Hey Ari"
                 seg = Segmenter(floor=seg.floor)
                 c = echo_seg.feed(block)
