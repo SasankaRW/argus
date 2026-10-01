@@ -9,6 +9,9 @@ Local first: the model (T1, then T2) chooses one step at a time: a tool, or the 
 things always go through a tool (your files, Argus's data); general knowledge it answers itself when sure. When it
 needs something current or isn't sure, Claude answers with web search (read only), within the daily cap.
 
+A tool marked "private" (the screen, the clipboard) keeps the chat local: after it, Claude is not asked, and a
+web search gets only the question.
+
 A tool marked "asks first" (closing apps, typing, changing files) is not run: Ari asks, and your yes runs it.
 """
 
@@ -83,7 +86,7 @@ def spoken(text: str, limit: int = 600) -> str:
     t = re.sub(r"https?://\S+", "", t)
     t = re.sub(r"(?m)^\s*(?:[-*\u2022]|\d+[.)])\s+", "", t)       # bullets and numbered lists
     t = re.sub(r"(?m)^\s*#+\s*", "", t)
-    t = re.sub(r"[*_`]{1,3}([^*_`]+)[*_`]{1,3}", r"\1", t)
+    t = re.sub(r"(?<!\w)(\*{1,3}|`+|_{1,3})(?=\S)(.+?)(?<=\S)\1(?!\w)", r"\2", t)  # **bold**, `code`; not snake_case
     t = re.sub(r"\s*\n+\s*", " ", t)
     t = re.sub(r"\s{2,}", " ", t).strip()
     t = re.sub(r"\s+([.,!?])", r"\1", t)
@@ -129,13 +132,17 @@ def think(ctx: Context):
             return "too long: 1-3 short sentences"
         return None
 
+    def private() -> bool:
+        """Something private (the screen, the clipboard) is in this chat: Claude never sees it."""
+        return any(d.get("private") for d in done) or any(h.get("private") for h in base["conversation_so_far"])
+
     for i in range(MAX_STEPS):
         def decide(i=i) -> dict:
             task = {**base, "results_so_far": done} if done else dict(base)
             if i == MAX_STEPS - 1:
                 task["last_step"] = True
             s = ctx.llm(PLAYBOOK, json.dumps(task, ensure_ascii=False), schema=Step, check=check,
-                        tiers=ctx.local_tiers() or None, claude_last=True)
+                        tiers=ctx.local_tiers() or None, claude_last=not private())
             return {**s.model_dump(), "tier": ctx.last_answer.tier}
 
         try:
@@ -150,18 +157,23 @@ def think(ctx: Context):
                 ask = s["reply"].strip() or f"Shall I {t['does'][0].lower()}{t['does'][1:].rstrip('.')}?"
                 return {"reply": ask, "pending": {"kind": "tool", "name": s["tool"], "args": s["args"]}, "used": done}
 
-            def use(s=s) -> dict:
+            def use(s=s, t=t) -> dict:
+                mark = {"private": True} if t.get("private") else {}
                 try:
-                    return {"tool": s["tool"], "args": s["args"], "result": _clip(ctx.tool(s["tool"], s["args"]))}
+                    return {"tool": s["tool"], "args": s["args"], "result": _clip(ctx.tool(s["tool"], s["args"])),
+                            **mark}
                 except ToolFailed as e:
-                    return {"tool": s["tool"], "args": s["args"], "error": str(e)[:300]}
+                    return {"tool": s["tool"], "args": s["args"], "error": str(e)[:300], **mark}
 
             done.append(ctx.step(f"tool {i + 1}: {s['tool']}", use))
             continue
         if s["need_web"]:
             def web() -> dict:
-                ctx.claude(WEB, json.dumps({"question": text, "conversation_so_far": base["conversation_so_far"],
-                                            "found_locally": done}, ensure_ascii=False), web=True)
+                priv = private()  # then only the question goes out, not the chat or what the tools found
+                ctx.claude(WEB, json.dumps({"question": text,
+                                            "conversation_so_far": [] if priv else base["conversation_so_far"],
+                                            "found_locally": [d for d in done if not d.get("private")]},
+                                           ensure_ascii=False), web=True)
                 return {"reply": str(ctx.last_answer.value).strip()[:1200], "tier": ctx.last_answer.tier}
 
             try:

@@ -256,16 +256,23 @@ def history(conn: sqlite3.Connection, conv: str) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = [{"role": t["role"], "text": t["text"], "job_id": t.get("job_id")}
                                  for t in turns(conn, conv, HISTORY) if t["text"]]
     last = next((t for t in reversed(out) if t["role"] == "ari" and t["job_id"]), None)
-    if last is not None:
-        row = conn.execute("SELECT result FROM jobs WHERE id = ?", (last["job_id"],)).fetchone()
+    for t in out:
+        if t["role"] != "ari" or not t["job_id"]:
+            continue
+        row = conn.execute("SELECT result FROM jobs WHERE id = ?", (t["job_id"],)).fetchone()
         try:
             used = (json.loads(row[0]) or {}).get("used") if row and row[0] else None
         except (ValueError, AttributeError):
             used = None
-        if used:
-            found = [{k: u[k] for k in ("tool", "args", "result", "error") if k in u} for u in used[-3:]]
+        if not isinstance(used, list):
+            continue
+        if any(isinstance(u, dict) and u.get("private") for u in used):
+            t["private"] = True  # the screen or clipboard was in this chat: Ari's thinking stays local
+        public = [u for u in used if isinstance(u, dict) and not u.get("private")]
+        if t is last and public:
+            found = [{k: u[k] for k in ("tool", "args", "result", "error") if k in u} for u in public[-3:]]
             s = json.dumps(found, ensure_ascii=False, default=str)
-            last["found"] = found if len(s) <= 1200 else s[:1200] + "…"
+            t["found"] = found if len(s) <= 1200 else s[:1200] + "…"
     for t in out:
         t.pop("job_id")
     return out

@@ -72,6 +72,14 @@ def test_what_counts():
     assert wt.verdict(c, wt.read(page, c)) == "Keyboard changed: Back in stock"
 
 
+def test_a_name_that_turns_local_on_connect_is_refused(monkeypatch):
+    """DNS rebinding: the name checks out as public, but the connection lands on this machine."""
+    page = Page()
+    h = Http("watchers", ["*"], lambda *a: None, is_public=lambda host: True)
+    with pytest.raises(PermissionDenied, match="not a public address"):
+        h.request("GET", page.url)
+
+
 def test_star_means_public_websites_only():
     h = Http("watchers", ["*"], lambda *a: None, is_public=lambda host: host == "shop.example.com")
     assert h._check("https://shop.example.com/x")
@@ -107,6 +115,7 @@ class Page:
 
 def test_watch_by_talking_then_the_check_tells_the_phone(tmp_path, monkeypatch):
     monkeypatch.setattr(wplugins, "public_host", lambda host: True)  # the test page is local
+    monkeypatch.setattr(wplugins, "public_address", lambda ip: True)
     page = Page()
     (tmp_path / "argus.yaml").write_text(
         "logging:\n  file: null\njobs:\n  watchdog_interval_seconds: 0.1\n"

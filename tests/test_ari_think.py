@@ -25,6 +25,8 @@ ari:
     - {name: shout, description: Say something loudly on the PC., workflow: say,
        input: {text: {type: string, description: what to say}}, required: [text]}
     - {name: wipe, description: Delete everything., workflow: say, risky: true}
+    - {name: peek, description: Look at the screen., workflow: say, private: true,
+       input: {text: {type: string, description: what}}}
 """
 
 PLUGIN_PY = """from argus.worker import workflow
@@ -121,6 +123,7 @@ def test_replies_are_made_fit_to_be_read_aloud():
     from argus.worker.think import spoken
     md = "**Done.** Here's what I found:\n- one [note](https://x.y/z)\n- `two`\n\n## Next\nSee https://a.b ."
     assert spoken(md) == "Done. Here's what I found: one note two Next See."
+    assert spoken("Opened **my_notes_file.txt**, done_ok.") == "Opened my_notes_file.txt, done_ok."
     long = "Short one. " * 80
     out = spoken(long, 100)
     assert len(out) <= 100 and out.endswith(".")
@@ -158,3 +161,25 @@ def test_a_follow_up_sees_what_the_tools_found_last_time(tmp_path):
         prev = asked["conversation_so_far"][-1]
         assert prev["text"] == "Found it." and prev["found"][0]["result"]["said"] == "CV.PDF"
         assert "job_id" not in prev
+
+
+def test_private_tools_never_reach_claude(tmp_path):
+    cmd = fake_claude(tmp_path, result="Nothing in the news about it.")
+    extra = "    T3: {provider: claude}\n  chain: [T1, T3]\n" + f"claude:\n  command: {json.dumps(cmd)}\n"
+    replies = {"qwen2.5-coder:7b": [{"tool": "peek", "args": {"text": "secret invoice 4411"}}, {"need_web": True},
+                                    {"reply": ""}, {"reply": ""}, {"reply": ""}]}
+    with FakeOllama(replies) as ol, Server(make(tmp_path, extra).open()) as srv:
+        cl = client(srv.url)
+        assert {t["name"] for t in cl.get("/tools")} >= {"peek"}
+        w = Worker(cl, "pc", capabilities=["desktop", "session"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        r = cl.post("/ari", {"text": "what's on my screen and is it in the news?"})
+        last = settle(cl, w, r["conv"], n=12)
+        assert last["text"] == "Nothing in the news about it."
+        sent = (tmp_path / "claude_stdin.txt").read_text()
+        assert "news" in sent and "SECRET INVOICE" not in sent.upper()
+        # the next turn in this chat stays local: a bad local answer is not handed to Claude
+        (tmp_path / "claude_stdin.txt").unlink()
+        r2 = cl.post("/ari", {"text": "say more", "conv": r["conv"]})
+        settle(cl, w, r2["conv"], n=12)
+        assert not (tmp_path / "claude_stdin.txt").exists()

@@ -29,14 +29,30 @@ UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) argus-watchers/1.
 
 # ------------------------------------------------------------------ reading a page
 
-_DROP = re.compile(r"<(script|style|noscript|svg|template|head)\b.*?</\1\s*>", re.S | re.I)
+_OPEN = re.compile(r"<(script|style|noscript|svg|template|head)\b", re.I)
+
+
+def _drop_hidden(markup: str) -> str:
+    """Remove script, style and the like, in one pass (a regex with .*? goes quadratic on unclosed tags)."""
+    out, i, low = [], 0, markup.lower()
+    while True:
+        m = _OPEN.search(markup, i)
+        if not m:
+            out.append(markup[i:])
+            return " ".join(out)
+        out.append(markup[i:m.start()])
+        end = low.find(f"</{m.group(1).lower()}", m.end())
+        if end < 0:
+            return " ".join(out)  # never closed: the rest is hidden
+        close = low.find(">", end)
+        i = len(markup) if close < 0 else close + 1
 _TAG = re.compile(r"<[^>]+>")
 _BLOCK = re.compile(r"</?(p|div|li|tr|h[1-6]|br|section|article|td|th|ul|ol|table)\b[^>]*>", re.I)
 
 
 def page_text(markup: str) -> str:
     """The words a person sees, one block per line."""
-    t = _DROP.sub(" ", markup)
+    t = _drop_hidden(markup)
     t = _BLOCK.sub("\n", t)
     t = html.unescape(_TAG.sub(" ", t))
     lines = (" ".join(x.split()) for x in t.splitlines())
@@ -285,8 +301,7 @@ def check(ctx: Context):
     told, problems = [], []
     for name in todo:
         def one(name=name):
-            all_ = watches(ctx)
-            w = all_.get(name)
+            w = watches(ctx).get(name)
             if w is None:  # stopped meanwhile
                 return None
             try:
@@ -296,12 +311,17 @@ def check(ctx: Context):
                 now, problem = None, str(e)[:200]
             msg = verdict(w, now) if now else None
             if now and now["found"]:
+                before = w.get("last") or {}
+                if w["kind"] == "price" and "price" not in now and "price" in before:
+                    now = {**now, "price": before["price"], "cur": before.get("cur", "")}  # a read without a price
                 w["last"] = now
                 if msg:
                     w["changed_at"] = time.time()
             w["checked_at"], w["problem"] = time.time(), problem
-            all_[name] = w
-            ctx.store.set("watches", all_)
+            fresh = watches(ctx)  # read again: a watch added or stopped while the page loaded stays that way
+            if name in fresh:
+                fresh[name] = w
+                ctx.store.set("watches", fresh)
             if msg:
                 ctx.notify("Watcher: " + w["name"], msg, priority="high", tags=["eyes"], link=w["url"])
             return {"told": msg, "problem": problem}

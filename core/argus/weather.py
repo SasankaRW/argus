@@ -8,6 +8,7 @@ and coordinates leave the machine. If the forecast can't be reached the brief go
 from __future__ import annotations
 
 import json
+import time
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
@@ -39,6 +40,7 @@ class Weather:
     def __init__(self, fetch: Fetch = fetch_json):
         self.fetch = fetch
         self._places: dict[str, tuple[float, float, str]] = {}
+        self._today: dict[tuple[str, str], dict[str, Any] | None] = {}
 
     def place(self, name: str) -> tuple[float, float, str] | None:
         """(lat, lon, name as Open-Meteo spells it), or None when it knows no such place."""
@@ -57,7 +59,14 @@ class Weather:
         return self._places[key]
 
     def today(self, name: str) -> dict[str, Any] | None:
-        """Today's low, high, chance of rain and sky; None when the place is unknown."""
+        """Today's low, high, chance of rain and sky; None when the place is unknown. Kept for an hour, so
+        "good morning" answers at once after the first time."""
+        key = (name.strip().lower(), time.strftime("%Y-%m-%d %H"))
+        if key not in self._today:
+            self._today = {key: self._fetch_today(name)}
+        return self._today[key]
+
+    def _fetch_today(self, name: str) -> dict[str, Any] | None:
         p = self.place(name)
         if p is None:
             return None

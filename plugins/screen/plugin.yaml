@@ -21,10 +21,12 @@ ari:
     - name: look_at_screen
       description: "Look at the PC's screen right now and answer about it (\"what's on my screen?\", \"what does this error say?\"). Nothing is saved."
       workflow: look
+      private: true
       input: {question: {type: string, description: "what the user wants to know about the screen (default: what's on it)"}}
     - name: summarise_clipboard
       description: "Sum up what the user copied (text, or a picture): \"summarise what I copied\", \"what are the action items in this?\"."
       workflow: clipboard
+      private: true
       input: {how: {type: string, description: "what kind of summary (default: the gist in 2-3 sentences)"}}
 
 helios:

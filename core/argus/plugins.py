@@ -169,6 +169,7 @@ class AriTool(_M):
     input: dict[str, Any] = Field(default_factory=dict)  # JSON schema properties of the arguments
     required: list[str] = Field(default_factory=list)
     risky: bool = False  # true: Ari asks you first (closing apps, typing, changing files)
+    private: bool = False  # true: what it returns stays local (your screen, clipboard): never sent to Claude
 
 
 class AriInfo(_M):

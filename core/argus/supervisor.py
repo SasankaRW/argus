@@ -203,7 +203,7 @@ def main(argv: list[str] | None = None) -> int:
                         log.info("new code; waiting for running jobs", extra={"commit": now_commit[:10]})
                     else:
                         log.info("new code; restarting", extra={"from": commit[:10], "to": now_commit[:10]})
-                        if deps_hash() != deps:
+                        if deps_hash() != deps and not args.desk_only:  # the boot supervisor updates packages
                             log.info("dependencies changed; updating packages")
                             try:
                                 r = subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-e",

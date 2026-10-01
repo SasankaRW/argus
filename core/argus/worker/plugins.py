@@ -261,7 +261,46 @@ def public_host(host: str) -> bool:
     except (OSError, UnicodeError):
         return False
     addrs = {i[4][0].split("%")[0] for i in infos}
-    return bool(addrs) and all(ipaddress.ip_address(a).is_global for a in addrs)
+    return bool(addrs) and all(public_address(a) for a in addrs)
+
+
+def _checked_connections(allowed):
+    """urllib handlers whose connections check the address they actually reached (so a name that resolves to a
+    public address for the check and to the LAN for the connect, DNS rebinding, is still refused)."""
+    import http.client
+
+    def verify(conn):
+        peer = conn.sock.getpeername()[0].split("%")[0]
+        if not allowed(conn.host, peer):
+            conn.close()
+            raise PermissionDenied(f"{conn.host} led to {peer}, which is not a public address")
+
+    class Conn(http.client.HTTPConnection):
+        def connect(self):
+            super().connect()
+            verify(self)
+
+    class SConn(http.client.HTTPSConnection):
+        def connect(self):
+            super().connect()
+            verify(self)
+
+    class H(urllib.request.HTTPHandler):
+        def http_open(self, req):
+            return self.do_open(Conn, req)
+
+    class HS(urllib.request.HTTPSHandler):
+        def https_open(self, req):
+            return self.do_open(SConn, req, context=self._context)
+
+    return H(), HS()
+
+
+def public_address(ip: str) -> bool:
+    try:
+        return ipaddress.ip_address(ip).is_global
+    except ValueError:
+        return False
 
 
 class Http:
@@ -283,7 +322,13 @@ class Http:
                 http._check(newurl)  # a redirect must be allowed too
                 return super().redirect_request(req, fp, code, msg, headers, newurl)
 
-        self._opener = urllib.request.build_opener(Redirects)
+        handlers: list[Any] = [Redirects]
+        if self.any_public:
+            def allowed(host: str, peer: str) -> bool:
+                return host.lower() in self.hosts or public_address(peer)
+
+            handlers += _checked_connections(allowed)
+        self._opener = urllib.request.build_opener(*handlers)
 
     def _check(self, url: str) -> str:
         u = urllib.parse.urlparse(url)
