@@ -5,6 +5,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Fix: voice training (and Whisper on the worker) find CUDA's cuBLAS / cuDNN in PyTorch's CUDA build on Windows, and fall back to the CPU instead of failing.
 - **Pause listening:** a button in Helios (Ari chat and Ari settings) stops Ari listening everywhere, the PC's
   microphone and every Helios, until you resume (`POST /ari/listening`); the voice training page pauses it by
   itself while it's open, so Ari doesn't answer the sentences you read.
