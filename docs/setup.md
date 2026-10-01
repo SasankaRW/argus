@@ -249,6 +249,12 @@ daily cap.
   fallback. Set it up once: `cd deploy\searxng`, put a random `secret_key` in settings.yml, `docker compose up -d`
   (it listens on 127.0.0.1:8888 only). Outbound only; pages are public websites only (never the PC, LAN or
   tailnet); what a page says is untrusted, so after reading the web, anything that does something asks you first.
+- **Read later** (in `web`): "save this for later" or the phone's share menu: the page's text and a short local
+  summary go to Documents/read-later (searchable); "what did I save about Kandy?".
+- **File tools** (`file-tools`): "merge these PDFs", "make a PDF of these photos", "pages 2-5 of the contract",
+  "make smaller copies of these pictures". New files go next to the originals; nothing is changed; Ari asks first.
+- **Weekly review**: on Sundays the evening summary has your week, and Ari suggests scheduling what you keep doing
+  by hand ("You ran Sort Downloads 4 times, mostly on Mondays around 9 am. Say ..."); "how was my week?" anytime.
 - **Watchers** (`watchers`): "watch this page", "tell me when the RTX 5080 on <page> is under 280,000", "what am I
   watching?", "stop watching the RTX". Checked every 3 hours (or **Check my watches now**); the phone hears when a
   page changes or a price drops or goes under yours, with the page as the link. Name a product ("part") to watch

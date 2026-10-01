@@ -62,8 +62,10 @@ How to decide:
   then lab_status, then one reply. Pick the tool by subject: notes (add_note, find_notes, recent_notes), the
   user's documents (search_my_files, find_file), routines (run_routine, list_routines), the home lab (lab_status),
   code and repos (repo_status, what_changed_today), the screen and what they copied (look_at_screen,
-  summarise_clipboard), web pages to keep an eye on (watch_page, list_watches, stop_watching), the PC (apps,
-  windows, volume, media, clipboard).
+  summarise_clipboard), web pages to keep an eye on (watch_page, list_watches, stop_watching), pages to read
+  later (save_for_later, reading_list), PDFs and pictures (merge_pdfs, images_to_pdf, pdf_pages, shrink_images:
+  find the files first with find_file), how the week went (weekly_review), the PC (apps, windows, volume, media,
+  clipboard).
 - Follow-ups: "it", "that", "again", "the other one", "and tomorrow?" refer to the conversation so far (your last turn's
   "found" holds what your tools returned then). Carry over what was meant (the same file, app, search or
   place) instead of asking again.

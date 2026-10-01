@@ -168,3 +168,38 @@ def test_held_messages_come_with_the_evening_summary_once(tmp_path):
     first, second = run(a.store.write(fn))
     assert "Also: Filed: CEB bill." in first and "Filed" not in second
     a.store.close()
+
+
+def test_the_week_and_what_to_schedule(tmp_path):
+    from argus.daily import repeats, week_review
+    from argus.events import insert_event
+
+    a = make(tmp_path).open()
+    now = datetime(2026, 10, 4, 20, 0).timestamp()  # a Sunday evening
+    mondays = [datetime(2026, 9, d, 9, 10).timestamp() for d in (7, 14, 21, 28)]
+    ids = [run(a.jobs.enqueue("downloads-organizer", "sort"))[0] for _ in mondays]
+    sched, _ = run(a.jobs.enqueue("screenshot-renamer", "sweep"))
+
+    def fn(c):
+        for jid, at in zip(ids, mondays, strict=True):
+            c.execute("UPDATE jobs SET state = 'succeeded', finished_at = ? WHERE id = ?", (at + 60, jid))
+            c.execute("UPDATE events SET from_component = 'helios', at = ? WHERE job_id = ? AND kind = 'job.queued'",
+                      (at, jid))
+        insert_event(c, now - 3600, "job.queued", job_id=sched, src="scheduler", dst="screenshot-renamer")
+        labels = {"run:downloads-organizer:sort": "Sort Downloads now"}
+        return repeats(c, now, labels), week_review(c, now, labels)
+
+    sugg, week = run(a.store.write(fn))
+    assert sugg[0]["text"] == "You ran Sort Downloads now by hand 4 times in 4 weeks, mostly on Mondays around 9 am."
+    assert sugg[0]["say"] == "sort downloads every Monday at 9 am"
+    assert week["text"].startswith("This week: 1 job done (downloads-organizer 1)")
+    assert 'Say "sort downloads every Monday at 9 am" to Ari' in week["text"]
+
+    def scheduled(c):
+        c.execute("INSERT INTO schedules (id, plugin, workflow, cron, spec, enabled, next_run_at, created_at,"
+                  " updated_at, owner, label) VALUES ('s1','downloads-organizer','sort','0 9 * * 1','{}',1,?,?,?,"
+                  "'you','x')", (now, now, now))
+        return repeats(c, now)
+
+    assert run(a.store.write(scheduled)) == []  # already scheduled: nothing to suggest
+    a.store.close()

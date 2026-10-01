@@ -76,7 +76,63 @@ def time_saved(conn: sqlite3.Connection, now: float, days: int = 7) -> dict[str,
             "by_day": dict(sorted(by_day.items()))}
 
 
-def compose_summary(conn: sqlite3.Connection, now: float) -> tuple[str, str]:
+DAYS = ["Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays", "Sundays"]
+SYSTEM = ("ari", "ask", "guidance", "demo", "health", "backup")
+
+
+def repeats(conn: sqlite3.Connection, now: float, labels: dict[str, str] | None = None,
+            days: int = 28) -> list[dict[str, Any]]:
+    """Things you started by hand again and again (a plugin button, 3+ times in 4 weeks) that have no schedule:
+    Ari's suggestions to schedule them, with the usual day and hour."""
+    rows = conn.execute(
+        "SELECT e.at, j.plugin, j.workflow FROM events e JOIN jobs j ON j.id = e.job_id"
+        " WHERE e.kind = 'job.queued' AND e.from_component IN ('helios', 'phone', 'ask')"
+        f" AND e.at >= ? AND j.plugin NOT IN ({','.join('?' * len(SYSTEM))})",
+        (now - days * 86400, *SYSTEM)).fetchall()
+    scheduled = {(r[0], r[1]) for r in conn.execute("SELECT plugin, workflow FROM schedules WHERE enabled = 1")}
+    by: dict[tuple[str, str], list[float]] = {}
+    for at, plugin, wf in rows:
+        by.setdefault((plugin, wf), []).append(at)
+    out = []
+    for (plugin, wf), ats in by.items():
+        if len(ats) < 3 or (plugin, wf) in scheduled:
+            continue
+        ds = [datetime.fromtimestamp(a) for a in ats]
+        wd = max(range(7), key=lambda d: sum(x.weekday() == d for x in ds))
+        same_day = sum(x.weekday() == wd for x in ds)
+        hours = sorted(x.hour for x in ds)
+        hour = hours[len(hours) // 2]
+        label = (labels or {}).get(f"run:{plugin}:{wf}") or f"{plugin} {wf}"
+        when = f"every {DAYS[wd][:-1]} at {clock(hour, 0)}" if same_day >= 2 else f"every day at {clock(hour, 0)}"
+        out.append({"plugin": plugin, "workflow": wf, "label": label, "times": len(ats), "when": when,
+                    "say": f"{label.lower().removesuffix(' now')} {when}",
+                    "text": f"You ran {label} by hand {len(ats)} times in 4 weeks"
+                            + (f", mostly on {DAYS[wd]}" if same_day >= 2 else "") + f" around {clock(hour, 0)}."})
+    return sorted(out, key=lambda x: -x["times"])[:3]
+
+
+def week_review(conn: sqlite3.Connection, now: float, labels: dict[str, str] | None = None) -> dict[str, Any]:
+    """The last 7 days: what ran, what failed, the time saved, and what Ari suggests scheduling."""
+    since = now - 7 * 86400
+    done = conn.execute("SELECT plugin, COUNT(*) FROM jobs WHERE state = 'succeeded' AND finished_at >= ?"
+                        f" AND plugin NOT IN ({','.join('?' * len(SYSTEM))}) GROUP BY plugin ORDER BY 2 DESC",
+                        (since, *SYSTEM)).fetchall()
+    dead = conn.execute("SELECT plugin, workflow FROM jobs WHERE state = 'dead' AND finished_at >= ?",
+                        (since,)).fetchall()
+    saved = time_saved(conn, now, 7)
+    n = sum(r[1] for r in done)
+    lines = [f"This week: {n} job{'s' if n != 1 else ''} done"
+             + (" (" + ", ".join(f"{r[0]} {r[1]}" for r in done[:4]) + ")" if done else "")
+             + (f", about {saved['text']} saved." if saved["seconds"] else ".")]
+    if dead:
+        lines.append(f"{len(dead)} failed: " + ", ".join(sorted({_name(r) for r in dead}))[:200] + ".")
+    sugg = repeats(conn, now, labels)
+    for s in sugg:
+        lines.append(f"{s['text']} Say \"{s['say']}\" to Ari to schedule it.")
+    return {"text": "\n".join(lines), "jobs": n, "failed": len(dead), "saved": saved["text"], "suggestions": sugg}
+
+
+def compose_summary(conn: sqlite3.Connection, now: float, labels: dict[str, str] | None = None) -> tuple[str, str]:
     """(title, text) of the evening summary: today's work, the time it saved, what failed or waits."""
     start = datetime.fromtimestamp(now).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
     done = conn.execute("SELECT plugin, COUNT(*) FROM jobs WHERE state = 'succeeded' AND finished_at >= ?"
@@ -104,9 +160,8 @@ def compose_summary(conn: sqlite3.Connection, now: float) -> tuple[str, str]:
         lines.append("Also: " + "; ".join(f"{r['title']}" for r in held[:8]) + ("…" if len(held) > 8 else "") + ".")
         conn.execute(f"UPDATE held_notes SET told_at = ? WHERE id IN ({','.join('?' * len(held))})",
                      (now, *[r["id"] for r in held]))
-    if datetime.fromtimestamp(now).weekday() == 6:  # Sunday: the week too
-        week = time_saved(conn, now, 7)
-        lines.append(f"This week: about {week['text']} saved.")
+    if datetime.fromtimestamp(now).weekday() == 6:  # Sunday: the week too, and what Ari suggests scheduling
+        lines.append(week_review(conn, now, labels)["text"])
     return "Today with Argus", "\n".join(lines)
 
 

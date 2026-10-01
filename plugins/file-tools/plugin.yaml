@@ -1,0 +1,50 @@
+id: file-tools
+name: File tools
+version: 1.0.0
+kind: workflow
+argus_api: ">=1.0 <2.0"
+description: Lets Ari merge PDFs, turn pictures into a PDF, pull pages out of a PDF and make smaller copies of pictures. New files go next to the originals; nothing is changed or deleted.
+runs_on: desktop
+
+workflows: [merge_pdfs, images_to_pdf, pdf_pages, shrink_images]
+
+permissions:
+  files:
+    read: ["~/Documents", "~/Downloads", "~/Desktop", "~/Pictures", "~/OneDrive/Documents", "~/OneDrive/Desktop"]
+    write: ["~/Documents", "~/Downloads", "~/Desktop", "~/Pictures", "~/OneDrive/Documents", "~/OneDrive/Desktop"]
+    delete: none
+  models: []
+
+ari:
+  tools:
+    - name: merge_pdfs
+      description: Join PDFs into one, in the order given. The new PDF goes next to the first one.
+      workflow: merge_pdfs
+      risky: true
+      input: {files: {type: string, description: "the PDFs' full paths, one per line or separated by ;"}}
+      required: [files]
+    - name: images_to_pdf
+      description: Put pictures (JPG/PNG) into one PDF, a page each, in the order given.
+      workflow: images_to_pdf
+      risky: true
+      input: {files: {type: string, description: "the pictures' full paths, one per line or separated by ;"}}
+      required: [files]
+    - name: pdf_pages
+      description: Copy some pages of a PDF into a new PDF ("pages 2-5 of the contract").
+      workflow: pdf_pages
+      risky: true
+      input:
+        file: {type: string, description: the PDF's full path}
+        pages: {type: string, description: "pages like 2-5 or 1,3,7"}
+      required: [file, pages]
+    - name: shrink_images
+      description: Make smaller copies of pictures (for email or upload); the originals stay as they are.
+      workflow: shrink_images
+      risky: true
+      input:
+        files: {type: string, description: "the pictures' full paths, one per line or separated by ;"}
+        max_side: {type: integer, description: "longest side in pixels (default 1600)"}
+      required: [files]
+
+helios:
+  node: {label: File tools, group: files}
