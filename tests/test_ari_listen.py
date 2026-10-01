@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from argus.ari_listen import BLOCK, RATE, Listener, Segmenter, wake_rest
+from argus.ari_listen import BLOCK, RATE, Listener, Segmenter, barge, notice_text, speak_hours_ok, wake_rest
 
 
 def blocks(ms: int, level: float) -> list:
@@ -78,3 +78,59 @@ def test_other_talk_is_ignored_and_long_talk_is_not_transcribed():
     lis, t, sent, spoken, chimes = make(["so then he said"])
     assert lis.clip(clip()) is None and sent == [] and chimes == []
     assert lis.clip(clip(6000)) is None  # longer than a wake phrase: not even written down
+
+
+def test_follow_up_without_the_wake_phrase():
+    lis, t, sent, spoken, _ = make(["Hey Ari, weather in Kandy?", "and tomorrow?", "and next week?"],
+                                   [{"reply": "Showers."}, {"reply": "Sunny."}, {"reply": "x"}])
+    lis.speak = lambda text: (spoken.append(text), 2.0)[1]  # takes 2 s to say
+    lis.clip(clip())
+    t[0] = 7.5  # within 2 s of speaking + 6 s
+    lis.clip(clip())
+    assert sent == ["weather in Kandy", "and tomorrow?"]
+    t[0] = 30.0  # long after: needs "Hey Ari" again ("and next week?" has none)
+    lis.clip(clip())
+    assert sent == ["weather in Kandy", "and tomorrow?"]
+
+
+def test_stop_or_a_new_question_while_ari_talks():
+    assert barge("Stop.", "It's 29 degrees in Kandy") == ("stop", "")
+    assert barge("okay wait", "...") == ("stop", "")
+    assert barge("Hey Ari, what time is it", "It's 29 degrees") == ("wake", "what time is it")
+    assert barge("29 degrees in Kandy", "It's 29 degrees in Kandy today") is None  # its own voice
+    assert barge("the kettle is boiling", "...") is None
+    lis, t, sent, spoken, chimes = make(["Hey Ari, what time is it?"], [{"reply": "It's 9."}])
+    stopped = []
+    lis.stop_speaking = lambda: stopped.append(1)
+    assert lis.interrupt(clip(), "It's 29 degrees in Kandy") == "what time is it"
+    assert stopped == [1] and sent == ["what time is it"]
+
+
+def test_speaking_up_hours_and_words():
+    import time as _t
+    at = lambda h, m: _t.struct_time((2026, 10, 1, h, m, 0, 3, 274, 0))  # noqa: E731
+    assert speak_hours_ok("08:00-22:00", at(9, 0)) and not speak_hours_ok("08:00-22:00", at(23, 30))
+    assert speak_hours_ok("22:00-07:00", at(23, 0)) and not speak_hours_ok("22:00-07:00", at(12, 0))
+    assert notice_text("Watcher: RTX 5080", "RTX 5080 is LKR 279,000, under your LKR 280,000.") == \
+        "Heads up: Watcher: RTX 5080. RTX 5080 is LKR 279,000, under your LKR 280,000."
+    assert notice_text("Argus backup failed", "disk full") == "Heads up: Argus backup failed. disk full"
+
+
+def test_important_phone_messages_become_notices(tmp_path):
+    import json
+
+    from argus.config import load_config
+    from argus.context import Argus
+    from argus.outbox import add_message, ntfy_message
+    from conftest import run as arun
+
+    (tmp_path / "argus.yaml").write_text("logging:\n  file: null\n", encoding="utf-8")
+    a = Argus(load_config(tmp_path / "argus.yaml")).open()
+
+    def fn(c):
+        add_message(c, 1.0, "ntfy", ntfy_message("Evening", "fine", priority="low"))
+        add_message(c, 2.0, "ntfy", ntfy_message("Argus backup failed", "disk full", priority="high"))
+        return [json.loads(r[0]) for r in c.execute("SELECT data FROM events WHERE kind = 'ari.notice'")]
+
+    assert arun(a.store.write(fn)) == [{"title": "Argus backup failed", "text": "disk full"}]
+    a.store.close()

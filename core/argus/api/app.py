@@ -868,6 +868,10 @@ def create_app(argus: Argus) -> FastAPI:
                 reply, out = "Done.", {"tool": q["name"], "result": res}
             except ToolError as e:
                 reply, out = f"I couldn't: {e}.", {}
+        elif q["kind"] == "remember":
+            fact = str(q.get("fact") or "")[:500]
+            await argus.store.write(lambda c: ari_mod.remember(c, fact))
+            reply, out = "Got it, I'll remember that.", {"remembered": fact}
         elif q["kind"] == "schedule":
             when = ari_mod.When(q["cron"], q["once"], q["say"], "")
             spec = _schedule_spec(q["action"])

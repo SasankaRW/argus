@@ -240,7 +240,7 @@ class Argus:
         """The evening summary to the phone (once per day; `POST /summary` sends one now)."""
         def fn(conn):
             now = time.time()
-            title, text = compose_summary(conn, now)
+            title, text = compose_summary(conn, now, self.button_labels())
             key = f"summary:{day}" if day else f"summary:now:{int(now)}"
             oid = add_message(conn, now, "ntfy", ntfy_message(title, text, priority="low", tags=["crescent_moon"]),
                               dedupe_key=key)
@@ -251,6 +251,14 @@ class Argus:
             self.summary_sent = day
         self.outbox.poke()
         return out
+
+    def button_labels(self) -> dict[str, str]:
+        from .ask import catalog
+
+        try:
+            return {a["id"]: a["label"] for a in catalog(self.plugin_host)}
+        except Exception:
+            return {}
 
     async def weather_line(self) -> str:
         """Today's weather in one line for the brief, or "" (no place set, unknown place, or no connection)."""

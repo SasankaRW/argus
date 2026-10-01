@@ -1,0 +1,39 @@
+id: lifehub
+name: Life Hub
+version: 1.0.0
+kind: connector
+argus_api: ">=1.0 <2.0"
+description: 'Lets Ari use your Life Hub (G:\Projects\lifehub): the shopping list and wishlist ("add milk to the shopping list"), and how money looks this month (read only, local models only).'
+runs_on: any
+
+workflows: [lists, add, money]
+
+permissions:
+  files: {read: [], write: [], delete: none}
+  models: []
+  network: ["config:url"]      # only the Life Hub address you set
+  secrets: [LIFEHUB_API_KEY]   # Life Hub's API_KEY, in Argus's .env
+
+config:
+  url: {type: text, default: "http://127.0.0.1:8081", label: Life Hub address}
+
+ari:
+  tools:
+    - name: shopping_list
+      description: What's on the shopping list (by store) or the wishlist (with how affordable each is).
+      workflow: lists
+      input: {list: {type: string, description: '"shopping" (default) or "wishlist"'}}
+    - name: add_to_list
+      description: 'Add to the shopping list or wishlist in Life Hub''s quick syntax: "2x milk @keells ~450", wishlist "Sony WH-1000XM5 ~95000 by:2026-12-01".'
+      workflow: add
+      input:
+        text: {type: string, description: the item in Life Hub's quick syntax}
+        list: {type: string, description: '"shopping" (default) or "wishlist"'}
+      required: [text]
+    - name: money_this_month
+      description: How money looks (from Cashly via Life Hub) - safe to spend until payday, spending vs budget this month, bills before payday. Read only.
+      workflow: money
+      private: true
+
+helios:
+  node: {label: Life Hub, group: assistant}

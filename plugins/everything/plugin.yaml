@@ -1,0 +1,29 @@
+id: everything
+name: Everything search
+version: 1.0.0
+kind: workflow
+argus_api: ">=1.0 <2.0"
+description: Lets Ari find any file on the PC instantly with Everything (voidtools) - by name, type, size or date. Names only; folders in paths.blocked never show up.
+runs_on: desktop
+needs: [session]
+
+workflows: [search]
+
+permissions:
+  files: {read: [], write: [], delete: none}
+  models: []
+
+config:
+  es_path: {type: text, default: "", label: "es.exe (Everything's command line); empty: look in PATH and Program Files"}
+  results: {type: int, default: 20, label: Results Ari gets}
+
+ari:
+  tools:
+    - name: search_everything
+      description: 'Find files anywhere on the PC by name (instant). Everything syntax works: words, *.pdf or ext:pdf, "exact name", dm:today / dm:thisweek (modified), size:>100mb, path:Downloads. Newest first. Then open_file to open one.'
+      workflow: search
+      input: {query: {type: string, description: "what to look for, in Everything's syntax"}}
+      required: [query]
+
+helios:
+  node: {label: Everything, group: files}

@@ -1,0 +1,56 @@
+id: tracker
+name: Tracker
+version: 1.0.0
+kind: connector
+argus_api: ">=1.0 <2.0"
+description: 'Lets Ari use your Tracker (G:\Projects\tracker): what needs you, list issues, add one ("ACME bug P1 checkout broken @fri"), move one, start or stop the timer.'
+runs_on: any
+
+triggers:
+  - schedule: {workflow: check, cron: "12 9-19 * * *"}   # hourly in the day: overdue issues reach you (once each)
+
+workflows: [summary, issues, add, move, timer, check]
+
+permissions:
+  files: {read: [], write: [], delete: none}
+  models: []
+  network: ["config:url"]     # only the Tracker address you set
+  secrets: [TRACKER_API_KEY]  # Tracker's API_KEY, in Argus's .env
+
+config:
+  url: {type: text, default: "http://127.0.0.1:8080", label: Tracker address}
+
+ari:
+  tools:
+    - name: work_summary
+      description: The user's work in Tracker - open, urgent, overdue and due this week, hours this month, the running timer, and the focus list.
+      workflow: summary
+    - name: list_issues
+      description: Issues in Tracker, optionally only one project (its key, e.g. ACME), status (backlog, todo, in_progress, review, done) or words.
+      workflow: issues
+      input:
+        project: {type: string, description: "project key (optional)"}
+        status: {type: string, description: "backlog, todo, in_progress, review or done (optional)"}
+        query: {type: string, description: "words in the title or description (optional)"}
+    - name: add_issue
+      description: 'Add an issue to Tracker in its quick syntax: "ACME bug P1 Checkout broken #payments @fri" (project key first; bug/feature/task/support; P0-P3; #label; @today/@fri/@3d).'
+      workflow: add
+      risky: true
+      input: {text: {type: string, description: the issue in Tracker's quick syntax}}
+      required: [text]
+    - name: move_issue
+      description: Change an issue's status (e.g. ACME-12 to done).
+      workflow: move
+      risky: true
+      input:
+        key: {type: string, description: "the issue key, e.g. ACME-12"}
+        status: {type: string, description: "backlog, todo, in_progress, review or done"}
+      required: [key, status]
+    - name: issue_timer
+      description: Start the time tracker on an issue, or stop the running one.
+      workflow: timer
+      input:
+        key: {type: string, description: "the issue key to start (leave out to stop)"}
+
+helios:
+  node: {label: Tracker, group: assistant}

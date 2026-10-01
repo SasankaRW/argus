@@ -249,6 +249,32 @@ daily cap.
   fallback. Set it up once: `cd deploy\searxng`, put a random `secret_key` in settings.yml, `docker compose up -d`
   (it listens on 127.0.0.1:8888 only). Outbound only; pages are public websites only (never the PC, LAN or
   tailnet); what a page says is untrusted, so after reading the web, anything that does something asks you first.
+- **Everything search** (`everything`): "find my CV", "PDFs I changed today" (`ext:pdf dm:today`), "files over
+  1 GB". Uses Everything (voidtools) on the PC: install it, keep it running, and put its command line `es.exe`
+  (voidtools.com/downloads) in the Everything folder. Names only; folders in `paths.blocked` never show up.
+- **Ari speaks up**: an important message (a price under yours, an issue overdue, a failed backup, a reminder)
+  is also said out loud at the PC, only while you're using it, between `ari.speak_hours` (08:00-22:00), at most
+  one every 10 minutes (`ari.speak_up: false` turns it off). Tracker issues that become overdue are told once.
+- **Talking with Ari** (`ari.live`, on): after "Hey Ari" it's a conversation. Just talk back and forth; talk over
+  Ari to interrupt (it pauses at once; if it was only "mm-hm" or its own voice coming back, it carries on);
+  "thanks Ari" or "that's all" ends it, or 20 s of quiet (`ari.talk_idle_s`). Ari knows when you've finished a
+  sentence rather than just paused (Smart Turn, an 8 MB model taken once from PyPI and checked; Silero VAD from
+  faster-whisper). Answers are spoken a sentence at a time, with a soft pulse while Ari thinks. Headphones make
+  interrupting easiest; with speakers, Ari learns how loud its own echo is. `ari.live: false` is the classic mode
+  (every request starts with "Hey Ari"; a few seconds of follow-up, `ari.follow_up`).
+- **Remembering**: when you mention a lasting fact (a person, a place, a preference), Ari asks "Want me to
+  remember that?"; yes keeps it (never passwords, money or health).
+- **Tracker** (`tracker`) and **Life Hub** (`lifehub`): "what's urgent at work?", "add an issue: ACME bug P1
+  checkout broken @fri" (asks first), "move ACME-12 to done", "start the timer on ACME-12"; "add milk to the
+  shopping list", "what's on my wishlist?", "how's my money this month?" (read only, never sent to Claude). Put
+  Tracker's and Life Hub's `API_KEY` in Argus's .env as `TRACKER_API_KEY` / `LIFEHUB_API_KEY`, and their
+  addresses in each plugin's settings (default http://127.0.0.1:8080 and :8081; the laptop's name after the move).
+- **Read later** (in `web`): "save this for later" or the phone's share menu: the page's text and a short local
+  summary go to Documents/read-later (searchable); "what did I save about Kandy?".
+- **File tools** (`file-tools`): "merge these PDFs", "make a PDF of these photos", "pages 2-5 of the contract",
+  "make smaller copies of these pictures". New files go next to the originals; nothing is changed; Ari asks first.
+- **Weekly review**: on Sundays the evening summary has your week, and Ari suggests scheduling what you keep doing
+  by hand ("You ran Sort Downloads 4 times, mostly on Mondays around 9 am. Say ..."); "how was my week?" anytime.
 - **Watchers** (`watchers`): "watch this page", "tell me when the RTX 5080 on <page> is under 280,000", "what am I
   watching?", "stop watching the RTX". Checked every 3 hours (or **Check my watches now**); the phone hears when a
   page changes or a price drops or goes under yours, with the page as the link. Name a product ("part") to watch

@@ -5,6 +5,17 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Fix: the MCP endpoint reads the request before refusing a wrong token (Windows reset the connection instead of answering 401).
+- **Talk with Ari like a conversation** (`ari.live`, on by default): after "Hey Ari" you just talk back and forth;
+  talking over Ari pauses it at once, and it carries on if that was only "mm-hm" or its own echo; "thanks Ari"
+  ends it, or `ari.talk_idle_s` of quiet. Knows when you've finished a sentence (Smart Turn v3.2, Silero VAD),
+  speaks answers sentence by sentence, and pulses softly while thinking. `ari.live: false` keeps the classic mode.
+- Ari, more natural: carry on without "Hey Ari" for a few seconds after an answer; say "stop" or "Hey Ari, …" to interrupt; it offers to remember lasting facts you mention (your yes keeps them); harder questions start on the bigger local model; important messages (overdue Tracker issues, price drops, failed backups, reminders) are said out loud at the PC while you're there, 08:00-22:00, at most one every 10 minutes.
+- Everything search (new plugin `everything`): Ari finds any file on the PC instantly through Everything's es.exe; blocked folders never show.
+- Helios build updated (the plugin page says "your phone" for phone plugins).
+- Tracker and Life Hub for Ari (connector plugins `tracker`, `lifehub`): work summary, list/add/move issues, the timer; the shopping list and wishlist; this month's money (read only, private: never sent to Claude). Adding or moving issues asks first. `permissions.network` can name a setting ("config:url"), so a connector reaches exactly the address you set.
+- Argus for Android (`android/`): Helios full screen plus phone tools for Ari (new plugin `phone`: battery and network, ring loudly, Do Not Disturb, torch, timer, open an app or a link). The phone connects to Argus as a worker with the capability `phone` (outgoing only, over Tailscale); a setup page for the address, token and phone permissions. Build once in Android Studio (android/README.md). Plugins can now say `runs_on: phone`.
+- New Ari skills: read later (save a page from Ari or the phone's share menu: text + local summary in Documents/read-later, "what did I save about ..."), file tools (merge PDFs, pictures to PDF, pages out of a PDF, smaller copies of pictures; new files beside the originals, Ari asks first), weekly review (Sunday's summary has your week and suggests scheduling what you keep doing by hand; "how was my week?").
 - Web for Ari (new plugin `web`): the local models search your own SearXNG (`deploy/searxng`, 127.0.0.1 only) and read pages, so current questions no longer need Claude (it stays the fallback). Outbound only; pages are public websites only (checked again after redirects and on the actual connection); web text is marked untrusted, and after it anything that does something asks you first.
 - Island: shortcut chips have small line icons by what they do (a page, a routine, a plugin button, sleep, a website, the phone).
 - Helios buttons reworked: one system everywhere. Main actions are dark keys with amber text and a hairline amber edge (no flat yellow slabs), "no"/secondary buttons are quiet outlines, the mic is a round key, your chat bubbles are a warm tint, Dry-run chips are neutral (Live stays green), one focus ring for the keyboard.

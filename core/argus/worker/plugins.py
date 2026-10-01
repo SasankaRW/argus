@@ -73,6 +73,15 @@ class Files:
             raise PermissionDenied(f"{self.plugin} may not {kind} {p} (add it under permissions.files.{kind})")
         return p
 
+    def visible(self, path: str | Path) -> bool:
+        """May Argus show this path's name at all (argus.yaml paths.blocked / paths.allowed)? For listings that
+        come from elsewhere (a search index), whatever the plugin's own read list."""
+        try:
+            p = Path(path).resolve()
+        except (OSError, ValueError):
+            return False
+        return not _within(p, self.blocked) and (not self.allowed or _within(p, self.allowed))
+
     # -------------------------------------------------------------- reading
 
     def read_text(self, path: str | Path, encoding: str = "utf-8", limit: int | None = None) -> str:
