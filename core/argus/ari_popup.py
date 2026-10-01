@@ -34,6 +34,9 @@ from typing import Any
 
 SHOULDER_MAX = 13     # the concave curve into the screen's edge, each side
 MARGIN = 28           # room round the shape for its shadow (the window is this much bigger on 3 sides)
+SH_SCALE = 8          # the shadow is drawn at 1/8 size and scaled up: about 8 px of soft fade
+SH_DROP = 3           # how far below the island it sits
+SH_ALPHA = 120        # how dark it is at its darkest
 IDLE = (84, 10)
 HOVER = (138, 22)
 DETAILS_W = 384
@@ -153,10 +156,8 @@ class AriState:
 def target_size(mode: str, text: str, hover: bool, details_h: float) -> tuple[float, float]:
     if mode == "details":
         return DETAILS_W, min(MAX_H, details_h)
-    if mode == "done":
-        return 400, 60
-    if mode == "active":
-        return max(220, min(MAX_W, 70 + len(text) * 7.0)), 36
+    if mode in ("active", "done"):  # one look for both: Ari's answer stays in the same pill it spoke from
+        return max(220, min(MAX_W, (70 if mode == "active" else 50) + len(text) * 7.0)), 36
     return HOVER if hover else IDLE
 
 
@@ -252,6 +253,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             QCursor,
             QFont,
             QFontMetrics,
+            QImage,
             QLinearGradient,
             QPainter,
             QPainterPath,
@@ -298,6 +300,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                                 | Qt.WindowType.Tool | Qt.WindowType.WindowDoesNotAcceptFocus)
             self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
             self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+            self._shadow_key: Any = None
+            self._shadow: Any = None
             self.setMouseTracking(True)
             self.ari = AriState()
             self.info = Info()
@@ -458,6 +462,35 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 p.closeSubpath()
             return p
 
+        def shadow(self, mode: str, tone: Any) -> Any:
+            """The shadow under the island, blurred by drawing it at 1/SH_SCALE size and scaling it back up
+            (twice, so the edge fades smoothly). Kept while the size doesn't change."""
+            key = (round(self.spring.w), round(self.spring.h), mode, tone.name())
+            if self._shadow_key == key:
+                return self._shadow
+            k = SH_SCALE
+            small = QImage(max(1, W // k), max(1, H // k), QImage.Format.Format_ARGB32_Premultiplied)
+            small.fill(Qt.GlobalColor.transparent)
+            sp = QPainter(small)
+            sp.setRenderHint(QPainter.RenderHint.Antialiasing)
+            sp.scale(1 / k, 1 / k)
+            sp.translate(0, SH_DROP)
+            sp.setPen(Qt.PenStyle.NoPen)
+            sp.setBrush(QColor(0, 0, 0, SH_ALPHA))
+            sp.drawPath(self.path())
+            if mode in ("active", "done"):
+                c = QColor(tone)
+                c.setAlpha(40)
+                sp.setBrush(c)
+                sp.drawPath(self.path())
+            sp.end()
+            smooth = Qt.TransformationMode.SmoothTransformation
+            ratio = Qt.AspectRatioMode.IgnoreAspectRatio
+            half = small.scaled(max(1, W * 2 // k), max(1, H * 2 // k), ratio, smooth)
+            self._shadow = half.scaled(W, H, ratio, smooth)
+            self._shadow_key = key
+            return self._shadow
+
         def paintEvent(self, _e: Any) -> None:  # noqa: N802 - Qt's name
             qp = QPainter(self)
             qp.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -465,25 +498,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             path = self.path()
             mode = self.mode()
             tone = QColor(TONE.get(self.ari.phase, "#f5a524"))
-            # soft shadow: the lower outline drawn wider and fainter (cheap, no blur pass); its ends sit on the
-            # screen's edge, so nothing bunches up at the shoulders
-            edge = self.path(open_top=True)
-            qp.save()
-            qp.translate(0, 3)
-            steps = 12
-            for i in range(steps, 0, -1):
-                a = int(30 * (1 - i / (steps + 1)) ** 1.7)
-                qp.setPen(QPen(QColor(0, 0, 0, a), i * 3.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap,
-                               Qt.PenJoinStyle.RoundJoin))
-                qp.drawPath(edge)
-            if mode in ("active", "done"):  # a faint glow in Ari's colour under it
-                for i in range(8, 0, -1):
-                    c = QColor(tone)
-                    c.setAlpha(int(13 * (1 - i / 9) ** 1.4))
-                    qp.setPen(QPen(c, i * 3.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap,
-                                   Qt.PenJoinStyle.RoundJoin))
-                    qp.drawPath(edge)
-            qp.restore()
+            # soft shadow: the shape drawn small and scaled up smoothly (a cheap blur that fades to nothing, no
+            # hard ends); in Ari's colour too while it talks
+            qp.drawImage(0, 0, self.shadow(mode, tone))
             # the shape itself
             r = self.shape_rect()
             g = QLinearGradient(0, 0, 0, r.height())
@@ -543,7 +560,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             fade = max(0.0, min(1.0, (self.spring.h - 24) / 10))
             qp.setOpacity(fade)
             x = body.x() + 16
-            cy = body.y() + (18 if mode == "active" else 19)
+            cy = body.y() + 18
             self.draw_indicator(qp, x + 9, cy, tone)
             x += 28
             right = body.right() - 16
@@ -559,12 +576,12 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 text = self.shown_text()
                 text = QFontMetrics(F_TEXT).elidedText(text, Qt.TextElideMode.ElideRight, int(right - x))
                 qp.drawText(QRectF(x, body.y(), right - x, 36), Qt.AlignmentFlag.AlignVCenter, text)
-            else:
+            else:  # done: the same line, the answer instead of the label (the whole answer is in Helios)
                 qp.setFont(F_TEXT)
                 qp.setPen(QColor("#e4e6e8"))
-                qp.drawText(QRectF(x, body.y() + 10, right - x, 42),
-                            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
-                            two_lines(self.ari.text, QFontMetrics(F_TEXT), int(right - x)))
+                text = QFontMetrics(F_TEXT).elidedText(" ".join(self.ari.text.split()), Qt.TextElideMode.ElideRight,
+                                                       int(right - x))
+                qp.drawText(QRectF(x, body.y(), right - x, 36), Qt.AlignmentFlag.AlignVCenter, text)
             qp.setOpacity(1)
 
         def button(self, qp: Any, rect: Any, key: str, text: str, *, fill: str = "#141618", color: str = "#e4e6e8",

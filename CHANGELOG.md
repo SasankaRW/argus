@@ -5,6 +5,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Island: Ari's answer stays in the same slim pill it spoke from (no switch to a bigger, different-looking box); the shadow is a real soft blur that fades out, smaller, with no hard ends.
 - CI: Pillow is a dev dependency (the screen plugin's tests use it).
 - Plugins: schedules read in words ("every 3 hours", "weekdays at 09:00"; the cron line is on hover).
 - Code review fixes: tools marked `private` (screen, clipboard) keep the chat local, so Claude never sees them, a web search gets only the question, and they aren't offered over MCP. Watchers also check the address they actually connect to, so DNS rebinding can't reach the LAN. The logon supervisor leaves package updates to the boot one. A watch added during a check is kept, and a page read without a price keeps the last price (no repeat alerts). The page reader is linear on broken HTML. The weather is kept for an hour. Replies keep snake_case names.
