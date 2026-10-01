@@ -77,10 +77,20 @@ def offered(tools: dict[str, dict], text: str, history: list[dict]) -> dict[str,
             if n not in SCREEN_TOOLS or SCREEN_TOOLS[n].search(text) or SCREEN_TOOLS[n].search(recent)}
 
 
+OPEN_APP = re.compile(r"^\W*(?:please\s+)?(?:open|launch|start)\s+(?:up\s+)?(?:the\s+)?(?P<app>[a-z][\w+ -]{1,28}?)"
+                      r"(?:\s+app)?(?:\s+(?:for me|please))?\W*$", re.I)
+NOT_APP = re.compile(r"^(?:a|an|my|some)\b|\b(?:file|folder|document|page|site|website|link|it|that|this|them|routine|"
+                     r"tab|timer|music|playlist|song|recording|backup|job|over|again)\b|[./\\:]", re.I)
+
+
 def straight_to(tools: dict[str, dict], text: str) -> tuple[str, dict] | None:
-    """A message that is plainly about the screen or the clipboard: that tool, at once, with the message."""
+    """A message that plainly needs one tool: "open brave" (the app), "what's on my screen?" (the screen), "sum up
+    what I copied" (the clipboard). That tool runs at once, with no model deciding first."""
     if len(text) > 200:
         return None
+    m = OPEN_APP.match(text)
+    if m and "open_app" in tools and not NOT_APP.search(m.group("app")):
+        return "open_app", {"name": m.group("app").strip()}
     if "look_at_screen" in tools and SCREEN.search(text):
         return "look_at_screen", {"question": text}
     if "summarise_clipboard" in tools and CLIPBOARD.search(text):
@@ -210,7 +220,7 @@ def think(ctx: Context):
         return any(d.get("private") for d in done) or any(h.get("private") for h in base["conversation_so_far"])
 
     direct = straight_to(tools, text)
-    if direct is not None:  # one flow: look (or read the clipboard) right away; its answer is the reply
+    if direct is not None:  # one flow: open the app / look / read the clipboard right away; that is the reply
         name, args = direct
 
         def use_direct() -> dict:
@@ -219,8 +229,18 @@ def think(ctx: Context):
             except ToolFailed as e:
                 return {"tool": name, "args": args, "error": str(e)[:300], "private": True}
 
-        got = ctx.step(f"tool 1: {name}", use_direct)
+        def use_direct_app() -> dict:
+            try:
+                return {"tool": name, "args": args, "result": _clip(ctx.tool(name, args))}
+            except ToolFailed as e:
+                return {"tool": name, "args": args, "error": str(e)[:300]}
+
+        got = ctx.step(f"tool 1: {name}", use_direct_app if name == "open_app" else use_direct)
         res = got.get("result")
+        if name == "open_app" and "error" not in got:
+            app = args["name"].strip()
+            return {"reply": f"Opening {app[:1].upper()}{app[1:]}.",
+                    "used": [got]}
         if isinstance(res, dict) and str(res.get("answer") or "").strip():
             return {"reply": spoken(str(res["answer"])), "used": [got]}
         done.append(got)  # it failed or said nothing useful: let the model take it from here

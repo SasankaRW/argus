@@ -5,6 +5,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **"Open Brave"** and similar plain app requests open the app at once, without a model step.
 - **Ari feels like one flow:** the screen and clipboard tools are only offered when you ask about them (a weather
   question no longer looks at your screen), and "what's on my screen?" / "what does this error say?" goes straight
   to the screen: no model step first, its answer is the reply. Such questions no longer hit Argus's own "errors"

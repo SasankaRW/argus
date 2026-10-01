@@ -71,3 +71,11 @@ def test_whats_on_my_screen_goes_straight_to_the_screen(tmp_path):
         assert ol.requests == []  # no model step before or after: one flow
         names = [s["name"] for s in cl.get(f"/jobs/{r['job_id']}")["steps"]]
         assert names == ["tool 1: look_at_screen"]
+
+
+def test_open_an_app_needs_no_model():
+    t = {"open_app": {"name": "open_app"}}
+    assert straight_to(t, "open brave") == ("open_app", {"name": "brave"})
+    assert straight_to(t, "Launch VS Code please") == ("open_app", {"name": "VS Code"})
+    for no in ["open the file report.pdf", "open it", "start a timer", "open youtube.com", "start the backup"]:
+        assert straight_to(t, no) is None, no
