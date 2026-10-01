@@ -288,6 +288,7 @@ function AriSettings() {
       <section className="panel">
         <div className="ph"><span className="pt">ari/settings</span></div>
         <div className="ari-set">
+          <a className="btn" href="#voice" title="Read sentences aloud so Ari learns your accent and names">train on my voice</a>
           <span className="pill-pick" role="group" aria-label="Ari pill look">pill
             {(["pulse", "comet"] as const).map((l) => (
               <button key={l} type="button" className="btn" aria-pressed={look === l}

@@ -115,3 +115,32 @@ def test_small_talk_is_just_talk(tmp_path):
         assert last["text"] == "Living the dream in your PC. You?"
         assert "companion" in ol.requests[0]["messages"][0]["content"]  # the chat persona, no tool list
         assert [s["name"] for s in cl.get(f"/jobs/{r['job_id']}")["steps"]] == ["chat"]
+
+
+def test_old_chats_and_old_questions_dont_leak(tmp_path):
+    import os
+    import sqlite3
+    import time as _t
+
+    from argus import ari as ari_mod
+    from argus.ari_listen import AriClient
+    from argus.db.store import available_migrations
+
+    c = sqlite3.connect(":memory:")
+    c.row_factory = sqlite3.Row
+    for _, _, path in available_migrations():
+        c.executescript(path.read_text(encoding="utf-8"))
+    ari_mod.add_turn(c, "x", "you", "type hello in the window in front")
+    t = ari_mod.add_turn(c, "x", "ari", "Shall I type it?", pending={"kind": "tool", "name": "type_text"})
+    c.execute("UPDATE ari_turns SET created_at = created_at - 3600")
+    assert ari_mod.open_question(c, "x")["turn"] == t
+    assert ari_mod.open_question(c, "x", max_age=600) is None  # an hour later, "yes" isn't about that
+    ari_mod.add_turn(c, "x", "you", "what time is it")
+    assert [h["text"] for h in ari_mod.history(c, "x")] == ["what time is it"]  # the old chat isn't sent along
+
+    conv_file = tmp_path / "c.conv"
+    conv_file.write_text("old-chat")
+    old = _t.time() - 7200
+    os.utime(conv_file, (old, old))
+    cl = AriClient("http://127.0.0.1:9", None, conv_file)
+    assert cl.conv == "old-chat" and _t.time() - cl.used > cl.NEW_CHAT_S  # the next message starts a new chat

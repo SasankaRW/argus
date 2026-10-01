@@ -65,7 +65,7 @@ from pydantic import BaseModel, Field
 
 from .. import ari as ari_mod
 from .. import ask as ask_mod
-from .. import daily, guidance, logview, vocab
+from .. import daily, guidance, logview, vocab, voice_corpus
 from .. import island as island_mod
 from .. import settings as settings_mod
 from ..approvals import ApprovalClosed, ApprovalError, ApprovalNotFound, BadToken
@@ -82,6 +82,7 @@ from ..shares import ShareError, ShareStore, kinds_of
 from ..tools import Tool, ToolError, Tools
 from ..triggers import BadSignature, TriggerError, UnknownTrigger
 from ..voice import CATALOG, Voice, VoiceUnavailable, download, installed
+from ..voice_samples import Samples
 from ..worker import think as think_mod
 from . import approval_page, mcp
 from .home import HOME_HTML
@@ -921,7 +922,8 @@ def create_app(argus: Argus) -> FastAPI:
         """The words Whisper should expect (ari.vocabulary + names Ari remembers) and the fixes (ari.heard_as)."""
         facts = await argus.store.read(lambda c: [m["fact"] for m in ari_mod.memories(c)])
         names = vocab.words(argus.cfg.ari.vocabulary, facts)
-        return {"words": names, "prompt": vocab.prompt(names), "heard_as": argus.cfg.ari.heard_as}
+        return {"words": names, "prompt": vocab.prompt(names), "heard_as": argus.cfg.ari.heard_as,
+                "whisper_model": argus.cfg.ari.whisper_model}
 
     @app.get("/ari/listener", dependencies=guarded)
     async def ari_listener_running() -> dict:
@@ -950,6 +952,9 @@ def create_app(argus: Argus) -> FastAPI:
         body.text = vocab.fix(body.text, argus.cfg.ari.heard_as)  # "open what's up" -> "open WhatsApp"
         text = ari_mod.WAKE.sub("", body.text).strip() or body.text.strip()
         q = await argus.store.read(lambda c: ari_mod.open_question(c, conv))
+        if q and not await argus.store.read(lambda c: ari_mod.open_question(c, conv, max_age=600)):
+            await argus.store.write(lambda c: ari_mod.close_question(c, q["turn"]))  # asked too long ago: lapsed
+            q = None
         await argus.store.write(lambda c: ari_mod.add_turn(c, conv, "you", body.text.strip()))
         if q and (ari_mod.YES.match(text) or ari_mod.NO.match(text)):
             return await _answer(conv, q, bool(ari_mod.YES.match(text)))
@@ -1200,6 +1205,58 @@ def create_app(argus: Argus) -> FastAPI:
         if not re.fullmatch(r"[0-9a-z]{10,40}\.(webm|ogg|wav|m4a|mp3)", name) or not (audio_dir / name).is_file():
             raise HTTPException(status_code=404, detail="no such recording")
         return FileResponse(audio_dir / name, media_type="application/octet-stream")
+
+    # ---------------------------------------------------------------- training Ari on your voice
+    samples = Samples(argus.cfg.db_path.parent / "voice-train")
+
+    async def corpus() -> list[dict]:
+        facts = await argus.store.read(lambda c: [m["fact"] for m in ari_mod.memories(c)])
+        mine = [w for w in vocab.words(argus.cfg.ari.vocabulary, facts) if w not in vocab.BUILTIN]
+        return voice_corpus.sentences(mine)
+
+    @app.get("/voice-train", dependencies=guarded)
+    async def voice_train() -> dict:
+        """The sentences to read, which are recorded, and how much (Helios > Ari > Train on my voice)."""
+        have = samples.all()
+        todo = await corpus()
+        return {"sentences": [{**x, "done": x["id"] in have, "seconds": have.get(x["id"], {}).get("seconds")}
+                              for x in todo],
+                "recorded": len(have), "seconds": round(sum(v["seconds"] for v in have.values()), 1),
+                "goal_seconds": 20 * 60, "model": argus.cfg.ari.whisper_model}
+
+    @app.post("/voice-train/{sid}", dependencies=guarded)
+    async def voice_train_add(sid: str, request: Request, seconds: float = Query(..., gt=0.3, le=30)) -> dict:
+        """One sentence read aloud (webm/ogg/wav, at most 3 MB). Recording it again replaces it."""
+        hit = next((x for x in await corpus() if x["id"] == sid), None)
+        if hit is None:
+            raise HTTPException(status_code=404, detail="no such sentence")
+        data = bytearray()
+        async for chunk in request.stream():
+            data += chunk
+            if len(data) > 3 * 1024 * 1024:
+                raise HTTPException(status_code=413, detail="recording too long")
+        if len(data) < 200:
+            raise HTTPException(status_code=422, detail="empty recording")
+        kind = (request.headers.get("content-type") or "").split(";")[0].strip()
+        return await asyncio.to_thread(samples.add, sid, hit["text"], bytes(data), kind, seconds)
+
+    @app.delete("/voice-train/{sid}", dependencies=guarded)
+    async def voice_train_remove(sid: str) -> dict:
+        return {"removed": await asyncio.to_thread(samples.remove, sid)}
+
+    @app.get("/voice-train/{sid}/audio", dependencies=guarded)
+    async def voice_train_audio(sid: str):
+        """A recording (to play it back in Helios, or for the trainer on another machine)."""
+        p = samples.path(sid) if re.fullmatch(r"[0-9a-f]{12}", sid) else None
+        if p is None or not p.is_file():
+            raise HTTPException(status_code=404, detail="no such recording")
+        return FileResponse(p, media_type={"webm": "audio/webm", "ogg": "audio/ogg", "wav": "audio/wav",
+                                           "m4a": "audio/mp4"}.get(p.suffix[1:], "application/octet-stream"))
+
+    @app.get("/voice-train-samples", dependencies=guarded)
+    async def voice_train_samples() -> dict:
+        """Every recording with its sentence (for `python -m argus.voice_train --from <argus url>`)."""
+        return samples.all()
 
     @app.post("/ari/{conv}/answer", dependencies=guarded)
     async def ari_answer(conv: str, body: AriAnswer) -> dict:

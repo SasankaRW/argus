@@ -243,8 +243,9 @@ class AriClient:
         self.url, self.token, self.conv_file = url.rstrip("/"), token, conv_file
         try:
             self.conv = conv_file.read_text().strip() or None
+            self.used = conv_file.stat().st_mtime  # when we last talked (touched on every message)
         except OSError:
-            self.conv = None
+            self.conv, self.used = None, time.time()
 
     def _req(self, method: str, path: str, body: dict | None = None, timeout: float = 30) -> bytes:
         req = urllib.request.Request(self.url + path, method=method,
@@ -254,7 +255,16 @@ class AriClient:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.read()
 
+    NEW_CHAT_S = 30 * 60
+
     def say(self, text: str) -> dict:
+        if self.conv and time.time() - self.used > self.NEW_CHAT_S:
+            self.conv = None  # a while since we last talked: a fresh chat, so old ones don't leak into this one
+        self.used = time.time()
+        try:
+            self.conv_file.touch()
+        except OSError:
+            pass
         r = json.loads(self._req("POST", "/ari", {"text": text, **({"conv": self.conv} if self.conv else {})}))
         if r.get("conv") and r["conv"] != self.conv:
             self.conv = r["conv"]
@@ -565,7 +575,8 @@ def main(argv: list[str] | None = None) -> int:
     log.info("loading Whisper", extra={"wake": cfg.ari.listen_wake_model, "command": cfg.ari.whisper_model,
                                        "expects": VOCAB.get("prompt", "")[:120]})
     wake_t = whisper(cfg.ari.listen_wake_model)
-    cmd_t = whisper(cfg.ari.whisper_model) if cfg.ari.whisper_model != cfg.ari.listen_wake_model else wake_t
+    heard_with = str(VOCAB.get("whisper_model") or cfg.ari.whisper_model)  # Helios > Settings (a trained model)
+    cmd_t = whisper(heard_with) if heard_with != cfg.ari.listen_wake_model else wake_t
     device = int(args.device) if args.device and args.device.isdigit() else args.device
     if cfg.ari.live:
         return live(cfg, client, wake_t, cmd_t, device)

@@ -1053,3 +1053,21 @@ button:focus-visible, .chip:focus-visible, a:focus-visible {
   outline: 2px solid rgba(245, 165, 36, .7); outline-offset: 2px;
 }
 @media (prefers-reduced-motion: reduce) { .primary, .btn, .chip, .k-yes, .k-no, .prompt-mic { transition: none; } }
+
+/* train Ari on your voice */
+.voice-train .vt-body { padding: 18px 20px; display: grid; gap: 16px; max-width: 760px; }
+.vt-progress { display: grid; gap: 6px; font-size: 12px; color: var(--tx2); }
+.vt-card { border: 1px solid var(--line, #1f2a2e); border-radius: 12px; padding: 18px 20px; display: grid; gap: 12px; transition: border-color .2s, box-shadow .2s; }
+.vt-card.rec { border-color: #ff5d5d; box-shadow: 0 0 0 3px rgba(255, 93, 93, .12); }
+.vt-card.done .vt-kind { color: var(--tg, #39ff9c); }
+.vt-kind { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--tx2); }
+.vt-text { font-size: 22px; line-height: 1.35; margin: 0; color: var(--tx, #e6f0ec); }
+.vt-level { height: 4px; border-radius: 3px; background: #11181c; overflow: hidden; }
+.vt-level i { display: block; height: 100%; background: #ff5d5d; transition: width .06s linear; }
+.vt-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.voice-train .vt-actions button.primary.rec { background: #ff5d5d; border-color: #ff5d5d; color: #120808; }
+.vt-tips { font-size: 12.5px; color: var(--tx2); line-height: 1.55; }
+.vt-tips p { margin: 0 0 8px; }
+.vt-tips .ok { color: var(--tx, #e6f0ec); }
+.vt-tips code { font-size: 12px; }
+@media (max-width: 640px) { .vt-text { font-size: 19px; } .voice-train .vt-body { padding: 14px; } }

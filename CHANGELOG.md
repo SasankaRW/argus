@@ -5,6 +5,12 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Train Ari on your voice:** Helios > Ari > *train on my voice* shows about 300 sentences to read (commands,
+  chat, numbers, your names); `python -m argus.voice_train --apply` fine-tunes Whisper with LoRA on the PC's GPU,
+  tests it on held-out sentences and switches Ari to it only when it makes fewer mistakes.
+- **No leaking old chats:** Ari's model only sees the last half hour of a chat, a question older than 10 minutes
+  lapses (a later "yes" isn't about it), the PC's listener starts a new chat after 30 quiet minutes, and Ari
+  never re-offers an old action unless asked again.
 - **One Ari at a time:** a second `ari-listen` quits instead of answering too; Helios doesn't listen for "Hey Ari"
   when the PC's listener runs, and only one Helios tab listens; only the screen you asked on speaks the answer.
 - **Your words:** Whisper is told the names to expect (`ari.vocabulary` plus names Ari remembers) and mishearings
