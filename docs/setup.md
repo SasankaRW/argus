@@ -244,6 +244,11 @@ daily cap.
   copied", "any action items in what I copied?". The screen is grabbed in memory (never saved) and looked at by
   the vision model (`V1`, e.g. `qwen2.5vl:7b`; without it, the text on screen via Tesseract goes to T1). Local
   models only: nothing on your screen or clipboard goes to Claude.
+- **Web for Ari** (`web`): the local models look things up themselves ("what's the weather in Kandy?", "latest
+  Python release?"): `web_search` on your own SearXNG, then `read_page`. Claude with web search stays the
+  fallback. Set it up once: `cd deploy\searxng`, put a random `secret_key` in settings.yml, `docker compose up -d`
+  (it listens on 127.0.0.1:8888 only). Outbound only; pages are public websites only (never the PC, LAN or
+  tailnet); what a page says is untrusted, so after reading the web, anything that does something asks you first.
 - **Watchers** (`watchers`): "watch this page", "tell me when the RTX 5080 on <page> is under 280,000", "what am I
   watching?", "stop watching the RTX". Checked every 3 hours (or **Check my watches now**); the phone hears when a
   page changes or a price drops or goes under yours, with the page as the link. Name a product ("part") to watch

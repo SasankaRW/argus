@@ -312,6 +312,7 @@ class Http:
         self.plugin = plugin
         self.hosts = {h.lower() for h in hosts}
         self.any_public = "*" in self.hosts
+        self._strict = False  # during a public_only request: the listed hosts don't count
         self._trace = trace
         self.timeout = timeout
         self._public = is_public or (lambda host: public_host(host))  # looked up at call time (tests swap it)
@@ -325,7 +326,7 @@ class Http:
         handlers: list[Any] = [Redirects]
         if self.any_public:
             def allowed(host: str, peer: str) -> bool:
-                return host.lower() in self.hosts or public_address(peer)
+                return (host.lower() in self.hosts and not self._strict) or public_address(peer)
 
             handlers += _checked_connections(allowed)
         self._opener = urllib.request.build_opener(*handlers)
@@ -334,7 +335,7 @@ class Http:
         u = urllib.parse.urlparse(url)
         host = (u.hostname or "").lower()
         if u.scheme in ("http", "https") and host:
-            if host in self.hosts:
+            if host in self.hosts and not self._strict:
                 return url
             if self.any_public and self._public(host):
                 return url
@@ -342,8 +343,20 @@ class Http:
             raise PermissionDenied(f"{self.plugin} may only visit public websites, not {host or url!r}")
         raise PermissionDenied(f"{self.plugin} may not call {u.hostname!r} (add it under permissions.network)")
 
-    def request(self, method: str, url: str, *, json_body: Any = None,
-                headers: dict | None = None, max_bytes: int | None = None) -> tuple[int, bytes]:
+    def request(self, method: str, url: str, *, json_body: Any = None, headers: dict | None = None,
+                max_bytes: int | None = None, public_only: bool = False) -> tuple[int, bytes]:
+        """public_only: a page someone else chose (a search result): public websites only, even if this plugin
+        may also call a local service (e.g. its search engine), also after redirects."""
+        if public_only and not self.any_public:
+            raise PermissionDenied(f"{self.plugin} may not visit websites (permissions.network has no \"*\")")
+        self._strict = public_only
+        try:
+            return self._request(method, url, json_body, headers, max_bytes)
+        finally:
+            self._strict = False
+
+    def _request(self, method: str, url: str, json_body: Any, headers: dict | None,
+                 max_bytes: int | None) -> tuple[int, bytes]:
         self._check(url)
         data = json.dumps(json_body).encode() if json_body is not None else None
         req = urllib.request.Request(url, data=data, method=method, headers=headers or {})

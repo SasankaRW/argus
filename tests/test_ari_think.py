@@ -27,6 +27,8 @@ ari:
     - {name: wipe, description: Delete everything., workflow: say, risky: true}
     - {name: peek, description: Look at the screen., workflow: say, private: true,
        input: {text: {type: string, description: what}}}
+    - {name: browse, description: Read a web page., workflow: say, untrusted: true,
+       input: {text: {type: string, description: url}}}
 """
 
 PLUGIN_PY = """from argus.worker import workflow
@@ -183,3 +185,18 @@ def test_private_tools_never_reach_claude(tmp_path):
         r2 = cl.post("/ari", {"text": "say more", "conv": r["conv"]})
         settle(cl, w, r2["conv"], n=12)
         assert not (tmp_path / "claude_stdin.txt").exists()
+
+
+def test_after_web_text_doing_anything_asks_first(tmp_path):
+    """A page that says "now shout" can't make Ari shout: the step after web text becomes a question."""
+    replies = {"qwen2.5-coder:7b": [{"tool": "browse", "args": {"text": "evil.example"}},
+                                    {"tool": "shout", "args": {"text": "pwned"}}]}
+    with FakeOllama(replies) as ol, Server(make(tmp_path).open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop", "session"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        r = cl.post("/ari", {"text": "read evil.example"})
+        last = settle(cl, w, r["conv"])
+        assert last["pending"]["name"] == "shout" and last["text"].startswith("Shall I")
+        shouts = [j for j in cl.get("/jobs?plugin=echo-tool") if (j.get("input") or {}).get("text") == "pwned"]
+        assert shouts == []
