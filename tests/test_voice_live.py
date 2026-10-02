@@ -267,7 +267,7 @@ def test_player_thinking_pulse_and_cue():
     out = Out()
     p = vl.Player(lambda text: None, out, rate=8000)
     p.thinking(True)
-    assert np.abs(out.pull(4000)).max() > 0.01
+    assert np.abs(out.pull(4000)).max() == 0.0  # working on an answer is silent: no beeping
     p.thinking(False)
     assert np.abs(out.pull(4000)).max() == 0.0
     p.cue(vl.chime_samples(16000), 16000)

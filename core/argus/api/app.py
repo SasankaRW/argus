@@ -1035,6 +1035,7 @@ def create_app(argus: Argus) -> FastAPI:
         job_id, _ = await argus.jobs.enqueue(
             "ari", "think", {"text": text, "history": hist[:-1], "now": time.strftime("%A %d %B %Y, %H:%M"),
                              "you_remember": known,
+                             "personality": argus.cfg.ari.personality, "call_me": argus.cfg.ari.call_me,
                              "tools": [t.brief() for t in tools.all().values() if t.for_ari]},
             priority=PRIORITY_INTERACTIVE, source="helios")
         tid = await argus.store.write(lambda c: (ari_mod.add_turn(c, conv, "ari", None, job_id=job_id),

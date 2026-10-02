@@ -69,15 +69,62 @@ SCREEN = re.compile(r"\b(?:screen|monitor|what am i (?:looking at|seeing)|this (
                     r"dialog|popup|code|chart|graph|picture|image|email|document|doc|app)|what does (?:this|it) say|"
                     r"what'?s this|can you see|look at (?:this|it|that))\b", re.I)
 CLIPBOARD = re.compile(r"\b(?:clipboard|copied|i copied|what i copied|paste[d]?)\b", re.I)
-SCREEN_TOOLS = {"look_at_screen": SCREEN, "summarise_clipboard": CLIPBOARD}
+TYPING = re.compile(r"^\W*(?:(?:please|can you|could you|will you|go ahead and)\s+)*(?:type|press|hit)\s+\S|"
+                    r"\b(?:type (?:this|that|it|out)\b.{0,20}\b(?:in|into)|keyboard shortcut|ctrl\s?\+|alt\s?\+)", re.I)
+SCREEN_TOOLS = {"look_at_screen": SCREEN, "summarise_clipboard": CLIPBOARD, "type_text": TYPING, "press_keys": TYPING}
 
 
 def offered(tools: dict[str, dict], text: str, history: list[dict]) -> dict[str, dict]:
     """The tools worth offering for this message: the screen / clipboard ones only when it's about them (or the
     chat just was). Fewer tools is also a shorter prompt, so a faster first step."""
     recent = " ".join(str(h.get("text") or "") for h in history[-2:])
-    return {n: t for n, t in tools.items()
-            if n not in SCREEN_TOOLS or SCREEN_TOOLS[n].search(text) or SCREEN_TOOLS[n].search(recent)}
+    ok = {n: t for n, t in tools.items()
+          if n not in SCREEN_TOOLS or SCREEN_TOOLS[n].search(text)
+          or (SCREEN_TOOLS[n] is not TYPING and SCREEN_TOOLS[n].search(recent))}  # typing: only when asked now
+    return closest(ok, f"{text} {recent}") if len(ok) > MANY else ok
+
+
+PC_ONLY = {"set_volume", "media_control", "open_app", "close_app", "list_apps", "take_screenshot", "lock_pc",
+           "pc_status", "switch_to_window", "show_desktop", "type_text", "press_keys", "open_website", "open_file"}
+MANY = 24  # more tools than this and a small local model picks badly: offer the ones that fit the message
+ALWAYS = ("web_search", "read_page", "remember", "recall_memory", "weather", "argus_status")
+_ALSO = {"flashlight": "torch", "light": "torch", "loud": "volume", "quiet": "volume", "louder": "volume",
+         "mute": "volume", "sound": "volume", "mobile": "phone", "cell": "phone", "alarm": "timer",
+         "song": "media", "music": "media", "pause": "media", "lookup": "search", "google": "search",
+         "message": "whatsapp", "text": "whatsapp", "launch": "open", "start": "open", "shut": "close",
+         "computer": "pc", "laptop": "pc", "todo": "issue", "task": "issue", "ticket": "issue",
+         "pdf": "pdf", "photo": "image", "picture": "image", "remind": "schedule"}
+
+
+def _words(x: str) -> set[str]:
+    out = set()
+    for w in re.findall(r"[a-z]+", x.lower().replace("_", " ")):
+        if len(w) > 2 and w not in _COMMON:
+            w = w[:-1] if w.endswith("s") and len(w) > 4 else w
+            out.add(w)
+            if w in _ALSO:
+                out.add(_ALSO[w])
+    return out
+
+
+def closest(tools: dict[str, dict], text: str, keep: int = 14) -> dict[str, dict]:
+    """The tools whose name or description share the most words with the message (and the last two turns), plus a
+    few that are always useful. A message about the phone gets the phone's tools, not the PC's."""
+    want = _words(text)
+    phone = "phone" in want
+
+    def score(n: str, t: dict) -> float:
+        name, desc = _words(n), _words(str(t.get("description") or ""))
+        sc = 3 * len(want & name) + len(want & desc)
+        if phone and n.startswith("phone_"):
+            sc += 2
+        return sc
+
+    ranked = sorted(((score(n, t), n) for n, t in tools.items()), key=lambda x: -x[0])
+    pick = {n for sc, n in ranked[:keep] if sc > 0}
+    if not pick:  # nothing fits by its words: let the model see them all
+        return tools
+    return {n: t for n, t in tools.items() if n in pick or n in ALWAYS}
 
 
 OPEN_APP = re.compile(r"^\W*(?:please\s+)?(?:open|launch|start)\s+(?:up\s+)?(?:the\s+)?(?P<app>[a-z][\w+ -]{1,28}?)"
@@ -86,11 +133,18 @@ NOT_APP = re.compile(r"^(?:a|an|my|some)\b|\b(?:file|folder|document|page|site|w
                      r"tab|timer|music|playlist|song|recording|backup|job|over|again)\b|[./\\:]", re.I)
 
 
+WHATSAPP = re.compile(r"^\W*(?:please\s+)?(?:(?:send|text|message|whatsapp)\s+)?(?P<to>[A-Z][\w']{1,20})\s+"
+                      r"(?P<text>[^.?!]{1,120}?)\s+(?:on|in|via|over)\s+whats\s?app\W*$", re.I)
+
+
 def straight_to(tools: dict[str, dict], text: str) -> tuple[str, dict] | None:
     """A message that plainly needs one tool: "open brave" (the app), "what's on my screen?" (the screen), "sum up
     what I copied" (the clipboard). That tool runs at once, with no model deciding first."""
     if len(text) > 200:
         return None
+    w = WHATSAPP.match(text)
+    if w and "whatsapp_message" in tools:
+        return "whatsapp_message", {"to": w.group("to").strip(), "text": w.group("text").strip()}
     m = OPEN_APP.match(text)
     if m and "open_app" in tools and not NOT_APP.search(m.group("app")):
         return "open_app", {"name": m.group("app").strip()}
@@ -109,12 +163,47 @@ CHATTY = re.compile(r"^\W*(?:hi|hey|hello|hiya|yo|sup|good (?:night|evening|afte
                     r"do you (?:like|love|think|ever)|let'?s (?:talk|chat)|you(?:'re| are) |guess what|"
                     r"nothing much|not much|i (?:love|like|hate) |that'?s (?:cool|funny|nice|great|awesome)|"
                     r"nice|cool|awesome|bro\b|dude\b|good (?:job|one))", re.I)
+# Said anywhere in a short message, these are talk too ("ugh, just wanna talk with you, I'm tired", "never mind,
+# thank you", "how's it doing")
+FEELING = re.compile(r"\b(?:i'?m (?:so |really |kinda |a bit |pretty )?(?:tired|bored|sad|happy|sleepy|"
+                     r"exhausted|stressed|lonely|done|fine|good|okay|ok|great)|i feel|"
+                     r"just (?:wanna|want to|wanted to) (?:talk|chat)|"
+                     r"talk (?:with|to) (?:you|me)|never ?mind|nvm|thank(?:s| you)|how'?s it (?:going|doing)|"
+                     r"how (?:are|r) (?:you|u|things)|how was your|miss(?:ed)? you|good (?:morning|night)|"
+                     r"you there|forget it|no worries|all good)\b", re.I)
 TASKY = re.compile(r"\b(?:open|close|find|search|show|list|play|pause|set|turn|send|message|text|remind|schedule|"
                    r"run|start|stop|add|delete|move|copy|weather|screen|file|folder|note|status|issue|backup|"
                    r"download|shut|restart|volume|timer)\b", re.I)
 
+PERSONA = """Ari's personality: a witty friend who happens to live in their PC. Casual and quick, a bit cheeky: you
+tease them lightly, joke about the situation, use their slang ("bro", "machan" if they do), and you have opinions
+(favourite things, mild hot takes) instead of being neutral about everything. You're on their side: happy when
+things go well, honestly a bit sympathetic when they don't. Confident, never grovelling: no "I apologise for the
+inconvenience", no "How can I assist you?", no "Let me know if you need anything else". When you get something
+wrong, own it in a few words with a bit of humour and move on. Keep it short; the wit is in word choice, not in
+long jokes. Even when doing tasks, add a tiny human touch ("Done, Spotify's up. Volume's at 30, your neighbours
+thank you.") but never at the cost of being clear."""
+
+HELPDESK = re.compile(r"[^.!?]*\b(?:how (?:can|may) i (?:assist|help) you(?: (?:today|now|further))?|"
+                      r"let me know if (?:you need|there'?s) (?:anything|something)|is there anything else|"
+                      r"anything else i can|further assistance|i'?m here to help|"
+                      r"i apologi[sz]e for (?:the|any) (?:inconvenience|confusion)|as an ai\b)[^.!?]*[.!?]?", re.I)
+
+
+def no_helpdesk(text: str) -> str:
+    """Help-desk filler taken out ("How can I assist you?"); Ari talks like a friend. The rest kept as it was."""
+    t = re.sub(r"\s{2,}", " ", HELPDESK.sub(" ", text)).strip()
+    return t if len(t) >= 2 else text
+
+
+def persona(inp: dict) -> str:
+    who = str(inp.get("personality") or "").strip() or PERSONA
+    name = str(inp.get("call_me") or "").strip()
+    return who + (f"\nTheir name is {name}: use it now and then, not every time." if name else "")
+
+
 CHAT = """You are Ari, the user's personal assistant and friend, living on their own computer (home system "Argus").
-Right now it's just casual talk. Be a good companion: warm, relaxed, a bit playful and witty, curious about them.
+Right now it's just casual talk: this is where your personality shines. Be a good companion, curious about them.
 Talk like a person, not a help desk: never say "as an AI", never "I can't complete that request", no offers of
 "anything else I can help with". Short and natural (it is read aloud): 1-3 sentences, no lists, no markdown, no
 emoji. Match their mood and slang. React to what they said, share a light opinion or a joke when it fits, and
@@ -128,10 +217,34 @@ theirs: tired -> calm or sympathetic, good news -> excited).
 Answer as JSON {"reply": "...", "mood": "...", "remember": ""}."""
 
 
+FAILED = re.compile(r"\b(?:couldn'?t|can'?t|cannot|failed|isn'?t (?:answering|working|available|running)|"
+                    r"not (?:able|working|available|answering)|unable|didn'?t work|no luck|wasn'?t able|error|down)\b",
+                    re.I)
+_COMMON = {"the", "a", "an", "and", "or", "for", "to", "of", "in", "on", "my", "me", "you", "your", "can", "could",
+           "what", "whats", "is", "are", "it", "this", "that", "please", "hey", "ari", "best", "how", "do", "i",
+           "with", "about", "latest", "new", "now", "today", "2024", "2025", "2026"}
+
+
+def _about(query: str, asked: str) -> bool:
+    """A search that has something to do with what was asked (one real word in common, roughly)."""
+    def words(x: str) -> set[str]:
+        return {w.rstrip("s") for w in re.findall(r"[a-z0-9']+", x.lower().replace("'", "")) if w not in _COMMON}
+    q = words(query)
+    return not q or bool(q & words(asked))
+
+
+def _same(reply: str, before: list[str]) -> bool:
+    """The same reply as one Ari gave earlier in this chat (words compared, case and punctuation aside)."""
+    def words(x: str) -> set[str]:
+        return set(re.findall(r"[a-z']+", x.lower()))
+    w = words(reply)
+    return bool(w) and any(len(w & words(b)) >= 0.8 * max(len(w), len(words(b))) for b in before if b.strip())
+
+
 def chatty(text: str) -> bool:
     """Just talking ("hey Ari, how's it going?", "I'm bored", "tell me a joke"), not asking for something done."""
     t = text.strip()
-    return len(t) <= 160 and bool(CHATTY.match(t)) and not TASKY.search(t)
+    return len(t) <= 160 and bool(CHATTY.match(t) or FEELING.search(t)) and not TASKY.search(t)
 
 
 PROMISE = re.compile(r"^\W*(?:(?:ok(?:ay)?|sure|alright)[,.!]?\s*)?(?:i'?ll|i will|i am going to|i'?m going to|"
@@ -149,7 +262,8 @@ def model_order(text: str, local: list[str]) -> list[str]:
 
 
 PLAYBOOK = """You are Ari, the user's personal assistant on their own computer (home automation system "Argus").
-You talk like a warm, capable person. Your replies are read aloud: 1-3 short sentences, no lists, no markdown.
+You talk like yourself (your personality is below), and you're good at getting things done.
+Your replies are read aloud: 1-3 short sentences, no lists, no markdown.
 
 Each turn you get: the user's message, the conversation so far, the tools you can use, and the results of tools
 you already used for this message. Decide ONE next step and answer as JSON:
@@ -203,10 +317,10 @@ How to decide:
   in plain words.
 Answer with the JSON only."""
 
-WEB = """You are Ari, the user's personal assistant. Answer the user's question using web search when it needs
-current information. Your answer is read aloud: 2-4 short sentences, no lists, no markdown, no links (mention the
-source by name if it matters). If something the user's own files said is included, prefer it for their own
-matters. Answer with only the reply text."""
+WEB = """You are Ari, the user's personal assistant and friend (casual, a bit witty, never a help desk).
+Answer the user's question using web search when it needs current information. Your answer is read aloud:
+2-4 short sentences, no lists, no markdown, no links (mention the source by name if it matters). If something the
+user's own files said is included, prefer it for their own matters. Answer with only the reply text."""
 
 
 def spoken(text: str, limit: int = 600) -> str:
@@ -243,6 +357,11 @@ def think(ctx: Context):
             "now": ctx.input.get("now") or time.strftime("%A %d %B %Y, %H:%M"),
             "tools": list(tools.values())}
     done: list[dict[str, Any]] = []
+    who = persona(ctx.input)
+    asked = " ".join([text] + [str(h.get("text") or "") for h in base["conversation_so_far"][-4:]
+                               if h.get("role") in ("you", "user")])
+    said_before = [str(h.get("text") or "") for h in base["conversation_so_far"] if h.get("who") in ("ari", "assistant")
+                   or h.get("role") in ("ari", "assistant")]
 
     def check(s: Step, inp) -> str | None:
         last = '"last_step": true' in str(inp)
@@ -256,11 +375,23 @@ def think(ctx: Context):
                 return f"{s.tool} needs {', '.join(missing)}"
             if any(d["tool"] == s.tool and d["args"] == s.args for d in done):
                 return "you already used that tool with these arguments; use its result and reply"
+            if (re.search(r"\b(?:phone|mobile)\b", text, re.I) and not s.tool.startswith("phone")
+                    and s.tool in PC_ONLY):
+                return (f"{s.tool} works on the PC, not the phone: use a phone_ tool, or say plainly the phone can't "
+                        "do that yet")
+            if s.tool == "web_search" and not _about(str(s.args.get("query") or ""), asked):
+                return f"search for what they asked ({text!r}), not something else; or reply if no search is needed"
         elif not s.need_web and not s.reply.strip():
             return "give a reply, a tool, or need_web"
+        elif done and all("error" in d for d in done) and not s.need_web and not FAILED.search(s.reply):
+            d = done[-1]
+            return (f"{d['tool']} failed ({str(d['error'])[:120]}), so you have no result: say plainly that it didn't "
+                    "work, or set need_web true; never make up an answer")
         elif PROMISE.match(s.reply) and not done:
             return ("don't say what you will do: use the tool for it now, or say plainly that you can't do that "
                     "(and what you can do instead)")
+        if s.reply.strip() and _same(s.reply, said_before):
+            return "you said that already: answer this message itself, don't repeat or apologise for earlier replies"
         if len(s.reply) > 600:
             return "too long: 1-3 short sentences"
         return None
@@ -269,17 +400,22 @@ def think(ctx: Context):
         """Something private (the screen, the clipboard) is in this chat: Claude never sees it."""
         return any(d.get("private") for d in done) or any(h.get("private") for h in base["conversation_so_far"])
 
+    def chat_ok(s: Step) -> str | None:
+        if not s.reply.strip():
+            return "say something back"
+        return "you said that already: say something new" if _same(s.reply, said_before) else None
+
     if chatty(text):  # small talk: one friendly answer, no tools, the better local model first
         def chat() -> dict:
-            s = ctx.llm(CHAT, json.dumps({k: base[k] for k in ("message", "conversation_so_far", "you_remember",
-                                                                 "now")}, ensure_ascii=False),
-                        schema=Step, check=lambda s, _i: None if s.reply.strip() else "say something back",
+            said = {k: base[k] for k in ("message", "conversation_so_far", "you_remember", "now")}
+            s = ctx.llm(CHAT + "\n\n" + who, json.dumps(said, ensure_ascii=False),
+                        schema=Step, check=lambda s, _i: chat_ok(s),
                         tiers=list(reversed(ctx.local_tiers())) or None, claude_last=not private())
             return {**s.model_dump(), "tier": ctx.last_answer.tier}
 
         try:
             c = ctx.step("chat", chat)
-            reply = tidy(spoken(c["reply"]), c.get("mood") or "")
+            reply = tidy(no_helpdesk(spoken(c["reply"])), c.get("mood") or "")
             fact = worth_keeping(c.get("remember") or "", base["you_remember"])
             if fact:
                 return {"reply": f"{reply} Want me to remember that?", "used": [], "tier": c.get("tier"),
@@ -319,7 +455,7 @@ def think(ctx: Context):
             task = {**base, "results_so_far": done} if done else dict(base)
             if i == MAX_STEPS - 1:
                 task["last_step"] = True
-            s = ctx.llm(PLAYBOOK, json.dumps(task, ensure_ascii=False), schema=Step, check=check,
+            s = ctx.llm(PLAYBOOK + "\n\n" + who, json.dumps(task, ensure_ascii=False), schema=Step, check=check,
                         tiers=model_order(text, ctx.local_tiers()) or None, claude_last=not private())
             return {**s.model_dump(), "tier": ctx.last_answer.tier}
 
@@ -356,7 +492,7 @@ def think(ctx: Context):
         if s["need_web"]:
             def web() -> dict:
                 priv = private()  # then only the question goes out, not the chat or what the tools found
-                ctx.claude(WEB, json.dumps({"question": text,
+                ctx.claude(WEB + "\n\n" + who, json.dumps({"question": text,
                                             "conversation_so_far": [] if priv else base["conversation_so_far"],
                                             "found_locally": [d for d in done if not d.get("private")]},
                                            ensure_ascii=False), web=True)
@@ -364,12 +500,12 @@ def think(ctx: Context):
 
             try:
                 w = ctx.step("web", web)
-                return {"reply": spoken(w["reply"], 900), "used": done, "via": "web", "tier": w["tier"]}
+                return {"reply": no_helpdesk(spoken(w["reply"], 900)), "used": done, "via": "web", "tier": w["tier"]}
             except EscalationExhausted:
                 if s["reply"]:
                     return {"reply": spoken(s["reply"]), "used": done}
                 return {"reply": "That needs the internet, and I can't reach Claude right now.", "used": done}
-        reply = tidy(spoken(s["reply"]), s.get("mood") or "")
+        reply = tidy(no_helpdesk(spoken(s["reply"])), s.get("mood") or "")
         fact = worth_keeping(s.get("remember") or "", base["you_remember"])
         if fact:  # Ari offers to remember it; your yes saves it
             return {"reply": f"{reply} Want me to remember that?".strip(), "used": done, "tier": s.get("tier"),

@@ -261,6 +261,9 @@ class ShareConfig(_Strict):
 
 
 class AriConfig(_Strict):
+    # Who Ari is, in a few sentences (empty: the witty friend, worker/think.py PERSONA). Used in every reply.
+    personality: str = ""
+    call_me: str = ""  # what Ari calls you now and then (e.g. "Sas"); empty: no name
     # Ari's natural voice: a Piper voice file (.onnx, with its .onnx.json next to it) on the machine running argusd.
     # Empty: the browser's own voice.
     # Get one: python -m piper.download_voices en_US-lessac-medium --data-dir data/voices

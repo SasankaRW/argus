@@ -5,6 +5,15 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Ari has a personality: a witty friend (casual, a bit cheeky, has opinions) in chat and in task replies, with no help-desk lines like "How can I assist you?". Change it with `ari.personality`; `ari.call_me` sets what it calls you.
+- Ari no longer makes up answers: a web search must be about what you asked, and when a tool fails Ari says so instead of inventing a result.
+- With many tools, Ari is offered the ones that fit your message (a phone request gets the phone's tools, and PC-only tools are refused for the phone).
+- The map shows the phone once: the Argus app and the phone Tailscale sees are one box.
+- Ari treats "I'm tired", "just wanna talk", "never mind, thank you" and "how's it doing" as talk, even mid-sentence, instead of reaching for a tool; and it no longer repeats the same reply (like an apology) message after message.
+- Ari no longer plays a beeping tone while an answer is being worked out.
+- Ari no longer offers to type into the window in front unless you ask to type or press keys; "Kaancha hi on WhatsApp" goes straight to a WhatsApp message.
+- The voice-training page pauses Ari for one minute at a time while it is open and showing, so Ari can't get stuck "not listening" after you leave.
+- The WhatsApp tool's description no longer carries a sample message that Ari could repeat as if you had said it.
 - **Ari's expressive voice:** `ari.voice_engine: expressive` runs Chatterbox-Turbo on the PC's GPU (in its own
   Python environment; the supervisor starts it): replies carry a mood and real sounds ("[cheerful] Oh nice!
   [laugh]") that set how Ari sounds, sounding like the Piper voice (or `ari.voice_clip`), with Piper as the

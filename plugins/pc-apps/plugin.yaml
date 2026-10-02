@@ -39,7 +39,7 @@ ari:
     - name: whatsapp_message
       description: "Send someone a WhatsApp message from the PC: opens WhatsApp with the message typed (to their
         number when known, from what you remember about them; else WhatsApp asks which chat), and the user presses
-        Enter to send. \"text Kaancha hi on WhatsApp\"."
+        Enter to send."
       workflow: whatsapp
       input:
         to: {type: string, description: the person's name}

@@ -168,10 +168,59 @@ def test_times_said_in_words_like_a_transcript_writes_them():
 
     from argus.ari import digits, parse_when
 
-    now = _t.time()
+    now = _t.mktime((2026, 10, 1, 15, 0, 0, 0, 0, -1))  # a fixed afternoon: "tonight" must not depend on the clock
     assert parse_when("remind me to call mum tomorrow at five pm", now).say == "tomorrow at 5 pm"
     assert parse_when("sort downloads every morning at seven", now).say == "every day at 7 am"
     assert parse_when("shut down the PC at eleven thirty tonight", now).say.endswith("at 11:30 pm")
     assert parse_when("every thirty minutes check the lab", now).say == "every 30 minutes"
     assert parse_when("remind me in half an hour to stretch", now) is not None
     assert digits("at five oh five pm") == "at 5:05 pm"
+
+
+def test_typing_tools_only_when_asked_and_whatsapp_goes_straight():
+    t = {n: {} for n in ("type_text", "press_keys", "whatsapp_message", "open_app")}
+    assert set(offered(t, "open whatsapp", [{"text": "type hello"}])) == {"whatsapp_message", "open_app"}
+    assert "type_text" in offered(t, "type hello world", [])
+    assert straight_to(t, "Kaancha hi on WhatsApp") == ("whatsapp_message", {"to": "Kaancha", "text": "hi"})
+
+
+def test_talk_said_mid_sentence_is_still_talk_and_ari_never_repeats_itself():
+    from argus.worker.think import _same, chatty
+
+    for t in ("How's it doing", "Just wanna talk with you, I'm tired", "Never mind, thank you", "ugh I'm so tired"):
+        assert chatty(t), t
+    assert not chatty("I'm tired, set a timer for 20 minutes") and not chatty("what's on my screen")
+    said = ["Sorry about that! I'll make sure to use the correct tool next time. How can I assist you?"]
+    assert _same("Sorry about that! I'll make sure to use the correct tool next time. How can I assist you now?", said)
+    assert not _same("Long day, huh? Want to talk about it?", said)
+
+
+def test_no_made_up_searches_or_answers_after_a_failed_tool():
+    from argus.worker.think import FAILED, _about
+
+    assert not _about("best budget laptop for college students 2025", "can you turn down my volume on my phone")
+    assert _about("weather Kandy", "what's the weather in kandy?")
+    assert _about("python release", "latest Python release?")
+    assert FAILED.search("Sorry, I couldn't look that up right now.")
+    assert not FAILED.search("Based on the latest information, the best budget laptops are...")
+
+
+def test_with_many_tools_the_ones_that_fit_are_offered():
+    from argus.worker.think import closest
+
+    tools = {f"tool_{i}": {"description": f"does thing number {i}"} for i in range(40)}
+    tools |= {"phone_torch": {"description": "Turn the phone's torch (flashlight) on or off"},
+              "set_volume": {"description": "Set the PC's volume"}, "web_search": {"description": "Search the web"}}
+    got = closest(tools, "can you turn on the flashlight on my phone")
+    assert "phone_torch" in got and "web_search" in got and "tool_3" not in got
+    assert closest(tools, "zzz qqq") == tools  # nothing fits: all of them
+
+
+def test_ari_has_a_personality_and_no_help_desk_lines():
+    from argus.worker.think import PERSONA, no_helpdesk, persona
+
+    assert no_helpdesk("Done, Spotify's up. How can I assist you today?") == "Done, Spotify's up."
+    assert no_helpdesk("Opened it. Let me know if you need anything else!") == "Opened it."
+    assert no_helpdesk("How can I help you?") == "How can I help you?"  # nothing left: keep it
+    assert persona({}) == PERSONA and "Sas" in persona({"call_me": "Sas"})
+    assert persona({"personality": "A calm butler."}).startswith("A calm butler.")
