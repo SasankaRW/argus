@@ -40,7 +40,11 @@ FIELDS: list[tuple[str, str, str]] = [
     ("ari.pill", "Ari", "Ari's pill look"),
     ("ari.whisper_model", "Ari", "Whisper model for what you say (small.en, or your trained one: "
                                  "data/models/whisper-mine)"),
+    ("ari.call_me", "Ari", "What Ari calls you (empty: no name)"),
+    ("ari.personality", "Ari", "Ari's personality, in a few sentences (empty: the witty friend shown)"),
 ]
+# Settings that are a paragraph, not a word: a big box, with what "empty" means shown greyed out
+LONG = {"ari.personality"}
 NAMES = {k for k, _, _ in FIELDS}
 
 
@@ -120,6 +124,13 @@ def listing(cfg: Any, base: dict[str, Any], overrides: dict[str, Any]) -> list[d
     out = []
     for key, group, label in FIELDS:
         model, name = _section(cfg, key)
-        out.append({"key": key, "group": group, "label": label, **describe(model, name),
-                    "value": getattr(model, name), "default": base[key], "changed": key in overrides})
+        row = {"key": key, "group": group, "label": label, **describe(model, name),
+               "value": getattr(model, name), "default": base[key], "changed": key in overrides}
+        if key in LONG:
+            row["type"] = "longtext"
+        if key == "ari.personality":
+            from .worker.think import PERSONA
+
+            row["placeholder"] = PERSONA
+        out.append(row)
     return out

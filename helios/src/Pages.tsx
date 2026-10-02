@@ -104,8 +104,8 @@ function fmtScore(v?: Score) { return v ? `${v.passed}/${v.total}` : "—"; }
 
 // ---------------------------------------------------------------- Settings: Argus's own, over argus.yaml
 
-type Setting = { key: string; group: string; label: string; type: "bool" | "time" | "choice" | "int" | "number" | "text";
-  options?: string[]; min?: number; max?: number; value: unknown; default: unknown; changed: boolean };
+type Setting = { key: string; group: string; label: string; type: "bool" | "time" | "choice" | "int" | "number" | "text" | "longtext";
+  options?: string[]; placeholder?: string; min?: number; max?: number; value: unknown; default: unknown; changed: boolean };
 
 export function SettingsView() {
   const [rows, setRows] = useState<Setting[] | null>(null);
@@ -151,7 +151,7 @@ export function SettingsView() {
             <div key={g} className="setgroup">
               <div className="sect">{g.toLowerCase()}</div>
               {list.map((s) => (
-                <div key={s.key} className={`setrow${s.key in draft ? " dirty" : ""}${s.type === "text" ? " wide" : ""}`}>
+                <div key={s.key} className={`setrow${s.key in draft ? " dirty" : ""}${s.type === "text" ? " wide" : s.type === "longtext" ? " long" : ""}`}>
                   <label className="setl" htmlFor={`set-${s.key}`}>
                     {s.label}
                     <span className="setk mono">{s.key}{s.changed ? " · changed" : ""}</span>
@@ -256,6 +256,9 @@ function Field({ s, value, onChange }: { s: Setting; value: unknown; onChange: (
   if (s.type === "int" || s.type === "number") {
     return <input id={id} type="number" value={String(value ?? "")} min={s.min} max={s.max} step={s.type === "int" ? 1 : "any"}
       onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))} />;
+  }
+  if (s.type === "longtext") {
+    return <textarea id={id} rows={6} value={String(value ?? "")} placeholder={s.placeholder} onChange={(e) => onChange(e.target.value)} />;
   }
   return <input id={id} value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} />;
 }

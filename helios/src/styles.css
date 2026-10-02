@@ -908,6 +908,11 @@ main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .setrow.wide .setv { flex: 1 1 190px; justify-content: flex-end; }
 .setrow.wide .setv input { width: 100%; max-width: 260px; }
 @media (max-width: 720px) { .setrow.wide .setv input { max-width: none; } }
+.setrow.long { flex-direction: column; align-items: stretch; gap: 8px; }
+.setrow.long .setv { width: 100%; }
+.setv textarea { width: 100%; min-height: 120px; padding: 8px 10px; resize: vertical; font: inherit; line-height: 1.5;
+  background: var(--raise); color: inherit; border: 1px solid var(--line2); border-radius: 6px; }
+.setv textarea::placeholder { color: var(--tx3); }
 .setback { height: 28px; font-size: 11px; color: var(--tx3); }
 .setp { display: flex; flex-direction: column; gap: 14px; }
 .ttest .tools { gap: 10px; }
