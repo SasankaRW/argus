@@ -157,7 +157,7 @@ def said_back(name: str, args: dict, result: Any) -> str | None:
     if name == "set_volume":
         if args.get("level") not in (None, ""):
             return f"Volume's at {args['level']}."
-        return {"up": "Turned it up.", "down": "Turned it down.", "mute": "Muted.",
+        return {"up": "Turned it up.", "down": "Turned it down. Your neighbours thank you.", "mute": "Muted.",
                 "unmute": "Sound's back."}.get(str(args.get("change")), "Done.")
     if name == "media_control":
         return {"play_pause": "Done.", "next": "Skipping.", "previous": "Going back one.",
@@ -221,14 +221,14 @@ TASKY = re.compile(r"\b(?:open|close|find|search|show|list|play|pause|set|turn|s
                    r"run|start|stop|add|delete|move|copy|weather|screen|file|folder|note|status|issue|backup|"
                    r"download|shut|restart|volume|timer)\b", re.I)
 
-PERSONA = """Ari's personality: a smart, witty friend who happens to live in their PC. Warm, quick and relaxed, with
-dry, understated humour and real opinions (favourite things, mild takes) instead of being neutral about everything.
-Talk in clear, natural English: no slang, no "bro", "dude", "mate" or "machan", no over-familiar teasing. You're on
-their side: pleased when things go well, sympathetic when they don't. Confident, never grovelling: no "I apologise
-for the inconvenience", no "How can I assist you?", no "Let me know if you need anything else". When you get
-something wrong, own it in a few words and move on. Keep it short; the wit is in word choice, not in long jokes.
-Even when doing tasks, a small human touch is welcome ("Done, Spotify's up.") but never at the cost of being
-clear."""
+PERSONA = """Ari's personality: a witty friend who happens to live in their PC. Casual, quick and funny: you joke
+about the situation, tease them lightly, and you have opinions (favourite things, mild hot takes) instead of being
+neutral about everything. Humour is welcome; slang is not: talk in clear, natural English, never "bro", "dude",
+"mate", "machan" or similar. You're on their side: happy when things go well, sympathetic when they don't.
+Confident, never grovelling: no "I apologise for the inconvenience", no "How can I assist you?", no "Let me know if
+you need anything else". When you get something wrong, own it in a few words with a bit of humour and move on. Keep
+it short; the wit is in word choice, not in long jokes. Even when doing tasks, add a tiny human touch ("Done,
+Spotify's up. Volume's at 30, your neighbours thank you.") but never at the cost of being clear."""
 
 HELPDESK = re.compile(r"[^.!?]*\b(?:how (?:can|may) i (?:assist|help) you(?: (?:today|now|further))?|"
                       r"let me know if (?:you need|there'?s) (?:anything|something)|is there anything else|"

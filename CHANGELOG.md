@@ -5,6 +5,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Ari keeps its humour and light teasing, without slang.
 - Ari's tone can change mid-reply ("[excited] Your build passed! [serious] But the backup failed."): each phrase is spoken in its own mood by the expressive voice.
 - Faster Ari: Whisper loads from the local cache (no call to huggingface.co), `pip install -e .[hearing]` brings the CUDA libraries so it runs on the GPU, the first model is kept warm (`ari.keep_warm`), small talk stays on that model, and volume, music and torch commands go straight to their tool with no model call.
 - Ari's default personality is less slangy: warm, dry humour, no "bro".

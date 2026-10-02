@@ -265,7 +265,7 @@ daily cap.
 - **Your words** (`ari.vocabulary`, `ari.heard_as`): Whisper is told the names to expect (yours, the people and
   places Ari remembers, apps like WhatsApp), and common mishearings are put right ("open what's up" -> WhatsApp).
   Add your own: `vocabulary: [Kaancha, Nimali]`, `heard_as: {kancha: Kaancha}`.
-- **Ari's personality**: a witty friend by default (warm, dry humour, has opinions, no slang, no help-desk lines like
+- **Ari's personality**: a witty friend by default (funny, teases you a bit, has opinions, no slang, no help-desk lines like
   "How can I assist you?"), in small talk and in task replies. Change it in a few sentences of your own, and tell it
   what to call you:
 
