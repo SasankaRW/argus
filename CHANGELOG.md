@@ -7,7 +7,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 - The Ari pill is gone from Helios on the phone too (and its look setting); the island on the PC shows what Ari is doing.
 - Ari talks sooner: small-talk replies stream from the model and each finished sentence is spoken while the rest is still being written; answers are picked up every 0.15 s instead of 0.5 s.
-- The island shows Ari is still listening after an answer (a ring that runs down), and keeps the answer on show meanwhile; the Helios pill now only appears on the phone.
+- The island shows Ari is still listening after an answer (a ring that runs down), and keeps the answer on show meanwhile.
 - `python -m argus.ari_eval`: Ari's test set (40 everyday phrases, right tool or not, how fast; nothing runs for real).
 - Fix: with many tools, Ari now matches them by what they do, not only by name.
 - Ari keeps its humour and light teasing, without slang.
