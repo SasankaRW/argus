@@ -203,7 +203,7 @@ function useInstall(): (() => void) | null {
 
 export function PhoneMore({ onOpen, onFull }: { onOpen: (v: string) => void; onFull: () => void }) {
   const install = useInstall();
-  const rows: [string, string, string][] = [["inbox", "inbox", "everything waiting for you"], ["queue", "queue", "what runs next"], ["runs", "runs", "everything that ran"],
+  const rows: [string, string, string][] = [["inbox", "inbox", "everything waiting for you"], ["notifications", "notifications", "what was sent to this phone"], ["queue", "queue", "what runs next"], ["runs", "runs", "everything that ran"],
     ["share", "share", "send files to argus"], ["power", "power", "wake · sleep · shut down"], ["models", "models", "tiers, calls, hand-ups"],
     ["settings", "settings", "quiet hours, summaries, power…"], ["logs", "logs", "what argus wrote"]];
   return (

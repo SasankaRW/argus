@@ -357,6 +357,27 @@ class Outbox:
 
         return await self.store.read(fn)
 
+    async def notifications(self, limit: int = 50) -> list[dict[str, Any]]:
+        """The phone notifications, newest first, with their text: what the app's Notifications page shows.
+        `state`: waiting (the phone has not collected it yet), delivered, dropped (never collected in time)."""
+        kinds = ["phone", "ntfy"]
+
+        def fn(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+            rows = conn.execute(
+                "SELECT id, state, payload, created_at, sent_at FROM outbox WHERE kind IN (?,?)"
+                " ORDER BY created_at DESC LIMIT ?", (*kinds, limit)).fetchall()
+            out = []
+            for r in rows:
+                p = json.loads(r["payload"])
+                out.append({"id": r["id"], "title": p.get("title", ""), "text": p.get("message", ""),
+                            "priority": _prio(p.get("priority")), "click": p.get("click"),
+                            "at": r["created_at"], "delivered_at": r["sent_at"],
+                            "state": {"sent": "delivered", "skipped": "dropped", "failed": "dropped"}.get(
+                                r["state"], "waiting")})
+            return out
+
+        return await self.store.read(fn)
+
     def health(self) -> dict[str, Any]:
         box = self.inbox
         return {"alive": self.alive, "sent": self.sent, "last_error": self.last_error,

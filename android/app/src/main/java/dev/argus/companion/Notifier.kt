@@ -64,7 +64,7 @@ object Notifier {
             .setAutoCancel(true)
             .setShowWhen(true)
             .setWhen((msg.optDouble("at", System.currentTimeMillis() / 1000.0) * 1000).toLong())
-            .setContentIntent(open(ctx, id, msg.optString("click")))
+            .setContentIntent(open(ctx, id, msg.optString("click").ifBlank { "/helios/?app=1#notifications" }))
         if (priority >= 5) b.setCategory(Notification.CATEGORY_ALARM)
         val actions = msg.optJSONArray("actions")
         for (i in 0 until minOf(actions?.length() ?: 0, 3)) {

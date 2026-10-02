@@ -12,7 +12,7 @@ import { MapFull } from "./MapFull";
 import { CommandLayer, Layout, LayoutSwitch, loadLayout, saveLayout } from "./Desk";
 import { PhoneHeader, PhoneHome, PhoneMore, PhoneOffline, PhoneTab, PhoneTabs } from "./Phone";
 import { Sheet } from "./Sheet";
-import { InboxView, ModelsView, SettingsView, useInboxCount } from "./Pages";
+import { InboxView, ModelsView, NotificationsView, SettingsView, useInboxCount } from "./Pages";
 import { PluginsView } from "./PluginsView";
 import { PowerView } from "./PowerView";
 import { QueueView } from "./QueueView";
@@ -28,6 +28,7 @@ const CMD_PAD: FitPad = { top: "340px", right: "40px", bottom: "150px", left: "4
 const NAV: { id: string; label: string; icon: string }[] = [
   { id: "map", label: "Live map", icon: "M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3zM9 3v15M15 6v15" },
   { id: "inbox", label: "Inbox", icon: "M4 13l2.5-8h11L20 13v6H4zM4 13h5l1 2h4l1-2h5" },
+  { id: "notifications", label: "Notifications", icon: "M6 16V11a6 6 0 0 1 12 0v5l2 2H4zM10 20a2 2 0 0 0 4 0" },
   { id: "ari", label: "Ari", icon: "M4 5h16v11H9l-5 4zM8 10h.01M12 10h.01M16 10h.01" },
   { id: "plugins", label: "Plugins", icon: "M9 3v4M15 3v4M6 7h12v5a6 6 0 0 1-12 0zM12 18v3" },
   { id: "queue", label: "Queue", icon: "M4 6h10M4 12h10M4 18h10M18 6l2 2-2 2M18 14l2 2-2 2" },
@@ -172,7 +173,7 @@ export function App() {
   const [wide, setWide] = useState(() => { try { return localStorage.getItem("helios.rail") === "wide"; } catch { return false; } });
   const setWideRail = (v: boolean) => { setWide(v); try { localStorage.setItem("helios.rail", v ? "wide" : "icons"); } catch { /* private */ } };
   const [triedLogin, setTriedLogin] = useState(false);
-  const parse = (h: string) => (["queue", "runs", "logs", "share", "power", "ari", "plugins", "more", "inbox", "models", "settings", "voice"].includes(h) || h.startsWith("rules/") || h.startsWith("plugins/") || h.startsWith("ari/") ? h : "map");
+  const parse = (h: string) => (["queue", "runs", "logs", "share", "power", "ari", "plugins", "more", "inbox", "notifications", "models", "settings", "voice"].includes(h) || h.startsWith("rules/") || h.startsWith("plugins/") || h.startsWith("ari/") ? h : "map");
   const [view, setView] = useState<string>(() => parse(location.hash.slice(1)));
   useEffect(() => {  // the share menu opens /helios/#share on a page that may already be open
     const on = () => setView(parse(location.hash.slice(1)));
@@ -307,6 +308,7 @@ export function App() {
           : proot === "power" ? <PowerView events={a.events} onSelect={setSel} />
           : proot === "logs" ? <LogsView />
           : proot === "inbox" ? <InboxView events={a.events} onOpenChat={(c) => go(`ari/${c}`)} />
+          : proot === "notifications" ? <NotificationsView events={a.events} />
           : proot === "settings" ? <SettingsView />
           : proot === "voice" ? <VoiceTrain />
           : proot === "models" ? <ModelsView events={a.events} />
@@ -424,6 +426,7 @@ export function App() {
         : view === "share" ? <ShareView onJob={(id) => { setSel({ type: "job", id }); go("runs"); }} onDone={() => go("map")} />
         : view === "logs" ? <LogsView />
         : view === "inbox" ? <InboxView events={a.events} onOpenChat={(c) => go(`ari/${c}`)} />
+        : view === "notifications" ? <NotificationsView events={a.events} />
         : view === "settings" ? <SettingsView />
         : view === "voice" ? <VoiceTrain />
         : view === "models" ? <ModelsView events={a.events} />

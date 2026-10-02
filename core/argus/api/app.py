@@ -34,6 +34,7 @@ Approvals (C8):
     GET  /outbox                      recent outgoing messages and counts (token)
     GET  /phone/inbox?wait=25         the phone app collects its notifications (long poll, token)
     POST /phone/inbox/ack             {ids}: the app showed them (token)
+    GET  /phone/notifications         the notifications sent to the phone, newest first (token)
     POST /outbox/test                 send a test notification (token)
 
 Scheduler and triggers (C9):
@@ -1920,6 +1921,14 @@ def create_app(argus: Argus) -> FastAPI:
     @app.post("/phone/inbox/ack", dependencies=guarded)
     async def phone_inbox_ack(body: InboxAck) -> dict:
         return {"acked": await argus.outbox.inbox_ack(body.ids)}
+
+    @app.get("/phone/notifications", dependencies=guarded)
+    async def phone_notifications(limit: int = Query(50, ge=1, le=200)) -> dict:
+        """The notifications sent to the phone, newest first (the Notifications page in Helios and the app)."""
+        box = argus.outbox.inbox
+        return {"notifications": await argus.outbox.notifications(limit),
+                "phone": {"connected": bool(box and box.connected()), "last_seen": box.last_seen if box else 0.0,
+                          "device": box.device if box else ""}}
 
     @app.get("/outbox", dependencies=guarded)
     async def outbox(limit: int = 50) -> dict:

@@ -137,6 +137,27 @@ def test_the_phone_app_collects_acknowledges_and_expires(store, clock):
     assert rows["b"]["state"] == "skipped" and rows["b"]["last_error"] == "not collected in time"
 
 
+def test_notifications_list_shows_text_and_state(store, clock):
+    from argus.outbox import add_message, phone_message
+
+    ob = Outbox(store, cfg_with(), clock=clock)
+    store.write_sync(lambda c: add_message(c, clock(), "phone", phone_message("one", "first text", priority="high"),
+                                           dedupe_key="1"))
+    clock.advance(1)
+    store.write_sync(lambda c: add_message(c, clock(), "phone", phone_message("two", "second", click="/a/x"),
+                                           dedupe_key="2"))
+
+    async def go():
+        got = await ob.inbox_fetch("pixel")
+        await ob.inbox_ack([got[0]["id"]])
+        return await ob.notifications()
+
+    out = run(go())
+    assert [n["title"] for n in out] == ["two", "one"]  # newest first
+    assert [n["state"] for n in out] == ["waiting", "delivered"]
+    assert out[1]["text"] == "first text" and out[1]["priority"] == 4 and out[0]["click"] == "/a/x"
+
+
 def test_a_long_poll_hears_a_new_message_at_once(store, clock):
     from argus.outbox import add_message, phone_message
 
@@ -360,6 +381,9 @@ def test_approve_from_the_phone_resumes_the_job_in_under_a_second(tmp_path):
         assert box["phone"] is True and box["phone_device"] == "test-phone"
         evs = [e["kind"] for e in cl.get(f"/jobs/{jid}/events")]
         assert "approval.requested" in evs and "approval.approved" in evs and "outbox.sent" in evs
+        notes = cl.get("/phone/notifications")
+        assert [n["title"] for n in notes["notifications"]] == ["Argus test", "demo: CEB bill"]
+        assert notes["phone"]["connected"] is True and {n["state"] for n in notes["notifications"]} == {"delivered"}
         # without the Argus token the inbox is closed
         assert FakePhoneApp(srv.url, "wrong")._call("GET", "/phone/inbox")[0] == 401
 
