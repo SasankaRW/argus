@@ -163,11 +163,14 @@ class AriState:
         return self.phase == "done" and now - self.since > min(9.0, 3.5 + len(self.text) * 0.04)
 
 
+STOPPABLE = ("thinking", "working", "speaking")  # while Ari is doing any of these, the island has a Stop key
+
+
 def target_size(mode: str, text: str, hover: bool, details_h: float) -> tuple[float, float]:
     if mode == "details":
         return DETAILS_W, min(MAX_H, details_h)
     if mode in ("active", "done"):  # one look for both: Ari's answer stays in the same pill it spoke from
-        return max(220, min(MAX_W, (70 if mode == "active" else 50) + len(text) * 7.0)), 36
+        return max(220, min(MAX_W, (100 if mode == "active" else 50) + len(text) * 7.0)), 36
     return HOVER if hover else IDLE
 
 
@@ -595,6 +598,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             self.draw_indicator(qp, x + 9, cy, tone)
             x += 28
             right = body.right() - 16
+            if mode == "active" and self.ari.phase in STOPPABLE:  # a round Stop key at the right end
+                stop = QRectF(right - 22, body.y() + 7, 22, 22)
+                self.stop_key(qp, stop)
+                right -= 30
             if mode == "active":
                 label = WORDS.get(self.ari.phase, "")
                 qp.setFont(F_LABEL)
@@ -625,6 +632,18 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             qp.setFont(f or F_CHIP)
             qp.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
             self.buttons.append((rect, key))
+
+        def stop_key(self, qp: Any, rect: Any) -> None:
+            """A round Stop key: a small square in a ring (Ari stops talking and drops what it is working on)."""
+            hot = self.hot == "stop"
+            qp.setPen(QPen(QColor(248, 113, 113, 150 if hot else 90), 1))
+            qp.setBrush(QColor("#2a1416" if hot else "#1c1213"))
+            qp.drawEllipse(rect.adjusted(0.5, 0.5, -0.5, -0.5))
+            c = rect.center()
+            qp.setPen(Qt.PenStyle.NoPen)
+            qp.setBrush(QColor("#f87171" if hot else "#ef6a6a"))
+            qp.drawRoundedRect(QRectF(c.x() - 4, c.y() - 4, 8, 8), 1.6, 1.6)
+            self.buttons.append((rect.adjusted(-4, -4, 4, 4), "stop"))  # a bit larger to hit
 
         def draw_details(self, qp: Any, body: Any) -> None:
             info = self.info
@@ -892,7 +911,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
         def mousePressEvent(self, e: Any) -> None:  # noqa: N802
             if not self.shape_rect().contains(QPointF(e.position())):
                 return
-            key = self.key_at(e.position()) if self.details else None
+            key = self.key_at(e.position()) if (self.details or self.mode() == "active") else None
+            if key == "stop":
+                self.stop_ari()
+                return
             if key is None:
                 (self.close_details if self.details else self.open_details)()
                 return
@@ -905,6 +927,19 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 self.close_details()
             elif key.startswith("sc:"):
                 self.shortcut(key[3:])
+
+        def stop_ari(self) -> None:
+            """Stop: Ari goes quiet at once and the answer it was working on is dropped."""
+            job = self.ari.think_job if self.ari.phase in ("thinking", "working") else None
+            self.ari.phase, self.ari.text = "idle", ""
+            self.kick()
+
+            def go() -> None:
+                try:
+                    api.call("POST", "/ari/stop", {"job": job or ""})
+                except Exception:  # noqa: BLE001 - Argus out of reach: say so
+                    bus.flash.emit("Stop didn't reach Argus")
+            threading.Thread(target=go, daemon=True).start()
 
         def talk(self) -> None:
             def go() -> None:

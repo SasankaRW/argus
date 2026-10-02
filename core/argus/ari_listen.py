@@ -262,7 +262,7 @@ class AriClient:
     def say(self, text: str, on_partial: Callable[[str, str], None] | None = None) -> dict:
         """Ask Ari. `on_partial(text_so_far, mood)`: the finished sentences of a reply still being written (small
         talk streams), so they can be spoken before the rest is ready."""
-        LAST_ASKED[0] = time.monotonic()
+        LAST_ASKED[0] = started = time.monotonic()
         if self.conv and time.time() - self.used > self.NEW_CHAT_S:
             self.conv = None  # a while since we last talked: a fresh chat, so old ones don't leak into this one
         self.used = time.time()
@@ -284,6 +284,8 @@ class AriClient:
             while time.monotonic() - start < 60:
                 time.sleep(0.15)
                 n += 1
+                if STOPPED_AT[0] > started:  # the island's Stop button: drop this answer
+                    return {"reply": "", "stopped": True}
                 if on_partial is not None:
                     try:
                         q = f"/events?kinds=plugin.ari.partial&job={job}&after={seen}&limit=20"
@@ -513,8 +515,12 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device) -> i
         seq = -1
         while True:
             t0 = time.monotonic()
-            evs, seq = client.wakes(seq, "ari.wake,ari.notice,ari.listening", wait=20)
+            evs, seq = client.wakes(seq, "ari.wake,ari.notice,ari.listening,ari.stop", wait=20)
             hush_from(evs)
+            if any(e.get("kind") == "ari.stop" for e in evs):
+                log.info("stop button")
+                STOPPED_AT[0] = time.monotonic()
+                player.stop()  # quiet at once; an answer still being written is dropped by say()
             if any(e.get("kind") == "ari.wake" for e in evs):
                 log.info("talk button")
                 talk.wake()
@@ -579,6 +585,7 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device) -> i
 LOCK_PORT = 8619
 
 
+STOPPED_AT = [0.0]  # when the island's Stop button was last pressed (monotonic)
 LAST_ASKED = [0.0]  # when Ari was last asked something here (monotonic)
 
 
@@ -729,8 +736,12 @@ def main(argv: list[str] | None = None) -> int:
                 client.here()
                 last = time.monotonic()
             t0 = time.monotonic()
-            evs, seq = client.wakes(seq, "ari.wake,ari.notice,ari.listening", wait=20)  # a long poll
+            evs, seq = client.wakes(seq, "ari.wake,ari.notice,ari.listening,ari.stop", wait=20)  # a long poll
             hush_from(evs)
+            if any(e.get("kind") == "ari.stop" for e in evs):
+                log.info("stop button")
+                STOPPED_AT[0] = time.monotonic()
+                stop_speaking()
             if any(e.get("kind") == "ari.wake" for e in evs):
                 log.info("talk button")
                 listener.wake()

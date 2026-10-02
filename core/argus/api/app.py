@@ -985,6 +985,21 @@ def create_app(argus: Argus) -> FastAPI:
             await argus.store.write(lambda c: insert_event(c, time.time(), "ari.wake", src="island", dst="ari"))
         return {"listener": here}
 
+    @app.post("/ari/stop", dependencies=guarded)
+    async def ari_stop(body: dict | None = None) -> dict:
+        """The island's Stop button: Ari stops talking and drops the answer it is working on (the PC's listener
+        hears ari.stop; the job, when given, is cancelled)."""
+        job = str((body or {}).get("job") or "")
+        stopped = False
+        if job:
+            with contextlib.suppress(Exception):  # already finished or unknown: nothing to cancel
+                await argus.jobs.cancel(job, "stopped from the island")
+                stopped = True
+        await argus.store.write(lambda c: (insert_event(c, time.time(), "ari.stop", src="island", dst="ari",
+                                                        data={"job": job}),
+                                           ari_state(c, "idle", "", by="argus")))
+        return {"ok": True, "cancelled": stopped}
+
     @app.post("/ari/popup", dependencies=guarded)
     async def ari_popup_ping(request: Request) -> dict:
         """The PC's Ari popup is running (sent every 30 s): Helios on that PC then leaves the pill to it."""
