@@ -13,13 +13,14 @@ function ago(t: number) {
 // ---------------------------------------------------------------- Notifications: what was sent to the phone
 
 type Note = { id: string; title: string; text: string; priority: number; click: string | null; at: number;
-  delivered_at: number | null; state: "waiting" | "delivered" | "dropped" };
+  delivered_at: number | null; state: "waiting" | "delivered" | "dropped"; approval_id: string | null; approval_state: string | null };
 type NoteData = { notifications: Note[]; phone: { connected: boolean; last_seen: number; device: string } };
 
 export function NotificationsView({ events }: { events: ArgusEvent[] }) {
   const [d, setD] = useState<NoteData | null>(null);
   const [only, setOnly] = useState<string>("all");
   const [msg, setMsg] = useState<string | null>(null);
+  const [review, setReview] = useState<string | null>(null);
   const load = useCallback(() => { api<NoteData>("/phone/notifications?limit=100").then(setD).catch(() => setD({ notifications: [], phone: { connected: false, last_seen: 0, device: "" } })); }, []);
   const last = events.filter((e) => /^(outbox|approval)\./.test(e.kind)).map((e) => e.seq).pop() ?? 0;
   useEffect(load, [load, last]);
@@ -57,7 +58,10 @@ export function NotificationsView({ events }: { events: ArgusEvent[] }) {
               <span className="muted">{n.state === "waiting" ? "waiting for the phone" : n.state === "dropped" ? "never collected" : "delivered"} · {ago(n.at)}</span>
             </div>
             {n.text && <div className="ibox" style={{ whiteSpace: "pre-wrap" }}>{n.text}</div>}
-            {n.click && n.click.startsWith("/a/") && <div className="iact"><a className="btn" href={n.click}>open</a></div>}
+            {n.approval_id && n.approval_state === "pending" && (review === n.id
+              ? <div className="ibox"><ApprovalCard id={n.approval_id} onDone={() => { setReview(null); load(); }} /></div>
+              : <div className="iact"><button type="button" className="primary" onClick={() => setReview(n.id)}>review &amp; decide</button></div>)}
+            {n.approval_id && n.approval_state && n.approval_state !== "pending" && <div className="iact"><span className="muted">{n.approval_state}</span></div>}
           </div>
         ))}
       </div>

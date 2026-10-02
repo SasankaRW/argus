@@ -5,6 +5,9 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Notifications page: an approval notification now has **review & decide** (the same card as the Inbox, with Approve / Reject and edits) while it is pending, and shows its outcome after.
+- **Fix:** the phone app asked for any job and failed the ones that weren't phone jobs ("the phone only runs the phone plugin", seen as "Job failed: guidance.review"); it now only asks for phone-plugin jobs.
+
 - **Export an Ari chat for debugging:** "copy report" (and "save report" on the PC) in the chat header gives one text file with the conversation, what Ari did for each answer (the model's steps, tools and what they returned, errors, how long), the events around that time, the log lines from the same minutes (warnings and errors from every log, everything from Ari's own), the model and Ari settings and the last health check. Secrets and one-time links are removed, and what private tools (screen, clipboard) returned is left out. `GET /ari/{chat}/export`.
 
 - **Notifications page** in Helios and the phone app (More > notifications, the app's long-press shortcut, and what a notification opens when tapped): everything sent to the phone, newest first, with its text, whether the phone has collected it yet, whether the phone is connected, filters (important, waiting, delivered) and a "send test" button. `GET /phone/notifications`.

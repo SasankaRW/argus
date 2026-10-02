@@ -383,6 +383,8 @@ def test_approve_from_the_phone_resumes_the_job_in_under_a_second(tmp_path):
         assert "approval.requested" in evs and "approval.approved" in evs and "outbox.sent" in evs
         notes = cl.get("/phone/notifications")
         assert [n["title"] for n in notes["notifications"]] == ["Argus test", "demo: CEB bill"]
+        ceb = next(n for n in notes["notifications"] if n["title"] == "demo: CEB bill")
+        assert ceb["approval_id"] and ceb["approval_state"] == "approved"  # the page shows its state / a decide button
         assert notes["phone"]["connected"] is True and {n["state"] for n in notes["notifications"]} == {"delivered"}
         # without the Argus token the inbox is closed
         assert FakePhoneApp(srv.url, "wrong")._call("GET", "/phone/inbox")[0] == 401

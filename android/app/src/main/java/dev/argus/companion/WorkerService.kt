@@ -174,7 +174,7 @@ class WorkerService : Service() {
                     registeredAt = System.currentTimeMillis()
                     show("connected")
                 }
-                val claim = api.post("/workers/$id/claim", JSONObject().put("capabilities", caps).put("wait", 25),
+                val claim = api.post("/workers/$id/claim", JSONObject().put("capabilities", caps).put("plugins", JSONArray().put("phone")).put("wait", 25),
                     timeoutMs = 45_000)
                 backoff = 5_000L
                 if (claim.status == 204) continue

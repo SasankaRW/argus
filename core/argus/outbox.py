@@ -364,12 +364,16 @@ class Outbox:
 
         def fn(conn: sqlite3.Connection) -> list[dict[str, Any]]:
             rows = conn.execute(
-                "SELECT id, state, payload, created_at, sent_at FROM outbox WHERE kind IN (?,?)"
+                "SELECT id, state, payload, created_at, sent_at, dedupe_key FROM outbox WHERE kind IN (?,?)"
                 " ORDER BY created_at DESC LIMIT ?", (*kinds, limit)).fetchall()
             out = []
             for r in rows:
                 p = json.loads(r["payload"])
-                out.append({"id": r["id"], "title": p.get("title", ""), "text": p.get("message", ""),
+                key = r["dedupe_key"] or ""
+                aid = key.split(":", 1)[1] if key.startswith(("approval:", "approval-remind:")) else None
+                ap = conn.execute("SELECT state FROM approvals WHERE id = ?", (aid,)).fetchone() if aid else None
+                out.append({"approval_id": aid if ap else None, "approval_state": ap["state"] if ap else None,
+                            "id": r["id"], "title": p.get("title", ""), "text": p.get("message", ""),
                             "priority": _prio(p.get("priority")), "click": p.get("click"),
                             "at": r["created_at"], "delivered_at": r["sent_at"],
                             "state": {"sent": "delivered", "skipped": "dropped", "failed": "dropped"}.get(
