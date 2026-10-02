@@ -374,3 +374,31 @@ def test_the_health_check_is_run_and_kept(tmp_path):
         names = [c["name"] for c in r["checks"]]
         assert "ollama" in names and "web search" in names and "voice" in names and "worker" in names
         assert cl.get("/ari/health")["health"]["at"] == r["at"]
+
+
+def test_a_chat_exports_as_one_file_with_secrets_and_private_results_left_out(tmp_path):
+    import urllib.error
+    import urllib.request
+
+    from argus.ari_export import scrub
+
+    assert "abc123def456ghi789" not in scrub("Authorization: Bearer abc123def456ghi789 and token=abc123def456ghi789")
+    assert "0123456789abcdef0123456789abcdef" not in scrub("/approvals/x/decide?t=0123456789abcdef0123456789abcdef")
+    with FakeOllama({"qwen2.5-coder:7b": []}) as ol, Server(make(tmp_path).open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop", "session"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        r = cl.post("/ari", {"text": "what does this error say? my token=supersecretvalue99"})
+        settle(cl, w, r["conv"])
+        resp = urllib.request.urlopen(f"{srv.url}/ari/{r['conv']}/export")
+        text = resp.read().decode()
+        assert "attachment" in resp.headers["Content-Disposition"] and ".md" in resp.headers["Content-Disposition"]
+        assert "# Ari conversation export" in text and "## Conversation" in text and "## Events around then" in text
+        assert "YOU: what does this error say?" in text and "ARI:" in text
+        assert "supersecretvalue99" not in text  # secrets are removed
+        assert "private result, not exported" in text  # the screen tool's raw result is not copied into the job details
+        try:
+            urllib.request.urlopen(f"{srv.url}/ari/nochat/export")
+            raise AssertionError("expected 404")
+        except urllib.error.HTTPError as e:
+            assert e.code == 404

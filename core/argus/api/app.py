@@ -69,6 +69,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .. import ari as ari_mod
+from .. import ari_export as export_mod
 from .. import ask as ask_mod
 from .. import daily, guidance, logview, vocab, voice_corpus
 from .. import island as island_mod
@@ -1128,6 +1129,24 @@ def create_app(argus: Argus) -> FastAPI:
         if not n:
             raise HTTPException(status_code=404, detail="no such chat")
         return {"deleted": n}
+
+    @app.get("/ari/{conv}/export", dependencies=guarded)
+    async def ari_export(conv: str, last: int = Query(40, ge=1, le=500)) -> Response:
+        """The conversation and everything around it as one text file (what Ari did, errors, events, logs, settings):
+        what you hand over when something went wrong. Secrets are removed."""
+
+        def fn(conn):
+            ev = read_events(conn, 0, limit=1, flt=EventFilter.parse("ari.health"), newest=True)
+            return export_mod.build(conn, conv, cfg=argus.cfg, version=argus.version, log_dir=argus.cfg.log_dir,
+                                    health=ev[-1]["data"] if ev else None, last=last,
+                                    private={t.name for t in tools.all().values() if t.private})
+
+        text = await argus.store.read(fn)
+        if text is None:
+            raise HTTPException(status_code=404, detail="no such chat")
+        name = f"ari-{conv[:12]}-{time.strftime('%Y%m%d-%H%M%S')}.md"
+        return Response(text, media_type="text/markdown; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
 
     @app.get("/ari/{conv}", dependencies=guarded)
     async def ari_conv(conv: str) -> dict:

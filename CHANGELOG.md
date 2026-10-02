@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Export an Ari chat for debugging:** "copy report" (and "save report" on the PC) in the chat header gives one text file with the conversation, what Ari did for each answer (the model's steps, tools and what they returned, errors, how long), the events around that time, the log lines from the same minutes (warnings and errors from every log, everything from Ari's own), the model and Ari settings and the last health check. Secrets and one-time links are removed, and what private tools (screen, clipboard) returned is left out. `GET /ari/{chat}/export`.
+
 - **Notifications page** in Helios and the phone app (More > notifications, the app's long-press shortcut, and what a notification opens when tapped): everything sent to the phone, newest first, with its text, whether the phone has collected it yet, whether the phone is connected, filters (important, waiting, delivered) and a "send test" button. `GET /phone/notifications`.
 
 - **Notifications now go through the Argus phone app, not ntfy.** The app asks Argus for its messages (a long poll, `GET /phone/inbox?wait=25`), shows them and acknowledges them (`POST /phone/inbox/ack`); only then is a message "sent". The phone can be off or away from Tailscale: messages wait on the PC (`notify.keep_hours`, 48 h) and arrive when it is back. Nothing goes through ntfy or any outside service. Removed: the ntfy sender, the reply relay, `NTFY_*` in `.env`, `approvals.buttons`. An old `ntfy:` section in `argus.yaml` is still accepted and ignored. Approve / Reject buttons are relative links; the app puts its own Argus address in front.
