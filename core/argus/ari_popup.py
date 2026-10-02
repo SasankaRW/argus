@@ -44,6 +44,7 @@ MAX_W = 430
 MAX_H = 300
 W, H = MAX_W + 2 * 30 + 2 * MARGIN, MAX_H + MARGIN  # the window (room for the widest shoulders)
 
+FOLLOW_S = 20.0  # how long Ari listens for a follow-up after answering (ari.talk_idle_s)
 WORDS = {"listening": "listening", "thinking": "thinking", "working": "on it", "speaking": "speaking"}
 NICE = {"search_my_files": "searching your files", "find_file": "looking for the file", "open_app": "opening it",
         "set_volume": "setting the volume", "argus_status": "checking Argus", "add_note": "writing it down",
@@ -138,7 +139,10 @@ class AriState:
                 phase = str(data.get("phase") or "idle")
                 if phase == "thinking":
                     self.think_job = e.get("job_id")
-                self.phase, self.text, self.since = phase, str(data.get("text") or ""), now
+                text = str(data.get("text") or "")
+                if phase == "following" and not text:
+                    text = self.text  # the answer stays on show while Ari listens for a follow-up
+                self.phase, self.text, self.since = phase, text, now
                 changed = True
             elif e["kind"] == "step.running" and e.get("job_id") and e.get("job_id") == self.think_job:
                 step = str(e.get("step") or "")
@@ -152,7 +156,10 @@ class AriState:
         return changed
 
     def fold_due(self, now: float) -> bool:
-        """An answer shows for a while (longer for longer ones), then the island folds."""
+        """An answer shows for a while (longer for longer ones), then the island folds. After a spoken answer
+        ("following": Ari still listens for a follow-up, no "Hey Ari" needed) it stays while that lasts."""
+        if self.phase == "following":
+            return now - self.since > FOLLOW_S
         return self.phase == "done" and now - self.since > min(9.0, 3.5 + len(self.text) * 0.04)
 
 
@@ -354,7 +361,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 return "details"
             if self.ari.phase == "idle":
                 return "idle"
-            return "done" if self.ari.phase == "done" else "active"
+            return "done" if self.ari.phase in ("done", "following") else "active"
 
         def shown_text(self) -> str:
             return self.ari.text or ("say what you need" if self.ari.phase == "listening" else "")
@@ -369,7 +376,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             if not self.anim.isActive():
                 self.last_frame = time.monotonic()
                 self.anim.start()
-            busy = self.mode() == "active"
+            busy = self.mode() == "active" or self.ari.phase == "following"  # the follow-up ring moves
             if busy and not self.pulse.isActive():
                 self.pulse.start()
             elif not busy and self.pulse.isActive():
@@ -389,6 +396,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             if self.ari.apply(evs, time.monotonic()):
                 if self.ari.phase == "done":
                     self.fold.start(int(min(9.0, 3.5 + len(self.ari.text) * 0.04) * 1000) + 50)
+                elif self.ari.phase == "following":
+                    self.fold.start(int(FOLLOW_S * 1000) + 50)
                 self.kick()
 
         def check_fold(self) -> None:
@@ -557,6 +566,15 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 qp.setBrush(Qt.BrushStyle.NoBrush)
                 qp.drawArc(QRectF(cx - 7, cy - 7, 14, 14), int(start * 16), int(-250 * 16))
             else:
+                if ph == "following":  # still listening for a follow-up: a ring that runs down with the time left
+                    left = max(0.0, 1.0 - (t - self.ari.since) / FOLLOW_S)
+                    ring = QPen(tone, 1.6)
+                    ring.setCapStyle(Qt.PenCapStyle.RoundCap)
+                    qp.setPen(ring)
+                    qp.setBrush(Qt.BrushStyle.NoBrush)
+                    qp.setOpacity(0.35 + 0.65 * left)
+                    qp.drawArc(QRectF(cx - 8.5, cy - 8.5, 17, 17), 90 * 16, int(left * 360 * 16))
+                    qp.setOpacity(1)
                 glow = QRadialGradient(QPointF(cx, cy), 9)
                 c = QColor(tone)
                 glow.setColorAt(0, c)

@@ -44,6 +44,29 @@ class Reply:
     meta: dict[str, Any] = field(default_factory=dict)
 
 
+def _streamed(resp, on_text) -> dict[str, Any]:
+    """Ollama's streamed answer (one JSON object per line) read as it comes; the last line carries the totals.
+    Returns what a non-streamed answer would have been."""
+    text, last = "", {}
+    for line in resp:
+        line = line.strip()
+        if not line:
+            continue
+        last = json.loads(line)
+        if "error" in last:
+            return last
+        piece = (last.get("message") or {}).get("content", "")
+        if piece:
+            text += piece
+            try:
+                on_text(text)
+            except Exception:  # noqa: BLE001 - a listener's problem never breaks the answer
+                pass
+        if last.get("done"):
+            break
+    return {**last, "message": {"role": "assistant", "content": text}}
+
+
 class OllamaProvider:
     kind = "ollama"
 
@@ -53,11 +76,14 @@ class OllamaProvider:
         self.timeout = timeout
         self.keep_alive = keep_alive
 
-    def chat(self, system: str, messages: list[dict[str, Any]], schema: dict | None = None) -> Reply:
+    def chat(self, system: str, messages: list[dict[str, Any]], schema: dict | None = None, *,
+             on_text: Any = None) -> Reply:
+        """`on_text(text_so_far)`: called as the answer arrives (Ollama streams it), so a reply can be spoken
+        before it is finished."""
         body: dict[str, Any] = {
             "model": self.model,
             "messages": [{"role": "system", "content": system}, *messages],
-            "stream": False,
+            "stream": on_text is not None,
             "keep_alive": self.keep_alive,
             "options": {"temperature": 0},
         }
@@ -70,7 +96,7 @@ class OllamaProvider:
         t0 = time.perf_counter()
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                data = json.loads(resp.read() or b"{}")
+                data = _streamed(resp, on_text) if on_text is not None else json.loads(resp.read() or b"{}")
         except urllib.error.HTTPError as e:
             detail = e.read().decode(errors="replace")[:300]
             if e.code == 404:

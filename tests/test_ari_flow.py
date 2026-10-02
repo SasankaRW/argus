@@ -116,6 +116,19 @@ def test_small_talk_is_just_talk(tmp_path):
         assert "companion" in ol.requests[0]["messages"][0]["content"]  # the chat persona, no tool list
         assert [s["name"] for s in cl.get(f"/jobs/{r['job_id']}")["steps"]] == ["chat"]
 
+    # streamed: the finished sentences go out while the rest is still being written
+    with FakeOllama({"qwen2.5-coder:7b": [{"mood": "calm", "reply": "Long day, huh? Put your feet up. I'll keep "
+                                                                       "the lights on."}]}) as ol, \
+            Server(make(tmp_path / "s").open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop", "session"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        r = cl.post("/ari", {"text": "I'm so tired"})
+        settle(cl, w, r["conv"])
+        evs = cl.get(f"/events?kinds=plugin.ari.partial&job={r['job_id']}")["events"]
+        assert [e["data"]["text"] for e in evs] == ["Long day, huh?", "Long day, huh? Put your feet up."]
+        assert evs[0]["data"]["mood"] == "calm" and ol.requests[0]["stream"] is True
+
 
 def test_old_chats_and_old_questions_dont_leak(tmp_path):
     import os

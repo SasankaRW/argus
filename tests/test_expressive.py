@@ -150,3 +150,65 @@ def test_a_reply_changes_mood_mid_way():
     assert phrases("Hi there.") == [("neutral", "Hi there.")]
     assert phrases("[calm] One. [calm] Two.") == [("calm", "One. Two.")]
     assert plain(r) == "We won! Ten nil. Shame about the rain though."
+
+
+def test_a_streamed_reply_is_spoken_as_it_arrives_and_the_rest_follows():
+    calls = []
+
+    class P:
+        busy, text = False, ""
+
+        def say(self, parts):
+            calls.append(("say", parts))
+
+        def add(self, parts):
+            calls.append(("add", parts))
+
+        def pause(self):
+            pass
+
+        def resume(self):
+            pass
+
+        def stop(self):
+            pass
+
+    def ask(q, partial):
+        partial("Oh, long day?", "calm")
+        partial("Oh, long day? I get it.", "calm")
+        return {"reply": "[calm] Oh, long day? I get it. [playful] Want me to put on something chill?"}
+
+    talk = vl.Talk(turns=vl.Turns(), transcribe=lambda a: "Hey Ari, I'm tired", wake_rest=lambda t: "I'm tired",
+                   ask=ask, player=P())
+    talk._turn(np.zeros(10, np.float32))
+    assert calls == [("add", ["[calm] Oh, long day?"]), ("add", ["[calm] I get it."]),
+                     ("add", ["[playful] Want me to put on something chill?"])]
+    assert vl.after_spoken("Something else.", "Oh, long day?") is None
+
+
+def test_the_reply_so_far_from_a_json_answer_still_arriving():
+    from argus.worker.think import finished_part, reply_so_far
+
+    assert reply_so_far('{"mood": "calm", "reply": "Long day? I get it. You sh') == \
+        ("calm", "Long day? I get it. You sh")
+    assert reply_so_far('{"mood": "excited", "reply": "Wow \\"nice\\"! Ne') == ("excited", 'Wow "nice"! Ne')
+    assert reply_so_far('{"mo') == ("", "")
+    assert finished_part("Long day? I get it. You sh") == "Long day? I get it."
+    assert finished_part("No end yet") == ""
+
+
+def test_the_player_adds_sentences_without_cutting_off_what_it_is_saying():
+    class Out:
+        def __call__(self, rate, cb):
+            self.cb = cb
+            return self
+
+    made = []
+    p = vl.Player(lambda t: (made.append(t) or np.full(80, 0.2, np.float32), 8000), Out(), rate=8000)
+    p.say(["One."])
+    p.add(["Two.", "Three."])
+    for _ in range(200):
+        if not p._making:
+            break
+        threading.Event().wait(0.01)
+    assert made == ["One.", "Two.", "Three."] and len(p._chunks) == 3 and p.text == "One. Two. Three."

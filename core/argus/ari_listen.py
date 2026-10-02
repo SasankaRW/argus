@@ -257,7 +257,9 @@ class AriClient:
 
     NEW_CHAT_S = 30 * 60
 
-    def say(self, text: str) -> dict:
+    def say(self, text: str, on_partial: Callable[[str, str], None] | None = None) -> dict:
+        """Ask Ari. `on_partial(text_so_far, mood)`: the finished sentences of a reply still being written (small
+        talk streams), so they can be spoken before the rest is ready."""
         if self.conv and time.time() - self.used > self.NEW_CHAT_S:
             self.conv = None  # a while since we last talked: a fresh chat, so old ones don't leak into this one
         self.used = time.time()
@@ -274,8 +276,23 @@ class AriClient:
             except OSError:
                 pass
         if r.get("reply") is None and r.get("job_id"):  # a model answers: wait for the turn to fill in
-            for _ in range(120):
-                time.sleep(0.5)
+            job, seen, start = r["job_id"], 0, time.monotonic()
+            n = 0
+            while time.monotonic() - start < 60:
+                time.sleep(0.15)
+                n += 1
+                if on_partial is not None:
+                    try:
+                        q = f"/events?kinds=plugin.ari.partial&job={job}&after={seen}&limit=20"
+                        evs = json.loads(self._req("GET", q, None, timeout=3)).get("events") or []
+                        for e in evs:
+                            seen = max(seen, int(e.get("seq") or 0))
+                            d = e.get("data") or {}
+                            on_partial(str(d.get("text") or ""), str(d.get("mood") or "neutral"))
+                    except Exception as e:  # noqa: BLE001 - no streaming then; the whole reply still comes
+                        log.debug("no partial reply", extra={"error": str(e)[:120]})
+                if n % 2 and on_partial is not None:
+                    continue  # the turn itself every 0.3 s
                 turns = json.loads(self._req("GET", f"/ari/{self.conv}"))["turns"]
                 last = turns[-1] if turns else {}
                 if last.get("text"):
@@ -461,13 +478,19 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device) -> i
         else:
             player.thinking(True)
 
-    def ask(text: str) -> dict:
+    def ask(text: str, partial: Callable[[str, str], None] | None = None) -> dict:
         from .worker.think import chatty
 
         t = threading.Timer(1.2, wait_sound, args=(chatty(text),))
         t.start()
+
+        def first_words(so_far: str, mood: str) -> None:  # Ari starts talking: no "let me check" now
+            t.cancel()
+            if partial is not None:
+                partial(so_far, mood)
+
         try:
-            return client.say(text)
+            return client.say(text, first_words)
         finally:
             t.cancel()
             if not player.busy:

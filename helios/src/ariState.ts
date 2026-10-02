@@ -62,6 +62,7 @@ export function ariFromEvents(evs: Ev[]) {
       const mine = !state.remote && (state.phase === "speaking" || state.phase === "listening");
       if (phase === "done" && mine && state.phase === "speaking") continue;
       if (phase === "idle") { if (!mine) ariSet("idle"); continue; }
+      if ((phase as string) === "following") continue;  // the PC's island shows it; nothing changes here
       ariSet(phase, text, true);
     } else if (e.kind === "step.running" && e.job_id && e.job_id === thinkJob && e.step) {
       const m = TOOL.exec(e.step);

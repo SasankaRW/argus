@@ -42,6 +42,57 @@ class Step(BaseModel):
                                       "sympathetic or serious")
 
 
+class Chat(BaseModel):
+    """Small talk: the mood first, so a streamed reply knows how to sound before its first word."""
+    mood: str = Field("", description="how to say it: neutral, cheerful, excited, playful, calm, sympathetic or "
+                                      "serious")
+    reply: str = Field("", description="what you say")
+    remember: str = Field("", description="a lasting fact the user just told you about themselves (else empty)")
+
+
+_REPLY_AT = re.compile(r'"reply"\s*:\s*"')
+_MOOD_AT = re.compile(r'"mood"\s*:\s*"(\w+)"')
+_ESC = {"n": " ", "t": " ", '"': '"', "\\": "\\", "/": "/", "r": "", "b": "", "f": ""}
+
+
+def reply_so_far(raw: str) -> tuple[str, str]:
+    """(mood, the reply's text so far) from a JSON answer still arriving: '{"mood": "calm", "reply": "Long day?'"""
+    m = _REPLY_AT.search(raw)
+    if not m:
+        return "", ""
+    out, i = [], m.end()
+    while i < len(raw):
+        c = raw[i]
+        if c == '"':
+            break
+        if c == "\\":
+            if i + 1 >= len(raw):
+                break  # an escape cut in half: wait for the rest
+            n = raw[i + 1]
+            if n == "u":
+                if i + 6 > len(raw):
+                    break
+                try:
+                    out.append(chr(int(raw[i + 2:i + 6], 16)))
+                except ValueError:
+                    pass
+                i += 6
+                continue
+            out.append(_ESC.get(n, n))
+            i += 2
+            continue
+        out.append(c)
+        i += 1
+    md = _MOOD_AT.search(raw[:m.start()])
+    return (md.group(1).lower() if md else ""), "".join(out)
+
+
+def finished_part(text: str) -> str:
+    """The text up to its last finished sentence ("Oh nice! You fixed i" -> "Oh nice!"); "" if none yet."""
+    ends = [m.end() for m in re.finditer(r"[.!?](?=\s)", text)]
+    return text[:ends[-1]].strip() if ends else ""
+
+
 SENSITIVE = re.compile(r"\b(password|passcode|pin|otp|cvv|card|account number|bank|salary|loan|debt|diagnos|"
                        r"medic|illness|sick)\w*|\d{6,}", re.I)
 
@@ -114,7 +165,7 @@ def closest(tools: dict[str, dict], text: str, keep: int = 14) -> dict[str, dict
     phone = "phone" in want
 
     def score(n: str, t: dict) -> float:
-        name, desc = _words(n), _words(str(t.get("description") or ""))
+        name, desc = _words(n), _words(str(t.get("does") or t.get("description") or ""))
         sc = 3 * len(want & name) + len(want & desc)
         if phone and n.startswith("phone_"):
             sc += 2
@@ -263,7 +314,7 @@ theirs: tired -> calm or sympathetic, good news -> excited).
 When the feeling changes partway, put the new mood as a tag where it changes, like a person's tone shifting
 ("Oh nice, you fixed it! [sympathetic] Shame it took all night though."): at most two changes, at a sentence or
 comma, never word by word.
-Answer as JSON {"reply": "...", "mood": "...", "remember": ""}."""
+Answer as JSON {"mood": "...", "reply": "...", "remember": ""}."""
 
 
 FAILED = re.compile(r"\b(?:couldn'?t|can'?t|cannot|failed|isn'?t (?:answering|working|available|running)|"
@@ -451,7 +502,7 @@ def think(ctx: Context):
         """Something private (the screen, the clipboard) is in this chat: Claude never sees it."""
         return any(d.get("private") for d in done) or any(h.get("private") for h in base["conversation_so_far"])
 
-    def chat_ok(s: Step) -> str | None:
+    def chat_ok(s: Chat) -> str | None:
         if not s.reply.strip():
             return "say something back"
         return "you said that already: say something new" if _same(s.reply, said_before) else None
@@ -459,8 +510,17 @@ def think(ctx: Context):
     if chatty(text):  # small talk: one friendly answer, no tools, on the warm first model (no swap)
         def chat() -> dict:
             said = {k: base[k] for k in ("message", "conversation_so_far", "you_remember", "now")}
-            s = ctx.llm(CHAT + "\n\n" + who, json.dumps(said, ensure_ascii=False),
-                        schema=Step, check=lambda s, _i: chat_ok(s),
+            sent = {"n": 0}
+
+            def partial(raw: str) -> None:  # finished sentences go out as they arrive: Ari starts talking sooner
+                mood, so_far = reply_so_far(raw)
+                done = finished_part(so_far)
+                if len(done) > sent["n"]:
+                    sent["n"] = len(done)
+                    ctx.progress("plugin.ari.partial", {"text": done, "mood": mood or "neutral"})
+
+            s = ctx.llm(CHAT + "\n\n" + who, json.dumps(said, ensure_ascii=False), on_text=partial,
+                        schema=Chat, check=lambda s, _i: chat_ok(s),
                         tiers=ctx.local_tiers() or None, claude_last=not private())
             return {**s.model_dump(), "tier": ctx.last_answer.tier}
 

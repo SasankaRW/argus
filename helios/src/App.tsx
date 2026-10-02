@@ -281,7 +281,7 @@ export function App() {
   }, []);
   const heardBadge = <>
     {heard && <div className="ari-heard" role="status">{heard}</div>}
-    {!popupHere && <AriPill onOpen={() => go("ari")} />}
+    {narrow && !popupHere && <AriPill onOpen={() => go("ari")} />}{/* on the PC, the island is Ari's face */}
   </>;
   const closeMap = useCallback(() => setBigMap(false), []);
   const mapFull = bigMap && a.map ? (

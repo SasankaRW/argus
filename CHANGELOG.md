@@ -5,6 +5,10 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Ari talks sooner: small-talk replies stream from the model and each finished sentence is spoken while the rest is still being written; answers are picked up every 0.15 s instead of 0.5 s.
+- The island shows Ari is still listening after an answer (a ring that runs down), and keeps the answer on show meanwhile; the Helios pill now only appears on the phone.
+- `python -m argus.ari_eval`: Ari's test set (40 everyday phrases, right tool or not, how fast; nothing runs for real).
+- Fix: with many tools, Ari now matches them by what they do, not only by name.
 - Ari keeps its humour and light teasing, without slang.
 - Ari's tone can change mid-reply ("[excited] Your build passed! [serious] But the backup failed."): each phrase is spoken in its own mood by the expressive voice.
 - Faster Ari: Whisper loads from the local cache (no call to huggingface.co), `pip install -e .[hearing]` brings the CUDA libraries so it runs on the GPU, the first model is kept warm (`ari.keep_warm`), small talk stays on that model, and volume, music and torch commands go straight to their tool with no model call.

@@ -215,7 +215,7 @@ class Context:
 
     def llm(self, playbook: str, input: Any, *, schema: Any = None, check: Any = None,
             tiers: list[str] | None = None, attempts: int | None = None, images: list[bytes] | None = None,
-            claude_last: bool = True) -> Any:
+            claude_last: bool = True, on_text: Any = None) -> Any:
         """Ask the models, cheapest tier first, escalating when the answer fails the schema or the check.
 
         Returns the answer (a `schema` instance, or text without a schema). Call it inside `ctx.step`, so a
@@ -242,7 +242,7 @@ class Context:
             playbook = f"{playbook}\n\nLessons from earlier mistakes (follow them):\n{self._lessons[key]}"
         try:
             ans = self._router.ask(playbook, input, schema=schema, check=check, chain=tiers, attempts=attempts,
-                                   images=pics)
+                                   images=pics, **({"on_text": on_text} if on_text is not None else {}))
         except EscalationExhausted as e:
             claude = self._claude_tier()
             tried = tiers or list(self._router.chain)
@@ -295,6 +295,17 @@ class Context:
             if before is None:
                 raise
             raise EscalationExhausted(f"{before} and {claude}: {_advice(e2)}", before.trail + e2.trail) from None
+
+    def progress(self, kind: str, data: dict) -> None:
+        """A live event for this job (e.g. "plugin.ari.partial": the reply so far), for whoever is waiting on it.
+        Best effort: never fails the job."""
+        sink = getattr(self._reporter, "event", None) or getattr(getattr(self._router, "board", None), "event", None)
+        if sink is None:
+            return
+        try:
+            sink(kind, self.plugin.id if self.plugin else None, None, data)
+        except Exception as e:  # noqa: BLE001
+            self.log.debug("progress not sent", extra={"error": str(e)[:200]})
 
     def local_tiers(self) -> list[str]:
         """The chain without Claude (the models on your machines), within what the plugin may use."""

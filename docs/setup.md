@@ -265,6 +265,10 @@ daily cap.
 - **Your words** (`ari.vocabulary`, `ari.heard_as`): Whisper is told the names to expect (yours, the people and
   places Ari remembers, apps like WhatsApp), and common mishearings are put right ("open what's up" -> WhatsApp).
   Add your own: `vocabulary: [Kaancha, Nimali]`, `heard_as: {kancha: Kaancha}`.
+- **Ari's test set**: `python -m argus.ari_eval` (with Argus running) says 40 everyday things to Ari's first
+  decision and checks it picks the right tool, with how long the model took; nothing is done for real. Each run is
+  kept in `data/ari-eval/` and compared with the last one. Your own cases: `--cases my-cases.yaml`
+  (`- {say: "open brave", expect: open_app}`; several allowed: `expect: "weather|web_search"`).
 - **Ari's personality**: a witty friend by default (funny, teases you a bit, has opinions, no slang, no help-desk lines like
   "How can I assist you?"), in small talk and in task replies. Change it in a few sentences of your own, and tell it
   what to call you:

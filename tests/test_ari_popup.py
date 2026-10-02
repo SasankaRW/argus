@@ -112,3 +112,48 @@ def test_shortcut_icons_follow_what_they_do():
     assert [icon_for(a) for a in ("show:inbox", "show:map", "routine:work mode", "run:downloads-organizer:sort",
                                   "power:sleep", "power:shutdown", "url:https://x.y", "phone:ring", "odd")] == \
         ["inbox", "grid", "spark", "bolt", "moon", "power", "globe", "bell", "dot"]
+
+
+def test_after_answering_the_island_shows_it_still_listens():
+    from argus.ari_popup import FOLLOW_S
+
+    st = AriState()
+    st.apply([{"kind": "ari.state", "data": {"phase": "done", "text": "It's 31 degrees."}}], 0.0)
+    st.apply([{"kind": "ari.state", "data": {"phase": "following"}}], 1.0)
+    assert st.phase == "following" and st.text == "It's 31 degrees."  # the answer stays on show
+    assert not st.fold_due(1.0 + FOLLOW_S - 1) and st.fold_due(1.0 + FOLLOW_S + 1)
+
+
+def test_talk_reports_the_follow_up_window_once_the_answer_is_spoken():
+    import numpy as np
+
+    from argus import voice_live as vl
+
+    said = []
+
+    class P:
+        busy, text = False, ""
+
+        def say(self, parts):
+            pass
+
+        def pause(self):
+            pass
+
+        def resume(self):
+            pass
+
+        def stop(self):
+            pass
+
+    now = [0.0]
+    talk = vl.Talk(turns=vl.Turns(), transcribe=lambda a: "Hey Ari, what time is it", wake_rest=lambda t: "what time",
+                   ask=lambda q: {"reply": "Half past three."}, player=P(), report=said.append,
+                   clock=lambda: now[0])
+    talk._turn(np.zeros(10, np.float32))
+    talk.tick()
+    talk.tick()
+    assert said[-1] == "following" and said.count("following") == 1
+    now[0] = 1000
+    talk.tick()
+    assert said[-1] == "idle"

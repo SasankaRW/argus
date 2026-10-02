@@ -205,7 +205,7 @@ class AriAnswer(BaseModel):
 
 
 class AriStateIn(BaseModel):
-    phase: Literal["idle", "listening", "thinking", "working", "speaking", "done"]
+    phase: Literal["idle", "listening", "thinking", "working", "speaking", "done", "following"]
     text: str = Field("", max_length=300)
     by: str = Field("", max_length=40)
 

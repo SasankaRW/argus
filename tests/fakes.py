@@ -75,6 +75,21 @@ class FakeOllama:
                     self._send(500, {"error": "boom"})
                     return
                 content = what if isinstance(what, str) else json.dumps(what)
+                if body.get("stream"):  # like Ollama: one JSON line per piece, then a last line with the totals
+                    lines = [{"model": model, "message": {"role": "assistant", "content": content[i:i + 8]},
+                              "done": False} for i in range(0, len(content), 8)]
+                    lines.append({"model": model, "message": {"role": "assistant", "content": ""}, "done": True,
+                                  "eval_count": 7})
+                    raw = "".join(json.dumps(x) + "\n" for x in lines).encode()
+                    try:
+                        self.send_response(200)
+                        self.send_header("Content-Type", "application/x-ndjson")
+                        self.send_header("Content-Length", str(len(raw)))
+                        self.end_headers()
+                        self.wfile.write(raw)
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass
+                    return
                 self._send(200, {"model": model, "message": {"role": "assistant", "content": content},
                                  "done": True, "eval_count": 7})
 
