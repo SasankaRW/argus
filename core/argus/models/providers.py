@@ -67,6 +67,20 @@ def _streamed(resp, on_text) -> dict[str, Any]:
     return {**last, "message": {"role": "assistant", "content": text}}
 
 
+def context_for(system: str, messages: list[dict[str, Any]], schema: dict | None = None) -> int | None:
+    """The context size a prompt needs, when it may not fit Ollama's usual one (4096 tokens): None for a short one,
+    so the model isn't reloaded for nothing. About 3 characters a token, plus room for the answer."""
+    size = len(system) + sum(len(str(m.get("content") or "")) for m in messages)
+    size += len(json.dumps(schema)) if schema else 0
+    est = size // 3 + 1024
+    if est <= 4096:
+        return None
+    n = 8192
+    while n < est and n < 32768:
+        n *= 2
+    return n
+
+
 class OllamaProvider:
     kind = "ollama"
 
@@ -87,6 +101,9 @@ class OllamaProvider:
             "keep_alive": self.keep_alive,
             "options": {"temperature": 0},
         }
+        need = context_for(system, messages, schema)
+        if need:  # a long prompt: room for it all (Ollama would quietly cut it down and the model miss the question)
+            body["options"]["num_ctx"] = need
         if re.search(r"qwen3(?!-coder)|deepseek-r1", self.model, re.I):
             body["think"] = False  # these think out loud first by default: many seconds before a short answer
         if schema is not None:

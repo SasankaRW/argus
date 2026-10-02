@@ -5,6 +5,10 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Fix: when no tool matched a message ("is the laptop server up", "15 percent of 2400"), Ari offered the model all ~70 tools; that prompt was too long for the model's context, Ollama cut it, and the question itself was lost (it answered "web search" to anything). Now only the always-useful few are offered.
+- Long prompts to Ollama get a context big enough to hold them (8k–32k tokens), instead of being quietly cut.
+- Simple sums ("what's 15 percent of 2400", "1250 times 4", "10 divided by 4") are worked out in code: exact and instant.
+- `lab_status` is found for "is the laptop server up".
 - The island shows the words as you say them (the small model hears you about once a second while you talk in a conversation), then keeps what you said on show while Ari thinks. `ari.live_words: false` turns it off.
 - `python -m argus.ari_eval` now also prints, per case, how many tools were offered and where the model's time went (prompt, output, load).
 - The Ari pill is gone from Helios on the phone too (and its look setting); the island on the PC shows what Ari is doing.

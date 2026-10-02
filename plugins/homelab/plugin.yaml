@@ -26,7 +26,7 @@ config:
 ari:
   tools:
     - name: lab_status
-      description: "The home lab at a glance: free space per drive, GPU temperature and memory, Ollama models, the newest Argus backup, Tailscale devices online, and anything that needs attention."
+      description: "The home lab (the laptop server and this PC) at a glance, is it up: free space per drive, GPU temperature and memory, Ollama models, the newest Argus backup, Tailscale devices online, and anything that needs attention."
       workflow: status
 
 helios:

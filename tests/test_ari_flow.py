@@ -226,7 +226,8 @@ def test_with_many_tools_the_ones_that_fit_are_offered():
               "set_volume": {"description": "Set the PC's volume"}, "web_search": {"description": "Search the web"}}
     got = closest(tools, "can you turn on the flashlight on my phone")
     assert "phone_torch" in got and "web_search" in got and "tool_3" not in got
-    assert closest(tools, "zzz qqq") == tools  # nothing fits: all of them
+    assert list(closest(tools, "zzz qqq")) == ["web_search"]  # nothing fits: the always-useful ones, not all 40
+    # (all of them was a prompt too long for the model's context: Ollama cut it and the question was lost)
 
 
 def test_ari_has_a_personality_and_no_help_desk_lines():
@@ -269,3 +270,23 @@ def test_whisper_loads_from_the_local_cache_first():
     assert calls == [True]  # no call to huggingface.co
     _load(M, "new", "cpu", "int8")
     assert calls[1:] == [True, False]  # first time: downloaded
+
+
+def test_sums_are_worked_out_in_code():
+    from argus.worker.think import quick_math
+
+    assert quick_math("what's 15 percent of 2400") == "15% of 2,400 is 360."
+    assert quick_math("Hey Ari, what is 12% of 80?") == "12% of 80 is 9.6."
+    assert quick_math("what's 1250 times 4") == "1,250 × 4 is 5,000."
+    assert quick_math("calculate 10 divided by 4") == "10 ÷ 4 is 2.5."
+    assert quick_math("what's 7 / 0") == "Can't divide by zero."
+    assert quick_math("what's 2400 minus 15 percent") is None  # not one of the simple shapes: the model answers
+    assert quick_math("open brave") is None and quick_math("what's the time") is None
+
+
+def test_long_prompts_get_room_in_the_context():
+    from argus.models.providers import context_for
+
+    assert context_for("short", [{"role": "user", "content": "hi"}]) is None
+    assert context_for("x" * 12000, [{"role": "user", "content": "y" * 9000}]) == 8192
+    assert context_for("x" * 60000, []) == 32768

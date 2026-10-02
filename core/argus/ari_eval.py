@@ -76,8 +76,10 @@ def load_cases(path: Path | None) -> list[tuple[str, str]]:
 def first_step(text: str, tools: list[dict], decide: Any, now: str = "", info: dict | None = None) -> tuple[str, float]:
     """What Ari would do first with `text`: ("chat" | a tool name | "reply" | "web", seconds the model took).
     `info` gets how many tools were offered and what the model reported (prompt/output tokens, load and prompt time)."""
-    from .worker.think import chatty, offered, straight_to
+    from .worker.think import chatty, offered, quick_math, straight_to
 
+    if quick_math(text):
+        return "reply", 0.0
     if chatty(text):
         return "chat", 0.0
     have = offered({t["name"]: t for t in tools}, text, [])

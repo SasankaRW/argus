@@ -144,7 +144,8 @@ _ALSO = {"flashlight": "torch", "light": "torch", "loud": "volume", "quiet": "vo
          "song": "media", "music": "media", "pause": "media", "lookup": "search", "google": "search",
          "message": "whatsapp", "text": "whatsapp", "launch": "open", "start": "open", "shut": "close",
          "computer": "pc", "laptop": "pc", "todo": "issue", "task": "issue", "ticket": "issue",
-         "pdf": "pdf", "photo": "image", "picture": "image", "remind": "schedule"}
+         "pdf": "pdf", "photo": "image", "picture": "image", "remind": "schedule", "server": "lab",
+         "homelab": "lab"}
 
 
 def _words(x: str) -> set[str]:
@@ -172,9 +173,7 @@ def closest(tools: dict[str, dict], text: str, keep: int = 14) -> dict[str, dict
         return sc
 
     ranked = sorted(((score(n, t), n) for n, t in tools.items()), key=lambda x: -x[0])
-    pick = {n for sc, n in ranked[:keep] if sc > 0}
-    if not pick:  # nothing fits by its words: let the model see them all
-        return tools
+    pick = {n for sc, n in ranked[:keep] if sc > 0}  # nothing fits by its words: the always-useful few only
     return {n: t for n, t in tools.items() if n in pick or n in ALWAYS}
 
 
@@ -339,6 +338,48 @@ def _same(reply: str, before: list[str]) -> bool:
         return set(re.findall(r"[a-z']+", x.lower()))
     w = words(reply)
     return bool(w) and any(len(w & words(b)) >= 0.8 * max(len(w), len(words(b))) for b in before if b.strip())
+
+
+_NUM = r"(-?\d[\d,]*(?:\.\d+)?)"
+PERCENT_OF = re.compile(_PLEASE + r"(?:what'?s|what is|calculate|work out|how much is)?\s*" + _NUM +
+                        r"\s*(?:%|per ?cent) of\s+" + _NUM + r"\W*$", re.I)
+SUM = re.compile(_PLEASE + r"(?:what'?s|what is|calculate|work out|how much is)\s*" + _NUM +
+                 r"\s*(\+|-|\*|x|×|/|÷|plus|minus|times|multiplied by|divided by|over)\s*" + _NUM + r"\W*$", re.I)
+_OPS = {"+": "+", "plus": "+", "-": "-", "minus": "-", "*": "×", "x": "×", "×": "×", "times": "×",
+        "multiplied by": "×", "/": "÷", "÷": "÷", "divided by": "÷", "over": "÷"}
+
+
+def _n(x: str):
+    from decimal import Decimal
+
+    return Decimal(x.replace(",", ""))
+
+
+def _show(d) -> str:
+    from decimal import Decimal
+
+    d = d.quantize(Decimal("0.0001")).normalize()
+    whole, _, frac = f"{d:f}".partition(".")
+    return f"{int(whole):,}" + (f".{frac}" if frac else "") if whole.lstrip("-") else f"{d:f}"
+
+
+def quick_math(text: str) -> str | None:
+    """"what's 15 percent of 2400", "1250 times 4": worked out in code (exact, instant), not guessed by a model."""
+    from decimal import Decimal, InvalidOperation
+
+    try:
+        if m := PERCENT_OF.match(text):
+            p, of = _n(m.group(1)), _n(m.group(2))
+            return f"{_show(p)}% of {_show(of)} is {_show(p * of / 100)}."
+        if m := SUM.match(text):
+            a, op, b = _n(m.group(1)), _OPS[m.group(2).lower()], _n(m.group(3))
+            if op == "÷" and b == 0:
+                return "Can't divide by zero."
+            r = {"+": a + b, "-": a - b, "×": a * b, "÷": a / b if b else Decimal(0)}[op]
+            return f"{_show(a)} {op} {_show(b)} is {_show(r)}."
+    except (InvalidOperation, KeyError):
+        return None
+    return None
 
 
 def chatty(text: str) -> bool:
@@ -506,6 +547,10 @@ def think(ctx: Context):
         if not s.reply.strip():
             return "say something back"
         return "you said that already: say something new" if _same(s.reply, said_before) else None
+
+    sum_ = quick_math(text)
+    if sum_:
+        return {"reply": sum_, "used": []}
 
     if chatty(text):  # small talk: one friendly answer, no tools, on the warm first model (no swap)
         def chat() -> dict:
