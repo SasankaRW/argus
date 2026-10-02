@@ -5,6 +5,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Ari tells "is the backup okay" (backup_status) from "is the laptop server up" (lab_status): the descriptions now say which is which.
 - Every request to Ollama asks for the same context size (`ollama.num_ctx`, 8192 by default; more only for a prompt too long for it), and so does the listener's keep-warm. Before, a different size now and then made Ollama reload the model (2.5–5 s each time).
 - Fix: when no tool matched a message ("is the laptop server up", "15 percent of 2400"), Ari offered the model all ~70 tools; that prompt was too long for the model's context, Ollama cut it, and the question itself was lost (it answered "web search" to anything). Now only the always-useful few are offered.
 - Long prompts to Ollama get a context big enough to hold them (8k–32k tokens), instead of being quietly cut.
