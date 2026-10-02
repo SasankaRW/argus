@@ -265,6 +265,15 @@ daily cap.
 - **Your words** (`ari.vocabulary`, `ari.heard_as`): Whisper is told the names to expect (yours, the people and
   places Ari remembers, apps like WhatsApp), and common mishearings are put right ("open what's up" -> WhatsApp).
   Add your own: `vocabulary: [Kaancha, Nimali]`, `heard_as: {kancha: Kaancha}`.
+- **Ari's personality**: a witty friend by default (casual, teases you a bit, has opinions, no help-desk lines like
+  "How can I assist you?"), in small talk and in task replies. Change it in a few sentences of your own, and tell it
+  what to call you:
+
+  ```yaml
+  ari:
+    personality: "A calm, dry-witted butler who is quietly amused by everything."
+    call_me: Sas
+  ```
 - **Ari's expressive voice** (`ari.voice_engine: expressive`): Chatterbox-Turbo (Resemble AI, MIT) on the GPU
   laughs, sighs and changes its tone with the mood of each reply ("[cheerful] Oh nice! [laugh]"; on screen you
   only see the words). It lives in its own Python environment, since it pins its own PyTorch:

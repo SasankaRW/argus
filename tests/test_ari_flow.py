@@ -214,3 +214,13 @@ def test_with_many_tools_the_ones_that_fit_are_offered():
     got = closest(tools, "can you turn on the flashlight on my phone")
     assert "phone_torch" in got and "web_search" in got and "tool_3" not in got
     assert closest(tools, "zzz qqq") == tools  # nothing fits: all of them
+
+
+def test_ari_has_a_personality_and_no_help_desk_lines():
+    from argus.worker.think import PERSONA, no_helpdesk, persona
+
+    assert no_helpdesk("Done, Spotify's up. How can I assist you today?") == "Done, Spotify's up."
+    assert no_helpdesk("Opened it. Let me know if you need anything else!") == "Opened it."
+    assert no_helpdesk("How can I help you?") == "How can I help you?"  # nothing left: keep it
+    assert persona({}) == PERSONA and "Sas" in persona({"call_me": "Sas"})
+    assert persona({"personality": "A calm butler."}).startswith("A calm butler.")

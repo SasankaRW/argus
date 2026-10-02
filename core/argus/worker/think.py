@@ -175,8 +175,35 @@ TASKY = re.compile(r"\b(?:open|close|find|search|show|list|play|pause|set|turn|s
                    r"run|start|stop|add|delete|move|copy|weather|screen|file|folder|note|status|issue|backup|"
                    r"download|shut|restart|volume|timer)\b", re.I)
 
+PERSONA = """Ari's personality: a witty friend who happens to live in their PC. Casual and quick, a bit cheeky: you
+tease them lightly, joke about the situation, use their slang ("bro", "machan" if they do), and you have opinions
+(favourite things, mild hot takes) instead of being neutral about everything. You're on their side: happy when
+things go well, honestly a bit sympathetic when they don't. Confident, never grovelling: no "I apologise for the
+inconvenience", no "How can I assist you?", no "Let me know if you need anything else". When you get something
+wrong, own it in a few words with a bit of humour and move on. Keep it short; the wit is in word choice, not in
+long jokes. Even when doing tasks, add a tiny human touch ("Done, Spotify's up. Volume's at 30, your neighbours
+thank you.") but never at the cost of being clear."""
+
+HELPDESK = re.compile(r"[^.!?]*\b(?:how (?:can|may) i (?:assist|help) you(?: (?:today|now|further))?|"
+                      r"let me know if (?:you need|there'?s) (?:anything|something)|is there anything else|"
+                      r"anything else i can|further assistance|i'?m here to help|"
+                      r"i apologi[sz]e for (?:the|any) (?:inconvenience|confusion)|as an ai\b)[^.!?]*[.!?]?", re.I)
+
+
+def no_helpdesk(text: str) -> str:
+    """Help-desk filler taken out ("How can I assist you?"); Ari talks like a friend. The rest kept as it was."""
+    t = re.sub(r"\s{2,}", " ", HELPDESK.sub(" ", text)).strip()
+    return t if len(t) >= 2 else text
+
+
+def persona(inp: dict) -> str:
+    who = str(inp.get("personality") or "").strip() or PERSONA
+    name = str(inp.get("call_me") or "").strip()
+    return who + (f"\nTheir name is {name}: use it now and then, not every time." if name else "")
+
+
 CHAT = """You are Ari, the user's personal assistant and friend, living on their own computer (home system "Argus").
-Right now it's just casual talk. Be a good companion: warm, relaxed, a bit playful and witty, curious about them.
+Right now it's just casual talk: this is where your personality shines. Be a good companion, curious about them.
 Talk like a person, not a help desk: never say "as an AI", never "I can't complete that request", no offers of
 "anything else I can help with". Short and natural (it is read aloud): 1-3 sentences, no lists, no markdown, no
 emoji. Match their mood and slang. React to what they said, share a light opinion or a joke when it fits, and
@@ -235,7 +262,8 @@ def model_order(text: str, local: list[str]) -> list[str]:
 
 
 PLAYBOOK = """You are Ari, the user's personal assistant on their own computer (home automation system "Argus").
-You talk like a warm, capable person. Your replies are read aloud: 1-3 short sentences, no lists, no markdown.
+You talk like yourself (your personality is below), and you're good at getting things done.
+Your replies are read aloud: 1-3 short sentences, no lists, no markdown.
 
 Each turn you get: the user's message, the conversation so far, the tools you can use, and the results of tools
 you already used for this message. Decide ONE next step and answer as JSON:
@@ -289,10 +317,10 @@ How to decide:
   in plain words.
 Answer with the JSON only."""
 
-WEB = """You are Ari, the user's personal assistant. Answer the user's question using web search when it needs
-current information. Your answer is read aloud: 2-4 short sentences, no lists, no markdown, no links (mention the
-source by name if it matters). If something the user's own files said is included, prefer it for their own
-matters. Answer with only the reply text."""
+WEB = """You are Ari, the user's personal assistant and friend (casual, a bit witty, never a help desk).
+Answer the user's question using web search when it needs current information. Your answer is read aloud:
+2-4 short sentences, no lists, no markdown, no links (mention the source by name if it matters). If something the
+user's own files said is included, prefer it for their own matters. Answer with only the reply text."""
 
 
 def spoken(text: str, limit: int = 600) -> str:
@@ -329,6 +357,7 @@ def think(ctx: Context):
             "now": ctx.input.get("now") or time.strftime("%A %d %B %Y, %H:%M"),
             "tools": list(tools.values())}
     done: list[dict[str, Any]] = []
+    who = persona(ctx.input)
     asked = " ".join([text] + [str(h.get("text") or "") for h in base["conversation_so_far"][-4:]
                                if h.get("role") in ("you", "user")])
     said_before = [str(h.get("text") or "") for h in base["conversation_so_far"] if h.get("who") in ("ari", "assistant")
@@ -378,15 +407,15 @@ def think(ctx: Context):
 
     if chatty(text):  # small talk: one friendly answer, no tools, the better local model first
         def chat() -> dict:
-            s = ctx.llm(CHAT, json.dumps({k: base[k] for k in ("message", "conversation_so_far", "you_remember",
-                                                                 "now")}, ensure_ascii=False),
+            said = {k: base[k] for k in ("message", "conversation_so_far", "you_remember", "now")}
+            s = ctx.llm(CHAT + "\n\n" + who, json.dumps(said, ensure_ascii=False),
                         schema=Step, check=lambda s, _i: chat_ok(s),
                         tiers=list(reversed(ctx.local_tiers())) or None, claude_last=not private())
             return {**s.model_dump(), "tier": ctx.last_answer.tier}
 
         try:
             c = ctx.step("chat", chat)
-            reply = tidy(spoken(c["reply"]), c.get("mood") or "")
+            reply = tidy(no_helpdesk(spoken(c["reply"])), c.get("mood") or "")
             fact = worth_keeping(c.get("remember") or "", base["you_remember"])
             if fact:
                 return {"reply": f"{reply} Want me to remember that?", "used": [], "tier": c.get("tier"),
@@ -426,7 +455,7 @@ def think(ctx: Context):
             task = {**base, "results_so_far": done} if done else dict(base)
             if i == MAX_STEPS - 1:
                 task["last_step"] = True
-            s = ctx.llm(PLAYBOOK, json.dumps(task, ensure_ascii=False), schema=Step, check=check,
+            s = ctx.llm(PLAYBOOK + "\n\n" + who, json.dumps(task, ensure_ascii=False), schema=Step, check=check,
                         tiers=model_order(text, ctx.local_tiers()) or None, claude_last=not private())
             return {**s.model_dump(), "tier": ctx.last_answer.tier}
 
@@ -463,7 +492,7 @@ def think(ctx: Context):
         if s["need_web"]:
             def web() -> dict:
                 priv = private()  # then only the question goes out, not the chat or what the tools found
-                ctx.claude(WEB, json.dumps({"question": text,
+                ctx.claude(WEB + "\n\n" + who, json.dumps({"question": text,
                                             "conversation_so_far": [] if priv else base["conversation_so_far"],
                                             "found_locally": [d for d in done if not d.get("private")]},
                                            ensure_ascii=False), web=True)
@@ -471,12 +500,12 @@ def think(ctx: Context):
 
             try:
                 w = ctx.step("web", web)
-                return {"reply": spoken(w["reply"], 900), "used": done, "via": "web", "tier": w["tier"]}
+                return {"reply": no_helpdesk(spoken(w["reply"], 900)), "used": done, "via": "web", "tier": w["tier"]}
             except EscalationExhausted:
                 if s["reply"]:
                     return {"reply": spoken(s["reply"]), "used": done}
                 return {"reply": "That needs the internet, and I can't reach Claude right now.", "used": done}
-        reply = tidy(spoken(s["reply"]), s.get("mood") or "")
+        reply = tidy(no_helpdesk(spoken(s["reply"])), s.get("mood") or "")
         fact = worth_keeping(s.get("remember") or "", base["you_remember"])
         if fact:  # Ari offers to remember it; your yes saves it
             return {"reply": f"{reply} Want me to remember that?".strip(), "used": done, "tier": s.get("tier"),
