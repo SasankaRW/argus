@@ -5,6 +5,9 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Ari's tone can change mid-reply ("[excited] Your build passed! [serious] But the backup failed."): each phrase is spoken in its own mood by the expressive voice.
+- Faster Ari: Whisper loads from the local cache (no call to huggingface.co), `pip install -e .[hearing]` brings the CUDA libraries so it runs on the GPU, the first model is kept warm (`ari.keep_warm`), small talk stays on that model, and volume, music and torch commands go straight to their tool with no model call.
+- Ari's default personality is less slangy: warm, dry humour, no "bro".
 - Settings > Ari: set what Ari calls you and Ari's personality (a big box showing the default witty friend) in Helios; the next reply uses them.
 - Ari has a personality: a witty friend (casual, a bit cheeky, has opinions) in chat and in task replies, with no help-desk lines like "How can I assist you?". Change it with `ari.personality`; `ari.call_me` sets what it calls you.
 - Ari no longer makes up answers: a web search must be about what you asked, and when a tool fails Ari says so instead of inventing a result.

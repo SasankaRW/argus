@@ -46,6 +46,32 @@ def plain(text: str) -> str:
     return t
 
 
+_ANY_MOOD = re.compile(r"\[(" + "|".join(MOODS) + r")\]", re.I)
+
+
+def phrases(text: str, mood: str = "neutral") -> list[tuple[str, str]]:
+    """A reply cut where its mood changes: "[excited] We won! [sympathetic] Shame about the rain." ->
+    [("excited", "We won!"), ("sympathetic", "Shame about the rain.")]. A mood holds until the next tag; text before
+    the first tag gets `mood`. Sounds ([laugh]) stay with their words."""
+    out: list[tuple[str, str]] = []
+    pos = 0
+    for m in _ANY_MOOD.finditer(text or ""):
+        chunk = text[pos:m.start()].strip()
+        if chunk:
+            out.append((mood, chunk))
+        mood, pos = m.group(1).lower(), m.end()
+    chunk = (text or "")[pos:].strip()
+    if chunk:
+        out.append((mood, chunk))
+    merged: list[tuple[str, str]] = []
+    for md, t in out:  # the same mood twice in a row: one phrase
+        if merged and merged[-1][0] == md:
+            merged[-1] = (md, f"{merged[-1][1]} {t}")
+        else:
+            merged.append((md, t))
+    return merged
+
+
 def for_voice(text: str) -> tuple[str, str]:
     """(mood, text with only the sounds Chatterbox makes, written its way: "[laugh]")."""
     mood, rest = mood_of(text)

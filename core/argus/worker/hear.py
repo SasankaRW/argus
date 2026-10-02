@@ -61,17 +61,29 @@ def model(name: str):
                 raise PermanentError("faster-whisper is not installed on this PC (pip install -e .[hearing])") from None
             if _gpu["ok"]:
                 try:
-                    m = WhisperModel(name, device="cuda", compute_type="float16")
+                    m = _load(WhisperModel, name, "cuda", "float16")
                     _prove(m)  # loading works without CUDA's libraries; the first real use is what fails
                     _models[name] = m
                     log.info("whisper loaded", extra={"model": name, "device": "cuda"})
                 except Exception as e:  # no CUDA 12 cuBLAS / cuDNN 9: the CPU is fine for short commands
                     _gpu["ok"] = False
-                    log.warning("whisper on the GPU failed; using the CPU", extra={"error": str(e)[:200]})
+                    log.warning("whisper on the GPU failed; using the CPU (slower). Fix: pip install -e .[hearing] "
+                                "(adds CUDA 12 cuBLAS and cuDNN 9)", extra={"error": str(e)[:200]})
             if name not in _models:
-                _models[name] = WhisperModel(name, device="cpu", compute_type="int8")
+                _models[name] = _load(WhisperModel, name, "cpu", "int8")
                 log.info("whisper loaded", extra={"model": name, "device": "cpu"})
         return _models[name]
+
+
+def _load(cls, name: str, device: str, compute: str):
+    """The model from the local cache, with no call to huggingface.co (a second or more, and it fails offline);
+    downloaded only the first time."""
+    try:
+        return cls(name, device=device, compute_type=compute, local_files_only=True)
+    except Exception as e:  # noqa: BLE001 - not downloaded yet (or a GPU problem, which the caller handles)
+        if "cuda" in str(e).lower() or "cublas" in str(e).lower() or "cudnn" in str(e).lower():
+            raise
+        return cls(name, device=device, compute_type=compute)
 
 
 def _prove(m, limit: float = 30.0) -> None:

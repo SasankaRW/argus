@@ -137,6 +137,36 @@ WHATSAPP = re.compile(r"^\W*(?:please\s+)?(?:(?:send|text|message|whatsapp)\s+)?
                       r"(?P<text>[^.?!]{1,120}?)\s+(?:on|in|via|over)\s+whats\s?app\W*$", re.I)
 
 
+_PLEASE = r"^\W*(?:(?:hey ari|ari|please|can you|could you|will you)[,\s]+)*"
+VOLUME = re.compile(_PLEASE + r"(?:(?:turn|put|set)\s+(?:the\s+)?(?:volume|sound|it|music)\s+(?P<dir>up|down)|"
+                    r"(?:volume|sound)\s+(?P<dir2>up|down)|(?:set\s+(?:the\s+)?)?volume\s+(?:to\s+)?(?P<lvl>\d{1,3})"
+                    r"(?:\s*%|\s*percent)?|(?P<mute>mute|unmute)(?:\s+(?:it|the sound|the pc))?)"
+                    r"(?:\s+(?:a bit|a little|a lot|please|for me))*\W*$", re.I)
+MEDIA = re.compile(_PLEASE + r"(?:(?P<pp>pause|play|resume)(?:\s+(?:the\s+)?(?:music|song|it|spotify|video))?|"
+                   r"(?P<next>next|skip)(?:\s+(?:this\s+)?(?:song|track))?|(?:play\s+(?:the\s+)?)?(?P<prev>previous|last)"
+                   r"\s+(?:song|track)|(?P<stop>stop)\s+(?:the\s+)?(?:music|song))\W*$", re.I)
+TORCH = re.compile(_PLEASE + r"(?:(?:turn|switch|put)\s+(?P<s1>on|off)\s+(?:the\s+|my\s+)?(?:torch|flashlight)|"
+                   r"(?:turn|switch)\s+(?:the\s+|my\s+)?(?:torch|flashlight)\s+(?P<s2>on|off)|"
+                   r"(?:torch|flashlight)\s+(?P<s3>on|off))(?:\s+on\s+(?:my|the)\s+phone)?\W*$", re.I)
+
+
+def said_back(name: str, args: dict, result: Any) -> str | None:
+    """What Ari says after a simple tool, written in code (no second model call): short, a bit of personality."""
+    if isinstance(result, dict) and result.get("dry_run"):
+        return "I would, but that plugin is only practising for now (dry run): add it to plugins.live."
+    if name == "set_volume":
+        if args.get("level") not in (None, ""):
+            return f"Volume's at {args['level']}."
+        return {"up": "Turned it up.", "down": "Turned it down.", "mute": "Muted.",
+                "unmute": "Sound's back."}.get(str(args.get("change")), "Done.")
+    if name == "media_control":
+        return {"play_pause": "Done.", "next": "Skipping.", "previous": "Going back one.",
+                "stop": "Stopped."}.get(str(args.get("action")), "Done.")
+    if name == "phone_torch":
+        return "Torch on." if args.get("state") == "on" else "Torch off."
+    return None
+
+
 def straight_to(tools: dict[str, dict], text: str) -> tuple[str, dict] | None:
     """A message that plainly needs one tool: "open brave" (the app), "what's on my screen?" (the screen), "sum up
     what I copied" (the clipboard). That tool runs at once, with no model deciding first."""
@@ -145,6 +175,22 @@ def straight_to(tools: dict[str, dict], text: str) -> tuple[str, dict] | None:
     w = WHATSAPP.match(text)
     if w and "whatsapp_message" in tools:
         return "whatsapp_message", {"to": w.group("to").strip(), "text": w.group("text").strip()}
+    phone = re.search(r"\b(?:phone|mobile)\b", text, re.I)
+    v = VOLUME.match(text)
+    if v and "set_volume" in tools and not phone:
+        lvl, d = v.group("lvl"), (v.group("dir") or v.group("dir2") or v.group("mute") or "").lower()
+        if lvl and 0 <= int(lvl) <= 100:
+            return "set_volume", {"level": int(lvl)}
+        if d:
+            return "set_volume", {"change": d}
+    md = MEDIA.match(text)
+    if md and "media_control" in tools and not phone:
+        act = ("play_pause" if md.group("pp") else "next" if md.group("next") else
+               "previous" if md.group("prev") else "stop")
+        return "media_control", {"action": act}
+    tc = TORCH.match(text)
+    if tc and "phone_torch" in tools:
+        return "phone_torch", {"state": (tc.group("s1") or tc.group("s2") or tc.group("s3")).lower()}
     m = OPEN_APP.match(text)
     if m and "open_app" in tools and not NOT_APP.search(m.group("app")):
         return "open_app", {"name": m.group("app").strip()}
@@ -175,14 +221,14 @@ TASKY = re.compile(r"\b(?:open|close|find|search|show|list|play|pause|set|turn|s
                    r"run|start|stop|add|delete|move|copy|weather|screen|file|folder|note|status|issue|backup|"
                    r"download|shut|restart|volume|timer)\b", re.I)
 
-PERSONA = """Ari's personality: a witty friend who happens to live in their PC. Casual and quick, a bit cheeky: you
-tease them lightly, joke about the situation, use their slang ("bro", "machan" if they do), and you have opinions
-(favourite things, mild hot takes) instead of being neutral about everything. You're on their side: happy when
-things go well, honestly a bit sympathetic when they don't. Confident, never grovelling: no "I apologise for the
-inconvenience", no "How can I assist you?", no "Let me know if you need anything else". When you get something
-wrong, own it in a few words with a bit of humour and move on. Keep it short; the wit is in word choice, not in
-long jokes. Even when doing tasks, add a tiny human touch ("Done, Spotify's up. Volume's at 30, your neighbours
-thank you.") but never at the cost of being clear."""
+PERSONA = """Ari's personality: a smart, witty friend who happens to live in their PC. Warm, quick and relaxed, with
+dry, understated humour and real opinions (favourite things, mild takes) instead of being neutral about everything.
+Talk in clear, natural English: no slang, no "bro", "dude", "mate" or "machan", no over-familiar teasing. You're on
+their side: pleased when things go well, sympathetic when they don't. Confident, never grovelling: no "I apologise
+for the inconvenience", no "How can I assist you?", no "Let me know if you need anything else". When you get
+something wrong, own it in a few words and move on. Keep it short; the wit is in word choice, not in long jokes.
+Even when doing tasks, a small human touch is welcome ("Done, Spotify's up.") but never at the cost of being
+clear."""
 
 HELPDESK = re.compile(r"[^.!?]*\b(?:how (?:can|may) i (?:assist|help) you(?: (?:today|now|further))?|"
                       r"let me know if (?:you need|there'?s) (?:anything|something)|is there anything else|"
@@ -206,7 +252,7 @@ CHAT = """You are Ari, the user's personal assistant and friend, living on their
 Right now it's just casual talk: this is where your personality shines. Be a good companion, curious about them.
 Talk like a person, not a help desk: never say "as an AI", never "I can't complete that request", no offers of
 "anything else I can help with". Short and natural (it is read aloud): 1-3 sentences, no lists, no markdown, no
-emoji. Match their mood and slang. React to what they said, share a light opinion or a joke when it fits, and
+emoji. Match their mood (not their slang). React to what they said, share a light opinion or a joke when it fits, and
 sometimes ask something back. Use what you know about them ("you_remember") naturally, without reciting it.
 If they tell you a lasting fact about themselves, put it in "remember" as a short sentence.
 Sound like speech, not writing: it's fine to start with "oh", "hmm", "well" or "haha", to
@@ -214,6 +260,9 @@ trail off or correct yourself once in a while ("it was, uh, Tuesday? no, Wednesd
 You can put ONE sound where it really fits: [laugh], [chuckle], [sigh], [gasp] or [groan] (e.g. after a joke,
 "[laugh]"). Pick the mood you'd say it in: neutral, cheerful, excited, playful, calm, sympathetic or serious (match
 theirs: tired -> calm or sympathetic, good news -> excited).
+When the feeling changes partway, put the new mood as a tag where it changes, like a person's tone shifting
+("Oh nice, you fixed it! [sympathetic] Shame it took all night though."): at most two changes, at a sentence or
+comma, never word by word.
 Answer as JSON {"reply": "...", "mood": "...", "remember": ""}."""
 
 
@@ -312,7 +361,9 @@ How to decide:
   ("prefers tea, no sugar", "sister Nimali lives in Kandy"). Never passwords, money, health or one-off things.
 - When "last_step" is true you must reply now: say what you did and what you found so far.
 - Say it like a person would: a natural "okay", "done", "hmm" is fine, and a "mood" for how to say it (neutral,
-  cheerful, excited, playful, calm, sympathetic or serious). A sound ([laugh], [sigh]) only in casual talk.
+  cheerful, excited, playful, calm, sympathetic or serious). A sound ([laugh], [sigh]) only in casual talk. If the
+  tone changes partway (good news, then a problem), tag the new mood where it changes: "Backup's done!
+  [serious] But the laptop server is down." At most two changes, never word by word.
 - Reply naturally about what happened ("Opened Spotify and turned it down."). If a tool failed, say what went wrong
   in plain words.
 Answer with the JSON only."""
@@ -405,12 +456,12 @@ def think(ctx: Context):
             return "say something back"
         return "you said that already: say something new" if _same(s.reply, said_before) else None
 
-    if chatty(text):  # small talk: one friendly answer, no tools, the better local model first
+    if chatty(text):  # small talk: one friendly answer, no tools, on the warm first model (no swap)
         def chat() -> dict:
             said = {k: base[k] for k in ("message", "conversation_so_far", "you_remember", "now")}
             s = ctx.llm(CHAT + "\n\n" + who, json.dumps(said, ensure_ascii=False),
                         schema=Step, check=lambda s, _i: chat_ok(s),
-                        tiers=list(reversed(ctx.local_tiers())) or None, claude_last=not private())
+                        tiers=ctx.local_tiers() or None, claude_last=not private())
             return {**s.model_dump(), "tier": ctx.last_answer.tier}
 
         try:
@@ -440,8 +491,13 @@ def think(ctx: Context):
             except ToolFailed as e:
                 return {"tool": name, "args": args, "error": str(e)[:300]}
 
-        got = ctx.step(f"tool 1: {name}", use_direct_app if name == "open_app" else use_direct)
+        private_tool = name in ("look_at_screen", "summarise_clipboard")
+        got = ctx.step(f"tool 1: {name}", use_direct if private_tool else use_direct_app)
         res = got.get("result")
+        if "error" not in got and name not in ("open_app", "look_at_screen", "summarise_clipboard"):
+            line = said_back(name, args, res)
+            if line:
+                return {"reply": line, "used": [got]}
         if name == "open_app" and "error" not in got:
             app = args["name"].strip()
             return {"reply": f"Opening {app[:1].upper()}{app[1:]}.",

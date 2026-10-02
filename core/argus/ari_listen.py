@@ -539,6 +539,33 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device) -> i
 LOCK_PORT = 8619
 
 
+def keep_warm(cfg, every: float = 240.0) -> threading.Thread | None:
+    """Ari's first local model stays loaded in Ollama while this listener runs (ari.keep_warm): loading it on your
+    first question costs seconds. A tiny request now and every few minutes, so it is never unloaded."""
+    t1 = cfg.models.tiers.get(cfg.models.chain[0]) if cfg.models.chain else None
+    if not cfg.ari.keep_warm or t1 is None or t1.provider != "ollama" or not t1.model:
+        return None
+    import json
+    import urllib.request
+
+    body = json.dumps({"model": t1.model, "prompt": "", "keep_alive": "10m"}).encode()
+
+    def loop() -> None:
+        while True:
+            try:
+                req = urllib.request.Request(cfg.ollama.url.rstrip("/") + "/api/generate", data=body, method="POST",
+                                             headers={"Content-Type": "application/json"})
+                urllib.request.urlopen(req, timeout=120).read()  # noqa: S310 - the local Ollama
+            except Exception as e:  # noqa: BLE001 - Ollama down: try again later
+                log.info("could not warm the model", extra={"error": str(e)[:120]})
+            time.sleep(every)
+
+    th = threading.Thread(target=loop, daemon=True, name="keep-warm")
+    th.start()
+    log.info("keeping the model warm", extra={"model": t1.model})
+    return th
+
+
 def only_one():
     """Hold a local port for as long as this listener runs: a second ari-listen (a restart that overlapped, a second
     `dev.ps1 up`) can't take it, and quits instead of answering "Hey Ari" a second time. None when taken."""
@@ -620,6 +647,7 @@ def main(argv: list[str] | None = None) -> int:
 
     client.vocabulary()
     client.ears()
+    keep_warm(cfg)
     log.info("loading Whisper", extra={"wake": cfg.ari.listen_wake_model, "command": cfg.ari.whisper_model,
                                        "expects": VOCAB.get("prompt", "")[:120]})
     wake_t = whisper(cfg.ari.listen_wake_model)

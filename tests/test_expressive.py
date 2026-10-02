@@ -135,3 +135,18 @@ def test_a_live_reply_keeps_its_mood_on_every_sentence():
     talk._turn(np.zeros(10, np.float32))
     assert said == ["[cheerful] Pretty good, honestly! I sorted your downloads earlier."] or \
         all(s.startswith("[cheerful] ") for s in said)
+    said.clear()
+    two = "[excited] Your build passed, first try! [serious] But the backup failed last night."
+    talk.ask = lambda q: {"reply": two}
+    talk._turn(np.zeros(10, np.float32))
+    assert said == ["[excited] Your build passed, first try!", "[serious] But the backup failed last night."]
+
+
+def test_a_reply_changes_mood_mid_way():
+    from argus.expressive import phrases, plain
+
+    r = "[excited] We won! [laugh] Ten nil. [sympathetic] Shame about the rain though."
+    assert phrases(r) == [("excited", "We won! [laugh] Ten nil."), ("sympathetic", "Shame about the rain though.")]
+    assert phrases("Hi there.") == [("neutral", "Hi there.")]
+    assert phrases("[calm] One. [calm] Two.") == [("calm", "One. Two.")]
+    assert plain(r) == "We won! Ten nil. Shame about the rain though."

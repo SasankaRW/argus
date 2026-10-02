@@ -224,3 +224,35 @@ def test_ari_has_a_personality_and_no_help_desk_lines():
     assert no_helpdesk("How can I help you?") == "How can I help you?"  # nothing left: keep it
     assert persona({}) == PERSONA and "Sas" in persona({"call_me": "Sas"})
     assert persona({"personality": "A calm butler."}).startswith("A calm butler.")
+
+
+def test_common_commands_go_straight_to_their_tool_and_reply_without_a_model():
+    from argus.worker.think import said_back
+
+    t = {n: {} for n in ("set_volume", "media_control", "phone_torch", "open_app")}
+    assert straight_to(t, "turn the volume down a bit please") == ("set_volume", {"change": "down"})
+    assert straight_to(t, "set volume to 45%") == ("set_volume", {"level": 45})
+    assert straight_to(t, "Hey Ari, mute") == ("set_volume", {"change": "mute"})
+    assert straight_to(t, "next song") == ("media_control", {"action": "next"})
+    assert straight_to(t, "pause the music") == ("media_control", {"action": "play_pause"})
+    assert straight_to(t, "turn on the torch on my phone") == ("phone_torch", {"state": "on"})
+    assert straight_to(t, "turn down my volume on my phone") is None  # the PC's volume tool is not the phone's
+    assert said_back("set_volume", {"level": 30}, {"volume": 30}) == "Volume's at 30."
+    assert "dry run" in said_back("set_volume", {"change": "up"}, {"dry_run": True})
+
+
+def test_whisper_loads_from_the_local_cache_first():
+    from argus.worker.hear import _load
+
+    calls = []
+
+    class M:
+        def __init__(self, name, device, compute_type, local_files_only=False):
+            calls.append(local_files_only)
+            if local_files_only and name == "new":
+                raise RuntimeError("not in the cache")
+
+    _load(M, "small.en", "cpu", "int8")
+    assert calls == [True]  # no call to huggingface.co
+    _load(M, "new", "cpu", "int8")
+    assert calls[1:] == [True, False]  # first time: downloaded

@@ -28,7 +28,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # core/, for argus.expressive (plain Python)
-from argus.expressive import STYLE, for_voice  # noqa: E402
+from argus.expressive import STYLE, for_voice, phrases  # noqa: E402
 
 log = logging.getLogger("argus.voice_server")
 
@@ -60,31 +60,46 @@ class Engine:
         return self.m
 
     def say(self, text: str, clip: str | None = None) -> bytes:
+        """The whole reply, each phrase in its own mood ("[excited] We won! [sympathetic] Shame about the rain."),
+        joined with a short breath between moods."""
         import numpy as np
-        import torch
 
-        mood, words = for_voice(text)
-        if not words:
+        parts = [for_voice(f"[{m}] {t}") for m, t in phrases(text)]
+        parts = [(m, w) for m, w in parts if w]
+        if not parts:
             raise ValueError("nothing to say")
-        lively, pace, temp = STYLE.get(mood, STYLE["neutral"])
         with self.lock:
             m = self.load()
             if clip and clip != self.clip and Path(clip).is_file():
-                m.prepare_conditionals(clip, exaggeration=lively)  # the voice to sound like (once per clip)
+                m.prepare_conditionals(clip, exaggeration=STYLE["neutral"][0])  # the voice to sound like (once)
                 self.clip = clip
-            conds = getattr(m, "conds", None)
-            if conds is not None and hasattr(conds, "t3"):  # how lively this reply is
-                conds.t3.emotion_adv = lively * torch.ones(1, 1, 1, device=getattr(m, "device", "cpu"))
-            params = inspect.signature(m.generate).parameters
-            kw = {"temperature": temp}
-            if params.get("exaggeration") is not None and params["exaggeration"].default:  # the full model
-                kw.update(exaggeration=lively, cfg_weight=pace)
-            t0 = time.perf_counter()
-            with torch.inference_mode():
-                wav = m.generate(words, **{k: v for k, v in kw.items() if k in params})
-            a = np.asarray(wav.squeeze(0).float().cpu().numpy() if hasattr(wav, "cpu") else wav, dtype=np.float32)
+            rate = int(m.sr)
+            gap = np.zeros(int(0.12 * rate), dtype=np.float32)
+            audio = []
+            for i, (mood, words) in enumerate(parts):
+                if i:
+                    audio.append(gap)
+                audio.append(self._one(m, mood, words))
+        return to_wav(np.concatenate(audio), rate)
+
+    def _one(self, m, mood: str, words: str):
+        import numpy as np
+        import torch
+
+        lively, pace, temp = STYLE.get(mood, STYLE["neutral"])
+        conds = getattr(m, "conds", None)
+        if conds is not None and hasattr(conds, "t3"):  # how lively this phrase is
+            conds.t3.emotion_adv = lively * torch.ones(1, 1, 1, device=getattr(m, "device", "cpu"))
+        params = inspect.signature(m.generate).parameters
+        kw = {"temperature": temp}
+        if params.get("exaggeration") is not None and params["exaggeration"].default:  # the full model
+            kw.update(exaggeration=lively, cfg_weight=pace)
+        t0 = time.perf_counter()
+        with torch.inference_mode():
+            wav = m.generate(words, **{k: v for k, v in kw.items() if k in params})
+        a = np.asarray(wav.squeeze(0).float().cpu().numpy() if hasattr(wav, "cpu") else wav, dtype=np.float32)
         log.info("said", extra={"mood": mood, "chars": len(words), "ms": int((time.perf_counter() - t0) * 1000)})
-        return to_wav(a, int(m.sr))
+        return a.reshape(-1)
 
 
 def to_wav(a, rate: int) -> bytes:

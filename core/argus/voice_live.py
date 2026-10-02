@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .expressive import mood_of
+from .expressive import phrases
 
 log = logging.getLogger("argus.voice_live")
 RATE = 16000
@@ -371,9 +371,10 @@ class Talk:
             ans = {"reply": "Sorry, I can't reach Argus right now."}
         reply = (ans.get("reply") or "").strip()
         if reply:
-            mood, words = mood_of(reply)  # "[cheerful] ...": every sentence gets the mood, for the expressive voice
-            parts = sentences(words)
-            self.player.say([f"[{mood}] {p}" for p in parts] if mood != "neutral" else parts)
+            # "[excited] We won! [sympathetic] Shame about the rain.": each sentence carries the mood it is said in
+            said = [f"[{mood}] {p}" if mood != "neutral" else p
+                    for mood, words in phrases(reply) for p in sentences(words)]
+            self.player.say(said)
         self._keep_talking(pending=bool(ans.get("pending")))
         return command
 
