@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Answers to tasks are spoken as they are written, like small talk already was: when the model answers (no tool, no web), each finished sentence goes out at once, with the mood chosen before the first word. An answer the checks would refuse is never said early. (The model now writes the tool and web fields and the mood before the reply.)
+- "Hmm, let me check" comes after 0.8 s for tasks (was 1.2 s).
 - "Type hello world" goes straight to asking "Shall I type "hello world" into the window in front?" (no model guess; nothing is typed until you say yes). "What type of…", "type of…" and similar are not typing requests.
 - "Turn down my volume on my phone" now gets a plain answer (Ari can't change the phone's volume yet, and says what it can do) instead of picking a wrong phone tool.
 - Ari tells "is the backup okay" (backup_status) from "is the laptop server up" (lab_status): the descriptions now say which is which.

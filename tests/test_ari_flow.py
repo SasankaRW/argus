@@ -303,3 +303,26 @@ def test_type_something_is_asked_first_and_phone_volume_is_said_plainly():
         assert straight_to(tools, no) is None
     assert PHONE_VOLUME.search("turn down my volume on my phone") and PHONE_VOLUME.search("mute my phone")
     assert not PHONE_VOLUME.search("turn the volume down") and "phone's volume" in CANT_PHONE_VOLUME
+
+
+def test_a_task_answer_is_said_while_it_is_written_unless_it_is_about_to_use_a_tool(tmp_path):
+    step = {"tool": "", "args": {}, "need_web": False, "mood": "calm",
+            "reply": "A mutex lets one thread in at a time. The rest wait their turn."}
+    with FakeOllama({"qwen2.5-coder:7b": [step]}) as ol, Server(make(tmp_path).open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop", "session"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        r = cl.post("/ari", {"text": "explain what a mutex is in one sentence"})
+        settle(cl, w, r["conv"])
+        evs = cl.get(f"/events?kinds=plugin.ari.partial&job={r['job_id']}")["events"]
+        assert [e["data"]["text"] for e in evs] == ["A mutex lets one thread in at a time."]  # the rest follows
+        assert evs[0]["data"]["mood"] == "calm"
+    # the same words, but the model wants the web first: nothing of it is said early
+    web = {**step, "need_web": True}
+    with FakeOllama({"qwen2.5-coder:7b": [web, step]}) as ol, Server(make(tmp_path / "w").open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop", "session"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        r = cl.post("/ari", {"text": "explain what a mutex is in one sentence"})
+        settle(cl, w, r["conv"])
+        assert cl.get(f"/events?kinds=plugin.ari.partial&job={r['job_id']}")["events"] == []

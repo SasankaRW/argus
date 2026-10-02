@@ -481,7 +481,8 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device) -> i
     def ask(text: str, partial: Callable[[str, str], None] | None = None) -> dict:
         from .worker.think import chatty
 
-        t = threading.Timer(1.2, wait_sound, args=(chatty(text),))
+        chat = chatty(text)
+        t = threading.Timer(1.2 if chat else 0.8, wait_sound, args=(chat,))  # a task: "hmm, let me check" sooner
         t.start()
 
         def first_words(so_far: str, mood: str) -> None:  # Ari starts talking: no "let me check" now

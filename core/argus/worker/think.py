@@ -32,14 +32,16 @@ MAX_STEPS = 6
 
 
 class Step(BaseModel):
+    """One step: use a tool, or answer. The order of the fields is the order the model writes them: the tool and
+    need_web first and the mood before the reply, so an answer can be spoken while it is still being written."""
     tool: str = Field("", description="a tool name from the list, or empty when answering")
     args: dict[str, Any] = Field(default_factory=dict)
-    reply: str = Field("", description="the answer to the user, when no tool is needed any more")
     need_web: bool = Field(False, description="true when the answer needs current information from the internet")
-    remember: str = Field("", description="with a reply: a lasting fact the user just told you about themselves "
-                                          "worth keeping (else empty)")
     mood: str = Field("", description="with a reply: how to say it: neutral, cheerful, excited, playful, calm, "
                                       "sympathetic or serious")
+    reply: str = Field("", description="the answer to the user, when no tool is needed any more")
+    remember: str = Field("", description="with a reply: a lasting fact the user just told you about themselves "
+                                          "worth keeping (else empty)")
 
 
 class Chat(BaseModel):
@@ -550,6 +552,15 @@ def think(ctx: Context):
             return "too long: 1-3 short sentences"
         return None
 
+    def speakable(part: str) -> bool:
+        """The same refusals as check(), for a sentence already on its way out: if the answer would be sent back to
+        be written again, it must not have been said."""
+        if PROMISE.match(part) and not done:
+            return False
+        if _same(part, said_before):
+            return False
+        return not (done and all("error" in d for d in done) and not FAILED.search(part))
+
     def private() -> bool:
         """Something private (the screen, the clipboard) is in this chat: Claude never sees it."""
         return any(d.get("private") for d in done) or any(h.get("private") for h in base["conversation_so_far"])
@@ -632,8 +643,27 @@ def think(ctx: Context):
             task = {**base, "results_so_far": done} if done else dict(base)
             if i == MAX_STEPS - 1:
                 task["last_step"] = True
+            sent = {"n": 0, "blocked": False}
+
+            def partial(raw: str) -> None:  # an answer (no tool, no web) goes out sentence by sentence as it is written
+                if sent["blocked"] or '"reply"' not in raw:
+                    return
+                head = raw[:raw.index('"reply"')]
+                if not re.search(r'"tool"\s*:\s*""', head) or re.search(r'"need_web"\s*:\s*true', head):
+                    sent["blocked"] = True  # it is using a tool or the web: nothing of this is the answer
+                    return
+                mood, so_far = reply_so_far(raw)
+                part = finished_part(so_far)
+                if len(part) > sent["n"]:
+                    if not speakable(part):
+                        sent["blocked"] = True  # the checks would refuse this answer: don't say it
+                        return
+                    sent["n"] = len(part)
+                    ctx.progress("plugin.ari.partial", {"text": part, "mood": mood or "neutral"})
+
             s = ctx.llm(PLAYBOOK + "\n\n" + who, json.dumps(task, ensure_ascii=False), schema=Step, check=check,
-                        tiers=model_order(text, ctx.local_tiers()) or None, claude_last=not private())
+                        on_text=partial, tiers=model_order(text, ctx.local_tiers()) or None,
+                        claude_last=not private())
             return {**s.model_dump(), "tier": ctx.last_answer.tier}
 
         try:
