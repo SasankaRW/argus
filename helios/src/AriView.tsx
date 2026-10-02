@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import type { Selection } from "./MapView";
-import { ariNow, ariSet, pauseEars, resumeEars, setPillLook, useAri, useEars, usePillLook } from "./ariState";
+import { pauseEars, resumeEars, useAri, useEars } from "./ariState";
 import { canSpeak, listen, pref, setPref, speak, Speech, stopSpeaking, voiceStatus, VoiceStatus } from "./voice";
 import { plain } from "./spoken";
 
@@ -274,9 +274,8 @@ export function EarsButton() {
         pause listening</button>;
 }
 
-// Ari's settings (voice, pill), your schedules and what Ari remembers: on the chat list page.
+// Ari's settings (voice), your schedules and what Ari remembers: on the chat list page.
 function AriSettings() {
-  const look = usePillLook();
   const [piper, setPiper] = useState(() => pref("piper", true));
   const [vs, setVs] = useState<VoiceStatus>(voiceStatus);
   useEffect(() => {
@@ -305,16 +304,6 @@ function AriSettings() {
         <div className="ari-set">
           <a className="btn" href="#voice" title="Read sentences aloud so Ari learns your accent and names">train on my voice</a>
           <EarsButton />
-          <span className="pill-pick" role="group" aria-label="Ari pill look">pill
-            {(["pulse", "comet"] as const).map((l) => (
-              <button key={l} type="button" className="btn" aria-pressed={look === l}
-                onClick={() => {  // pick it, and show it for a moment
-                  setPillLook(l);
-                  ariSet(l === "pulse" ? "speaking" : "thinking", `This is the ${l} look.`);
-                  setTimeout(() => { if (ariNow().text === `This is the ${l} look.`) ariSet("idle"); }, 3500);
-                }}>{l}</button>
-            ))}
-          </span>
           {vs.voice && <label title="Piper: Argus's own natural voice (off: the browser's voice)"><input type="checkbox" checked={piper} onChange={(e) => { setPiper(e.target.checked); setPref("piper", e.target.checked); }} /> natural voice</label>}
           {vs.voice && piper && <VoicePick />}
           {vs.hearing === "whisper" && <span className="muted">{vs.whisper_ready ? "Whisper hears you" : "Whisper: the PC is off, the browser hears you"}</span>}
