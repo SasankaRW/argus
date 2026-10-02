@@ -50,7 +50,6 @@ Copy `.env.example` to `.env` (never committed) and fill in:
 | Name | What |
 | --- | --- |
 | `ARGUS_WORKER_TOKEN` | a long random token; Helios asks for it once. Make one: `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
-| `NTFY_TOPIC` | a long random topic name, e.g. `argus-7f3k2q9x`; subscribe to it in the ntfy phone app |
 | `ARGUS_ADMIN_PASSWORD` | change from `change-me` |
 
 ## 6. Settings: `argus.yaml`
@@ -74,18 +73,21 @@ plugins:
   live: [downloads-organizer]   # plugins allowed to change files; the others run in dry-run
 ```
 
-## 7. Phone (Tailscale + ntfy) *optional*
+## 7. Phone (Tailscale + the Argus app) *optional*
 
 1. Sign in to Tailscale on the PC and the phone (same account).
 2. Let the phone reach Helios over Tailscale: `tailscale serve --bg 8600`. It prints the https address; put it in
    `approvals.public_url`.
-3. Install the ntfy app on the phone and subscribe to your `NTFY_TOPIC`.
+3. Install the Argus phone app (`android/README.md`), open it and enter the Argus address and `ARGUS_WORKER_TOKEN`.
+   It collects your notifications itself (approvals, failures, reminders, summaries) and keeps doing so with the app
+   closed; messages wait up to `notify.keep_hours` while the phone is off or away from Tailscale. Nothing goes
+   through ntfy or any other outside service.
 4. Put Argus on the phone as an app: open the https address from step 2 + `/helios/` in Chrome, sign in with the
    token, then **More > install-app** (or Chrome's menu > **Install app**). You get:
    - an **Argus** icon that opens full screen, even when the PC is off (it then says it can't reach Argus);
    - **long-press shortcuts** on the icon: Talk to Ari (opens the current chat with the mic on), Inbox, Share, Map;
    - Argus in the phone's **share menu**: share a photo, PDF or link to it, pick where it goes, Send.
-5. Test: `.\scripts\dev.ps1 ntfy` (a notification) and `.\scripts\dev.ps1 approval` (Approve / Reject on the phone).
+5. Test: `.\scripts\dev.ps1 notify` (a notification) and `.\scripts\dev.ps1 approval` (Approve / Reject on the phone).
 
 ## 8. Start it
 
@@ -265,7 +267,11 @@ daily cap.
 - **Your words** (`ari.vocabulary`, `ari.heard_as`): Whisper is told the names to expect (yours, the people and
   places Ari remembers, apps like WhatsApp), and common mishearings are put right ("open what's up" -> WhatsApp).
   Add your own: `vocabulary: [Kaancha, Nimali]`, `heard_as: {kancha: Kaancha}`.
-- **Ari's personality**: a witty friend by default (casual, teases you a bit, has opinions, no help-desk lines like
+- **Ari's test set**: `python -m argus.ari_eval` (with Argus running) says 40 everyday things to Ari's first
+  decision and checks it picks the right tool, with how long the model took; nothing is done for real. Each run is
+  kept in `data/ari-eval/` and compared with the last one. Your own cases: `--cases my-cases.yaml`
+  (`- {say: "open brave", expect: open_app}`; several allowed: `expect: "weather|web_search"`).
+- **Ari's personality**: a witty friend by default (funny, teases you a bit, has opinions, no slang, no help-desk lines like
   "How can I assist you?"), in small talk and in task replies. Change it in a few sentences of your own, and tell it
   what to call you:
 
@@ -347,8 +353,8 @@ the PC or touch files: approvals stay yours.
 
 Ask Ari "where's my phone?" (or Helios > Power > Your phone): where Tailscale sees it (online at home on the same
 Wi-Fi, online away, or offline and when it was last online), then **Ring my phone** sends three urgent
-notifications 20 s apart. To hear them on silent: ntfy app > your topic > Notification settings > allow
-"Override Do Not Disturb" for urgent messages. Needs `approvals.phone` (the phone's Tailscale name).
+notifications 20 s apart. The app plays them on the alarm channel, so they are loud even on silent (allow
+"Do Not Disturb access" for the Argus app, once, if you want them to get through Do Not Disturb). Needs `approvals.phone` (the phone's Tailscale name).
 
 ## PC power buttons
 

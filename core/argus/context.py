@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from datetime import datetime
 
 from . import __version__
@@ -26,12 +27,11 @@ from .db import Store
 from .events import EventHub, insert_event, prune_events
 from .jobs import JobStore, Watchdog
 from .modelboard import ModelBoard
-from .outbox import Outbox, add_message, ntfy_message
+from .outbox import Outbox, add_message, phone_message
 from .plugins import PluginHost
 from .power import PowerManager
 from .presence import PhoneWatch
 from .registry import Registry
-from .relay import ReplyRelay
 from .scheduler import Scheduler
 from .triggers import Triggers
 from .weather import Weather, words
@@ -50,7 +50,6 @@ class Argus:
         self.models = ModelBoard(self.store, cfg)
         self.outbox = Outbox(self.store, cfg)
         self.approvals = Approvals(self.store, self.jobs, cfg)
-        self.relay = ReplyRelay(self.store, cfg, self.approvals, self.outbox)
         self.phone = PhoneWatch(self.store, cfg, self.approvals, self.outbox)
         self.plugin_host = PluginHost(cfg)
         self.power = PowerManager(self.store, cfg)
@@ -74,6 +73,9 @@ class Argus:
         self.brief_sent: str | None = None
         self.summary_sent: str | None = None
         self.guidance_sent: str | None = None
+        self.health_sent: str | None = None
+        self.health_tools: Callable[[], list[dict]] = lambda: []  # Ari's tools (set by the API)
+        self.listener_seen: Callable[[], float] = lambda: 0.0  # when the PC's listener last said it runs
         self._next_touch = 0.0
         self.resumed: dict | None = None  # set at start when the last run ended abruptly
         self.started_at: float | None = None
@@ -105,7 +107,6 @@ class Argus:
         await self.scheduler.sync()
         await self.power.start()
         await self.outbox.start()
-        self.relay.start()
         await self.phone.start()
         await self.hub.start()
         self.watchdog.start()
@@ -159,7 +160,7 @@ class Argus:
             now = time.time()
             title, text, data = resume_summary(conn, now, stopped_at)
             insert_event(conn, now, "argus.resumed", src="argus", dst="phone", data=data)
-            add_message(conn, now, "ntfy", ntfy_message(title, text, tags=["electric_plug"]),
+            add_message(conn, now, "phone", phone_message(title, text, tags=["electric_plug"]),
                         dedupe_key=f"resumed:{int(stopped_at)}")
             return data
 
@@ -180,10 +181,38 @@ class Argus:
             if day:
                 self.guidance_sent = day
                 await self.guidance_review()
+        if self.cfg.ari_health.enabled:
+            day = brief_due(self.cfg.ari_health.at, now, self.health_sent, until_hour=23)
+            if day:
+                self.health_sent = day
+                asyncio.create_task(self.run_health(push=True))  # takes a while (it asks the model): not in the tick
         if self.cfg.summary.enabled:
             day = brief_due(self.cfg.summary.at, now, self.summary_sent, until_hour=23)
             if day:
                 await self.send_summary(day)
+
+    async def run_health(self, push: bool = False) -> dict:
+        """Ari's health check (health.py), kept as an event; the phone hears only when something is bad."""
+        from . import health
+
+        workers = await self.registry.workers()
+        gpu = sum(1 for w in workers if w["state"] == "online" and "gpu" in w["capabilities"])
+        result = await asyncio.to_thread(health.run, self.cfg, tools=self.health_tools(),
+                                         listener_seen=self.listener_seen(), gpu_workers=gpu)
+
+        def fn(conn):
+            now = time.time()
+            insert_event(conn, now, "ari.health", src="argus", data=result)
+            if push and not result["ok"]:
+                day = datetime.fromtimestamp(now).strftime("%Y-%m-%d")
+                add_message(conn, now, "phone", phone_message("Ari needs a look", health.summary(result),
+                                                            priority="low", tags=["stethoscope"]),
+                            dedupe_key=f"health:{day}")
+
+        await self.store.write(fn)
+        if push:
+            self.outbox.poke()
+        return result
 
     async def guidance_review(self) -> dict:
         """Queue the review of new mistakes (a job for a worker with Claude). Nothing to do: no job."""
@@ -243,7 +272,7 @@ class Argus:
             now = time.time()
             title, text = compose_summary(conn, now, self.button_labels())
             key = f"summary:{day}" if day else f"summary:now:{int(now)}"
-            oid = add_message(conn, now, "ntfy", ntfy_message(title, text, priority="low", tags=["crescent_moon"]),
+            oid = add_message(conn, now, "phone", phone_message(title, text, priority="low", tags=["crescent_moon"]),
                               dedupe_key=key)
             return {"title": title, "text": text, "queued": oid is not None}
 
@@ -304,7 +333,7 @@ class Argus:
             now = time.time()
             title, text = compose_brief(conn, now, health=last_health(conn), **inputs)
             key = f"brief:{day}" if day else f"brief:now:{int(now)}"
-            oid = add_message(conn, now, "ntfy", ntfy_message(title, text, tags=["sunrise"]), dedupe_key=key)
+            oid = add_message(conn, now, "phone", phone_message(title, text, tags=["sunrise"]), dedupe_key=key)
             return {"title": title, "text": text, "queued": oid is not None}
 
         out = await self.store.write(fn)
@@ -350,7 +379,7 @@ class Argus:
             now = time.time()
             insert_event(conn, now, kind, src="argus", dst="backup", data=res)
             if not res["ok"]:
-                add_message(conn, now, "ntfy", ntfy_message("Argus backup failed", str(res.get("problem"))[:300],
+                add_message(conn, now, "phone", phone_message("Argus backup failed", str(res.get("problem"))[:300],
                                                             priority="high", tags=["warning"]),
                             dedupe_key=f"backup-failed:{time.strftime('%Y%m%d', time.localtime(now))}")
 
@@ -365,11 +394,11 @@ class Argus:
         return res
 
     async def notify_from_job(self, job_id: str, worker: str, key: str, message: dict) -> bool:
-        """ctx.notify(): queue an ntfy message for a job the worker holds. The key makes a retried step's
+        """ctx.notify(): queue a phone message for a job the worker holds. The key makes a retried step's
         message a no-op. Returns True if it was queued now."""
 
-        quiet = self.cfg.ntfy.quiet and self.cfg.summary.enabled and \
-            int(message.get("priority") or 3) <= 3  # ntfy: 1 min, 2 low, 3 default, 4 high, 5 urgent
+        quiet = self.cfg.notify.quiet and self.cfg.ntfy.quiet and self.cfg.summary.enabled and \
+            int(message.get("priority") or 3) <= 3  # 1 min, 2 low, 3 default, 4 high, 5 urgent
 
         def fn(conn) -> bool:
             now = time.time()
@@ -384,7 +413,7 @@ class Argus:
                     insert_event(conn, now, "notify.held", job_id=job_id, src=job.plugin, dst="argus",
                                  data={"title": message.get("title")})
                 return False
-            oid = add_message(conn, now, "ntfy", message, dedupe_key=f"notify:{key}", job_id=job_id)
+            oid = add_message(conn, now, "phone", message, dedupe_key=f"notify:{key}", job_id=job_id)
             if oid is not None:
                 insert_event(conn, now, "notify.queued", job_id=job_id, src=job.plugin, dst="argus",
                              data={"title": message.get("title")})
@@ -448,7 +477,6 @@ class Argus:
         await self.watchdog.stop()
         await asyncio.to_thread(self.marker.stop)  # a clean stop: no "Argus is back" message next time
         await self.phone.stop()
-        await self.relay.stop()
         await self.outbox.stop()
         await self.hub.stop()
         self.store.close()
@@ -456,7 +484,7 @@ class Argus:
 
     def health(self) -> dict:
         db = self.store.health()
-        ok = db["ok"] and self.watchdog.alive and self.hub.alive and self.outbox.alive and self.relay.alive
+        ok = db["ok"] and self.watchdog.alive and self.hub.alive and self.outbox.alive
         ok = ok and self.phone.alive
         return {
             "status": "ok" if ok else "degraded",
@@ -467,7 +495,6 @@ class Argus:
             "database": db,
             "events": self.hub.stats(),
             "outbox": self.outbox.health(),
-            "replies": self.relay.health(),
             "phone": self.phone.health(),
             "watchdog": {
                 "alive": self.watchdog.alive,

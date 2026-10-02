@@ -15,7 +15,7 @@ Argus core stays small and stable; every feature is a plugin in its own folder t
 | Job queue, scheduler, single GPU queue | Downloads organizer, screenshot renamer, bill filer |
 | Model tiers T0–T3, escalation, `claude -p` wrapper | Duplicate finder, invoice builder, research agent |
 | Event log (SQLite) + WebSocket stream | Connectors to your apps: Cashly, Tracker, Life Hub |
-| Approvals inbox, ntfy, permissions, secrets | Daily digest, email triage, model scout |
+| Approvals inbox, phone notifications, permissions, secrets | Daily digest, email triage, model scout |
 | PC power (wake, shutdown), desktop runner | Anything new you think of later |
 | Plugin loader, `ctx` API, Helios |  |
 
@@ -142,8 +142,8 @@ Plugins are built from three things core provides: triggers that start a run, st
 | `llm` | asks a model tier with a playbook and output schema | escalates on failed checks |
 | `claude` | asks T3 directly | counts against the daily cap |
 | `search` | queries SearXNG | needs the PC awake |
-| `approve` | pauses until you approve in Helios or ntfy | type: entry, batch or draft |
-| `notify` | sends an ntfy message, optional buttons |  |
+| `approve` | pauses until you approve in Helios or on the phone | type: entry, batch or draft |
+| `notify` | sends a phone notification, optional buttons |  |
 | `emit` | publishes an event other plugins can react to |  |
 
 ### The ctx API (inside step functions)
@@ -181,7 +181,7 @@ def send_to_cashly(ctx, data):
 | `ctx.ask_me(title, fields, summary=, image=)` | the last resort: ask you to fill in `fields` (Helios and the phone; `image` is a small picture to decide by). Returns the fields as you approved them, or None if you rejected it. The job waits meanwhile, like `ctx.approve`; call it inside `ctx.step`. |
 | `ctx.files` | read, write (new files only), `append_text` (add to the end, e.g. a daily notes file), move, `recycle` inside declared paths only |
 | `ctx.approve(type, title, fields)` | ask you and park the job (no worker held) until you answer on the phone or in Helios; the step then runs again and gets a Decision: truthy when approved, .fields = the values as approved (edits included), .state = approved, rejected or expired. Types: entry (editable fields), batch (items; Argus adds up count and total), draft (summary + link). Call it inside ctx.step: a retried step gets the same approval back, never a second one. Built in Argus 0.6 (C8). |
-| `ctx.notify(title, text, priority=, tags=, link=)` | phone message through the outbox (ntfy): sent once even if the step runs again, retried if ntfy is down. Built in 0.6 (C8). |
+| `ctx.notify(title, text, priority=, tags=, link=)` | phone message through the outbox: queued once even if the step runs again, collected by the phone app when it connects. Built in 0.6 (C8). |
 | `ctx.emit(name, data)` / `ctx.log(msg, **kv)` | events and log lines |
 | `ctx.store` | the plugin's own small table (state between runs) |
 | `ctx.secrets["name"]` | tokens from the encrypted `.env`, never in files |
@@ -227,7 +227,7 @@ A plugin shows up in Helios with no front-end code. Helios builds everything fro
 | `batch` | many items, one decision | count, total size or value, top items, full list on Open | Approve all, Open, Not now |
 | `draft` | a document to review | title, summary lines, link to the file | Approve, Open, Not now |
 
-The same card goes to ntfy as a notification with the same buttons.
+The same card goes to the phone app as a notification with the same buttons.
 
 If a plugin really needs its own panel (Cashly's month summary, for example), it adds a `ui.yaml` using Helios's built-in widgets: stat, list, table, bar, and link button. Custom React panels are a last resort.
 

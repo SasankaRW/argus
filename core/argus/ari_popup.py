@@ -44,6 +44,7 @@ MAX_W = 430
 MAX_H = 300
 W, H = MAX_W + 2 * 30 + 2 * MARGIN, MAX_H + MARGIN  # the window (room for the widest shoulders)
 
+FOLLOW_S = 20.0  # how long Ari listens for a follow-up after answering (ari.talk_idle_s)
 WORDS = {"listening": "listening", "thinking": "thinking", "working": "on it", "speaking": "speaking"}
 NICE = {"search_my_files": "searching your files", "find_file": "looking for the file", "open_app": "opening it",
         "set_volume": "setting the volume", "argus_status": "checking Argus", "add_note": "writing it down",
@@ -138,7 +139,10 @@ class AriState:
                 phase = str(data.get("phase") or "idle")
                 if phase == "thinking":
                     self.think_job = e.get("job_id")
-                self.phase, self.text, self.since = phase, str(data.get("text") or ""), now
+                text = str(data.get("text") or "")
+                if phase == "following" and not text:
+                    text = self.text  # the answer stays on show while Ari listens for a follow-up
+                self.phase, self.text, self.since = phase, text, now
                 changed = True
             elif e["kind"] == "step.running" and e.get("job_id") and e.get("job_id") == self.think_job:
                 step = str(e.get("step") or "")
@@ -152,15 +156,21 @@ class AriState:
         return changed
 
     def fold_due(self, now: float) -> bool:
-        """An answer shows for a while (longer for longer ones), then the island folds."""
+        """An answer shows for a while (longer for longer ones), then the island folds. After a spoken answer
+        ("following": Ari still listens for a follow-up, no "Hey Ari" needed) it stays while that lasts."""
+        if self.phase == "following":
+            return now - self.since > FOLLOW_S
         return self.phase == "done" and now - self.since > min(9.0, 3.5 + len(self.text) * 0.04)
+
+
+STOPPABLE = ("thinking", "working", "speaking")  # while Ari is doing any of these, the island has a Stop key
 
 
 def target_size(mode: str, text: str, hover: bool, details_h: float) -> tuple[float, float]:
     if mode == "details":
         return DETAILS_W, min(MAX_H, details_h)
     if mode in ("active", "done"):  # one look for both: Ari's answer stays in the same pill it spoke from
-        return max(220, min(MAX_W, (70 if mode == "active" else 50) + len(text) * 7.0)), 36
+        return max(220, min(MAX_W, (100 if mode == "active" else 50) + len(text) * 7.0)), 36
     return HOVER if hover else IDLE
 
 
@@ -354,7 +364,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 return "details"
             if self.ari.phase == "idle":
                 return "idle"
-            return "done" if self.ari.phase == "done" else "active"
+            return "done" if self.ari.phase in ("done", "following") else "active"
 
         def shown_text(self) -> str:
             return self.ari.text or ("say what you need" if self.ari.phase == "listening" else "")
@@ -369,7 +379,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             if not self.anim.isActive():
                 self.last_frame = time.monotonic()
                 self.anim.start()
-            busy = self.mode() == "active"
+            busy = self.mode() == "active" or self.ari.phase == "following"  # the follow-up ring moves
             if busy and not self.pulse.isActive():
                 self.pulse.start()
             elif not busy and self.pulse.isActive():
@@ -389,6 +399,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             if self.ari.apply(evs, time.monotonic()):
                 if self.ari.phase == "done":
                     self.fold.start(int(min(9.0, 3.5 + len(self.ari.text) * 0.04) * 1000) + 50)
+                elif self.ari.phase == "following":
+                    self.fold.start(int(FOLLOW_S * 1000) + 50)
                 self.kick()
 
         def check_fold(self) -> None:
@@ -557,6 +569,15 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 qp.setBrush(Qt.BrushStyle.NoBrush)
                 qp.drawArc(QRectF(cx - 7, cy - 7, 14, 14), int(start * 16), int(-250 * 16))
             else:
+                if ph == "following":  # still listening for a follow-up: a ring that runs down with the time left
+                    left = max(0.0, 1.0 - (t - self.ari.since) / FOLLOW_S)
+                    ring = QPen(tone, 1.6)
+                    ring.setCapStyle(Qt.PenCapStyle.RoundCap)
+                    qp.setPen(ring)
+                    qp.setBrush(Qt.BrushStyle.NoBrush)
+                    qp.setOpacity(0.35 + 0.65 * left)
+                    qp.drawArc(QRectF(cx - 8.5, cy - 8.5, 17, 17), 90 * 16, int(left * 360 * 16))
+                    qp.setOpacity(1)
                 glow = QRadialGradient(QPointF(cx, cy), 9)
                 c = QColor(tone)
                 glow.setColorAt(0, c)
@@ -577,6 +598,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             self.draw_indicator(qp, x + 9, cy, tone)
             x += 28
             right = body.right() - 16
+            if mode == "active" and self.ari.phase in STOPPABLE:  # a round Stop key at the right end
+                stop = QRectF(right - 22, body.y() + 7, 22, 22)
+                self.stop_key(qp, stop)
+                right -= 30
             if mode == "active":
                 label = WORDS.get(self.ari.phase, "")
                 qp.setFont(F_LABEL)
@@ -607,6 +632,18 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             qp.setFont(f or F_CHIP)
             qp.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
             self.buttons.append((rect, key))
+
+        def stop_key(self, qp: Any, rect: Any) -> None:
+            """A round Stop key: a small square in a ring (Ari stops talking and drops what it is working on)."""
+            hot = self.hot == "stop"
+            qp.setPen(QPen(QColor(248, 113, 113, 150 if hot else 90), 1))
+            qp.setBrush(QColor("#2a1416" if hot else "#1c1213"))
+            qp.drawEllipse(rect.adjusted(0.5, 0.5, -0.5, -0.5))
+            c = rect.center()
+            qp.setPen(Qt.PenStyle.NoPen)
+            qp.setBrush(QColor("#f87171" if hot else "#ef6a6a"))
+            qp.drawRoundedRect(QRectF(c.x() - 4, c.y() - 4, 8, 8), 1.6, 1.6)
+            self.buttons.append((rect.adjusted(-4, -4, 4, 4), "stop"))  # a bit larger to hit
 
         def draw_details(self, qp: Any, body: Any) -> None:
             info = self.info
@@ -874,7 +911,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
         def mousePressEvent(self, e: Any) -> None:  # noqa: N802
             if not self.shape_rect().contains(QPointF(e.position())):
                 return
-            key = self.key_at(e.position()) if self.details else None
+            key = self.key_at(e.position()) if (self.details or self.mode() == "active") else None
+            if key == "stop":
+                self.stop_ari()
+                return
             if key is None:
                 (self.close_details if self.details else self.open_details)()
                 return
@@ -887,6 +927,19 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 self.close_details()
             elif key.startswith("sc:"):
                 self.shortcut(key[3:])
+
+        def stop_ari(self) -> None:
+            """Stop: Ari goes quiet at once and the answer it was working on is dropped."""
+            job = self.ari.think_job if self.ari.phase in ("thinking", "working") else None
+            self.ari.phase, self.ari.text = "idle", ""
+            self.kick()
+
+            def go() -> None:
+                try:
+                    api.call("POST", "/ari/stop", {"job": job or ""})
+                except Exception:  # noqa: BLE001 - Argus out of reach: say so
+                    bus.flash.emit("Stop didn't reach Argus")
+            threading.Thread(target=go, daemon=True).start()
 
         def talk(self) -> None:
             def go() -> None:
@@ -957,24 +1010,27 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
     app.primaryScreen().geometryChanged.connect(lambda _g: island.place())
 
     def feed() -> None:
-        """Follow Ari: a light poll of the event stream (faster while Ari is busy), and "I'm here" every 30 s."""
+        """Follow Ari: a long poll of the event stream (Argus answers the moment something happens, else after 20 s,
+        so nothing is asked every second all day), and "I'm here" every 30 s."""
         seq, last_ping = -1, 0.0
         while True:
+            t0 = time.monotonic()
             try:
                 if time.monotonic() - last_ping > 30:
                     api.call("POST", "/ari/popup")
                     last_ping = time.monotonic()
                 if seq < 0:
                     seq = int(api.call("GET", "/events?kinds=ari.state&limit=1&newest=true").get("seq") or 0)
-                r = api.call("GET", f"/events?kinds=ari.state,step.running&after={seq}&limit=200")
+                r = api.call("GET", f"/events?kinds=ari.state,step.running&after={seq}&limit=200&wait=20",
+                             timeout=30)
                 evs = r.get("events") or []
                 if evs:
                     seq = max(int(e["seq"]) for e in evs)
                     bus.events.emit(evs)
+                elif time.monotonic() - t0 < 1:  # an older Argus that doesn't wait: don't ask in a tight loop
+                    time.sleep(1.2)
             except Exception:  # Argus restarting or out of reach: look again later
                 time.sleep(4)
-            busy = island.ari.phase not in ("idle",)
-            time.sleep(0.5 if busy else 1.2)
 
     threading.Thread(target=feed, daemon=True, name="ari-feed").start()
     print("Ari's island is on (top of the screen).", flush=True)

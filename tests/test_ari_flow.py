@@ -116,6 +116,19 @@ def test_small_talk_is_just_talk(tmp_path):
         assert "companion" in ol.requests[0]["messages"][0]["content"]  # the chat persona, no tool list
         assert [s["name"] for s in cl.get(f"/jobs/{r['job_id']}")["steps"]] == ["chat"]
 
+    # streamed: the finished sentences go out while the rest is still being written
+    with FakeOllama({"qwen2.5-coder:7b": [{"mood": "calm", "reply": "Long day, huh? Put your feet up. I'll keep "
+                                                                       "the lights on."}]}) as ol, \
+            Server(make(tmp_path / "s").open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop", "session"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        r = cl.post("/ari", {"text": "I'm so tired"})
+        settle(cl, w, r["conv"])
+        evs = cl.get(f"/events?kinds=plugin.ari.partial&job={r['job_id']}")["events"]
+        assert [e["data"]["text"] for e in evs] == ["Long day, huh?", "Long day, huh? Put your feet up."]
+        assert evs[0]["data"]["mood"] == "calm" and ol.requests[0]["stream"] is True
+
 
 def test_old_chats_and_old_questions_dont_leak(tmp_path):
     import os
@@ -213,7 +226,8 @@ def test_with_many_tools_the_ones_that_fit_are_offered():
               "set_volume": {"description": "Set the PC's volume"}, "web_search": {"description": "Search the web"}}
     got = closest(tools, "can you turn on the flashlight on my phone")
     assert "phone_torch" in got and "web_search" in got and "tool_3" not in got
-    assert closest(tools, "zzz qqq") == tools  # nothing fits: all of them
+    assert list(closest(tools, "zzz qqq")) == ["web_search"]  # nothing fits: the always-useful ones, not all 40
+    # (all of them was a prompt too long for the model's context: Ollama cut it and the question was lost)
 
 
 def test_ari_has_a_personality_and_no_help_desk_lines():
@@ -224,3 +238,139 @@ def test_ari_has_a_personality_and_no_help_desk_lines():
     assert no_helpdesk("How can I help you?") == "How can I help you?"  # nothing left: keep it
     assert persona({}) == PERSONA and "Sas" in persona({"call_me": "Sas"})
     assert persona({"personality": "A calm butler."}).startswith("A calm butler.")
+
+
+def test_common_commands_go_straight_to_their_tool_and_reply_without_a_model():
+    from argus.worker.think import said_back
+
+    t = {n: {} for n in ("set_volume", "media_control", "phone_torch", "open_app")}
+    assert straight_to(t, "turn the volume down a bit please") == ("set_volume", {"change": "down"})
+    assert straight_to(t, "set volume to 45%") == ("set_volume", {"level": 45})
+    assert straight_to(t, "Hey Ari, mute") == ("set_volume", {"change": "mute"})
+    assert straight_to(t, "next song") == ("media_control", {"action": "next"})
+    assert straight_to(t, "pause the music") == ("media_control", {"action": "play_pause"})
+    assert straight_to(t, "turn on the torch on my phone") == ("phone_torch", {"state": "on"})
+    assert straight_to(t, "turn down my volume on my phone") is None  # the PC's volume tool is not the phone's
+    assert said_back("set_volume", {"level": 30}, {"volume": 30}) == "Volume's at 30."
+    assert "dry run" in said_back("set_volume", {"change": "up"}, {"dry_run": True})
+
+
+def test_whisper_loads_from_the_local_cache_first():
+    from argus.worker.hear import _load
+
+    calls = []
+
+    class M:
+        def __init__(self, name, device, compute_type, local_files_only=False):
+            calls.append(local_files_only)
+            if local_files_only and name == "new":
+                raise RuntimeError("not in the cache")
+
+    _load(M, "small.en", "cpu", "int8")
+    assert calls == [True]  # no call to huggingface.co
+    _load(M, "new", "cpu", "int8")
+    assert calls[1:] == [True, False]  # first time: downloaded
+
+
+def test_sums_are_worked_out_in_code():
+    from argus.worker.think import quick_math
+
+    assert quick_math("what's 15 percent of 2400") == "15% of 2,400 is 360."
+    assert quick_math("Hey Ari, what is 12% of 80?") == "12% of 80 is 9.6."
+    assert quick_math("what's 1250 times 4") == "1,250 × 4 is 5,000."
+    assert quick_math("calculate 10 divided by 4") == "10 ÷ 4 is 2.5."
+    assert quick_math("what's 7 / 0") == "Can't divide by zero."
+    assert quick_math("what's 2400 minus 15 percent") is None  # not one of the simple shapes: the model answers
+    assert quick_math("open brave") is None and quick_math("what's the time") is None
+
+
+def test_long_prompts_get_room_in_the_context():
+    from argus.models.providers import context_for
+
+    assert context_for("short", [{"role": "user", "content": "hi"}]) == 8192  # always the same size: no reloads
+    assert context_for("x" * 12000, [{"role": "user", "content": "y" * 9000}]) == 8192
+    assert context_for("x" * 30000, []) == 16384  # too long for it: more
+    assert context_for("x" * 300000, []) == 32768
+
+
+def test_type_something_is_asked_first_and_phone_volume_is_said_plainly():
+    from argus.worker.think import CANT_PHONE_VOLUME, PHONE_VOLUME, straight_to
+
+    tools = {"type_text": {}, "press_keys": {}}
+    assert straight_to(tools, "type hello world") == ("type_text", {"text": "hello world"})
+    assert straight_to(tools, 'please type "see you at 5"') == ("type_text", {"text": "see you at 5"})
+    for no in ("what type of laptop should I buy", "type of cat is this?", "type this into the box", "type"):
+        assert straight_to(tools, no) is None
+    assert PHONE_VOLUME.search("turn down my volume on my phone") and PHONE_VOLUME.search("mute my phone")
+    assert not PHONE_VOLUME.search("turn the volume down") and "phone's volume" in CANT_PHONE_VOLUME
+
+
+def test_phone_volume_goes_straight_to_the_phone_tool_when_the_app_has_it():
+    from argus.worker.think import said_back, straight_to
+
+    tools = {"phone_volume": {}, "set_volume": {}}
+    assert straight_to(tools, "turn down my volume on my phone") == ("phone_volume", {"change": "down"})
+    assert straight_to(tools, "set my phone volume to 30") == ("phone_volume", {"level": 30})
+    assert straight_to(tools, "mute my phone") == ("phone_volume", {"change": "mute"})
+    assert straight_to(tools, "make my phone ringer louder") == ("phone_volume", {"change": "up", "stream": "ring"})
+    assert straight_to(tools, "volume 30") == ("set_volume", {"level": 30})  # no "phone": the PC
+    assert said_back("phone_volume", {"level": 30}, {}) == "Phone volume's at 30."
+
+
+def test_a_task_answer_is_said_while_it_is_written_unless_it_is_about_to_use_a_tool(tmp_path):
+    step = {"tool": "", "args": {}, "need_web": False, "mood": "calm",
+            "reply": "A mutex lets one thread in at a time. The rest wait their turn."}
+    with FakeOllama({"qwen2.5-coder:7b": [step]}) as ol, Server(make(tmp_path).open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop", "session"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        r = cl.post("/ari", {"text": "explain what a mutex is in one sentence"})
+        settle(cl, w, r["conv"])
+        evs = cl.get(f"/events?kinds=plugin.ari.partial&job={r['job_id']}")["events"]
+        assert [e["data"]["text"] for e in evs] == ["A mutex lets one thread in at a time."]  # the rest follows
+        assert evs[0]["data"]["mood"] == "calm"
+    # the same words, but the model wants the web first: nothing of it is said early
+    web = {**step, "need_web": True}
+    with FakeOllama({"qwen2.5-coder:7b": [web, step]}) as ol, Server(make(tmp_path / "w").open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop", "session"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        r = cl.post("/ari", {"text": "explain what a mutex is in one sentence"})
+        settle(cl, w, r["conv"])
+        assert cl.get(f"/events?kinds=plugin.ari.partial&job={r['job_id']}")["events"] == []
+
+
+def test_events_can_wait_for_something_new(tmp_path):
+    import threading
+    import time
+
+    with Server(make(tmp_path).open()) as srv:
+        cl = client(srv.url)
+        seq = cl.get("/events?limit=1&newest=true")["seq"]
+        t0 = time.monotonic()
+        assert cl.get(f"/events?kinds=ari.state&after={seq}&wait=0.4")["events"] == []  # nothing: after the wait
+        assert time.monotonic() - t0 >= 0.35
+        got = {}
+
+        def poll():
+            got["r"] = cl.get(f"/events?kinds=ari.state&after={seq}&wait=10")
+            got["t"] = time.monotonic()
+
+        th = threading.Thread(target=poll)
+        th.start()
+        time.sleep(0.3)
+        t1 = time.monotonic()
+        cl.post("/ari/state", {"phase": "listening"})
+        th.join(5)
+        assert [e["data"]["phase"] for e in got["r"]["events"]] == ["listening"]
+        assert got["t"] - t1 < 2  # answered when it happened, not after the 10 s
+
+
+def test_the_health_check_is_run_and_kept(tmp_path):
+    with Server(make(tmp_path).open()) as srv:
+        cl = client(srv.url)
+        assert cl.get("/ari/health")["health"] is None
+        r = cl.post("/ari/health", {})["health"]
+        names = [c["name"] for c in r["checks"]]
+        assert "ollama" in names and "web search" in names and "voice" in names and "worker" in names
+        assert cl.get("/ari/health")["health"]["at"] == r["at"]

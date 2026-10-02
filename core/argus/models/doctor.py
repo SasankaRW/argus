@@ -54,7 +54,7 @@ def main(argv: list[str] | None = None) -> int:
                 if not present:
                     continue
                 prov = OllamaProvider(url, t.model, timeout=cfg.ollama.timeout_seconds,
-                                      keep_alive=cfg.ollama.keep_alive)
+                                      keep_alive=cfg.ollama.keep_alive, num_ctx=cfg.ollama.num_ctx)
                 try:
                     r = prov.chat("Reply with JSON only.", [{"role": "user", "content": 'Say {"ok": true}'}],
                                   _Ping.model_json_schema())

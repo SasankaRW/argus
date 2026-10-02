@@ -100,7 +100,7 @@ class PhoneWatch:
     @property
     def enabled(self) -> bool:
         a = self.cfg.approvals
-        return a.buttons == "tailscale" and bool(a.phone)
+        return bool(a.phone)
 
     # -------------------------------------------------------------- lifecycle
 

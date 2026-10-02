@@ -32,6 +32,9 @@ Approvals (C8):
                                       one-time token>&answer=... from the phone buttons (no body needed)
     GET  /a/{id}?t=<token>            the phone page behind the notification's Open button
     GET  /outbox                      recent outgoing messages and counts (token)
+    GET  /phone/inbox?wait=25         the phone app collects its notifications (long poll, token)
+    POST /phone/inbox/ack             {ids}: the app showed them (token)
+    GET  /phone/notifications         the notifications sent to the phone, newest first (token)
     POST /outbox/test                 send a test notification (token)
 
 Scheduler and triggers (C9):
@@ -46,11 +49,13 @@ Errors: 404 unknown job, 409 lease lost or transition not allowed, 429 plugin qu
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 import hmac
 import json
 import mimetypes
 import re
+import threading
 import time
 import urllib.request
 from contextlib import asynccontextmanager
@@ -76,7 +81,7 @@ from ..events import EventFilter, insert_event, read_events
 from ..expressive import plain
 from ..ids import new_id
 from ..jobs import InvalidTransition, Job, JobNotFound, JobState, LeaseLost, QueueFull, Step
-from ..outbox import PRIORITIES, add_message, ntfy_message
+from ..outbox import PRIORITIES, add_message, phone_message
 from ..power import PowerError
 from ..presence import describe_phone
 from ..shares import ShareError, ShareStore, kinds_of
@@ -122,6 +127,10 @@ class SubmitJob(BaseModel):
     delay: float = Field(0, ge=0)
     model: str | None = Field(None, max_length=100)  # groups GPU jobs by model (fewer swaps)
     window: str | None = Field(None, max_length=40)  # only start inside this window (e.g. night)
+
+
+class InboxAck(BaseModel):
+    ids: list[str] = Field(default_factory=list, max_length=100)
 
 
 class RegisterWorker(BaseModel):
@@ -205,7 +214,7 @@ class AriAnswer(BaseModel):
 
 
 class AriStateIn(BaseModel):
-    phase: Literal["idle", "listening", "thinking", "working", "speaking", "done"]
+    phase: Literal["idle", "listening", "thinking", "working", "speaking", "done", "following"]
     text: str = Field("", max_length=300)
     by: str = Field("", max_length=40)
 
@@ -358,6 +367,8 @@ def create_app(argus: Argus) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await argus.start()
+        if argus.cfg.ari.voice_engine == "expressive":  # the voice's first sentence shouldn't pay for its start-up
+            threading.Thread(target=lambda: expressive().warm(), daemon=True, name="voice-warm").start()
         try:
             yield
         finally:
@@ -691,14 +702,14 @@ def create_app(argus: Argus) -> FastAPI:
     # -------------------------------------------------------------- find my phone
 
     async def ring_phone() -> dict:
-        """Three urgent notifications, 20 s apart: loud even on silent if ntfy may override Do Not Disturb."""
-        if not argus.outbox.senders.get("ntfy") or not argus.outbox.senders["ntfy"].enabled:
-            raise HTTPException(status_code=409, detail="ntfy is off: set NTFY_TOPIC in .env")
+        """Three urgent notifications, 20 s apart: the app plays them loud, even on silent."""
+        if argus.outbox.inbox is None:
+            raise HTTPException(status_code=409, detail="the phone app is off")
 
         def fn(conn):
             now = time.time()
             for i in range(3):
-                add_message(conn, now, "ntfy", ntfy_message("Here I am!", "Argus is ringing your phone.",
+                add_message(conn, now, "phone", phone_message("Here I am!", "Argus is ringing your phone.",
                                                             priority="urgent", tags=["rotating_light", "iphone"]),
                             dedupe_key=f"ring:{int(now)}:{i}", send_at=now + 20 * i)
             insert_event(conn, now, "phone.ring", src="helios", dst="phone")
@@ -917,6 +928,21 @@ def create_app(argus: Argus) -> FastAPI:
         return {"ok": True}
 
     listener = {"seen": 0.0}
+    argus.listener_seen = lambda: listener["seen"]
+    argus.health_tools = lambda: [{**t.brief(), "plugin": t.plugin, "risky": t.risky}
+                                  for t in tools.all().values() if t.for_ari]
+
+    @app.get("/ari/health", dependencies=guarded)
+    async def ari_health_last() -> dict:
+        """The newest health check (Ari's setup: Ollama, SearXNG, the voice, Whisper, the listener), or null."""
+        rows = await argus.store.read(lambda c: read_events(c, 0, limit=1, flt=EventFilter.parse("ari.health"),
+                                                            newest=True))
+        return {"health": rows[-1]["data"] if rows else None}
+
+    @app.post("/ari/health", dependencies=guarded)
+    async def ari_health_run() -> dict:
+        """Check now (takes a few seconds: it asks the model a few questions)."""
+        return {"health": await argus.run_health(push=False)}
     hush = {"until": 0.0}  # Ari isn't listening (anywhere) until then; 0 = listening
 
     def listening_now() -> dict:
@@ -965,6 +991,21 @@ def create_app(argus: Argus) -> FastAPI:
         if here:
             await argus.store.write(lambda c: insert_event(c, time.time(), "ari.wake", src="island", dst="ari"))
         return {"listener": here}
+
+    @app.post("/ari/stop", dependencies=guarded)
+    async def ari_stop(body: dict | None = None) -> dict:
+        """The island's Stop button: Ari stops talking and drops the answer it is working on (the PC's listener
+        hears ari.stop; the job, when given, is cancelled)."""
+        job = str((body or {}).get("job") or "")
+        stopped = False
+        if job:
+            with contextlib.suppress(Exception):  # already finished or unknown: nothing to cancel
+                await argus.jobs.cancel(job, "stopped from the island")
+                stopped = True
+        await argus.store.write(lambda c: (insert_event(c, time.time(), "ari.stop", src="island", dst="ari",
+                                                        data={"job": job}),
+                                           ari_state(c, "idle", "", by="argus")))
+        return {"ok": True, "cancelled": stopped}
 
     @app.post("/ari/popup", dependencies=guarded)
     async def ari_popup_ping(request: Request) -> dict:
@@ -1539,10 +1580,31 @@ def create_app(argus: Argus) -> FastAPI:
 
     @app.get("/events", dependencies=guarded)
     async def events(after: int = 0, limit: int = Query(200, ge=1, le=1000), kinds: str | None = None,
-                     job: str | None = None, component: str | None = None, newest: bool = False) -> dict:
-        """Event history. `newest=true` returns the latest `limit` matches (oldest first)."""
+                     job: str | None = None, component: str | None = None, newest: bool = False,
+                     wait: float = Query(0, ge=0, le=30)) -> dict:
+        """Event history. `newest=true` returns the latest `limit` matches (oldest first). `wait=N`: when there is
+        nothing new yet, wait up to N seconds for it (a long poll: the island and the listener ask once and hear at
+        once, instead of asking every second all day)."""
         flt = EventFilter.parse(kinds, job, component)
-        rows = await argus.store.read(lambda c: read_events(c, after, limit=limit, flt=flt, newest=newest))
+
+        def read() -> Any:
+            return argus.store.read(lambda c: read_events(c, after, limit=limit, flt=flt, newest=newest))
+
+        if wait <= 0 or newest:
+            return {"events": await read(), "seq": argus.hub.cursor}
+        sub = argus.hub.subscribe(flt)  # before reading: nothing can slip in between
+        try:
+            rows = await read()
+            if not rows:
+                with contextlib.suppress(TimeoutError):
+                    async with asyncio.timeout(wait):
+                        while True:
+                            batch = await sub.queue.get()
+                            if batch is None or any(int(e.get("seq") or 0) > after for e in batch):
+                                break
+                rows = await read()
+        finally:
+            argus.hub.unsubscribe(sub)
         return {"events": rows, "seq": argus.hub.cursor}
 
     @app.get("/registry", dependencies=guarded)
@@ -1792,7 +1854,7 @@ def create_app(argus: Argus) -> FastAPI:
     async def notify(job_id: str, body: Notify) -> dict:
         if body.priority not in PRIORITIES:
             raise HTTPException(status_code=422, detail=f"priority must be one of {', '.join(PRIORITIES)}")
-        msg = ntfy_message(body.title, body.text, priority=body.priority, tags=body.tags, click=body.link)
+        msg = phone_message(body.title, body.text, priority=body.priority, tags=body.tags, click=body.link)
         return {"queued": await argus.notify_from_job(job_id, body.worker, body.key, msg)}
 
     @app.get("/approvals", dependencies=guarded)
@@ -1836,19 +1898,37 @@ def create_app(argus: Argus) -> FastAPI:
 
     @app.post("/outbox/test", dependencies=guarded)
     async def outbox_test() -> dict:
-        """Send a test notification, to check the ntfy topic and the phone app."""
-        ntfy = argus.outbox.senders.get("ntfy")
-        if not (ntfy and ntfy.enabled):
-            raise HTTPException(status_code=409, detail="ntfy is off: set NTFY_TOPIC in .env and restart argusd")
+        """Send a test notification, to check the phone app."""
+        if argus.outbox.inbox is None:
+            raise HTTPException(status_code=409, detail="the phone app is off")
 
         def fn(conn):
-            return add_message(conn, time.time(), "ntfy", ntfy_message(
-                "Argus test", f"ntfy works. Sent by {argus.cfg.instance.name} on {argus.cfg.instance.host}.",
+            return add_message(conn, time.time(), "phone", phone_message(
+                "Argus test", f"The phone app works. Sent by {argus.cfg.instance.name} on {argus.cfg.instance.host}.",
                 tags=["wave"]))
 
         oid = await argus.store.write(fn)
         argus.outbox.poke()
         return {"queued": oid}
+
+    @app.get("/phone/inbox", dependencies=guarded)
+    async def phone_inbox(device: str = "", wait: float = Query(0, ge=0, le=30), limit: int = Query(20, ge=1, le=50)
+                          ) -> dict:
+        """The phone app's messages it has not collected yet (a long poll: with `wait=N` it hears the moment one
+        is queued). It shows them as notifications, then acknowledges them."""
+        return {"messages": await argus.outbox.inbox_fetch(device, wait, limit)}
+
+    @app.post("/phone/inbox/ack", dependencies=guarded)
+    async def phone_inbox_ack(body: InboxAck) -> dict:
+        return {"acked": await argus.outbox.inbox_ack(body.ids)}
+
+    @app.get("/phone/notifications", dependencies=guarded)
+    async def phone_notifications(limit: int = Query(50, ge=1, le=200)) -> dict:
+        """The notifications sent to the phone, newest first (the Notifications page in Helios and the app)."""
+        box = argus.outbox.inbox
+        return {"notifications": await argus.outbox.notifications(limit),
+                "phone": {"connected": bool(box and box.connected()), "last_seen": box.last_seen if box else 0.0,
+                          "device": box.device if box else ""}}
 
     @app.get("/outbox", dependencies=guarded)
     async def outbox(limit: int = 50) -> dict:

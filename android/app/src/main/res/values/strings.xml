@@ -2,4 +2,7 @@
     <string name="app_name">Argus</string>
     <string name="shortcut_settings">Connection and permissions</string>
     <string name="shortcut_short">Connection</string>
+    <string name="accessibility_description">Lets Ari, your own assistant on your own Argus server, press Back and Home, lock the screen, read what is on screen, tap and type when you ask her to. Nothing is read or done unless you ask Ari; it only talks to your Argus server.</string>
+    <string name="shortcut_notes">Notifications</string>
+    <string name="shortcut_notes_long">Notifications from Argus</string>
 </resources>

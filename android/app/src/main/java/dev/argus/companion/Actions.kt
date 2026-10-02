@@ -22,6 +22,7 @@ import android.os.Looper
 import android.os.StatFs
 import android.provider.AlarmClock
 import android.provider.Settings
+import android.view.KeyEvent
 import org.json.JSONObject
 
 /** A job Argus can't do; its message is shown to you as is. */
@@ -61,6 +62,40 @@ class Actions(private val ctx: Context) {
                 throw ActionError("links must start with http:// or https://")
             }
             act(live, "open $url") { launch(Intent(Intent.ACTION_VIEW, Uri.parse(url)), url) }
+        }
+        "volume" -> volume(input, live)
+        "media" -> {
+            val a = input.optString("action", "").lowercase()
+            if (a !in listOf("play_pause", "next", "previous", "stop")) throw ActionError("play_pause, next, previous or stop")
+            act(live, "media: $a") { media(a) }
+        }
+        "lock" -> act(live, "lock the phone") { ControlService.need().lock(); JSONObject().put("locked", true) }
+        "press" -> {
+            val b = input.optString("button", "")
+            act(live, "press $b") { JSONObject().put("pressed", ControlService.need().press(b)) }
+        }
+        "screen_text" -> JSONObject().put("screen", ControlService.need().screenText())  // read-only: runs even in dry run
+        "tap_text" -> {
+            val t = input.optString("text", "").trim()
+            if (t.isEmpty()) throw ActionError("tap what?")
+            act(live, "tap \"$t\"") { JSONObject().put("tapped", ControlService.need().tapText(t)) }
+        }
+        "tap" -> {
+            val x = input.optInt("x", -1)
+            val y = input.optInt("y", -1)
+            if (x !in 0..100 || y !in 0..100) throw ActionError("x and y are 0 to 100 (percent of the screen)")
+            act(live, "tap at $x%, $y%") { ControlService.need().tap(x, y); JSONObject().put("tapped", "$x%, $y%") }
+        }
+        "swipe" -> {
+            val d = input.optString("direction", "")
+            act(live, "swipe $d") { ControlService.need().swipe(d); JSONObject().put("swiped", d) }
+        }
+        "type" -> {
+            val t = input.optString("text", "")
+            if (t.isEmpty()) throw ActionError("type what?")
+            act(live, "type ${t.take(40)}") {
+                JSONObject().put("field_now", ControlService.need().type(t, input.optBoolean("replace", false)).take(200))
+            }
         }
         else -> throw ActionError("the phone app doesn't know \"$workflow\" yet (update the app)")
     }
@@ -109,7 +144,7 @@ class Actions(private val ctx: Context) {
 
     // ------------------------------------------------------------------ doing things
 
-    private fun ring(): JSONObject {
+    fun ring(): JSONObject {
         val audio = ctx.getSystemService(AudioManager::class.java)
         val before = audio.getStreamVolume(AudioManager.STREAM_ALARM)
         audio.setStreamVolume(AudioManager.STREAM_ALARM, audio.getStreamMaxVolume(AudioManager.STREAM_ALARM), 0)
@@ -128,6 +163,53 @@ class Actions(private val ctx: Context) {
             audio.setStreamVolume(AudioManager.STREAM_ALARM, before, 0)
         }, 20_000)
         return JSONObject().put("ringing_seconds", 20)
+    }
+
+    private fun volume(input: JSONObject, live: Boolean): JSONObject {
+        val name = input.optString("stream", "media").lowercase().ifBlank { "media" }
+        val stream = when (name) {
+            "media", "music" -> AudioManager.STREAM_MUSIC
+            "ring", "ringer" -> AudioManager.STREAM_RING
+            "alarm" -> AudioManager.STREAM_ALARM
+            "notification", "notifications" -> AudioManager.STREAM_NOTIFICATION
+            else -> throw ActionError("volume of: media, ring, alarm or notification")
+        }
+        val level = if (input.has("level") && !input.isNull("level")) input.optInt("level", -1) else -1
+        val change = input.optString("change", "").lowercase()
+        if (level !in -1..100) throw ActionError("the level is 0 to 100")
+        if (level < 0 && change !in listOf("up", "down", "mute", "unmute")) throw ActionError("say a level, or up, down, mute, unmute")
+        return act(live, "set the phone's $name volume ${if (level >= 0) "to $level" else change}") {
+            val audio = ctx.getSystemService(AudioManager::class.java)
+            val max = audio.getStreamMaxVolume(stream)
+            try {
+                when {
+                    level >= 0 -> audio.setStreamVolume(stream, Math.round(max * level / 100f), AudioManager.FLAG_SHOW_UI)
+                    change == "mute" -> audio.adjustStreamVolume(stream, AudioManager.ADJUST_MUTE, AudioManager.FLAG_SHOW_UI)
+                    change == "unmute" -> audio.adjustStreamVolume(stream, AudioManager.ADJUST_UNMUTE, AudioManager.FLAG_SHOW_UI)
+                    else -> {
+                        val step = maxOf(1, Math.round(max * 0.2f))
+                        val now = audio.getStreamVolume(stream) + if (change == "up") step else -step
+                        audio.setStreamVolume(stream, now.coerceIn(0, max), AudioManager.FLAG_SHOW_UI)
+                    }
+                }
+            } catch (e: SecurityException) {
+                throw ActionError("Android won't let apps change that volume while Do Not Disturb is on (allow Do Not Disturb access for Argus)")
+            }
+            JSONObject().put("stream", name).put("volume_percent", Math.round(audio.getStreamVolume(stream) * 100f / max))
+        }
+    }
+
+    private fun media(action: String): JSONObject {
+        val audio = ctx.getSystemService(AudioManager::class.java)
+        val code = when (action) {
+            "next" -> KeyEvent.KEYCODE_MEDIA_NEXT
+            "previous" -> KeyEvent.KEYCODE_MEDIA_PREVIOUS
+            "stop" -> KeyEvent.KEYCODE_MEDIA_STOP
+            else -> KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
+        }
+        audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, code))
+        audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, code))
+        return JSONObject().put("media", action)
     }
 
     private fun dnd(on: Boolean): JSONObject {

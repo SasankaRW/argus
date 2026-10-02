@@ -121,15 +121,15 @@ def test_important_phone_messages_become_notices(tmp_path):
 
     from argus.config import load_config
     from argus.context import Argus
-    from argus.outbox import add_message, ntfy_message
+    from argus.outbox import add_message, phone_message
     from conftest import run as arun
 
     (tmp_path / "argus.yaml").write_text("logging:\n  file: null\n", encoding="utf-8")
     a = Argus(load_config(tmp_path / "argus.yaml")).open()
 
     def fn(c):
-        add_message(c, 1.0, "ntfy", ntfy_message("Evening", "fine", priority="low"))
-        add_message(c, 2.0, "ntfy", ntfy_message("Argus backup failed", "disk full", priority="high"))
+        add_message(c, 1.0, "phone", phone_message("Evening", "fine", priority="low"))
+        add_message(c, 2.0, "phone", phone_message("Argus backup failed", "disk full", priority="high"))
         return [json.loads(r[0]) for r in c.execute("SELECT data FROM events WHERE kind = 'ari.notice'")]
 
     assert arun(a.store.write(fn)) == [{"title": "Argus backup failed", "text": "disk full"}]

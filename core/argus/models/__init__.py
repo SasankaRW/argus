@@ -29,7 +29,8 @@ def build_providers(cfg: dict, *, ollama_url: str | None = None) -> dict:
     for tier, t in cfg.get("tiers", {}).items():
         if t["provider"] == "ollama":
             out[tier] = OllamaProvider(ollama_url or o.get("url", "http://127.0.0.1:11434"), t["model"],
-                                       timeout=o.get("timeout_seconds", 120), keep_alive=o.get("keep_alive", "10m"))
+                                       timeout=o.get("timeout_seconds", 120), keep_alive=o.get("keep_alive", "10m"),
+                                       num_ctx=o.get("num_ctx", 8192))
         elif t["provider"] == "claude":
             p = ClaudeProvider(c.get("command", ["claude"]), c.get("args", []),
                                timeout=c.get("timeout_seconds", 300), model=t.get("model"))

@@ -287,3 +287,105 @@ def test_smart_turn_download_is_checked(tmp_path, monkeypatch):
     assert vl.ensure_smart_turn(tmp_path, fetch=lambda url: b"never fetched") == got
     monkeypatch.setattr(vl, "SMART_TURN_SHA", "0" * 64)
     assert vl.ensure_smart_turn(tmp_path / "x", fetch=lambda url: wheel) is None  # tampered: not used
+
+
+def test_the_island_shows_the_words_as_you_say_them():
+    shown = []
+    talk, p, asked, heard, clock = make(heard=["Hey Ari, what's running?", "and the backups, and also the long list of "
+                                                "everything else that I wanted to ask you about today"])
+    talk.live_words = lambda a: "and the backups"
+    talk.show = lambda phase, text: shown.append((phase, text))
+    talk.run = lambda f: f()  # no thread
+    talk.live_every_s = 0.2
+    speak(talk)  # not in a conversation yet ("Hey Ari" needed): nothing is shown
+    assert shown == [("thinking", "what's running")]  # what you said stays on show while Ari works
+    shown.clear()
+    talk.in_talk_until = 1e9
+    for _ in range(round(1.0 / DT)):
+        talk.frame(F, 0.95)
+        clock.t += DT
+    assert shown and shown[-1] == ("listening", "and the backups")
+    assert len(shown) == 1  # the same words are not sent twice
+    talk.live_words = lambda a: "word " * 40
+    clock.t += 1
+    for _ in range(round(0.5 / DT)):
+        talk.frame(F, 0.95)
+    assert shown[-1][1].startswith("… ") and len(shown[-1][1]) <= 72
+
+
+def test_words_from_a_finished_turn_are_not_shown():
+    shown = []
+    talk, p, asked, heard, clock = make(heard=["thanks"])
+    talk.in_talk_until = 1e9
+    talk.show = lambda phase, text: shown.append(text)
+    pending = []
+    talk.run = pending.append
+    talk.live_words = lambda a: "old words"
+    talk.live_every_s = 0.1
+    for _ in range(round(1.0 / DT)):
+        talk.frame(F, 0.95)
+        clock.t += DT
+    assert len(pending) == 1
+    talk._turn(F)  # the turn ended before the words were ready
+    pending[0]()
+    assert shown == []
+
+
+def test_the_first_piece_is_short_so_speech_starts_sooner():
+    long_first = "Your week's been busy, with three hundred and forty four jobs done and a lot of time saved."
+    got = vl.sentences(long_first + " Nice.")
+    assert got[0] == "Your week's been busy," and got[1].startswith("with three hundred")
+    assert vl.sentences("Your week's been busy! 344 jobs done.") == ["Your week's been busy!", "344 jobs done."]
+    assert vl.sentences("Okay. Done.") == ["Okay. Done."]  # a tiny first one is joined to the next
+    assert vl.sentences("Short one, with a comma.") == ["Short one, with a comma."]
+
+
+def test_a_silent_room_does_not_run_the_voice_model():
+    runs = []
+    q = vl.Quiet(lambda f: runs.append(1) or 0.9)
+    quiet = np.full(vl.FRAME, 0.001, np.float32)
+    loud = np.full(vl.FRAME, 0.05, np.float32)
+    for _ in range(100):
+        assert q(quiet) == 0.0
+    assert runs == [] and q.share_skipped() == 1.0
+    assert q(loud) == 0.9 and len(runs) == 1  # someone talks: the model scores it
+    for _ in range(q.hang_frames):
+        q(quiet)  # ... and the next moments too (a word's end)
+    assert len(runs) == 1 + q.hang_frames
+    q(quiet)
+    assert len(runs) == 1 + q.hang_frames  # then quiet again
+
+
+def test_the_model_is_let_go_while_you_are_away_and_loaded_when_you_are_back(monkeypatch):
+    import threading as th
+    import urllib.request
+
+    from argus import ari_listen
+    from argus.config import Config
+
+    pings = []
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=0: pings.append(1) or __import__("io").BytesIO())
+    away = {"s": 0.0}
+    cfg = Config.model_validate({"models": {"tiers": {"T1": {"provider": "ollama", "model": "qwen3"}},
+                                            "chain": ["T1"]}, "ari": {"rest_after_min": 1}})
+    started = []
+    monkeypatch.setattr(th.Thread, "start", lambda self: started.append(self))
+    ari_listen.keep_warm(cfg, every=1000, check=0, away=lambda: away["s"])
+    loop = started[0]._target
+    sleeps = []
+
+    def fake_sleep(s):
+        sleeps.append(s)
+        if len(sleeps) == 1:
+            away["s"] = 120  # gone for two minutes
+        elif len(sleeps) == 3:
+            away["s"] = 0  # back
+        elif len(sleeps) == 4:
+            raise StopIteration
+
+    monkeypatch.setattr(ari_listen.time, "sleep", fake_sleep)
+    try:
+        loop()
+    except StopIteration:
+        pass
+    assert len(pings) == 2  # at the start, then not while away, then at once when back

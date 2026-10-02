@@ -32,14 +32,67 @@ MAX_STEPS = 6
 
 
 class Step(BaseModel):
+    """One step: use a tool, or answer. The order of the fields is the order the model writes them: the tool and
+    need_web first and the mood before the reply, so an answer can be spoken while it is still being written."""
     tool: str = Field("", description="a tool name from the list, or empty when answering")
     args: dict[str, Any] = Field(default_factory=dict)
-    reply: str = Field("", description="the answer to the user, when no tool is needed any more")
     need_web: bool = Field(False, description="true when the answer needs current information from the internet")
-    remember: str = Field("", description="with a reply: a lasting fact the user just told you about themselves "
-                                          "worth keeping (else empty)")
     mood: str = Field("", description="with a reply: how to say it: neutral, cheerful, excited, playful, calm, "
                                       "sympathetic or serious")
+    reply: str = Field("", description="the answer to the user, when no tool is needed any more")
+    remember: str = Field("", description="with a reply: a lasting fact the user just told you about themselves "
+                                          "worth keeping (else empty)")
+
+
+class Chat(BaseModel):
+    """Small talk: the mood first, so a streamed reply knows how to sound before its first word."""
+    mood: str = Field("", description="how to say it: neutral, cheerful, excited, playful, calm, sympathetic or "
+                                      "serious")
+    reply: str = Field("", description="what you say")
+    remember: str = Field("", description="a lasting fact the user just told you about themselves (else empty)")
+
+
+_REPLY_AT = re.compile(r'"reply"\s*:\s*"')
+_MOOD_AT = re.compile(r'"mood"\s*:\s*"(\w+)"')
+_ESC = {"n": " ", "t": " ", '"': '"', "\\": "\\", "/": "/", "r": "", "b": "", "f": ""}
+
+
+def reply_so_far(raw: str) -> tuple[str, str]:
+    """(mood, the reply's text so far) from a JSON answer still arriving: '{"mood": "calm", "reply": "Long day?'"""
+    m = _REPLY_AT.search(raw)
+    if not m:
+        return "", ""
+    out, i = [], m.end()
+    while i < len(raw):
+        c = raw[i]
+        if c == '"':
+            break
+        if c == "\\":
+            if i + 1 >= len(raw):
+                break  # an escape cut in half: wait for the rest
+            n = raw[i + 1]
+            if n == "u":
+                if i + 6 > len(raw):
+                    break
+                try:
+                    out.append(chr(int(raw[i + 2:i + 6], 16)))
+                except ValueError:
+                    pass
+                i += 6
+                continue
+            out.append(_ESC.get(n, n))
+            i += 2
+            continue
+        out.append(c)
+        i += 1
+    md = _MOOD_AT.search(raw[:m.start()])
+    return (md.group(1).lower() if md else ""), "".join(out)
+
+
+def finished_part(text: str) -> str:
+    """The text up to its last finished sentence ("Oh nice! You fixed i" -> "Oh nice!"); "" if none yet."""
+    ends = [m.end() for m in re.finditer(r"[.!?](?=\s)", text)]
+    return text[:ends[-1]].strip() if ends else ""
 
 
 SENSITIVE = re.compile(r"\b(password|passcode|pin|otp|cvv|card|account number|bank|salary|loan|debt|diagnos|"
@@ -93,7 +146,8 @@ _ALSO = {"flashlight": "torch", "light": "torch", "loud": "volume", "quiet": "vo
          "song": "media", "music": "media", "pause": "media", "lookup": "search", "google": "search",
          "message": "whatsapp", "text": "whatsapp", "launch": "open", "start": "open", "shut": "close",
          "computer": "pc", "laptop": "pc", "todo": "issue", "task": "issue", "ticket": "issue",
-         "pdf": "pdf", "photo": "image", "picture": "image", "remind": "schedule"}
+         "pdf": "pdf", "photo": "image", "picture": "image", "remind": "schedule", "server": "lab",
+         "homelab": "lab"}
 
 
 def _words(x: str) -> set[str]:
@@ -114,16 +168,14 @@ def closest(tools: dict[str, dict], text: str, keep: int = 14) -> dict[str, dict
     phone = "phone" in want
 
     def score(n: str, t: dict) -> float:
-        name, desc = _words(n), _words(str(t.get("description") or ""))
+        name, desc = _words(n), _words(str(t.get("does") or t.get("description") or ""))
         sc = 3 * len(want & name) + len(want & desc)
         if phone and n.startswith("phone_"):
             sc += 2
         return sc
 
     ranked = sorted(((score(n, t), n) for n, t in tools.items()), key=lambda x: -x[0])
-    pick = {n for sc, n in ranked[:keep] if sc > 0}
-    if not pick:  # nothing fits by its words: let the model see them all
-        return tools
+    pick = {n for sc, n in ranked[:keep] if sc > 0}  # nothing fits by its words: the always-useful few only
     return {n: t for n, t in tools.items() if n in pick or n in ALWAYS}
 
 
@@ -137,6 +189,77 @@ WHATSAPP = re.compile(r"^\W*(?:please\s+)?(?:(?:send|text|message|whatsapp)\s+)?
                       r"(?P<text>[^.?!]{1,120}?)\s+(?:on|in|via|over)\s+whats\s?app\W*$", re.I)
 
 
+_PLEASE = r"^\W*(?:(?:hey ari|ari|please|can you|could you|will you)[,\s]+)*"
+VOLUME = re.compile(_PLEASE + r"(?:(?:turn|put|set)\s+(?:the\s+)?(?:volume|sound|it|music)\s+(?P<dir>up|down)|"
+                    r"(?:volume|sound)\s+(?P<dir2>up|down)|(?:set\s+(?:the\s+)?)?volume\s+(?:to\s+)?(?P<lvl>\d{1,3})"
+                    r"(?:\s*%|\s*percent)?|(?P<mute>mute|unmute)(?:\s+(?:it|the sound|the pc))?)"
+                    r"(?:\s+(?:a bit|a little|a lot|please|for me))*\W*$", re.I)
+MEDIA = re.compile(_PLEASE + r"(?:(?P<pp>pause|play|resume)(?:\s+(?:the\s+)?(?:music|song|it|spotify|video))?|"
+                   r"(?P<next>next|skip)(?:\s+(?:this\s+)?(?:song|track))?|(?:play\s+(?:the\s+)?)?(?P<prev>previous|last)"
+                   r"\s+(?:song|track)|(?P<stop>stop)\s+(?:the\s+)?(?:music|song))\W*$", re.I)
+TORCH = re.compile(_PLEASE + r"(?:(?:turn|switch|put)\s+(?P<s1>on|off)\s+(?:the\s+|my\s+)?(?:torch|flashlight)|"
+                   r"(?:turn|switch)\s+(?:the\s+|my\s+)?(?:torch|flashlight)\s+(?P<s2>on|off)|"
+                   r"(?:torch|flashlight)\s+(?P<s3>on|off))(?:\s+on\s+(?:my|the)\s+phone)?\W*$", re.I)
+
+
+def said_back(name: str, args: dict, result: Any) -> str | None:
+    """What Ari says after a simple tool, written in code (no second model call): short, a bit of personality."""
+    if isinstance(result, dict) and result.get("dry_run"):
+        return "I would, but that plugin is only practising for now (dry run): add it to plugins.live."
+    if name == "set_volume":
+        if args.get("level") not in (None, ""):
+            return f"Volume's at {args['level']}."
+        return {"up": "Turned it up.", "down": "Turned it down. Your neighbours thank you.", "mute": "Muted.",
+                "unmute": "Sound's back."}.get(str(args.get("change")), "Done.")
+    if name == "media_control":
+        return {"play_pause": "Done.", "next": "Skipping.", "previous": "Going back one.",
+                "stop": "Stopped."}.get(str(args.get("action")), "Done.")
+    if name == "phone_torch":
+        return "Torch on." if args.get("state") == "on" else "Torch off."
+    if name == "phone_volume":
+        if args.get("level") not in (None, ""):
+            return f"Phone volume's at {args['level']}."
+        return {"up": "Turned the phone up.", "down": "Turned the phone down.", "mute": "Phone muted.",
+                "unmute": "Phone sound's back."}.get(str(args.get("change")), "Done.")
+    if name in ("phone_lock", "phone_press", "phone_swipe", "phone_media"):
+        return "Done."
+    return None
+
+
+TYPE_NOW = re.compile(_PLEASE + r"type\s+(?P<t>\S.{0,158}?)\W*$", re.I)
+NOT_TEXT = re.compile(r"(?:of|in|into|out|this|that|it|something|up|on|to|for|the|a|an|my|your|these|those)\b", re.I)
+PHONE_VOLUME = re.compile(r"\b(?:(?:volume|sound|louder|quieter|mute)\b.*\b(?:phone|mobile)|"
+                          r"(?:phone|mobile)\b.*\b(?:volume|louder|quieter|mute))", re.I)
+
+
+def phone_volume_args(text: str) -> dict | None:
+    """"turn the volume on my phone to 30" / "phone louder" / "mute my phone": the arguments for phone_volume."""
+    t = text.lower()
+    n = re.search(r"\b(\d{1,3})\b", t)
+    out: dict = {}
+    if n and int(n.group(1)) <= 100:
+        out["level"] = int(n.group(1))
+    elif re.search(r"\b(?:un-?mute)\b", t):
+        out["change"] = "unmute"
+    elif re.search(r"\bmute\b", t):
+        out["change"] = "mute"
+    elif re.search(r"\b(?:up|louder|raise|increase|higher)\b", t):
+        out["change"] = "up"
+    elif re.search(r"\b(?:down|quieter|lower|softer|decrease|less)\b", t):
+        out["change"] = "down"
+    else:
+        return None
+    if re.search(r"\b(?:ringer|ringtone|ring)\b", t):
+        out["stream"] = "ring"
+    elif re.search(r"\balarm\b", t):
+        out["stream"] = "alarm"
+    return out
+
+
+CANT_PHONE_VOLUME = ("I can't change the phone's volume yet. I can ring it, switch Do Not Disturb, or do the torch "
+                     "and timers.")
+
+
 def straight_to(tools: dict[str, dict], text: str) -> tuple[str, dict] | None:
     """A message that plainly needs one tool: "open brave" (the app), "what's on my screen?" (the screen), "sum up
     what I copied" (the clipboard). That tool runs at once, with no model deciding first."""
@@ -145,6 +268,29 @@ def straight_to(tools: dict[str, dict], text: str) -> tuple[str, dict] | None:
     w = WHATSAPP.match(text)
     if w and "whatsapp_message" in tools:
         return "whatsapp_message", {"to": w.group("to").strip(), "text": w.group("text").strip()}
+    phone = re.search(r"\b(?:phone|mobile)\b", text, re.I)
+    v = VOLUME.match(text)
+    if v and "set_volume" in tools and not phone:
+        lvl, d = v.group("lvl"), (v.group("dir") or v.group("dir2") or v.group("mute") or "").lower()
+        if lvl and 0 <= int(lvl) <= 100:
+            return "set_volume", {"level": int(lvl)}
+        if d:
+            return "set_volume", {"change": d}
+    if phone and "phone_volume" in tools and PHONE_VOLUME.search(text):
+        pv = phone_volume_args(text)
+        if pv:
+            return "phone_volume", pv
+    md = MEDIA.match(text)
+    if md and "media_control" in tools and not phone:
+        act = ("play_pause" if md.group("pp") else "next" if md.group("next") else
+               "previous" if md.group("prev") else "stop")
+        return "media_control", {"action": act}
+    ty = TYPE_NOW.match(text)
+    if ty and "type_text" in tools and not NOT_TEXT.match(ty.group("t")) and "?" not in text:
+        return "type_text", {"text": ty.group("t").strip(" \"'“”")}
+    tc = TORCH.match(text)
+    if tc and "phone_torch" in tools:
+        return "phone_torch", {"state": (tc.group("s1") or tc.group("s2") or tc.group("s3")).lower()}
     m = OPEN_APP.match(text)
     if m and "open_app" in tools and not NOT_APP.search(m.group("app")):
         return "open_app", {"name": m.group("app").strip()}
@@ -175,14 +321,14 @@ TASKY = re.compile(r"\b(?:open|close|find|search|show|list|play|pause|set|turn|s
                    r"run|start|stop|add|delete|move|copy|weather|screen|file|folder|note|status|issue|backup|"
                    r"download|shut|restart|volume|timer)\b", re.I)
 
-PERSONA = """Ari's personality: a witty friend who happens to live in their PC. Casual and quick, a bit cheeky: you
-tease them lightly, joke about the situation, use their slang ("bro", "machan" if they do), and you have opinions
-(favourite things, mild hot takes) instead of being neutral about everything. You're on their side: happy when
-things go well, honestly a bit sympathetic when they don't. Confident, never grovelling: no "I apologise for the
-inconvenience", no "How can I assist you?", no "Let me know if you need anything else". When you get something
-wrong, own it in a few words with a bit of humour and move on. Keep it short; the wit is in word choice, not in
-long jokes. Even when doing tasks, add a tiny human touch ("Done, Spotify's up. Volume's at 30, your neighbours
-thank you.") but never at the cost of being clear."""
+PERSONA = """Ari's personality: a witty friend who happens to live in their PC. Casual, quick and funny: you joke
+about the situation, tease them lightly, and you have opinions (favourite things, mild hot takes) instead of being
+neutral about everything. Humour is welcome; slang is not: talk in clear, natural English, never "bro", "dude",
+"mate", "machan" or similar. You're on their side: happy when things go well, sympathetic when they don't.
+Confident, never grovelling: no "I apologise for the inconvenience", no "How can I assist you?", no "Let me know if
+you need anything else". When you get something wrong, own it in a few words with a bit of humour and move on. Keep
+it short; the wit is in word choice, not in long jokes. Even when doing tasks, add a tiny human touch ("Done,
+Spotify's up. Volume's at 30, your neighbours thank you.") but never at the cost of being clear."""
 
 HELPDESK = re.compile(r"[^.!?]*\b(?:how (?:can|may) i (?:assist|help) you(?: (?:today|now|further))?|"
                       r"let me know if (?:you need|there'?s) (?:anything|something)|is there anything else|"
@@ -206,7 +352,7 @@ CHAT = """You are Ari, the user's personal assistant and friend, living on their
 Right now it's just casual talk: this is where your personality shines. Be a good companion, curious about them.
 Talk like a person, not a help desk: never say "as an AI", never "I can't complete that request", no offers of
 "anything else I can help with". Short and natural (it is read aloud): 1-3 sentences, no lists, no markdown, no
-emoji. Match their mood and slang. React to what they said, share a light opinion or a joke when it fits, and
+emoji. Match their mood (not their slang). React to what they said, share a light opinion or a joke when it fits, and
 sometimes ask something back. Use what you know about them ("you_remember") naturally, without reciting it.
 If they tell you a lasting fact about themselves, put it in "remember" as a short sentence.
 Sound like speech, not writing: it's fine to start with "oh", "hmm", "well" or "haha", to
@@ -214,7 +360,10 @@ trail off or correct yourself once in a while ("it was, uh, Tuesday? no, Wednesd
 You can put ONE sound where it really fits: [laugh], [chuckle], [sigh], [gasp] or [groan] (e.g. after a joke,
 "[laugh]"). Pick the mood you'd say it in: neutral, cheerful, excited, playful, calm, sympathetic or serious (match
 theirs: tired -> calm or sympathetic, good news -> excited).
-Answer as JSON {"reply": "...", "mood": "...", "remember": ""}."""
+When the feeling changes partway, put the new mood as a tag where it changes, like a person's tone shifting
+("Oh nice, you fixed it! [sympathetic] Shame it took all night though."): at most two changes, at a sentence or
+comma, never word by word.
+Answer as JSON {"mood": "...", "reply": "...", "remember": ""}."""
 
 
 FAILED = re.compile(r"\b(?:couldn'?t|can'?t|cannot|failed|isn'?t (?:answering|working|available|running)|"
@@ -239,6 +388,48 @@ def _same(reply: str, before: list[str]) -> bool:
         return set(re.findall(r"[a-z']+", x.lower()))
     w = words(reply)
     return bool(w) and any(len(w & words(b)) >= 0.8 * max(len(w), len(words(b))) for b in before if b.strip())
+
+
+_NUM = r"(-?\d[\d,]*(?:\.\d+)?)"
+PERCENT_OF = re.compile(_PLEASE + r"(?:what'?s|what is|calculate|work out|how much is)?\s*" + _NUM +
+                        r"\s*(?:%|per ?cent) of\s+" + _NUM + r"\W*$", re.I)
+SUM = re.compile(_PLEASE + r"(?:what'?s|what is|calculate|work out|how much is)\s*" + _NUM +
+                 r"\s*(\+|-|\*|x|×|/|÷|plus|minus|times|multiplied by|divided by|over)\s*" + _NUM + r"\W*$", re.I)
+_OPS = {"+": "+", "plus": "+", "-": "-", "minus": "-", "*": "×", "x": "×", "×": "×", "times": "×",
+        "multiplied by": "×", "/": "÷", "÷": "÷", "divided by": "÷", "over": "÷"}
+
+
+def _n(x: str):
+    from decimal import Decimal
+
+    return Decimal(x.replace(",", ""))
+
+
+def _show(d) -> str:
+    from decimal import Decimal
+
+    d = d.quantize(Decimal("0.0001")).normalize()
+    whole, _, frac = f"{d:f}".partition(".")
+    return f"{int(whole):,}" + (f".{frac}" if frac else "") if whole.lstrip("-") else f"{d:f}"
+
+
+def quick_math(text: str) -> str | None:
+    """"what's 15 percent of 2400", "1250 times 4": worked out in code (exact, instant), not guessed by a model."""
+    from decimal import Decimal, InvalidOperation
+
+    try:
+        if m := PERCENT_OF.match(text):
+            p, of = _n(m.group(1)), _n(m.group(2))
+            return f"{_show(p)}% of {_show(of)} is {_show(p * of / 100)}."
+        if m := SUM.match(text):
+            a, op, b = _n(m.group(1)), _OPS[m.group(2).lower()], _n(m.group(3))
+            if op == "÷" and b == 0:
+                return "Can't divide by zero."
+            r = {"+": a + b, "-": a - b, "×": a * b, "÷": a / b if b else Decimal(0)}[op]
+            return f"{_show(a)} {op} {_show(b)} is {_show(r)}."
+    except (InvalidOperation, KeyError):
+        return None
+    return None
 
 
 def chatty(text: str) -> bool:
@@ -312,7 +503,9 @@ How to decide:
   ("prefers tea, no sugar", "sister Nimali lives in Kandy"). Never passwords, money, health or one-off things.
 - When "last_step" is true you must reply now: say what you did and what you found so far.
 - Say it like a person would: a natural "okay", "done", "hmm" is fine, and a "mood" for how to say it (neutral,
-  cheerful, excited, playful, calm, sympathetic or serious). A sound ([laugh], [sigh]) only in casual talk.
+  cheerful, excited, playful, calm, sympathetic or serious). A sound ([laugh], [sigh]) only in casual talk. If the
+  tone changes partway (good news, then a problem), tag the new mood where it changes: "Backup's done!
+  [serious] But the laptop server is down." At most two changes, never word by word.
 - Reply naturally about what happened ("Opened Spotify and turned it down."). If a tool failed, say what went wrong
   in plain words.
 Answer with the JSON only."""
@@ -396,21 +589,45 @@ def think(ctx: Context):
             return "too long: 1-3 short sentences"
         return None
 
+    def speakable(part: str) -> bool:
+        """The same refusals as check(), for a sentence already on its way out: if the answer would be sent back to
+        be written again, it must not have been said."""
+        if PROMISE.match(part) and not done:
+            return False
+        if _same(part, said_before):
+            return False
+        return not (done and all("error" in d for d in done) and not FAILED.search(part))
+
     def private() -> bool:
         """Something private (the screen, the clipboard) is in this chat: Claude never sees it."""
         return any(d.get("private") for d in done) or any(h.get("private") for h in base["conversation_so_far"])
 
-    def chat_ok(s: Step) -> str | None:
+    def chat_ok(s: Chat) -> str | None:
         if not s.reply.strip():
             return "say something back"
         return "you said that already: say something new" if _same(s.reply, said_before) else None
 
-    if chatty(text):  # small talk: one friendly answer, no tools, the better local model first
+    sum_ = quick_math(text)
+    if sum_:
+        return {"reply": sum_, "used": []}
+    if PHONE_VOLUME.search(text) and "phone_volume" not in tools:
+        return {"reply": CANT_PHONE_VOLUME, "used": []}
+
+    if chatty(text):  # small talk: one friendly answer, no tools, on the warm first model (no swap)
         def chat() -> dict:
             said = {k: base[k] for k in ("message", "conversation_so_far", "you_remember", "now")}
-            s = ctx.llm(CHAT + "\n\n" + who, json.dumps(said, ensure_ascii=False),
-                        schema=Step, check=lambda s, _i: chat_ok(s),
-                        tiers=list(reversed(ctx.local_tiers())) or None, claude_last=not private())
+            sent = {"n": 0}
+
+            def partial(raw: str) -> None:  # finished sentences go out as they arrive: Ari starts talking sooner
+                mood, so_far = reply_so_far(raw)
+                done = finished_part(so_far)
+                if len(done) > sent["n"]:
+                    sent["n"] = len(done)
+                    ctx.progress("plugin.ari.partial", {"text": done, "mood": mood or "neutral"})
+
+            s = ctx.llm(CHAT + "\n\n" + who, json.dumps(said, ensure_ascii=False), on_text=partial,
+                        schema=Chat, check=lambda s, _i: chat_ok(s),
+                        tiers=ctx.local_tiers() or None, claude_last=not private())
             return {**s.model_dump(), "tier": ctx.last_answer.tier}
 
         try:
@@ -440,8 +657,16 @@ def think(ctx: Context):
             except ToolFailed as e:
                 return {"tool": name, "args": args, "error": str(e)[:300]}
 
-        got = ctx.step(f"tool 1: {name}", use_direct_app if name == "open_app" else use_direct)
+        if name == "type_text":  # it types into whatever is in front: only after your yes
+            return {"reply": f"Shall I type \"{args['text'][:80]}\" into the window in front?",
+                    "pending": {"kind": "tool", "name": name, "args": args}, "used": []}
+        private_tool = name in ("look_at_screen", "summarise_clipboard")
+        got = ctx.step(f"tool 1: {name}", use_direct if private_tool else use_direct_app)
         res = got.get("result")
+        if "error" not in got and name not in ("open_app", "look_at_screen", "summarise_clipboard"):
+            line = said_back(name, args, res)
+            if line:
+                return {"reply": line, "used": [got]}
         if name == "open_app" and "error" not in got:
             app = args["name"].strip()
             return {"reply": f"Opening {app[:1].upper()}{app[1:]}.",
@@ -455,8 +680,27 @@ def think(ctx: Context):
             task = {**base, "results_so_far": done} if done else dict(base)
             if i == MAX_STEPS - 1:
                 task["last_step"] = True
+            sent = {"n": 0, "blocked": False}
+
+            def partial(raw: str) -> None:  # an answer (no tool, no web) goes out sentence by sentence as it is written
+                if sent["blocked"] or '"reply"' not in raw:
+                    return
+                head = raw[:raw.index('"reply"')]
+                if not re.search(r'"tool"\s*:\s*""', head) or re.search(r'"need_web"\s*:\s*true', head):
+                    sent["blocked"] = True  # it is using a tool or the web: nothing of this is the answer
+                    return
+                mood, so_far = reply_so_far(raw)
+                part = finished_part(so_far)
+                if len(part) > sent["n"]:
+                    if not speakable(part):
+                        sent["blocked"] = True  # the checks would refuse this answer: don't say it
+                        return
+                    sent["n"] = len(part)
+                    ctx.progress("plugin.ari.partial", {"text": part, "mood": mood or "neutral"})
+
             s = ctx.llm(PLAYBOOK + "\n\n" + who, json.dumps(task, ensure_ascii=False), schema=Step, check=check,
-                        tiers=model_order(text, ctx.local_tiers()) or None, claude_last=not private())
+                        on_text=partial, tiers=model_order(text, ctx.local_tiers()) or None,
+                        claude_last=not private())
             return {**s.model_dump(), "tier": ctx.last_answer.tier}
 
         try:

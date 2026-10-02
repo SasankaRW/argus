@@ -5,6 +5,48 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Notifications page** in Helios and the phone app (More > notifications, the app's long-press shortcut, and what a notification opens when tapped): everything sent to the phone, newest first, with its text, whether the phone has collected it yet, whether the phone is connected, filters (important, waiting, delivered) and a "send test" button. `GET /phone/notifications`.
+
+- **Notifications now go through the Argus phone app, not ntfy.** The app asks Argus for its messages (a long poll, `GET /phone/inbox?wait=25`), shows them and acknowledges them (`POST /phone/inbox/ack`); only then is a message "sent". The phone can be off or away from Tailscale: messages wait on the PC (`notify.keep_hours`, 48 h) and arrive when it is back. Nothing goes through ntfy or any outside service. Removed: the ntfy sender, the reply relay, `NTFY_*` in `.env`, `approvals.buttons`. An old `ntfy:` section in `argus.yaml` is still accepted and ignored. Approve / Reject buttons are relative links; the app puts its own Argus address in front.
+- **Android app, notifications with the app closed:** an inbox loop in the foreground service, channels by priority (urgent rings on the alarm channel, "ring my phone" plays the loud alarm), Approve / Reject / Open buttons, a 15-minute keep-alive alarm, restart after reboot and app update, a network-back wake-up, a battery-exemption button and a "send me a test notification" button in setup.
+- **Android app, phone control for Ari:** an Accessibility service (off until you turn it on) with new phone tools: `phone_volume`, `phone_media`, `phone_lock`, `phone_press` (back, home, recents, notifications, quick settings, screenshot), `phone_screen_text` (private), `phone_swipe`, and the risky ones Ari asks about first: `phone_tap_text`, `phone_tap`, `phone_type`. "Turn my phone volume down" now goes straight to `phone_volume`.
+- Helios map: the phone app node replaces the ntfy node. `dev.ps1 notify` replaces `dev.ps1 ntfy` (the old name still works).
+
+- The island has a Stop key (a small red square at the right) while Ari thinks, works or speaks: Ari goes quiet at once, the answer it was working on is dropped (its job is cancelled) and the island goes idle. `POST /ari/stop`; the PC's listener hears `ari.stop`.
+- Check Ari (Helios > Settings > Ari, and every morning at `ari_health.at`, 09:00): looks at Ollama and the models (and whether the first one is fully on the GPU), SearXNG (answers, JSON on), the expressive voice (running, loaded, on the GPU), Whisper (GPU), the PC listener and worker, and asks the local model a few questions to see it still picks the right tool and how fast. Each problem says what to do. The phone hears only when something is wrong (one message a day). `POST /ari/health` runs it, `GET /ari/health` returns the last one.
+- Fix: a mood the model made up ("[curious]", "[warm]") was read out loud ("curious ...") and shown on the island. Made-up moods now map to the nearest real one (curious → playful, warm → cheerful, thoughtful → calm, ...), and any other tag is dropped.
+- Lighter when idle: the island and the "Hey Ari" listener wait for news from Argus (a long poll, `GET /events?wait=20`) instead of asking every second all day; a Talk press or a state change still lands at once.
+- The voice detector (Silero) only runs when the room isn't silent: plainly quiet moments are skipped (the minute "microphone level" log line shows how much, `vad_skipped`).
+- While you're away (no keyboard, mouse or question for `ari.rest_after_min`, 30 by default) Ari stops keeping its model warm, so Ollama lets it go; it is loaded again the moment you're back, before you speak. 0 keeps it always warm.
+- The listener's clock ticks twice a second while nothing is going on (10 times a second in a conversation).
+- Helios doesn't poll the status while its tab is hidden.
+- Fix: the expressive voice loaded its model twice at start-up (the warm-up and the first sentence asked at the same moment): double the GPU memory and a slower first sentence. It loads once now.
+- The voice server's log says what each sentence took ("said [calm] 52 chars in 310 ms").
+- Ari's expressive voice is warmed up when Argus starts (one short word, so the model, the voice clip and the GPU are ready before your first question), instead of the first sentence paying for it.
+- The first spoken piece is kept short (a long first sentence is cut at its first comma; "Hi." is the only thing joined to the next), so Ari starts talking sooner.
+- logs/ari.log now has a "voice made" line per sentence (characters, milliseconds, and time since the reply started), to see where speaking time goes.
+- Answers to tasks are spoken as they are written, like small talk already was: when the model answers (no tool, no web), each finished sentence goes out at once, with the mood chosen before the first word. An answer the checks would refuse is never said early. (The model now writes the tool and web fields and the mood before the reply.)
+- "Hmm, let me check" comes after 0.8 s for tasks (was 1.2 s).
+- "Type hello world" goes straight to asking "Shall I type "hello world" into the window in front?" (no model guess; nothing is typed until you say yes). "What type of…", "type of…" and similar are not typing requests.
+- "Turn down my volume on my phone" now gets a plain answer (Ari can't change the phone's volume yet, and says what it can do) instead of picking a wrong phone tool.
+- Ari tells "is the backup okay" (backup_status) from "is the laptop server up" (lab_status): the descriptions now say which is which.
+- Every request to Ollama asks for the same context size (`ollama.num_ctx`, 8192 by default; more only for a prompt too long for it), and so does the listener's keep-warm. Before, a different size now and then made Ollama reload the model (2.5–5 s each time).
+- Fix: when no tool matched a message ("is the laptop server up", "15 percent of 2400"), Ari offered the model all ~70 tools; that prompt was too long for the model's context, Ollama cut it, and the question itself was lost (it answered "web search" to anything). Now only the always-useful few are offered.
+- Long prompts to Ollama get a context big enough to hold them (8k–32k tokens), instead of being quietly cut.
+- Simple sums ("what's 15 percent of 2400", "1250 times 4", "10 divided by 4") are worked out in code: exact and instant.
+- `lab_status` is found for "is the laptop server up".
+- The island shows the words as you say them (the small model hears you about once a second while you talk in a conversation), then keeps what you said on show while Ari thinks. `ari.live_words: false` turns it off.
+- `python -m argus.ari_eval` now also prints, per case, how many tools were offered and where the model's time went (prompt, output, load).
+- The Ari pill is gone from Helios on the phone too (and its look setting); the island on the PC shows what Ari is doing.
+- Ari talks sooner: small-talk replies stream from the model and each finished sentence is spoken while the rest is still being written; answers are picked up every 0.15 s instead of 0.5 s.
+- The island shows Ari is still listening after an answer (a ring that runs down), and keeps the answer on show meanwhile.
+- `python -m argus.ari_eval`: Ari's test set (40 everyday phrases, right tool or not, how fast; nothing runs for real).
+- Fix: with many tools, Ari now matches them by what they do, not only by name.
+- Ari keeps its humour and light teasing, without slang.
+- Ari's tone can change mid-reply ("[excited] Your build passed! [serious] But the backup failed."): each phrase is spoken in its own mood by the expressive voice.
+- Faster Ari: Whisper loads from the local cache (no call to huggingface.co), `pip install -e .[hearing]` brings the CUDA libraries so it runs on the GPU, the first model is kept warm (`ari.keep_warm`), small talk stays on that model, and volume, music and torch commands go straight to their tool with no model call.
+- Ari's default personality is less slangy: warm, dry humour, no "bro".
+- Settings > Ari: set what Ari calls you and Ari's personality (a big box showing the default witty friend) in Helios; the next reply uses them.
 - Ari has a personality: a witty friend (casual, a bit cheeky, has opinions) in chat and in task replies, with no help-desk lines like "How can I assist you?". Change it with `ari.personality`; `ari.call_me` sets what it calls you.
 - Ari no longer makes up answers: a web search must be about what you asked, and when a tool fails Ari says so instead of inventing a result.
 - With many tools, Ari is offered the ones that fit your message (a phone request gets the phone's tools, and PC-only tools are refused for the phone).

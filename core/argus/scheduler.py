@@ -22,7 +22,7 @@ from .cron import next_run
 from .db import Store
 from .events import insert_event
 from .jobs.store import JobStore, QueueFull
-from .outbox import add_message, ntfy_message
+from .outbox import add_message, phone_message
 from .registry import ensure_component
 
 log = logging.getLogger("argus.scheduler")
@@ -98,7 +98,7 @@ class Scheduler:
         slot = int(now) if now_run else int(row["next_run_at"])
         if row["plugin"] == "argus" and row["workflow"] == "remind":  # a reminder: straight to the phone, no job
             text = str(spec.get("input", {}).get("text") or row["label"] or "Reminder")
-            add_message(conn, now, "ntfy", ntfy_message("Reminder", text[:500], priority="high", tags=["bell"]),
+            add_message(conn, now, "phone", phone_message("Reminder", text[:500], priority="high", tags=["bell"]),
                         dedupe_key=f"remind:{sid}:{slot}")
             insert_event(conn, now, "schedule.reminded", src="scheduler", dst="phone", data={"schedule": sid})
             self._advance(conn, sid, None, now_run=now_run, once=bool(spec.get("once")))

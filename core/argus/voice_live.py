@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .expressive import mood_of
+from .expressive import phrases
 
 log = logging.getLogger("argus.voice_live")
 RATE = 16000
@@ -87,6 +87,42 @@ def silero_path() -> Path | None:
         return None
     p = Path(faster_whisper.__file__).parent / "assets" / "silero_vad_v6.onnx"
     return p if p.exists() else None
+
+
+class Quiet:
+    """In front of the voice model: a plainly silent frame (not much above the room's background) is scored 0
+    without running the model, so a quiet room costs next to nothing. After anything louder the model runs for a
+    while (`hang_s`), so a word's start and end are still scored by it."""
+
+    def __init__(self, vad: Callable[[Any], float], ratio: float = 2.5, least: float = 0.002, hang_s: float = 0.6):
+        self.vad, self.ratio, self.least = vad, ratio, least
+        self.floor = 0.004
+        self.hang_frames = round(hang_s * RATE / FRAME)
+        self.hang = 0
+        self.ran = self.skipped = 0
+
+    def __call__(self, frame) -> float:
+        import numpy as np
+
+        rms = float(np.sqrt(np.mean(np.square(frame)))) if len(frame) else 0.0
+        # the background: follows quiet quickly, noise only slowly (a fan coming on)
+        self.floor = 0.9 * self.floor + 0.1 * rms if rms < self.floor else 0.999 * self.floor + 0.001 * rms
+        if rms >= max(self.floor * self.ratio, self.least):
+            self.hang = self.hang_frames
+        elif self.hang > 0:
+            self.hang -= 1
+        else:
+            self.skipped += 1
+            return 0.0
+        self.ran += 1
+        return self.vad(frame)
+
+    def share_skipped(self) -> float:
+        """How much of the time the model was not needed (since last asked)."""
+        n = self.ran + self.skipped
+        out = self.skipped / n if n else 0.0
+        self.ran = self.skipped = 0
+        return out
 
 
 class LoudnessVad:
@@ -234,6 +270,13 @@ class Turns:
                 return self._end()
         return None
 
+    def so_far(self, seconds: float = 10.0) -> Any:
+        """The last `seconds` of what you are saying now (for the live words on the island)."""
+        import numpy as np
+
+        keep = max(1, round(seconds * RATE / FRAME))
+        return np.concatenate(self._buf[-keep:]) if self._buf else np.zeros(0, dtype=np.float32)
+
     def _end(self) -> tuple[str, Any]:
         import numpy as np
 
@@ -262,15 +305,65 @@ def echo_of(heard: str, speaking: str) -> bool:
 
 
 def sentences(text: str) -> list[str]:
-    """Split an answer to be spoken a sentence at a time (short bits are kept with the next one)."""
+    """Split an answer to be spoken a sentence at a time. The first piece stays short (it decides how soon Ari
+    starts talking): a long first sentence is cut at its first comma, and only a tiny one ("Hi.") is joined to the
+    next. Later short bits are kept with the next one (a voice reading every few words sounds choppy)."""
     parts = [p.strip() for p in re.split(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(])", text.strip()) if p.strip()]
     out: list[str] = []
     for p in parts:
-        if out and len(out[-1]) < 25:
+        if out and len(out[-1]) < (10 if len(out) == 1 else 25):
             out[-1] = f"{out[-1]} {p}"
         else:
             out.append(p)
+    if out and len(out[0]) > 60:
+        m = re.search(r"[,;:\u2014]\s+", out[0][18:])  # the first comma after at least 18 characters
+        if m and 18 + m.end() < len(out[0]) - 12:
+            cut = 18 + m.end()
+            out[0:1] = [out[0][:cut].strip(), out[0][cut:].strip()]
     return out or ([text.strip()] if text.strip() else [])
+
+
+def tagged(ps: list[tuple[str, str]]) -> list[str]:
+    """Phrases as sentences to speak, each with the mood it is said in ("[calm] ...")."""
+    return [f"[{m}] {p}" if m != "neutral" else p for m, w in ps for p in sentences(w)]
+
+
+def _takes_partial(fn: Callable) -> bool:
+    import inspect
+
+    try:
+        return len(inspect.signature(fn).parameters) >= 2
+    except (TypeError, ValueError):
+        return False
+
+
+def after_spoken(final: str, spoken: str) -> str | None:
+    """What of the final reply is left once `spoken` (its start, streamed earlier) has been said; None when the final
+    reply doesn't start that way (it was written again). Letters and digits are compared; tags, punctuation and
+    spaces are ignored."""
+    want = [c for c in re.sub(r"\[[^\]]*\]", "", spoken).lower() if c.isalnum()]
+    if not want:
+        return None
+    k = 0
+    i = 0
+    text = final
+    while i < len(text) and k < len(want):
+        if text[i] == "[":  # a tag: skip it
+            j = text.find("]", i)
+            if j > 0:
+                i = j + 1
+                continue
+        c = text[i].lower()
+        if c.isalnum():
+            if c != want[k]:
+                return None
+            k += 1
+        i += 1
+    if k < len(want):
+        return None
+    while i < len(text) and not text[i].isalnum() and text[i] != "[":
+        i += 1  # the sentence end that was said too
+    return text[i:].strip()
 
 
 @dataclass
@@ -291,6 +384,15 @@ class Talk:
     transcribe_wake: Callable[[Any], str] | None = None  # the small model, for "is this for Ari?" (first 3 s)
     on_false_barge: Callable[[], None] = lambda: None  # it was Ari's own voice: be harder to interrupt
     in_talk_until: float = 0.0
+    live_words: Callable[[Any], str] | None = None  # the small model: audio so far -> words (shown while you talk)
+    show: Callable[[str, str], None] | None = None  # (phase, text): the island's words
+    live_every_s: float = 1.0
+    run: Callable[[Callable[[], None]], None] = lambda f: threading.Thread(target=f, daemon=True).start()
+    _live_at: float = 0.0
+    _live_busy: bool = False
+    _live_text: str = ""
+    _gen: int = 0
+    _following: bool = False  # "following" was reported for this answer (the island's follow-up ring)
     paused_for_barge: bool = False
     _lock: Any = field(default_factory=threading.RLock)
 
@@ -313,6 +415,7 @@ class Talk:
     def _frame(self, frame, voice: float) -> str | None:
         ev = self.turns.feed(frame, voice, ari_talking=self.player.busy and not self.paused_for_barge)
         if ev is None:
+            self._live()
             return None
         kind, audio = ev
         if kind == "barge":
@@ -326,7 +429,35 @@ class Talk:
             return "start"
         return self._turn(audio)
 
+    def _live(self) -> None:
+        """While you talk (in a conversation), now and then hear what you've said so far and put it on the island."""
+        if self.live_words is None or self.show is None or not self.turns.talking:
+            return
+        if not (self.in_conversation or self.paused_for_barge) or self._live_busy:
+            return
+        now = self.clock()
+        if now - self._live_at < self.live_every_s:
+            return
+        self._live_at, self._live_busy = now, True
+        audio, gen = self.turns.so_far(), self._gen
+
+        def work() -> None:
+            try:
+                text = " ".join((self.live_words(audio) or "").split())  # type: ignore[misc]
+                if gen == self._gen and self.turns.talking and text and text != self._live_text:
+                    self._live_text = text
+                    tail = text if len(text) <= 70 else "… " + text[-68:].split(" ", 1)[-1]
+                    self.show("listening", tail)  # type: ignore[misc]
+            except Exception as e:  # noqa: BLE001 - the words are a nicety
+                log.info("live words failed", extra={"error": str(e)[:100]})
+            finally:
+                self._live_busy = False
+
+        self.run(work)
+
     def _turn(self, audio) -> str | None:
+        self._gen += 1  # words still being worked out for this turn are no longer wanted
+        self._live_text = ""
         barged, self.paused_for_barge = self.paused_for_barge, False
         if not (barged or self.in_conversation) and self.transcribe_wake is not None:
             head = (self.transcribe_wake(audio[: 3 * RATE]) or "").strip()  # quick look: was it "Hey Ari …"?
@@ -355,6 +486,7 @@ class Talk:
         if not command:  # "Hey Ari" alone: listening
             self.chime()
             self.report("listening")
+            self._following = True  # waiting for the command: plain "listening", not the follow-up ring
             self._keep_talking(pending=True)
             return "wake"
         if BYE.match(command):
@@ -362,18 +494,38 @@ class Talk:
             self.player.say(["Okay."])
             self.report("idle")
             return "bye"
-        self.report("thinking")
+        self._following = False
+        if self.show is not None:
+            self.show("thinking", command)  # the island keeps what you said on show while Ari works
+        else:
+            self.report("thinking")
         log.info("heard", extra={"text": command})
+        streamed = {"text": "", "mood": "neutral"}
+
+        def partial(text: str, mood: str) -> None:  # a reply still being written: its finished sentences now
+            if not text.startswith(streamed["text"]):
+                return
+            new = text[len(streamed["text"]):].strip()
+            if not new:
+                return
+            ps = phrases(new, mood if not streamed["text"] else streamed["mood"])  # tags in the text win
+            streamed["text"] = text
+            if ps:
+                streamed["mood"] = ps[-1][0]
+            self.player.add(tagged(ps))
+
         try:
-            ans = self.ask(command)
+            ans = self.ask(command, partial) if _takes_partial(self.ask) else self.ask(command)
         except Exception as e:  # noqa: BLE001 - argusd down: say so, keep listening
             log.warning("could not reach Ari", extra={"error": str(e)[:200]})
             ans = {"reply": "Sorry, I can't reach Argus right now."}
         reply = (ans.get("reply") or "").strip()
-        if reply:
-            mood, words = mood_of(reply)  # "[cheerful] ...": every sentence gets the mood, for the expressive voice
-            parts = sentences(words)
-            self.player.say([f"[{mood}] {p}" for p in parts] if mood != "neutral" else parts)
+        rest = after_spoken(reply, streamed["text"]) if streamed["text"] else None
+        if rest is not None:  # most of it is said already: the rest follows on
+            self.player.add(tagged(phrases(rest, streamed["mood"])))
+        elif reply:
+            # "[excited] We won! [sympathetic] Shame about the rain.": each sentence carries the mood it is said in
+            self.player.say(tagged(phrases(reply)))
         self._keep_talking(pending=bool(ans.get("pending")))
         return command
 
@@ -390,8 +542,12 @@ class Talk:
             return
         if self.in_talk_until and self.in_talk_until > now + self.idle_s:
             self.in_talk_until = now + self.idle_s
+        if self.in_talk_until and not self._following:  # answered: still listening, no "Hey Ari" needed
+            self._following = True
+            self.report("following")
         if self.in_talk_until and now >= self.in_talk_until:
             self.in_talk_until = 0.0
+            self._following = False
             self.report("idle")
 
 
@@ -451,10 +607,12 @@ class Player:
         self._cues: deque = deque()  # chime etc.: played over everything, never paused
         self._gen = 0  # bumped by say()/stop(): an older answer still being made is dropped
         self._making = False
+        self._more: list[str] = []  # sentences added while the earlier ones are still being made (add())
         self._paused = False
         self._thinking = False
         self._think_t = 0
         self._ended_at = 0.0
+        self._began = time.perf_counter()
         self._was_busy = False
         self.text = ""
 
@@ -526,34 +684,70 @@ class Player:
             self._making = True
             self.text = " ".join(parts)
         self.show(self.text)
+        self._began = time.perf_counter()
         threading.Thread(target=self._make, args=(gen, parts), daemon=True, name="ari-voice").start()
+
+    def add(self, parts: list[str]) -> None:
+        """Speak these sentences after what is being said now, without stopping it (a reply arriving in pieces)."""
+        parts = [p for p in parts if p.strip()]
+        if not parts:
+            return
+        with self._lock:
+            going = self._making or bool(self._chunks)
+            self.text = f"{self.text} {' '.join(parts)}".strip() if going else " ".join(parts)
+            if self._making:
+                self._more.extend(parts)
+                start = False
+            else:
+                self._making, start, gen = True, True, self._gen
+        self.show(self.text)
+        if start:
+            self._began = time.perf_counter()
+            threading.Thread(target=self._make, args=(gen, parts), daemon=True, name="ari-voice").start()
 
     def _make(self, gen: int, parts: list[str]) -> None:
         np = self.np
+        first = True
         try:
-            for i, part in enumerate(parts):
-                got = self.synth(part)
-                if got is None:
-                    continue
-                audio, rate = got
+            while True:
+                for part in parts:
+                    t0 = time.perf_counter()
+                    got = self.synth(part)
+                    if got is None:
+                        continue
+                    log.info("voice made", extra={"chars": len(part), "ms": int((time.perf_counter() - t0) * 1000),
+                                                  "since_start_ms": int((time.perf_counter() - self._began) * 1000),
+                                                  "first": first})
+                    audio, rate = got
+                    with self._lock:
+                        if gen != self._gen:
+                            return
+                    self._ensure(rate)
+                    with self._lock:
+                        if gen != self._gen:
+                            return
+                        self._thinking = False
+                        gap = np.zeros(int(0.12 * rate) if (self._chunks or not first) else 0, dtype=np.float32)
+                        self._chunks.append(np.concatenate([gap, np.asarray(audio, dtype=np.float32)]))
+                    if first:
+                        self.report("speaking", self.text)
+                        first = False
                 with self._lock:
                     if gen != self._gen:
                         return
-                self._ensure(rate)
-                with self._lock:
-                    if gen != self._gen:
+                    if not self._more:  # done: in the same lock as add() looks, so nothing added is lost
+                        self._making, self._thinking = False, False
+                        if not self._chunks:
+                            self._ended_at = self.clock()
                         return
-                    self._thinking = False
-                    gap = np.zeros(int(0.12 * rate), dtype=np.float32) if i else np.zeros(0, dtype=np.float32)
-                    self._chunks.append(np.concatenate([gap, np.asarray(audio, dtype=np.float32)]))
-                if i == 0:
-                    self.report("speaking", self.text)
+                    parts, self._more = self._more, []
         except Exception as e:  # noqa: BLE001 - the voice failing must not stop Ari listening
             log.warning("speaking failed", extra={"error": str(e)[:200]})
         finally:
             with self._lock:
-                if gen == self._gen:
+                if gen == self._gen and self._making:  # it failed part way
                     self._making, self._thinking = False, False
+                    self._more = []
                     if not self._chunks:
                         self._ended_at = self.clock()
 
@@ -570,6 +764,7 @@ class Player:
             self._gen += 1
             had = bool(self._chunks) or self._making
             self._chunks.clear()
+            self._more = []
             self._pos, self._making, self._paused, self._thinking = 0, False, False, False
             if had:
                 self._ended_at = self.clock()

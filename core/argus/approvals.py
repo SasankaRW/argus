@@ -1,6 +1,6 @@
 """Approvals: a job asks you, waits without holding a worker, and carries on with your answer.
 
-    ctx.approve(...) in a step  ->  POST /jobs/{id}/approvals  ->  approval row + ntfy message (one transaction)
+    ctx.approve(...) in a step  ->  POST /jobs/{id}/approvals  ->  approval row + phone message (one transaction)
     the worker parks the job (waiting) and moves on to other work
     you tap Approve on the phone (or in Helios)  ->  decide()  ->  job back in the queue, ahead of scheduled work
     the step runs again, ctx.approve(...) now returns your answer at once
@@ -10,9 +10,9 @@ Rules:
   back instead of a second one, and the notification is queued only once.
 - **One-time signed tokens.** The phone buttons carry `HMAC(install key, approval id)`. It works only while the
   approval is pending, so a used or old link does nothing. Helios and apps use the normal Argus token instead.
-- **Buttons.** By default they go straight to Argus over Tailscale (`approvals.public_url`), so knowing the ntfy
-  topic is not enough to approve anything; when the phone comes back online Argus pushes what is still waiting
-  (presence.py). With `approvals.buttons: ntfy` they post to a private reply topic instead (relay.py).
+- **Buttons.** They are links to Argus that the phone app opens against its own Argus address (Tailscale), so
+  they carry the one-time token and nothing else is needed; when the phone comes back online Argus pushes what is
+  still waiting (presence.py).
 - **Money is shown from code.** A batch's count and total are added up here (Decimal), never taken from a model.
 - **Waiting is not failing.** After `remind_hours` you get one reminder; after `expire_hours` the approval
   counts as "no" and the job carries on.
@@ -36,7 +36,7 @@ from .events import insert_event
 from .ids import new_id
 from .jobs.states import JobState
 from .jobs.store import JobStore
-from .outbox import add_message, ntfy_message
+from .outbox import add_message, phone_message
 from .registry import ensure_component
 
 TYPES = ("entry", "batch", "draft")
@@ -157,27 +157,10 @@ class Approvals:
     def _hash(token: str) -> str:
         return hashlib.sha256(token.encode()).hexdigest()
 
-    @property
-    def reply_topic(self) -> str | None:
-        """The private ntfy topic the phone buttons post to and Argus listens on. NTFY_REPLY_TOPIC, or derived
-        from the main topic and the install key, so there is nothing extra to set up."""
-        sec = self.cfg.secrets
-        if self.cfg.approvals.buttons != "ntfy":
-            return None
-        if sec.ntfy_reply_topic:
-            return sec.ntfy_reply_topic
-        if not sec.ntfy_topic or self._key is None:
-            return None
-        return f"{sec.ntfy_topic}-reply-{hmac.new(self._key, b'reply', hashlib.sha256).hexdigest()[:10]}"
-
-    def reply_body(self, approval_id: str, answer: str) -> str:
-        return f"{answer} {approval_id} {self.token(approval_id)}"
-
-    def links(self, approval_id: str) -> dict[str, str] | None:
-        """Direct links to Argus (need the phone to reach it, e.g. over Tailscale)."""
-        base = self.cfg.approvals.public_url
-        if not base:
-            return None
+    def links(self, approval_id: str) -> dict[str, str]:
+        """Links to Argus for the notification's buttons. Relative paths (the phone app puts its own Argus address in
+        front, so they work wherever the app reaches Argus), or absolute when `approvals.public_url` is set."""
+        base = self.cfg.approvals.public_url or ""
         t = self.token(approval_id)
         return {"page": f"{base}/a/{approval_id}?t={t}",
                 "approve": f"{base}/approvals/{approval_id}/decide?t={t}&answer=approve",
@@ -204,36 +187,15 @@ class Approvals:
                 shown = p["amount"] if k == "amount" and p.get("amount") else v
                 lines.append(f"{k}: {shown}")
         links = self.links(a["id"])
-        reply = self.reply_topic
         ok_label = "Approve all" if a["type"] == "batch" else "Approve"
-        actions: list[dict] = []
-        if reply:
-            # The buttons post to the reply topic on the ntfy server, which the phone can always reach; Argus reads
-            # it from there. So they work with or without Tailscale.
-            url = f"{self.cfg.ntfy.url.rstrip('/')}/{reply}"
-            # A server behind a login needs a (write-only) token on the taps: NTFY_REPLY_WRITE_TOKEN.
-            wt = self.cfg.secrets.ntfy_reply_write_token
-            extra = {"headers": {"Authorization": f"Bearer {wt}"}} if wt else {}
-            actions += [
-                {"action": "http", "label": ok_label, "url": url, "method": "POST",
-                 "body": self.reply_body(a["id"], "approve"), "clear": True, **extra},
-                {"action": "http", "label": "Reject", "url": url, "method": "POST",
-                 "body": self.reply_body(a["id"], "reject"), "clear": True, **extra},
-            ]
-        elif links:
-            actions += [
-                {"action": "http", "label": ok_label, "url": links["approve"], "method": "POST", "clear": True},
-                {"action": "http", "label": "Reject", "url": links["reject"], "method": "POST", "clear": True},
-            ]
-        if links:
-            actions.append({"action": "view", "label": "Open", "url": links["page"]})
-            if not reply:
-                lines.append("Approve / Reject need Tailscale.")
-        if not actions:
-            lines.append("Decide in Helios.")
+        actions: list[dict] = [
+            {"action": "http", "label": ok_label, "url": links["approve"], "method": "POST", "clear": True},
+            {"action": "http", "label": "Reject", "url": links["reject"], "method": "POST", "clear": True},
+            {"action": "view", "label": "Open", "url": links["page"]},
+        ]
         title = f"{'Reminder: ' if reminder else ''}{a['plugin']}: {a['title']}"
-        return ntfy_message(title, "\n".join(lines), priority="high", tags=["inbox_tray"],
-                            click=links["page"] if links else None, actions=actions or None)
+        return phone_message(title, "\n".join(lines), priority="high", tags=["inbox_tray"],
+                            click=links["page"], actions=actions)
 
     # -------------------------------------------------------------- worker side
 
@@ -275,7 +237,7 @@ class Approvals:
             a = _decode(conn.execute("SELECT * FROM approvals WHERE id = ?", (aid,)).fetchone())
             insert_event(conn, now, "approval.requested", job_id=job_id, step=step, src=job.plugin,
                          dst="approvals", data={"approval": aid, "type": type_, "title": a["title"]})
-            add_message(conn, now, "ntfy", self._message(a), dedupe_key=f"approval:{aid}", job_id=job_id)
+            add_message(conn, now, "phone", self._message(a), dedupe_key=f"approval:{aid}", job_id=job_id)
             return a, True
 
         return await self.store.write(fn)
@@ -361,10 +323,10 @@ class Approvals:
             for row in conn.execute("SELECT * FROM approvals WHERE state = 'pending' AND remind_at <= ?",
                                     (now,)).fetchall():
                 a = _decode(row)
-                add_message(conn, now, "ntfy", self._message(a, reminder=True),
+                add_message(conn, now, "phone", self._message(a, reminder=True),
                             dedupe_key=f"approval-remind:{a['id']}", job_id=a["job_id"])
                 conn.execute("UPDATE approvals SET remind_at = NULL, updated_at = ? WHERE id = ?", (now, a["id"]))
-                insert_event(conn, now, "approval.reminded", job_id=a["job_id"], src="approvals", dst="ntfy",
+                insert_event(conn, now, "approval.reminded", job_id=a["job_id"], src="approvals", dst="phone-app",
                              data={"approval": a["id"]})
                 reminded += 1
             return {"reminded": reminded, "expired": expired}
@@ -391,13 +353,13 @@ class Approvals:
                 lines = [f"• {a['plugin']}: {a['title']}" for a in rows[:8]]
                 if len(rows) > 8:
                     lines.append(f"… and {len(rows) - 8} more")
-                msg = ntfy_message(f"{len(rows)} approvals waiting", "\n".join(lines), priority="high",
+                msg = phone_message(f"{len(rows)} approvals waiting", "\n".join(lines), priority="high",
                                    tags=["inbox_tray"], click=f"{base}/" if base else None,
                                    actions=[{"action": "view", "label": "Open Helios", "url": f"{base}/"}]
                                    if base else None)
-            if add_message(conn, now, "ntfy", msg, dedupe_key=dedupe) is None:
+            if add_message(conn, now, "phone", msg, dedupe_key=dedupe) is None:
                 return 0
-            insert_event(conn, now, "approval.pushed", src="approvals", dst="ntfy",
+            insert_event(conn, now, "approval.pushed", src="approvals", dst="phone-app",
                          data={"count": len(rows), "reason": "phone back online"})
             return len(rows)
 
