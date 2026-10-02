@@ -217,6 +217,14 @@ def said_back(name: str, args: dict, result: Any) -> str | None:
     return None
 
 
+TYPE_NOW = re.compile(_PLEASE + r"type\s+(?P<t>\S.{0,158}?)\W*$", re.I)
+NOT_TEXT = re.compile(r"(?:of|in|into|out|this|that|it|something|up|on|to|for|the|a|an|my|your|these|those)\b", re.I)
+PHONE_VOLUME = re.compile(r"\b(?:(?:volume|sound|louder|quieter|mute)\b.*\b(?:phone|mobile)|"
+                          r"(?:phone|mobile)\b.*\b(?:volume|louder|quieter|mute))", re.I)
+CANT_PHONE_VOLUME = ("I can't change the phone's volume yet. I can ring it, switch Do Not Disturb, or do the torch "
+                     "and timers.")
+
+
 def straight_to(tools: dict[str, dict], text: str) -> tuple[str, dict] | None:
     """A message that plainly needs one tool: "open brave" (the app), "what's on my screen?" (the screen), "sum up
     what I copied" (the clipboard). That tool runs at once, with no model deciding first."""
@@ -238,6 +246,9 @@ def straight_to(tools: dict[str, dict], text: str) -> tuple[str, dict] | None:
         act = ("play_pause" if md.group("pp") else "next" if md.group("next") else
                "previous" if md.group("prev") else "stop")
         return "media_control", {"action": act}
+    ty = TYPE_NOW.match(text)
+    if ty and "type_text" in tools and not NOT_TEXT.match(ty.group("t")) and "?" not in text:
+        return "type_text", {"text": ty.group("t").strip(" \"'“”")}
     tc = TORCH.match(text)
     if tc and "phone_torch" in tools:
         return "phone_torch", {"state": (tc.group("s1") or tc.group("s2") or tc.group("s3")).lower()}
@@ -551,6 +562,8 @@ def think(ctx: Context):
     sum_ = quick_math(text)
     if sum_:
         return {"reply": sum_, "used": []}
+    if PHONE_VOLUME.search(text) and "phone_volume" not in tools:
+        return {"reply": CANT_PHONE_VOLUME, "used": []}
 
     if chatty(text):  # small talk: one friendly answer, no tools, on the warm first model (no swap)
         def chat() -> dict:
@@ -596,6 +609,9 @@ def think(ctx: Context):
             except ToolFailed as e:
                 return {"tool": name, "args": args, "error": str(e)[:300]}
 
+        if name == "type_text":  # it types into whatever is in front: only after your yes
+            return {"reply": f"Shall I type \"{args['text'][:80]}\" into the window in front?",
+                    "pending": {"kind": "tool", "name": name, "args": args}, "used": []}
         private_tool = name in ("look_at_screen", "summarise_clipboard")
         got = ctx.step(f"tool 1: {name}", use_direct if private_tool else use_direct_app)
         res = got.get("result")

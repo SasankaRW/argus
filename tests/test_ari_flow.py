@@ -291,3 +291,15 @@ def test_long_prompts_get_room_in_the_context():
     assert context_for("x" * 12000, [{"role": "user", "content": "y" * 9000}]) == 8192
     assert context_for("x" * 30000, []) == 16384  # too long for it: more
     assert context_for("x" * 300000, []) == 32768
+
+
+def test_type_something_is_asked_first_and_phone_volume_is_said_plainly():
+    from argus.worker.think import CANT_PHONE_VOLUME, PHONE_VOLUME, straight_to
+
+    tools = {"type_text": {}, "press_keys": {}}
+    assert straight_to(tools, "type hello world") == ("type_text", {"text": "hello world"})
+    assert straight_to(tools, 'please type "see you at 5"') == ("type_text", {"text": "see you at 5"})
+    for no in ("what type of laptop should I buy", "type of cat is this?", "type this into the box", "type"):
+        assert straight_to(tools, no) is None
+    assert PHONE_VOLUME.search("turn down my volume on my phone") and PHONE_VOLUME.search("mute my phone")
+    assert not PHONE_VOLUME.search("turn the volume down") and "phone's volume" in CANT_PHONE_VOLUME

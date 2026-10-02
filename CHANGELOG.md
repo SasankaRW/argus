@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- "Type hello world" goes straight to asking "Shall I type "hello world" into the window in front?" (no model guess; nothing is typed until you say yes). "What type of…", "type of…" and similar are not typing requests.
+- "Turn down my volume on my phone" now gets a plain answer (Ari can't change the phone's volume yet, and says what it can do) instead of picking a wrong phone tool.
 - Ari tells "is the backup okay" (backup_status) from "is the laptop server up" (lab_status): the descriptions now say which is which.
 - Every request to Ollama asks for the same context size (`ollama.num_ctx`, 8192 by default; more only for a prompt too long for it), and so does the listener's keep-warm. Before, a different size now and then made Ollama reload the model (2.5–5 s each time).
 - Fix: when no tool matched a message ("is the laptop server up", "15 percent of 2400"), Ari offered the model all ~70 tools; that prompt was too long for the model's context, Ollama cut it, and the question itself was lost (it answered "web search" to anything). Now only the always-useful few are offered.
