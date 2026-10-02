@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "./api";
+import { api, getToken } from "./api";
 import type { Selection } from "./MapView";
-import { ariNow, ariSet, pauseEars, resumeEars, setPillLook, useAri, useEars, usePillLook } from "./ariState";
+import { pauseEars, resumeEars, useAri, useEars } from "./ariState";
 import { canSpeak, listen, pref, setPref, speak, Speech, stopSpeaking, voiceStatus, VoiceStatus } from "./voice";
 import { plain } from "./spoken";
 
@@ -201,6 +201,33 @@ export function AriView({ conv, onBack, onNew, onSelect, onView, compact = false
   }, []);
 
   const toggle = (k: string, v: boolean, set: (v: boolean) => void) => { set(v); setPref(k, v); };
+  const [note, setNote] = useState<string | null>(null);
+  // The chat and everything around it (what Ari did, errors, events, logs, settings; secrets removed), to hand over
+  // when something went wrong. "save" downloads a .md file; "copy" puts it on the clipboard (the phone app can't save files).
+  const exportChat = async (how: "save" | "copy") => {
+    setNote(null);
+    try {
+      const t = getToken();
+      const r = await fetch(`/ari/${conv}/export`, { headers: t ? { Authorization: `Bearer ${t}` } : {} });
+      if (!r.ok) throw new Error(r.status === 404 ? "nothing to export yet" : `HTTP ${r.status}`);
+      const text = await r.text();
+      if (how === "copy") {
+        if (navigator.clipboard && window.isSecureContext) await navigator.clipboard.writeText(text);
+        else {  // plain http (Argus over Tailscale): the old way
+          const ta = document.createElement("textarea");
+          ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+          document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove();
+        }
+        setNote(`copied ${text.split("\n").length} lines: paste it to Claude`);
+      } else {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(new Blob([text], { type: "text/markdown" }));
+        a.download = `ari-chat-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.md`;
+        document.body.appendChild(a); a.click(); a.remove();
+        setNote("saved to your downloads");
+      }
+    } catch (e) { setNote(e instanceof Error ? e.message : String(e)); }
+  };
   const last = [...turns].reverse().find((t) => t.role === "ari");
   const open = last?.pending && last.text !== null ? last : null;
   const title = turns.find((t) => t.role === "you")?.text ?? "new chat";
@@ -212,6 +239,8 @@ export function AriView({ conv, onBack, onNew, onSelect, onView, compact = false
         <span className="pt">ari</span>
         <span className="chat-title" title={title}>{title}</span>
         <div className="tools">
+          {turns.length > 0 && <button type="button" className="btn" title="Copy this chat with what Ari did, errors and logs (secrets removed) to paste to Claude" onClick={() => exportChat("copy")}>copy report</button>}
+          {turns.length > 0 && !/Android/i.test(navigator.userAgent) && <button type="button" className="btn" title="Save this chat with what Ari did, errors and logs (secrets removed) as a file" onClick={() => exportChat("save")}>save report</button>}
           <button type="button" className="btn" onClick={() => { stopSpeaking(); onNew(newConv()); }}>+ new chat</button>
         </div>
       </div>
@@ -243,6 +272,7 @@ export function AriView({ conv, onBack, onNew, onSelect, onView, compact = false
           </div>
         )}
         {err && <div className="tip bad">{err}</div>}
+        {note && <div className="tip">{note}</div>}
       </div>
       <form className="ari-in" onSubmit={(e) => { e.preventDefault(); send(text); }}>
         <span className="caret">›</span>
@@ -274,9 +304,8 @@ export function EarsButton() {
         pause listening</button>;
 }
 
-// Ari's settings (voice, pill), your schedules and what Ari remembers: on the chat list page.
+// Ari's settings (voice), your schedules and what Ari remembers: on the chat list page.
 function AriSettings() {
-  const look = usePillLook();
   const [piper, setPiper] = useState(() => pref("piper", true));
   const [vs, setVs] = useState<VoiceStatus>(voiceStatus);
   useEffect(() => {
@@ -305,16 +334,6 @@ function AriSettings() {
         <div className="ari-set">
           <a className="btn" href="#voice" title="Read sentences aloud so Ari learns your accent and names">train on my voice</a>
           <EarsButton />
-          <span className="pill-pick" role="group" aria-label="Ari pill look">pill
-            {(["pulse", "comet"] as const).map((l) => (
-              <button key={l} type="button" className="btn" aria-pressed={look === l}
-                onClick={() => {  // pick it, and show it for a moment
-                  setPillLook(l);
-                  ariSet(l === "pulse" ? "speaking" : "thinking", `This is the ${l} look.`);
-                  setTimeout(() => { if (ariNow().text === `This is the ${l} look.`) ariSet("idle"); }, 3500);
-                }}>{l}</button>
-            ))}
-          </span>
           {vs.voice && <label title="Piper: Argus's own natural voice (off: the browser's voice)"><input type="checkbox" checked={piper} onChange={(e) => { setPiper(e.target.checked); setPref("piper", e.target.checked); }} /> natural voice</label>}
           {vs.voice && piper && <VoicePick />}
           {vs.hearing === "whisper" && <span className="muted">{vs.whisper_ready ? "Whisper hears you" : "Whisper: the PC is off, the browser hears you"}</span>}

@@ -112,3 +112,81 @@ def test_shortcut_icons_follow_what_they_do():
     assert [icon_for(a) for a in ("show:inbox", "show:map", "routine:work mode", "run:downloads-organizer:sort",
                                   "power:sleep", "power:shutdown", "url:https://x.y", "phone:ring", "odd")] == \
         ["inbox", "grid", "spark", "bolt", "moon", "power", "globe", "bell", "dot"]
+
+
+def test_after_answering_the_island_shows_it_still_listens():
+    from argus.ari_popup import FOLLOW_S
+
+    st = AriState()
+    st.apply([{"kind": "ari.state", "data": {"phase": "done", "text": "It's 31 degrees."}}], 0.0)
+    st.apply([{"kind": "ari.state", "data": {"phase": "following"}}], 1.0)
+    assert st.phase == "following" and st.text == "It's 31 degrees."  # the answer stays on show
+    assert not st.fold_due(1.0 + FOLLOW_S - 1) and st.fold_due(1.0 + FOLLOW_S + 1)
+
+
+def test_talk_reports_the_follow_up_window_once_the_answer_is_spoken():
+    import numpy as np
+
+    from argus import voice_live as vl
+
+    said = []
+
+    class P:
+        busy, text = False, ""
+
+        def say(self, parts):
+            pass
+
+        def pause(self):
+            pass
+
+        def resume(self):
+            pass
+
+        def stop(self):
+            pass
+
+    now = [0.0]
+    talk = vl.Talk(turns=vl.Turns(), transcribe=lambda a: "Hey Ari, what time is it", wake_rest=lambda t: "what time",
+                   ask=lambda q: {"reply": "Half past three."}, player=P(), report=said.append,
+                   clock=lambda: now[0])
+    talk._turn(np.zeros(10, np.float32))
+    talk.tick()
+    talk.tick()
+    assert said[-1] == "following" and said.count("following") == 1
+    now[0] = 1000
+    talk.tick()
+    assert said[-1] == "idle"
+
+
+def test_the_stop_button_quietens_ari_and_drops_the_answer(tmp_path, monkeypatch):
+    from argus import ari_listen
+    from argus.ari_listen import AriClient
+    from argus.ari_popup import STOPPABLE
+
+    assert "speaking" in STOPPABLE and "thinking" in STOPPABLE and "listening" not in STOPPABLE
+    with Server(make(tmp_path, monkeypatch).open()) as srv:
+        cl = client(srv.url)
+        r = cl.post("/ari/stop", {"job": ""})
+        assert r == {"ok": True, "cancelled": False}
+        assert [e["kind"] for e in cl.get("/events?kinds=ari.stop")["events"]] == ["ari.stop"]
+        assert states(cl)[-1][0] == "idle"  # the island and the pill go quiet too
+        # a job being worked on is cancelled
+        job = cl.post("/ari", {"text": "what is a mutex in one line"})["job_id"]
+        assert cl.post("/ari/stop", {"job": job})["cancelled"] is True
+        assert cl.get(f"/jobs/{job}")["state"] == "cancelled"
+
+    # the listener: an answer still being waited for is dropped when Stop was pressed meanwhile
+    client_ = AriClient("http://127.0.0.1:9", None, tmp_path / "conv")
+    calls = []
+
+    def fake_req(method, path, body=None, timeout=30):
+        calls.append(path)
+        if method == "POST":
+            return b'{"conv": "c1", "job_id": "j1", "reply": null}'
+        ari_listen.STOPPED_AT[0] = ari_listen.time.monotonic() + 1  # pressed while waiting
+        return b'{"events": [], "turns": []}'
+
+    client_._req = fake_req  # type: ignore[method-assign]
+    out = client_.say("explain mutex")
+    assert out == {"reply": "", "stopped": True}

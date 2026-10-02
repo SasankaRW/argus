@@ -27,7 +27,7 @@ from typing import Any
 from .config import Config
 from .db import Store
 from .events import insert_event
-from .outbox import add_message, ntfy_message
+from .outbox import add_message, phone_message
 from .registry import _upsert_component
 
 log = logging.getLogger("argus.power")
@@ -144,7 +144,7 @@ class PowerManager:
                 self._set(conn, now, "warned", idle_since=self.idle_since, shutdown_at=now + warn)
                 insert_event(conn, now, "power.shutdown_warned", src="power", dst="pc", data={"at": now + warn})
                 link = (self.cfg.approvals.public_url or "").rstrip("/")
-                add_message(conn, now, "ntfy", ntfy_message(
+                add_message(conn, now, "phone", phone_message(
                     f"PC shuts down at {at}",
                     f"Idle for {round(idle_for / 60)} min. Open Helios > Power to keep it on.",
                     tags=["zzz"], click=f"{link}/helios/#power" if link else None), dedupe_key=f"power-warn:{int(now)}")

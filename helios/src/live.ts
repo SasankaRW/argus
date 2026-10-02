@@ -129,10 +129,15 @@ export function useArgus() {
   useEffect(() => {
     loadStatus();
     connect();
-    const iv = window.setInterval(loadStatus, 5000);
+    // the status every 5 s, but not while the tab is hidden (no point, and it keeps the PC busy); at once on return
+    const iv = window.setInterval(() => { if (!document.hidden) loadStatus(); }, 5000);
+    const back = () => { if (!document.hidden) loadStatus(); };
+    document.addEventListener("visibilitychange", back);
     // connect() may still be waiting for /map when this unmounts (React StrictMode does that in dev): bumping the
     // generation stops it from starting a second stream afterwards
-    return () => { gen.current++; window.clearInterval(iv); stream.current?.stop(); };
+    return () => {
+      gen.current++; window.clearInterval(iv); document.removeEventListener("visibilitychange", back); stream.current?.stop();
+    };
   }, [connect, loadStatus]);
 
   return { phase, authError, setAuthError, status, map, events, pulses, active, conn, reconnect: connect };

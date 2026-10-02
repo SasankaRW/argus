@@ -10,6 +10,65 @@ function ago(t: number) {
   return `${Math.floor(s / 86400)} d`;
 }
 
+// ---------------------------------------------------------------- Notifications: what was sent to the phone
+
+type Note = { id: string; title: string; text: string; priority: number; click: string | null; at: number;
+  delivered_at: number | null; state: "waiting" | "delivered" | "dropped"; approval_id: string | null; approval_state: string | null };
+type NoteData = { notifications: Note[]; phone: { connected: boolean; last_seen: number; device: string } };
+
+export function NotificationsView({ events }: { events: ArgusEvent[] }) {
+  const [d, setD] = useState<NoteData | null>(null);
+  const [only, setOnly] = useState<string>("all");
+  const [msg, setMsg] = useState<string | null>(null);
+  const [review, setReview] = useState<string | null>(null);
+  const load = useCallback(() => { api<NoteData>("/phone/notifications?limit=100").then(setD).catch(() => setD({ notifications: [], phone: { connected: false, last_seen: 0, device: "" } })); }, []);
+  const last = events.filter((e) => /^(outbox|approval)\./.test(e.kind)).map((e) => e.seq).pop() ?? 0;
+  useEffect(load, [load, last]);
+  useEffect(() => { const id = setInterval(load, 20000); return () => clearInterval(id); }, [load]);
+  const test = async () => {
+    try { await api("/outbox/test", { method: "POST" }); setMsg("sent: it appears on the phone in a moment"); } catch { setMsg("couldn't queue it"); }
+    setTimeout(load, 1500);
+  };
+  const items = (d?.notifications ?? []).filter((n) => only === "all" || n.state === only || (only === "important" && n.priority >= 4));
+  const waiting = d?.notifications.filter((n) => n.state === "waiting").length ?? 0;
+  const ph = d?.phone;
+  return (
+    <section className="panel inboxp" aria-label="Notifications">
+      <div className="ph">
+        <span className="pt">notifications</span>
+        <span className="muted">
+          {ph?.connected ? `phone connected${ph.device ? ` · ${ph.device}` : ""}` : ph?.last_seen ? `phone last seen ${ago(ph.last_seen)} ago` : "phone not connected yet"}
+          {waiting ? ` · ${waiting} waiting for it` : ""}
+        </span>
+        <div className="tools seg-f">
+          {["all", "important", "waiting", "delivered"].map((k) => (
+            <button key={k} type="button" className="btn" aria-pressed={only === k} onClick={() => setOnly(k)}>{k}</button>
+          ))}
+          <button type="button" className="btn" onClick={test}>send test</button>
+        </div>
+      </div>
+      <div className="ibody">
+        {msg && <div className="empty-note">$ {msg}</div>}
+        {d && items.length === 0 && <div className="empty-note">$ nothing here yet. Approvals, failures and reminders show up here and on the phone.</div>}
+        {items.map((n) => (
+          <div key={n.id} className="irow">
+            <div className="irow-h">
+              <span className={`ikind ${n.priority >= 4 ? "approval" : "lesson"}`}>{n.priority >= 5 ? "urgent" : n.priority >= 4 ? "important" : n.state}</span>
+              <b className="it">{n.title}</b>
+              <span className="muted">{n.state === "waiting" ? "waiting for the phone" : n.state === "dropped" ? "never collected" : "delivered"} · {ago(n.at)}</span>
+            </div>
+            {n.text && <div className="ibox" style={{ whiteSpace: "pre-wrap" }}>{n.text}</div>}
+            {n.approval_id && n.approval_state === "pending" && (review === n.id
+              ? <div className="ibox"><ApprovalCard id={n.approval_id} onDone={() => { setReview(null); load(); }} /></div>
+              : <div className="iact"><button type="button" className="primary" onClick={() => setReview(n.id)}>review &amp; decide</button></div>)}
+            {n.approval_id && n.approval_state && n.approval_state !== "pending" && <div className="iact"><span className="muted">{n.approval_state}</span></div>}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 // ---------------------------------------------------------------- Inbox: everything waiting for you
 
 type Score = { passed: number; total: number } | null;
@@ -104,8 +163,8 @@ function fmtScore(v?: Score) { return v ? `${v.passed}/${v.total}` : "—"; }
 
 // ---------------------------------------------------------------- Settings: Argus's own, over argus.yaml
 
-type Setting = { key: string; group: string; label: string; type: "bool" | "time" | "choice" | "int" | "number" | "text";
-  options?: string[]; min?: number; max?: number; value: unknown; default: unknown; changed: boolean };
+type Setting = { key: string; group: string; label: string; type: "bool" | "time" | "choice" | "int" | "number" | "text" | "longtext";
+  options?: string[]; placeholder?: string; min?: number; max?: number; value: unknown; default: unknown; changed: boolean };
 
 export function SettingsView() {
   const [rows, setRows] = useState<Setting[] | null>(null);
@@ -151,7 +210,7 @@ export function SettingsView() {
             <div key={g} className="setgroup">
               <div className="sect">{g.toLowerCase()}</div>
               {list.map((s) => (
-                <div key={s.key} className={`setrow${s.key in draft ? " dirty" : ""}${s.type === "text" ? " wide" : ""}`}>
+                <div key={s.key} className={`setrow${s.key in draft ? " dirty" : ""}${s.type === "text" ? " wide" : s.type === "longtext" ? " long" : ""}`}>
                   <label className="setl" htmlFor={`set-${s.key}`}>
                     {s.label}
                     <span className="setk mono">{s.key}{s.changed ? " · changed" : ""}</span>
@@ -170,8 +229,52 @@ export function SettingsView() {
           ))}
         </div>
       </section>
+      <AriHealth />
       <ToolTest />
     </div>
+  );
+}
+
+type HealthRow = { name: string; level: "ok" | "warn" | "bad"; detail: string; fix: string };
+type Health = { at: number; ok: boolean; problems: number; checks: HealthRow[] };
+
+// Ari's setup, checked: Ollama and its model, web search, the voice, Whisper, the listener, and whether the local
+// model still picks the right tool. Also runs by itself every morning; the phone hears only when something is wrong.
+function AriHealth() {
+  const [h, setH] = useState<Health | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => { api<{ health: Health | null }>("/ari/health").then((r) => setH(r.health)).catch(() => {}); }, []);
+  const run = async () => {
+    setBusy(true); setErr(null);
+    try { setH((await api<{ health: Health }>("/ari/health", { method: "POST", body: "{}" })).health); }
+    catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    setBusy(false);
+  };
+  const bad = h?.checks.filter((c) => c.level !== "ok").length ?? 0;
+  return (
+    <section className="panel ttest">
+      <div className="ph">
+        <span className="pt">check ari</span>
+        <span className="muted">Ollama, web search, the voice, Whisper, the listener, and tool picking{h ? ` · last ${new Date(h.at * 1000).toLocaleString([], { hour: "2-digit", minute: "2-digit", day: "numeric", month: "short" })}` : ""}</span>
+        <div className="tools"><button type="button" className="primary" disabled={busy} onClick={run}>{busy ? "checking…" : "check"}</button></div>
+      </div>
+      {err && <div className="tip bad setp-err">{err}</div>}
+      {busy && <div className="tip">Asking the services and the model a few questions… about ten seconds.</div>}
+      {h && (
+        <div className="ttrows">
+          <div className={`ttsum mono ${bad ? "bad" : "ok"}`}>{bad ? `${bad} to look at` : "all fine"}</div>
+          {h.checks.map((c) => (
+            <div key={c.name} className={`ttrow${c.level === "ok" ? "" : " bad"}`}>
+              <i aria-hidden="true">{c.level === "ok" ? "✓" : c.level === "warn" ? "!" : "✗"}</i>
+              <span className="mono">{c.name}</span>
+              <span className="muted">{c.level}</span>
+              <span className="ttabout">{c.detail}{c.fix ? ` — ${c.fix}` : ""}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -256,6 +359,9 @@ function Field({ s, value, onChange }: { s: Setting; value: unknown; onChange: (
   if (s.type === "int" || s.type === "number") {
     return <input id={id} type="number" value={String(value ?? "")} min={s.min} max={s.max} step={s.type === "int" ? 1 : "any"}
       onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))} />;
+  }
+  if (s.type === "longtext") {
+    return <textarea id={id} rows={6} value={String(value ?? "")} placeholder={s.placeholder} onChange={(e) => onChange(e.target.value)} />;
   }
   return <input id={id} value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} />;
 }

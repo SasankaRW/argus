@@ -75,6 +75,21 @@ class FakeOllama:
                     self._send(500, {"error": "boom"})
                     return
                 content = what if isinstance(what, str) else json.dumps(what)
+                if body.get("stream"):  # like Ollama: one JSON line per piece, then a last line with the totals
+                    lines = [{"model": model, "message": {"role": "assistant", "content": content[i:i + 8]},
+                              "done": False} for i in range(0, len(content), 8)]
+                    lines.append({"model": model, "message": {"role": "assistant", "content": ""}, "done": True,
+                                  "eval_count": 7})
+                    raw = "".join(json.dumps(x) + "\n" for x in lines).encode()
+                    try:
+                        self.send_response(200)
+                        self.send_header("Content-Type", "application/x-ndjson")
+                        self.send_header("Content-Length", str(len(raw)))
+                        self.end_headers()
+                        self.wfile.write(raw)
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass
+                    return
                 self._send(200, {"model": model, "message": {"role": "assistant", "content": content},
                                  "done": True, "eval_count": 7})
 
@@ -123,92 +138,50 @@ def fake_claude(tmp: Path, mode: str = "ok", result: str = DEFAULT_RESULT) -> li
     return [sys.executable, str(script)]
 
 
-class FakeNtfy:
-    """A tiny ntfy server.
+class FakePhoneApp:
+    """What the Argus phone app does: collects its notifications from `GET /phone/inbox`, acknowledges them and
+    taps their buttons. Used with a running Argus (`base` is its URL)."""
 
-    POST /            JSON publish (what Argus sends); recorded in `messages`. `fail_next` makes the next N fail.
-    POST /<topic>     plain-text publish (what the phone's http buttons do); kept per topic.
-    GET  /<topic>/json?poll=1&since=<id|unix time>   the cached messages after `since`, one JSON per line.
-    """
-
-    def __init__(self, fail_next: int = 0):
+    def __init__(self, base: str, token: str = "tok"):
+        self.base = base.rstrip("/")
+        self.token = token
         self.messages: list[dict] = []
-        self.topics: dict[str, list[dict]] = {}
-        self.polls: list[str] = []
-        self.fail_next = fail_next
-        self.headers: list[dict] = []
-        outer = self
 
-        class H(BaseHTTPRequestHandler):
-            def log_message(self, *a):
-                pass
-
-            def _reply(self, code: int, body: bytes, ctype: str = "application/json"):
-                self.send_response(code)
-                self.send_header("Content-Type", ctype)
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-
-            def do_POST(self):
-                raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
-                if outer.fail_next > 0:
-                    outer.fail_next -= 1
-                    self._reply(500, b'{"error":"boom"}')
-                    return
-                topic = self.path.strip("/")
-                if topic:  # plain publish to a topic
-                    msg = outer.publish(topic, raw.decode())
-                    self._reply(200, json.dumps(msg).encode())
-                    return
-                body = json.loads(raw)
-                outer.messages.append(body)
-                outer.headers.append(dict(self.headers))
-                self._reply(200, json.dumps({"id": str(len(outer.messages)), "event": "message"}).encode())
-
-            def do_GET(self):
-                from urllib.parse import parse_qs, urlparse
-
-                u = urlparse(self.path)
-                topic = u.path.strip("/").removesuffix("/json")
-                since = parse_qs(u.query).get("since", ["all"])[0]
-                outer.polls.append(since)
-                msgs = outer.topics.get(topic, [])
-                ids = [m["id"] for m in msgs]
-                if since in ids:
-                    msgs = msgs[ids.index(since) + 1:]
-                elif since.isdigit():
-                    msgs = [m for m in msgs if m["time"] >= int(since)]
-                self._reply(200, "".join(json.dumps(m) + "\n" for m in msgs).encode(), "application/x-ndjson")
-
-        with socket.socket() as s:
-            s.bind(("127.0.0.1", 0))
-            self.port = s.getsockname()[1]
-        self.url = f"http://127.0.0.1:{self.port}"
-        self.server = ThreadingHTTPServer(("127.0.0.1", self.port), H)
-        self.server.daemon_threads = True
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
-
-    def publish(self, topic: str, text: str) -> dict:
-        lst = self.topics.setdefault(topic, [])
-        msg = {"id": f"m{len(lst) + 1:04d}", "time": int(time.time()), "event": "message", "topic": topic,
-               "message": text}
-        lst.append(msg)
-        return msg
-
-    def tap(self, action: dict) -> int:
-        """What the ntfy app does for an http button."""
+    def _call(self, method: str, path: str, body: dict | None = None, auth: bool = True) -> tuple[int, dict]:
+        import urllib.error
         import urllib.request
 
-        req = urllib.request.Request(action["url"], data=(action.get("body") or "").encode(),
-                                     method=action.get("method", "POST"))
-        with urllib.request.urlopen(req, timeout=5) as r:
-            return r.status
+        data = None if method == "GET" else (json.dumps(body).encode() if body is not None else b"")
+        req = urllib.request.Request(self.base + path, data=data, method=method)
+        if auth:
+            req.add_header("Authorization", f"Bearer {self.token}")
+        if body is not None:
+            req.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.status, json.loads(r.read() or b"{}")
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read() or b"{}")
 
-    def __enter__(self) -> FakeNtfy:
-        self.thread.start()
-        return self
+    def pull(self, wait: float = 0) -> list[dict]:
+        """One round of the app's loop: ask, remember, acknowledge. Returns the new messages."""
+        code, out = self._call("GET", f"/phone/inbox?device=test-phone&wait={wait}")
+        assert code == 200, out
+        got = out["messages"]
+        if got:
+            self._call("POST", "/phone/inbox/ack", {"ids": [m["id"] for m in got]})
+            self.messages.extend(got)
+        return got
 
-    def __exit__(self, *exc) -> None:
-        self.server.shutdown()
-        self.server.server_close()
+    def wait_messages(self, n: int, timeout: float = 8.0) -> list[dict]:
+        end = time.monotonic() + timeout
+        while len(self.messages) < n and time.monotonic() < end:
+            self.pull(wait=0.5)
+        return self.messages
+
+    def tap(self, action: dict) -> tuple[int, dict]:
+        """A button: the url is a path on Argus (the app puts its own address in front); no Argus token is sent,
+        the one-time token is in the url."""
+        url = action["url"]
+        path = url if url.startswith("/") else "/" + url.split("/", 3)[3]
+        return self._call(action.get("method", "POST"), path, auth=False)

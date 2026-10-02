@@ -242,7 +242,8 @@ class Tools:
                     "copy_to": a.cfg.backup.copy_to}
 
         return [
-            Tool("backup_status", "Argus's own backups: how many, the newest and how many hours ago it was made.",
+            Tool("backup_status",
+                 "Is the backup okay? Argus's own backups: how many, the newest and how many hours ago it was made.",
                  fn=backups),
             Tool("argus_status", "Argus right now: health, workers, what runs, what is queued, what waits for the "
                  "user, the PC's power state.", fn=status),

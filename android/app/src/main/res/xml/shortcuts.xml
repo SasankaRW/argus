@@ -1,5 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut android:shortcutId="notifications" android:enabled="true" android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_notes" android:shortcutLongLabel="@string/shortcut_notes_long">
+        <intent android:action="dev.argus.companion.OPEN"
+            android:targetPackage="dev.argus.companion" android:targetClass="dev.argus.companion.MainActivity">
+            <extra android:name="path" android:value="/helios/?app=1#notifications" />
+        </intent>
+    </shortcut>
     <shortcut android:shortcutId="settings" android:enabled="true" android:icon="@mipmap/ic_launcher"
         android:shortcutShortLabel="@string/shortcut_short" android:shortcutLongLabel="@string/shortcut_settings">
         <intent android:action="dev.argus.companion.SETTINGS"

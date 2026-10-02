@@ -44,23 +44,64 @@ class Reply:
     meta: dict[str, Any] = field(default_factory=dict)
 
 
+def _streamed(resp, on_text) -> dict[str, Any]:
+    """Ollama's streamed answer (one JSON object per line) read as it comes; the last line carries the totals.
+    Returns what a non-streamed answer would have been."""
+    text, last = "", {}
+    for line in resp:
+        line = line.strip()
+        if not line:
+            continue
+        last = json.loads(line)
+        if "error" in last:
+            return last
+        piece = (last.get("message") or {}).get("content", "")
+        if piece:
+            text += piece
+            try:
+                on_text(text)
+            except Exception:  # noqa: BLE001 - a listener's problem never breaks the answer
+                pass
+        if last.get("done"):
+            break
+    return {**last, "message": {"role": "assistant", "content": text}}
+
+
+def context_for(system: str, messages: list[dict[str, Any]], schema: dict | None = None, base: int = 8192) -> int:
+    """The context size to ask for: always `base` (one size, so Ollama never reloads the model to change it), more
+    only for a prompt too long for it (Ollama would quietly cut it, and the question with it). About 3 characters
+    a token, plus room for the answer."""
+    size = len(system) + sum(len(str(m.get("content") or "")) for m in messages)
+    size += len(json.dumps(schema)) if schema else 0
+    est = size // 3 + 1024
+    n = base
+    while n < est and n < 32768:
+        n *= 2
+    return n
+
+
 class OllamaProvider:
     kind = "ollama"
 
-    def __init__(self, url: str, model: str, *, timeout: float = 120, keep_alive: str = "10m"):
+    def __init__(self, url: str, model: str, *, timeout: float = 120, keep_alive: str = "10m", num_ctx: int = 8192):
+        self.num_ctx = num_ctx
         self.url = url.rstrip("/")
         self.model = model
         self.timeout = timeout
         self.keep_alive = keep_alive
 
-    def chat(self, system: str, messages: list[dict[str, Any]], schema: dict | None = None) -> Reply:
+    def chat(self, system: str, messages: list[dict[str, Any]], schema: dict | None = None, *,
+             on_text: Any = None) -> Reply:
+        """`on_text(text_so_far)`: called as the answer arrives (Ollama streams it), so a reply can be spoken
+        before it is finished."""
         body: dict[str, Any] = {
             "model": self.model,
             "messages": [{"role": "system", "content": system}, *messages],
-            "stream": False,
+            "stream": on_text is not None,
             "keep_alive": self.keep_alive,
             "options": {"temperature": 0},
         }
+        body["options"]["num_ctx"] = context_for(system, messages, schema, self.num_ctx)
         if re.search(r"qwen3(?!-coder)|deepseek-r1", self.model, re.I):
             body["think"] = False  # these think out loud first by default: many seconds before a short answer
         if schema is not None:
@@ -70,7 +111,7 @@ class OllamaProvider:
         t0 = time.perf_counter()
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                data = json.loads(resp.read() or b"{}")
+                data = _streamed(resp, on_text) if on_text is not None else json.loads(resp.read() or b"{}")
         except urllib.error.HTTPError as e:
             detail = e.read().decode(errors="replace")[:300]
             if e.code == 404:
@@ -86,7 +127,8 @@ class OllamaProvider:
         if "error" in data:
             raise ModelUnavailable(f"Ollama: {data['error']}")
         text = (data.get("message") or {}).get("content", "")
-        meta = {k: data[k] for k in ("eval_count", "prompt_eval_count", "total_duration", "load_duration")
+        meta = {k: data[k] for k in ("eval_count", "prompt_eval_count", "total_duration", "load_duration",
+                                       "prompt_eval_duration", "eval_duration")
                 if k in data}
         return Reply(text, latency, meta)
 

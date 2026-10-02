@@ -8,6 +8,8 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.ConnectivityManager
+import android.net.Network
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
@@ -17,8 +19,11 @@ import java.io.IOException
 import kotlin.concurrent.thread
 
 /**
- * Keeps the phone connected to Argus as a worker with the capability "phone": asks for a phone job (waiting up to
- * 25 s), runs it, reports the result, and asks again. Only outgoing requests to your Argus; nothing listens.
+ * Keeps the phone connected to Argus, with two loops that only make outgoing requests to your Argus (nothing
+ * listens, nothing goes through an outside service):
+ *  - the inbox: asks for notifications (waiting up to 25 s), shows them, acknowledges them, asks again, so they
+ *    arrive with the app closed;
+ *  - the worker (when "let Argus use this phone" is on): capability "phone", runs the phone plugin's jobs.
  */
 class WorkerService : Service() {
 
@@ -28,7 +33,7 @@ class WorkerService : Service() {
         private const val TAG = "argus-worker"
 
         fun start(ctx: Context) {
-            if (!Prefs(ctx).ready || !Prefs(ctx).worker) return
+            if (!Prefs(ctx).ready) return
             ctx.startForegroundService(Intent(ctx, WorkerService::class.java))
         }
 
@@ -40,31 +45,94 @@ class WorkerService : Service() {
                 NotificationManager.IMPORTANCE_MIN).apply { setShowBadge(false) })
             nm.createNotificationChannel(NotificationChannel(CHANNEL_ASK, "Ari asks",
                 NotificationManager.IMPORTANCE_HIGH))
+            Notifier.channels(ctx)
         }
     }
 
     @Volatile private var running = false
     private var loop: Thread? = null
+    private var inboxLoop: Thread? = null
+    private val workerPause = Pause()
+    private val inboxPause = Pause()
+    private var lastText = "connecting…"
+    private var netCallback: ConnectivityManager.NetworkCallback? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         channels(this)
-        show("connecting…")
+        show(lastText)  // Android wants startForeground after every startForegroundService
         if (!running) {
             running = true
-            loop = thread(name = "argus-worker", isDaemon = true) { work() }
+            if (Prefs(this).worker) loop = thread(name = "argus-worker", isDaemon = true) { work() }
+            inboxLoop = thread(name = "argus-inbox", isDaemon = true) { inbox() }
+            // a network came back (wifi, Tailscale, mobile data): don't wait out the back-off
+            val cb = object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    workerPause.kick()
+                    inboxPause.kick()
+                }
+            }
+            runCatching { getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(cb) }
+            netCallback = cb
         }
+        KeepAlive.schedule(this)
         return START_STICKY
     }
 
     override fun onDestroy() {
         running = false
         loop?.interrupt()
+        inboxLoop?.interrupt()
+        netCallback?.let { runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(it) } }
         super.onDestroy()
     }
 
+    /** The notification inbox: what Argus has for the phone, shown as notifications, then acknowledged. */
+    private fun inbox() {
+        val prefs = Prefs(this)
+        val api = Api(prefs.url, prefs.token)
+        val device = workerId()
+        var backoff = 5_000L
+        while (running) {
+            try {
+                val r = api.call("GET", "/phone/inbox?device=$device&wait=25&limit=20", timeoutMs = 45_000)
+                if (r.status == 401 || r.status == 403) {
+                    inboxPause.sleep(60_000)
+                    continue
+                }
+                if (r.status >= 400) throw IOException("inbox: HTTP ${r.status}")
+                backoff = 5_000L
+                val msgs = r.json().optJSONArray("messages") ?: JSONArray()
+                if (msgs.length() == 0) continue
+                val shown = JSONArray()
+                for (i in 0 until msgs.length()) {
+                    val m = msgs.getJSONObject(i)
+                    try {
+                        Notifier.show(this, m)
+                        shown.put(m.getString("id"))
+                    } catch (e: Exception) {
+                        Log.w(TAG, "can't show a notification", e)  // left queued: shown once Android allows it
+                    }
+                }
+                if (shown.length() > 0) api.post("/phone/inbox/ack", JSONObject().put("ids", shown))
+                if (shown.length() == 0) inboxPause.sleep(30_000)
+            } catch (e: InterruptedException) {
+                return
+            } catch (e: Exception) {
+                Log.w(TAG, "inbox: can't reach Argus", e)
+                try {
+                    inboxPause.sleep(backoff)
+                } catch (_: InterruptedException) {
+                    return
+                }
+                backoff = minOf(backoff * 2, 120_000L)
+            }
+        }
+    }
+
     private fun show(text: String) {
+        lastText = text
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE)
         val n = Notification.Builder(this, CHANNEL_ON)
@@ -96,17 +164,17 @@ class WorkerService : Service() {
             try {
                 if (System.currentTimeMillis() - registeredAt > 10 * 60_000) {
                     val r = api.post("/workers/register", JSONObject().put("id", id).put("host", Build.MODEL ?: "phone")
-                        .put("capabilities", caps).put("version", "app-1.0"))
+                        .put("capabilities", caps).put("version", "app-1.1"))
                     if (r.status == 401 || r.status == 403) {
                         show("the token was refused: open Argus to fix it")
-                        Thread.sleep(60_000)
+                        workerPause.sleep(60_000)
                         continue
                     }
                     if (r.status >= 400) throw IOException("register: HTTP ${r.status}")
                     registeredAt = System.currentTimeMillis()
                     show("connected")
                 }
-                val claim = api.post("/workers/$id/claim", JSONObject().put("capabilities", caps).put("wait", 25),
+                val claim = api.post("/workers/$id/claim", JSONObject().put("capabilities", caps).put("plugins", JSONArray().put("phone")).put("wait", 25),
                     timeoutMs = 45_000)
                 backoff = 5_000L
                 if (claim.status == 204) continue
@@ -119,7 +187,7 @@ class WorkerService : Service() {
                 show("can't reach Argus, trying again…")
                 registeredAt = 0L
                 try {
-                    Thread.sleep(backoff)
+                    workerPause.sleep(backoff)
                 } catch (_: InterruptedException) {
                     return
                 }

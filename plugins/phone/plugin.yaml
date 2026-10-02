@@ -3,10 +3,10 @@ name: Phone
 version: 1.0.0
 kind: workflow
 argus_api: ">=1.0 <2.0"
-description: Lets Ari do things on your phone through the Argus app (android/) - battery and network, ring it loudly, Do Not Disturb, the torch, a timer, open an app or a link.
+description: Lets Ari do things on your phone through the Argus app (android/) - battery and network, ring it loudly, volume, media, Do Not Disturb, the torch, a timer, open an app or a link, and (once you allow it in Android) press buttons, read the screen, tap and type.
 runs_on: phone
 
-workflows: [status, ring, dnd, torch, timer, open_app, open_url]
+workflows: [status, ring, dnd, torch, timer, open_app, open_url, volume, media, lock, press, screen_text, tap_text, tap, swipe, type]
 
 permissions:
   files: {read: [], write: [], delete: none}
@@ -47,6 +47,57 @@ ari:
       workflow: open_url
       input: {url: {type: string, description: the link}}
       required: [url]
+    - name: phone_volume
+      description: Change the phone's volume (not the PC's) - set a level 0-100 or turn it up, down, mute or unmute. Music by default; ring, alarm or notification on request.
+      workflow: volume
+      input:
+        level: {type: integer, description: "0 to 100 (optional)"}
+        change: {type: string, description: '"up", "down", "mute" or "unmute" (optional)'}
+        stream: {type: string, description: '"media" (default), "ring", "alarm" or "notification"'}
+    - name: phone_media
+      description: Play, pause, skip or go back a track on the phone (not the PC).
+      workflow: media
+      input: {action: {type: string, description: '"play_pause", "next", "previous" or "stop"'}}
+      required: [action]
+    - name: phone_lock
+      description: Lock the phone's screen.
+      workflow: lock
+    - name: phone_press
+      description: Press one of the phone's system buttons - back, home, recents, notifications, quick_settings or screenshot.
+      workflow: press
+      input: {button: {type: string, description: '"back", "home", "recents", "notifications", "quick_settings" or "screenshot"'}}
+      required: [button]
+    - name: phone_screen_text
+      description: Read what is on the phone's screen right now (the text of the open app), to answer a question about it or to know what to tap.
+      workflow: screen_text
+      private: true
+    - name: phone_tap_text
+      description: Tap the button, link or item on the phone's screen with this text or label.
+      workflow: tap_text
+      input: {text: {type: string, description: the label to tap}}
+      required: [text]
+      risky: true
+    - name: phone_tap
+      description: Tap a point on the phone's screen (x and y as 0-100 percent of the width and height). Use phone_tap_text when you know the label.
+      workflow: tap
+      input:
+        x: {type: integer, description: "0 to 100, percent from the left"}
+        y: {type: integer, description: "0 to 100, percent from the top"}
+      required: [x, y]
+      risky: true
+    - name: phone_swipe
+      description: Scroll or swipe the phone's screen up, down, left or right.
+      workflow: swipe
+      input: {direction: {type: string, description: '"up", "down", "left" or "right" (the way the content moves)'}}
+      required: [direction]
+    - name: phone_type
+      description: Type text into the field that is open on the phone (add it, or replace what is there).
+      workflow: type
+      input:
+        text: {type: string, description: what to type}
+        replace: {type: boolean, description: "true to replace the field's text instead of adding"}
+      required: [text]
+      risky: true
 
 helios:
   node: {label: Phone, group: pc}
