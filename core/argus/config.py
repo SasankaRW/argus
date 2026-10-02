@@ -45,6 +45,9 @@ class OllamaConfig(_Strict):
     url: str = "http://127.0.0.1:11434"
     timeout_seconds: float = Field(120, gt=0, le=3600)
     keep_alive: str = "10m"  # how long Ollama keeps the last model loaded
+    # The context every request asks for (tokens). One size for all, so the model isn't reloaded to change it;
+    # longer prompts get more. Bigger uses more GPU memory.
+    num_ctx: int = Field(8192, ge=2048, le=131072)
 
 
 class TierConfig(_Strict):

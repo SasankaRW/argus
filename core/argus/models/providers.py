@@ -67,15 +67,14 @@ def _streamed(resp, on_text) -> dict[str, Any]:
     return {**last, "message": {"role": "assistant", "content": text}}
 
 
-def context_for(system: str, messages: list[dict[str, Any]], schema: dict | None = None) -> int | None:
-    """The context size a prompt needs, when it may not fit Ollama's usual one (4096 tokens): None for a short one,
-    so the model isn't reloaded for nothing. About 3 characters a token, plus room for the answer."""
+def context_for(system: str, messages: list[dict[str, Any]], schema: dict | None = None, base: int = 8192) -> int:
+    """The context size to ask for: always `base` (one size, so Ollama never reloads the model to change it), more
+    only for a prompt too long for it (Ollama would quietly cut it, and the question with it). About 3 characters
+    a token, plus room for the answer."""
     size = len(system) + sum(len(str(m.get("content") or "")) for m in messages)
     size += len(json.dumps(schema)) if schema else 0
     est = size // 3 + 1024
-    if est <= 4096:
-        return None
-    n = 8192
+    n = base
     while n < est and n < 32768:
         n *= 2
     return n
@@ -84,7 +83,8 @@ def context_for(system: str, messages: list[dict[str, Any]], schema: dict | None
 class OllamaProvider:
     kind = "ollama"
 
-    def __init__(self, url: str, model: str, *, timeout: float = 120, keep_alive: str = "10m"):
+    def __init__(self, url: str, model: str, *, timeout: float = 120, keep_alive: str = "10m", num_ctx: int = 8192):
+        self.num_ctx = num_ctx
         self.url = url.rstrip("/")
         self.model = model
         self.timeout = timeout
@@ -101,9 +101,7 @@ class OllamaProvider:
             "keep_alive": self.keep_alive,
             "options": {"temperature": 0},
         }
-        need = context_for(system, messages, schema)
-        if need:  # a long prompt: room for it all (Ollama would quietly cut it down and the model miss the question)
-            body["options"]["num_ctx"] = need
+        body["options"]["num_ctx"] = context_for(system, messages, schema, self.num_ctx)
         if re.search(r"qwen3(?!-coder)|deepseek-r1", self.model, re.I):
             body["think"] = False  # these think out loud first by default: many seconds before a short answer
         if schema is not None:

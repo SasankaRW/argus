@@ -572,7 +572,8 @@ def keep_warm(cfg, every: float = 240.0) -> threading.Thread | None:
     import json
     import urllib.request
 
-    body = json.dumps({"model": t1.model, "prompt": "", "keep_alive": "10m"}).encode()
+    body = json.dumps({"model": t1.model, "prompt": "", "keep_alive": "10m",  # the same context as Ari's requests
+                       "options": {"num_ctx": cfg.ollama.num_ctx}}).encode()
 
     def loop() -> None:
         while True:

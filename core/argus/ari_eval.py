@@ -101,12 +101,12 @@ def first_step(text: str, tools: list[dict], decide: Any, now: str = "", info: d
     return ("web" if step.get("need_web") else "reply"), took
 
 
-def ollama_decider(url: str, model: str) -> Any:
+def ollama_decider(url: str, model: str, num_ctx: int = 8192) -> Any:
     from .models.providers import OllamaProvider
     from .models.router import parse_json
     from .worker.think import PERSONA, PLAYBOOK, Step
 
-    p = OllamaProvider(url, model, keep_alive="10m")
+    p = OllamaProvider(url, model, keep_alive="10m", num_ctx=num_ctx)
     system = (PLAYBOOK + "\n\n" + PERSONA + "\n\nReply with only a JSON object that matches the given schema. "
               "No extra text.")
     schema = Step.model_json_schema()
@@ -172,7 +172,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Argus isn't answering at {a.url} ({e}): start it first (dev.ps1 up).", file=sys.stderr)
         return 2
     print(f"{len(tools)} tools, model {model}\n")
-    out = run(load_cases(a.cases), tools, ollama_decider(cfg.ollama.url, model))
+    out = run(load_cases(a.cases), tools, ollama_decider(cfg.ollama.url, model, cfg.ollama.num_ctx))
     out["model"] = model
     keep = cfg.db_path.parent / "ari-eval"
     keep.mkdir(parents=True, exist_ok=True)

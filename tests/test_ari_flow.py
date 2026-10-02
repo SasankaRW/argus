@@ -287,6 +287,7 @@ def test_sums_are_worked_out_in_code():
 def test_long_prompts_get_room_in_the_context():
     from argus.models.providers import context_for
 
-    assert context_for("short", [{"role": "user", "content": "hi"}]) is None
+    assert context_for("short", [{"role": "user", "content": "hi"}]) == 8192  # always the same size: no reloads
     assert context_for("x" * 12000, [{"role": "user", "content": "y" * 9000}]) == 8192
-    assert context_for("x" * 60000, []) == 32768
+    assert context_for("x" * 30000, []) == 16384  # too long for it: more
+    assert context_for("x" * 300000, []) == 32768

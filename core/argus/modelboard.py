@@ -240,6 +240,7 @@ class ModelBoard:
             "tiers": {k: v.model_dump() for k, v in m.tiers.items()},
             "chain": list(m.chain),
             "attempts_per_tier": m.attempts_per_tier,
-            "ollama": {"url": o.url, "timeout_seconds": o.timeout_seconds, "keep_alive": o.keep_alive},
+            "ollama": {"url": o.url, "timeout_seconds": o.timeout_seconds, "keep_alive": o.keep_alive,
+                       "num_ctx": o.num_ctx},
             "claude": {"command": list(c.command), "args": list(c.args), "timeout_seconds": c.timeout_seconds},
         }
