@@ -40,9 +40,14 @@ class Engine:
         self.kind, self.device = model, device
         self.m = None
         self.lock = threading.Lock()
+        self._loading = threading.Lock()
         self.clip: str | None = None
 
     def load(self):
+        with self._loading:  # the start-up warm-up and the first sentence both ask: load the model once, not twice
+            return self._load()
+
+    def _load(self):
         if self.m is None:
             import torch
 
@@ -56,7 +61,7 @@ class Engine:
 
                 self.m = ChatterboxTTS.from_pretrained(device=dev)
             self.device = dev
-            log.info("chatterbox loaded", extra={"model": self.kind, "device": dev})
+            log.info("chatterbox %s loaded on %s", self.kind, dev)
         return self.m
 
     def say(self, text: str, clip: str | None = None) -> bytes:
@@ -98,7 +103,7 @@ class Engine:
         with torch.inference_mode():
             wav = m.generate(words, **{k: v for k, v in kw.items() if k in params})
         a = np.asarray(wav.squeeze(0).float().cpu().numpy() if hasattr(wav, "cpu") else wav, dtype=np.float32)
-        log.info("said", extra={"mood": mood, "chars": len(words), "ms": int((time.perf_counter() - t0) * 1000)})
+        log.info("said [%s] %d chars in %d ms", mood, len(words), int((time.perf_counter() - t0) * 1000))
         return a.reshape(-1)
 
 

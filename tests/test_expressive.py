@@ -229,3 +229,23 @@ def test_warming_up_the_voice_says_one_word_and_waits_for_the_server(tmp_path):
     finally:
         srv.shutdown()
     assert Expressive("http://127.0.0.1:9", None, Piper()).warm(tries=2, wait=0.01) is False
+
+
+def test_the_model_is_loaded_once_even_when_two_ask_at_the_same_time():
+    import time
+
+    loads = []
+
+    class Slow(vs.Engine):
+        def _load(self):
+            if self.m is None:  # what the real one does
+                loads.append(1)
+                time.sleep(0.05)
+                self.m = object()
+            return self.m
+
+    e = Slow("turbo")
+    ts = [threading.Thread(target=e.load) for _ in range(4)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert len(loads) == 1

@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Fix: the expressive voice loaded its model twice at start-up (the warm-up and the first sentence asked at the same moment): double the GPU memory and a slower first sentence. It loads once now.
+- The voice server's log says what each sentence took ("said [calm] 52 chars in 310 ms").
 - Ari's expressive voice is warmed up when Argus starts (one short word, so the model, the voice clip and the GPU are ready before your first question), instead of the first sentence paying for it.
 - The first spoken piece is kept short (a long first sentence is cut at its first comma; "Hi." is the only thing joined to the next), so Ari starts talking sooner.
 - logs/ari.log now has a "voice made" line per sentence (characters, milliseconds, and time since the reply started), to see where speaking time goes.
