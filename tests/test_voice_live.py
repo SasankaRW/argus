@@ -329,3 +329,12 @@ def test_words_from_a_finished_turn_are_not_shown():
     talk._turn(F)  # the turn ended before the words were ready
     pending[0]()
     assert shown == []
+
+
+def test_the_first_piece_is_short_so_speech_starts_sooner():
+    long_first = "Your week's been busy, with three hundred and forty four jobs done and a lot of time saved."
+    got = vl.sentences(long_first + " Nice.")
+    assert got[0] == "Your week's been busy," and got[1].startswith("with three hundred")
+    assert vl.sentences("Your week's been busy! 344 jobs done.") == ["Your week's been busy!", "344 jobs done."]
+    assert vl.sentences("Okay. Done.") == ["Okay. Done."]  # a tiny first one is joined to the next
+    assert vl.sentences("Short one, with a comma.") == ["Short one, with a comma."]

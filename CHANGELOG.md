@@ -5,6 +5,9 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Ari's expressive voice is warmed up when Argus starts (one short word, so the model, the voice clip and the GPU are ready before your first question), instead of the first sentence paying for it.
+- The first spoken piece is kept short (a long first sentence is cut at its first comma; "Hi." is the only thing joined to the next), so Ari starts talking sooner.
+- logs/ari.log now has a "voice made" line per sentence (characters, milliseconds, and time since the reply started), to see where speaking time goes.
 - Answers to tasks are spoken as they are written, like small talk already was: when the model answers (no tool, no web), each finished sentence goes out at once, with the mood chosen before the first word. An answer the checks would refuse is never said early. (The model now writes the tool and web fields and the mood before the reply.)
 - "Hmm, let me check" comes after 0.8 s for tasks (was 1.2 s).
 - "Type hello world" goes straight to asking "Shall I type "hello world" into the window in front?" (no model guess; nothing is typed until you say yes). "What type of…", "type of…" and similar are not typing requests.

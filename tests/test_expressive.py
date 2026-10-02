@@ -212,3 +212,20 @@ def test_the_player_adds_sentences_without_cutting_off_what_it_is_saying():
             break
         threading.Event().wait(0.01)
     assert made == ["One.", "Two.", "Three."] and len(p._chunks) == 3 and p.text == "One. Two. Three."
+
+
+def test_warming_up_the_voice_says_one_word_and_waits_for_the_server(tmp_path):
+    eng = FakeEngine()
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), vs.handler(eng))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+    class Piper:
+        def say(self, text):
+            return vs.to_wav(np.zeros(100, np.float32), 22050)
+
+    try:
+        e = Expressive(f"http://127.0.0.1:{srv.server_address[1]}", tmp_path / "clip.wav", Piper())
+        assert e.warm(tries=2, wait=0.01) is True and eng.said[0][0] == "Hi."
+    finally:
+        srv.shutdown()
+    assert Expressive("http://127.0.0.1:9", None, Piper()).warm(tries=2, wait=0.01) is False

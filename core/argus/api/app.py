@@ -51,6 +51,7 @@ import hmac
 import json
 import mimetypes
 import re
+import threading
 import time
 import urllib.request
 from contextlib import asynccontextmanager
@@ -358,6 +359,8 @@ def create_app(argus: Argus) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await argus.start()
+        if argus.cfg.ari.voice_engine == "expressive":  # the voice's first sentence shouldn't pay for its start-up
+            threading.Thread(target=lambda: expressive().warm(), daemon=True, name="voice-warm").start()
         try:
             yield
         finally:

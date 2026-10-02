@@ -151,6 +151,29 @@ class Expressive:
             log.info("no voice clip", extra={"error": str(e)[:200]})
             return None
 
+    def warm(self, tries: int = 24, wait: float = 5.0) -> bool:
+        """Say one short word to the server (waiting for it to come up): its model, the voice to sound like and the
+        GPU are ready before the first real sentence, which would otherwise pay for all that."""
+        import json
+        import time
+        import urllib.request
+
+        clip = self.ensure_clip()
+        body = json.dumps({"text": "Hi.", "clip": str(clip.resolve()) if clip else ""}).encode()
+        for i in range(tries):
+            try:
+                req = urllib.request.Request(self.url + "/say", data=body, method="POST",
+                                             headers={"Content-Type": "application/json"})
+                with urllib.request.urlopen(req, timeout=120) as r:  # noqa: S310 - our own local service
+                    r.read()
+                log.info("expressive voice warmed up")
+                return True
+            except Exception as e:  # noqa: BLE001 - not up yet
+                if i == tries - 1:
+                    log.info("expressive voice not warmed up", extra={"error": str(e)[:120]})
+                time.sleep(wait)
+        return False
+
     def say(self, text: str) -> bytes | None:
         import json
         import time

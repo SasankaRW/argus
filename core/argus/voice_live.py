@@ -269,14 +269,21 @@ def echo_of(heard: str, speaking: str) -> bool:
 
 
 def sentences(text: str) -> list[str]:
-    """Split an answer to be spoken a sentence at a time (short bits are kept with the next one)."""
+    """Split an answer to be spoken a sentence at a time. The first piece stays short (it decides how soon Ari
+    starts talking): a long first sentence is cut at its first comma, and only a tiny one ("Hi.") is joined to the
+    next. Later short bits are kept with the next one (a voice reading every few words sounds choppy)."""
     parts = [p.strip() for p in re.split(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(])", text.strip()) if p.strip()]
     out: list[str] = []
     for p in parts:
-        if out and len(out[-1]) < 25:
+        if out and len(out[-1]) < (10 if len(out) == 1 else 25):
             out[-1] = f"{out[-1]} {p}"
         else:
             out.append(p)
+    if out and len(out[0]) > 60:
+        m = re.search(r"[,;:\u2014]\s+", out[0][18:])  # the first comma after at least 18 characters
+        if m and 18 + m.end() < len(out[0]) - 12:
+            cut = 18 + m.end()
+            out[0:1] = [out[0][:cut].strip(), out[0][cut:].strip()]
     return out or ([text.strip()] if text.strip() else [])
 
 
@@ -569,6 +576,7 @@ class Player:
         self._thinking = False
         self._think_t = 0
         self._ended_at = 0.0
+        self._began = time.perf_counter()
         self._was_busy = False
         self.text = ""
 
@@ -640,6 +648,7 @@ class Player:
             self._making = True
             self.text = " ".join(parts)
         self.show(self.text)
+        self._began = time.perf_counter()
         threading.Thread(target=self._make, args=(gen, parts), daemon=True, name="ari-voice").start()
 
     def add(self, parts: list[str]) -> None:
@@ -657,6 +666,7 @@ class Player:
                 self._making, start, gen = True, True, self._gen
         self.show(self.text)
         if start:
+            self._began = time.perf_counter()
             threading.Thread(target=self._make, args=(gen, parts), daemon=True, name="ari-voice").start()
 
     def _make(self, gen: int, parts: list[str]) -> None:
@@ -665,9 +675,13 @@ class Player:
         try:
             while True:
                 for part in parts:
+                    t0 = time.perf_counter()
                     got = self.synth(part)
                     if got is None:
                         continue
+                    log.info("voice made", extra={"chars": len(part), "ms": int((time.perf_counter() - t0) * 1000),
+                                                  "since_start_ms": int((time.perf_counter() - self._began) * 1000),
+                                                  "first": first})
                     audio, rate = got
                     with self._lock:
                         if gen != self._gen:
