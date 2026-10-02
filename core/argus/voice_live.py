@@ -234,6 +234,13 @@ class Turns:
                 return self._end()
         return None
 
+    def so_far(self, seconds: float = 10.0) -> Any:
+        """The last `seconds` of what you are saying now (for the live words on the island)."""
+        import numpy as np
+
+        keep = max(1, round(seconds * RATE / FRAME))
+        return np.concatenate(self._buf[-keep:]) if self._buf else np.zeros(0, dtype=np.float32)
+
     def _end(self) -> tuple[str, Any]:
         import numpy as np
 
@@ -334,6 +341,14 @@ class Talk:
     transcribe_wake: Callable[[Any], str] | None = None  # the small model, for "is this for Ari?" (first 3 s)
     on_false_barge: Callable[[], None] = lambda: None  # it was Ari's own voice: be harder to interrupt
     in_talk_until: float = 0.0
+    live_words: Callable[[Any], str] | None = None  # the small model: audio so far -> words (shown while you talk)
+    show: Callable[[str, str], None] | None = None  # (phase, text): the island's words
+    live_every_s: float = 1.0
+    run: Callable[[Callable[[], None]], None] = lambda f: threading.Thread(target=f, daemon=True).start()
+    _live_at: float = 0.0
+    _live_busy: bool = False
+    _live_text: str = ""
+    _gen: int = 0
     _following: bool = False  # "following" was reported for this answer (the island's follow-up ring)
     paused_for_barge: bool = False
     _lock: Any = field(default_factory=threading.RLock)
@@ -357,6 +372,7 @@ class Talk:
     def _frame(self, frame, voice: float) -> str | None:
         ev = self.turns.feed(frame, voice, ari_talking=self.player.busy and not self.paused_for_barge)
         if ev is None:
+            self._live()
             return None
         kind, audio = ev
         if kind == "barge":
@@ -370,7 +386,35 @@ class Talk:
             return "start"
         return self._turn(audio)
 
+    def _live(self) -> None:
+        """While you talk (in a conversation), now and then hear what you've said so far and put it on the island."""
+        if self.live_words is None or self.show is None or not self.turns.talking:
+            return
+        if not (self.in_conversation or self.paused_for_barge) or self._live_busy:
+            return
+        now = self.clock()
+        if now - self._live_at < self.live_every_s:
+            return
+        self._live_at, self._live_busy = now, True
+        audio, gen = self.turns.so_far(), self._gen
+
+        def work() -> None:
+            try:
+                text = " ".join((self.live_words(audio) or "").split())  # type: ignore[misc]
+                if gen == self._gen and self.turns.talking and text and text != self._live_text:
+                    self._live_text = text
+                    tail = text if len(text) <= 70 else "… " + text[-68:].split(" ", 1)[-1]
+                    self.show("listening", tail)  # type: ignore[misc]
+            except Exception as e:  # noqa: BLE001 - the words are a nicety
+                log.info("live words failed", extra={"error": str(e)[:100]})
+            finally:
+                self._live_busy = False
+
+        self.run(work)
+
     def _turn(self, audio) -> str | None:
+        self._gen += 1  # words still being worked out for this turn are no longer wanted
+        self._live_text = ""
         barged, self.paused_for_barge = self.paused_for_barge, False
         if not (barged or self.in_conversation) and self.transcribe_wake is not None:
             head = (self.transcribe_wake(audio[: 3 * RATE]) or "").strip()  # quick look: was it "Hey Ari …"?
@@ -408,7 +452,10 @@ class Talk:
             self.report("idle")
             return "bye"
         self._following = False
-        self.report("thinking")
+        if self.show is not None:
+            self.show("thinking", command)  # the island keeps what you said on show while Ari works
+        else:
+            self.report("thinking")
         log.info("heard", extra={"text": command})
         streamed = {"text": "", "mood": "neutral"}
 

@@ -42,12 +42,12 @@ CASES: list[tuple[str, str]] = [
     ("will it rain in Kandy tomorrow", "weather|web_search|web"),
     ("find my CV", "search_everything|find_file|search_my_files"),
     ("what did I note about the server", "find_notes|search_my_files"),
-    ("note that the router password changed", "add_note"),
+    ("note that the router password changed", "add_note|remember"),
     ("is the laptop server up", "lab_status"),
     ("what's running right now", "argus_status|list_jobs"),
     ("text Kaancha I'm running late on WhatsApp", "whatsapp_message"),
     ("any changes in my repos today", "what_changed_today|repo_status"),
-    ("add milk to the shopping list", "add_to_list"),
+    ("add milk to the shopping list", "add_to_list|shopping_list"),
     ("how much did I spend this month", "money_this_month"),
     ("who won the cricket yesterday", "web_search|web"),
     ("latest python release", "web_search|web"),
@@ -73,8 +73,9 @@ def load_cases(path: Path | None) -> list[tuple[str, str]]:
     return [(str(c["say"]), str(c["expect"])) for c in data]
 
 
-def first_step(text: str, tools: list[dict], decide: Any, now: str = "") -> tuple[str, float]:
-    """What Ari would do first with `text`: ("chat" | a tool name | "reply" | "web", seconds the model took)."""
+def first_step(text: str, tools: list[dict], decide: Any, now: str = "", info: dict | None = None) -> tuple[str, float]:
+    """What Ari would do first with `text`: ("chat" | a tool name | "reply" | "web", seconds the model took).
+    `info` gets how many tools were offered and what the model reported (prompt/output tokens, load and prompt time)."""
     from .worker.think import chatty, offered, straight_to
 
     if chatty(text):
@@ -87,6 +88,12 @@ def first_step(text: str, tools: list[dict], decide: Any, now: str = "") -> tupl
     step = decide({"message": text, "conversation_so_far": [], "you_remember": [], "now": now,
                    "tools": list(have.values())})
     took = time.perf_counter() - t0
+    if info is not None:
+        m = step.get("_meta") or {}
+        info.update({"tools": len(have), "prompt_tok": m.get("prompt_eval_count"), "out_tok": m.get("eval_count"),
+                     "load_s": round((m.get("load_duration") or 0) / 1e9, 2),
+                     "prompt_s": round((m.get("prompt_eval_duration") or 0) / 1e9, 2),
+                     "gen_s": round((m.get("eval_duration") or 0) / 1e9, 2)})
     if step.get("tool"):
         return str(step["tool"]), took
     return ("web" if step.get("need_web") else "reply"), took
@@ -105,9 +112,11 @@ def ollama_decider(url: str, model: str) -> Any:
     def decide(task: dict) -> dict:
         r = p.chat(system, [{"role": "user", "content": json.dumps(task, ensure_ascii=False)}], schema)
         try:
-            return dict(parse_json(r.text))
+            out = dict(parse_json(r.text))
         except ValueError:
-            return {}
+            out = {}
+        out["_meta"] = r.meta
+        return out
 
     return decide
 
@@ -115,12 +124,16 @@ def ollama_decider(url: str, model: str) -> Any:
 def run(cases: list[tuple[str, str]], tools: list[dict], decide: Any, log=print) -> dict:
     rows, times = [], []
     for say, expect in cases:
-        got, took = first_step(say, tools, decide, time.strftime("%A %d %B %Y, %H:%M"))
+        info: dict = {}
+        got, took = first_step(say, tools, decide, time.strftime("%A %d %B %Y, %H:%M"), info)
         ok = got in expect.split("|")
         if took:
             times.append(took)
-        rows.append({"say": say, "expect": expect, "got": got, "ok": ok, "seconds": round(took, 2)})
-        log(f"{'ok  ' if ok else 'MISS'} {took:5.2f}s  {say!r:52} -> {got}" + ("" if ok else f"  (wanted {expect})"))
+        rows.append({"say": say, "expect": expect, "got": got, "ok": ok, "seconds": round(took, 2), **info})
+        more = (f"  [{info['tools']} tools, prompt {info['prompt_tok']} tok in {info['prompt_s']} s, "
+                f"out {info['out_tok']} tok in {info['gen_s']} s, load {info['load_s']} s]") if info else ""
+        miss = "" if ok else f"  (wanted {expect})"
+        log(f"{'ok  ' if ok else 'MISS'} {took:5.2f}s  {say!r:52} -> {got}{miss}{more}")
     times.sort()
     out = {"at": time.strftime("%Y-%m-%d %H:%M"), "right": sum(r["ok"] for r in rows), "of": len(rows),
            "p50_s": round(times[len(times) // 2], 2) if times else 0.0,

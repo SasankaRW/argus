@@ -498,7 +498,8 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device) -> i
 
     talk = vl.Talk(turns=vl.Turns(finished=finished), transcribe=cmd_t, transcribe_wake=wake_t, wake_rest=wake_rest,
                    ask=ask, player=player, report=client.state, chime=lambda: player.cue(vl.chime_samples(), RATE),
-                   idle_s=float(cfg.ari.talk_idle_s), on_false_barge=gate.fooled)
+                   idle_s=float(cfg.ari.talk_idle_s), on_false_barge=gate.fooled,
+                   live_words=wake_t if cfg.ari.live_words else None, show=client.state)
     spoke_up = [0.0]
     voc_at = [time.monotonic()]
 

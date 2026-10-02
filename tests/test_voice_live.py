@@ -287,3 +287,45 @@ def test_smart_turn_download_is_checked(tmp_path, monkeypatch):
     assert vl.ensure_smart_turn(tmp_path, fetch=lambda url: b"never fetched") == got
     monkeypatch.setattr(vl, "SMART_TURN_SHA", "0" * 64)
     assert vl.ensure_smart_turn(tmp_path / "x", fetch=lambda url: wheel) is None  # tampered: not used
+
+
+def test_the_island_shows_the_words_as_you_say_them():
+    shown = []
+    talk, p, asked, heard, clock = make(heard=["Hey Ari, what's running?", "and the backups, and also the long list of "
+                                                "everything else that I wanted to ask you about today"])
+    talk.live_words = lambda a: "and the backups"
+    talk.show = lambda phase, text: shown.append((phase, text))
+    talk.run = lambda f: f()  # no thread
+    talk.live_every_s = 0.2
+    speak(talk)  # not in a conversation yet ("Hey Ari" needed): nothing is shown
+    assert shown == [("thinking", "what's running")]  # what you said stays on show while Ari works
+    shown.clear()
+    talk.in_talk_until = 1e9
+    for _ in range(round(1.0 / DT)):
+        talk.frame(F, 0.95)
+        clock.t += DT
+    assert shown and shown[-1] == ("listening", "and the backups")
+    assert len(shown) == 1  # the same words are not sent twice
+    talk.live_words = lambda a: "word " * 40
+    clock.t += 1
+    for _ in range(round(0.5 / DT)):
+        talk.frame(F, 0.95)
+    assert shown[-1][1].startswith("… ") and len(shown[-1][1]) <= 72
+
+
+def test_words_from_a_finished_turn_are_not_shown():
+    shown = []
+    talk, p, asked, heard, clock = make(heard=["thanks"])
+    talk.in_talk_until = 1e9
+    talk.show = lambda phase, text: shown.append(text)
+    pending = []
+    talk.run = pending.append
+    talk.live_words = lambda a: "old words"
+    talk.live_every_s = 0.1
+    for _ in range(round(1.0 / DT)):
+        talk.frame(F, 0.95)
+        clock.t += DT
+    assert len(pending) == 1
+    talk._turn(F)  # the turn ended before the words were ready
+    pending[0]()
+    assert shown == []

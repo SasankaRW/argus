@@ -283,6 +283,7 @@ class AriConfig(_Strict):
     # "Hey Ari" on the PC's microphone, no browser (python -m argus.ari_listen; `dev.ps1 up` starts it when on).
     listen: bool = False
     listen_wake_model: str = "tiny.en"  # listens for the wake phrase (small and fast; the command uses whisper_model)
+    live_words: bool = True  # the island shows the words as you say them (the small model hears you every second)
     follow_up: bool = True  # after Ari answers, keep listening a few seconds: carry on without "Hey Ari"
     # Talk like a conversation: after "Hey Ari" just talk back and forth, talk over Ari to interrupt, "thanks Ari"
     # ends it (also after talk_idle_s of quiet). Knows when you've finished a sentence (Smart Turn, downloaded

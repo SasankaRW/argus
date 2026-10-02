@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- The island shows the words as you say them (the small model hears you about once a second while you talk in a conversation), then keeps what you said on show while Ari thinks. `ari.live_words: false` turns it off.
+- `python -m argus.ari_eval` now also prints, per case, how many tools were offered and where the model's time went (prompt, output, load).
 - The Ari pill is gone from Helios on the phone too (and its look setting); the island on the PC shows what Ari is doing.
 - Ari talks sooner: small-talk replies stream from the model and each finished sentence is spoken while the rest is still being written; answers are picked up every 0.15 s instead of 0.5 s.
 - The island shows Ari is still listening after an answer (a ring that runs down), and keeps the answer on show meanwhile.
