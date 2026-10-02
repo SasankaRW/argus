@@ -215,7 +215,7 @@ class Registry:
                                     "waiting": waiting.get(c["id"], 0)}
                 if c["id"] == "approvals":
                     node["pending"] = pending
-                if c["id"] == "ntfy":
+                if c["id"] == "phone-app":
                     node["unsent"] = outbox.get("pending", 0) + outbox.get("sending", 0)
                     node["failed"] = outbox.get("failed", 0)
                 if c["kind"] == "model" and c["id"] in models:

@@ -291,9 +291,9 @@ function NodePanel({ id, map, status, events, onSelect }: { id: string } & Omit<
               Events. The real switch comes with the laptop.</div>
           </>
         )}
-        {n.id === "ntfy" && (
+        {n.id === "phone-app" && (
           <>
-            <KV k="Sending" v={n.unsent ?? 0} />
+            <KV k="Waiting for the phone" v={n.unsent ?? 0} />
             <KV k="Not delivered" v={<span className={n.failed ? "bad" : ""}>{n.failed ?? 0}</span>} />
           </>
         )}

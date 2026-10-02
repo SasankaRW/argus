@@ -305,6 +305,18 @@ def test_type_something_is_asked_first_and_phone_volume_is_said_plainly():
     assert not PHONE_VOLUME.search("turn the volume down") and "phone's volume" in CANT_PHONE_VOLUME
 
 
+def test_phone_volume_goes_straight_to_the_phone_tool_when_the_app_has_it():
+    from argus.worker.think import said_back, straight_to
+
+    tools = {"phone_volume": {}, "set_volume": {}}
+    assert straight_to(tools, "turn down my volume on my phone") == ("phone_volume", {"change": "down"})
+    assert straight_to(tools, "set my phone volume to 30") == ("phone_volume", {"level": 30})
+    assert straight_to(tools, "mute my phone") == ("phone_volume", {"change": "mute"})
+    assert straight_to(tools, "make my phone ringer louder") == ("phone_volume", {"change": "up", "stream": "ring"})
+    assert straight_to(tools, "volume 30") == ("set_volume", {"level": 30})  # no "phone": the PC
+    assert said_back("phone_volume", {"level": 30}, {}) == "Phone volume's at 30."
+
+
 def test_a_task_answer_is_said_while_it_is_written_unless_it_is_about_to_use_a_tool(tmp_path):
     step = {"tool": "", "args": {}, "need_web": False, "mood": "calm",
             "reply": "A mutex lets one thread in at a time. The rest wait their turn."}

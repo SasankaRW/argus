@@ -1,13 +1,16 @@
-"""The outbox: messages that leave Argus (ntfy now, webhooks later), sent exactly once.
+"""The outbox: messages that leave Argus (to the phone app, webhooks later), delivered exactly once.
 
 A message is written to the `outbox` table in the same transaction as the change that caused it (an approval
 created, a job dead), so it can never be lost: if argusd dies before sending, the row is still there and the
 sender picks it up after the restart. A `dedupe_key` stops the same message being queued twice, for example
 when a step is retried after a crash.
 
-The sender claims a row (`sending`), sends it, and marks it `sent`. A crash between the phone receiving it
-and the row being marked (milliseconds) is the only case that can repeat a message. Failures retry with
-backoff; after `ntfy.max_attempts` the row is `failed` and shows in Helios.
+The phone app does not get messages pushed: it asks (a long poll, `GET /phone/inbox`), shows them as notifications
+and acknowledges them (`POST /phone/inbox/ack`); only then is a row `sent`. Until then it waits in the table, so a
+phone that is off, asleep or off Tailscale gets everything when it is back (messages older than `notify.keep_hours`
+are dropped: an approval from two days ago is not worth a buzz). Other senders are push: the sender claims a row
+(`sending`), sends it, and marks it `sent`; failures retry with backoff and after `notify.max_attempts` the row is
+`failed` and shows in Helios.
 """
 
 from __future__ import annotations
@@ -18,8 +21,6 @@ import json
 import logging
 import sqlite3
 import time
-import urllib.error
-import urllib.request
 from collections.abc import Callable
 from typing import Any
 
@@ -53,9 +54,7 @@ def add_message(conn: sqlite3.Connection, now: float, kind: str, payload: dict[s
         " VALUES (?,?,?,?,'pending',?,?,?,?)",
         (oid, kind, dedupe_key, _dumps(payload), send_at or now, job_id, now, now),
     )
-    if kind == "ntfy" and _prio(payload.get("priority")) >= 4:  # important: Ari may say it out loud at the PC
-        from .events import insert_event
-
+    if kind in ("phone", "ntfy") and _prio(payload.get("priority")) >= 4:  # important: Ari may say it aloud at the PC
         insert_event(conn, now, "ari.notice", job_id=job_id, src="argus", dst="ari",
                      data={"title": str(payload.get("title") or "")[:200],
                            "text": str(payload.get("message") or "")[:400]})
@@ -69,9 +68,10 @@ def _prio(v: Any) -> int:
         return {"max": 5, "urgent": 5, "high": 4, "default": 3, "low": 2, "min": 1}.get(str(v), 3)
 
 
-def ntfy_message(title: str, message: str, *, priority: str = "default", tags: list[str] | None = None,
-                 click: str | None = None, actions: list[dict] | None = None) -> dict[str, Any]:
-    """An ntfy JSON message (without the topic; the sender adds it)."""
+def phone_message(title: str, message: str, *, priority: str = "default", tags: list[str] | None = None,
+                  click: str | None = None, actions: list[dict] | None = None) -> dict[str, Any]:
+    """A message for the phone: title, text, priority (1 min .. 5 urgent), tags, a page to open on tap (`click`, a
+    path on Argus or a full URL) and up to three buttons ({"action": "http" | "view", "label", "url", ...})."""
     msg: dict[str, Any] = {"title": title[:250], "message": message[:3500] or title,
                            "priority": PRIORITIES.index(priority) + 1 if priority in PRIORITIES else 3}
     if tags:
@@ -79,7 +79,7 @@ def ntfy_message(title: str, message: str, *, priority: str = "default", tags: l
     if click:
         msg["click"] = click
     if actions:
-        msg["actions"] = actions[:3]  # ntfy shows at most three buttons
+        msg["actions"] = actions[:3]  # a notification shows at most three buttons
     return msg
 
 
@@ -87,32 +87,33 @@ class SendError(Exception):
     pass
 
 
-class NtfySender:
-    """Posts one message to ntfy. Standard library only; runs in a thread."""
+class PhoneInbox:
+    """The phone app's side of the outbox: it asks for its messages (nothing is pushed, nothing listens on the
+    phone). Remembers when the app last asked, to show whether it is connected."""
 
-    def __init__(self, url: str, topic: str | None, token: str | None = None, timeout: float = 10):
-        self.url = url.rstrip("/")
-        self.topic = topic
-        self.token = token
-        self.timeout = timeout
+    pulled = True  # the outbox leaves these rows for the app to collect and acknowledge
+    enabled = True
 
-    @property
-    def enabled(self) -> bool:
-        return bool(self.topic)
+    def __init__(self, clock: Callable[[], float] = time.time):
+        self.clock = clock
+        self.last_seen = 0.0
+        self.device = ""
+        self.waiters: list[asyncio.Event] = []
 
-    def send(self, payload: dict[str, Any]) -> None:
-        body = {**payload, "topic": self.topic}
-        req = urllib.request.Request(self.url, data=_dumps(body).encode(), method="POST",
-                                     headers={"Content-Type": "application/json"})
-        if self.token:
-            req.add_header("Authorization", f"Bearer {self.token}")
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                resp.read()
-        except urllib.error.HTTPError as e:
-            raise SendError(f"ntfy HTTP {e.code}: {e.read().decode(errors='replace')[:200]}") from None
-        except (urllib.error.URLError, OSError) as e:
-            raise SendError(f"ntfy not reachable: {e}") from None
+    def seen(self, device: str = "") -> None:
+        self.last_seen = self.clock()
+        if device:
+            self.device = device[:60]
+
+    def connected(self, within: float = 90.0) -> bool:
+        return self.last_seen > 0 and self.clock() - self.last_seen < within
+
+    def wake(self) -> None:
+        for w in self.waiters:
+            w.set()
+
+    def send(self, payload: dict[str, Any]) -> None:  # never called: the app collects its messages
+        raise SendError("the phone app collects its messages; nothing is pushed")
 
 
 class Outbox:
@@ -121,22 +122,31 @@ class Outbox:
         self.store = store
         self.cfg = cfg
         self.clock = clock
-        self.senders = senders if senders is not None else {
-            "ntfy": NtfySender(cfg.ntfy.url, cfg.secrets.ntfy_topic, cfg.secrets.ntfy_token,
-                               cfg.ntfy.timeout_seconds)}
+        self.senders = senders if senders is not None else {"phone": PhoneInbox(clock)}
         self.poll_seconds = poll_seconds
         self._wake: asyncio.Event | None = None
         self._task: asyncio.Task | None = None
         self.sent = 0
         self.last_error: str | None = None
 
+    @property
+    def inbox(self) -> PhoneInbox | None:
+        """The phone app's inbox, when it is the one collecting messages."""
+        box = self.senders.get("phone")
+        return box if isinstance(box, PhoneInbox) else None
+
+    def pulled_kinds(self) -> list[str]:
+        """The kinds the app collects (the old name "ntfy" is the same thing: rows written before the move)."""
+        out = [k for k, sd in self.senders.items() if getattr(sd, "pulled", False)]
+        return out + ["ntfy"] if "phone" in out else out
+
     # -------------------------------------------------------------- lifecycle
 
     async def start(self) -> None:
         def fn(conn: sqlite3.Connection) -> int:
             now = self.clock()
-            if self.senders.get("ntfy") is not None and self.senders["ntfy"].enabled:
-                ensure_component(conn, now, "ntfy", "service", "ntfy", "cloud")
+            if self.inbox is not None:
+                ensure_component(conn, now, "phone-app", "service", "Phone app", "phone")
             # A crash while sending: the message may or may not have left. Send it again rather than lose it.
             return conn.execute("UPDATE outbox SET state = 'pending', updated_at = ? WHERE state = 'sending'",
                                 (now,)).rowcount
@@ -162,6 +172,8 @@ class Outbox:
         """Something was queued: send now instead of at the next poll."""
         if self._wake is not None:
             self._wake.set()
+        if self.inbox is not None:
+            self.inbox.wake()
 
     async def _loop(self) -> None:
         assert self._wake is not None
@@ -187,13 +199,16 @@ class Outbox:
 
         def claim(conn: sqlite3.Connection) -> list[dict]:
             now = self.clock()
+            skip = self.pulled_kinds()
             rows = conn.execute("SELECT * FROM outbox WHERE state = 'pending' AND next_try_at <= ?"
-                                " ORDER BY created_at LIMIT ?", (now, limit)).fetchall()
+                                f" AND kind NOT IN ({','.join('?' * len(skip))}) ORDER BY created_at LIMIT ?",
+                                (now, *skip, limit)).fetchall()
             for r in rows:
                 conn.execute("UPDATE outbox SET state = 'sending', attempts = attempts + 1, updated_at = ?"
                              " WHERE id = ?", (now, r["id"]))
             return [dict(r) for r in rows]
 
+        await self.expire_inbox()
         rows = await self.store.write(claim)
         for r in rows:
             sender = self.senders.get(r["kind"])
@@ -209,7 +224,7 @@ class Outbox:
         return len(rows)
 
     async def _finish(self, r: dict, outcome: str, error: str | None) -> None:
-        max_attempts = self.cfg.ntfy.max_attempts
+        max_attempts = self.cfg.notify.max_attempts
 
         def fn(conn: sqlite3.Connection) -> None:
             now = self.clock()
@@ -244,6 +259,79 @@ class Outbox:
             self.last_error = error
             log.warning("message not sent, will retry", extra={"kind": r["kind"], "error": error})
 
+    # -------------------------------------------------------------- the phone app collects
+
+    async def expire_inbox(self) -> int:
+        """Messages the app never collected are dropped after notify.keep_hours."""
+        skip = self.pulled_kinds()
+        if not skip:
+            return 0
+        cutoff = self.clock() - self.cfg.notify.keep_hours * 3600
+
+        def fn(conn: sqlite3.Connection) -> int:
+            return conn.execute(
+                f"UPDATE outbox SET state = 'skipped', last_error = 'not collected in time', updated_at = ?"
+                f" WHERE state = 'pending' AND created_at < ? AND kind IN ({','.join('?' * len(skip))})",
+                (self.clock(), cutoff, *skip)).rowcount
+
+        return await self.store.write(fn)
+
+    async def inbox_fetch(self, device: str = "", wait: float = 0.0, limit: int = 20) -> list[dict[str, Any]]:
+        """What the app has not collected yet, oldest first; when there is nothing, waits up to `wait` seconds for
+        something (a long poll). Asking again before acknowledging returns the same messages."""
+        box = self.inbox
+        if box is None:
+            return []
+        kinds = self.pulled_kinds()
+        box.seen(device)
+
+        def fn(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+            rows = conn.execute(
+                f"SELECT id, payload, created_at FROM outbox WHERE state = 'pending' AND next_try_at <= ?"
+                f" AND kind IN ({','.join('?' * len(kinds))}) ORDER BY created_at LIMIT ?",
+                (self.clock(), *kinds, limit)).fetchall()
+            return [{**json.loads(r["payload"]), "id": r["id"], "at": r["created_at"]} for r in rows]
+
+        waiter = asyncio.Event()
+        box.waiters.append(waiter)
+        try:
+            rows = await self.store.read(fn)
+            if not rows and wait > 0:
+                with contextlib.suppress(TimeoutError):
+                    async with asyncio.timeout(wait):
+                        await waiter.wait()
+                box.seen(device)
+                rows = await self.store.read(fn)
+        finally:
+            box.waiters.remove(waiter)
+        return rows
+
+    async def inbox_ack(self, ids: list[str]) -> int:
+        """The app showed these: they are sent (the one-time approval tokens in the buttons are dropped from the
+        stored copy)."""
+        ids = [str(i) for i in ids][:100]
+        if not ids:
+            return 0
+
+        def fn(conn: sqlite3.Connection) -> int:
+            now, n = self.clock(), 0
+            for oid in ids:
+                r = conn.execute("SELECT * FROM outbox WHERE id = ? AND state = 'pending'", (oid,)).fetchone()
+                if r is None:
+                    continue
+                payload = json.loads(r["payload"])
+                payload.pop("actions", None)
+                conn.execute("UPDATE outbox SET state = 'sent', sent_at = ?, payload = ?, last_error = NULL,"
+                             " updated_at = ? WHERE id = ?", (now, _dumps(payload), now, oid))
+                insert_event(conn, now, "outbox.sent", job_id=r["job_id"], src="argus", dst="phone-app",
+                             data={"kind": r["kind"], "attempt": r["attempts"] + 1})
+                n += 1
+            return n
+
+        n = await self.store.write(fn)
+        self.sent += n
+        return n
+
     # -------------------------------------------------------------- reads
 
     async def stats(self) -> dict[str, Any]:
@@ -270,6 +358,7 @@ class Outbox:
         return await self.store.read(fn)
 
     def health(self) -> dict[str, Any]:
-        ntfy = self.senders.get("ntfy")
+        box = self.inbox
         return {"alive": self.alive, "sent": self.sent, "last_error": self.last_error,
-                "ntfy": bool(ntfy and getattr(ntfy, "enabled", False))}
+                "phone": bool(box and box.connected()), "phone_seen": box.last_seen if box else 0.0,
+                "phone_device": box.device if box else ""}

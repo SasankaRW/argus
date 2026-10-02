@@ -28,11 +28,11 @@ cd G:\Projects\argus
 ```
 
 Trying things out: `demo` (a small job), `classify` (a model job with an escalation), `approval` (a pretend bill
-that waits for you), `ntfy` (a test notification), `models` (checks Ollama and Claude). `test` runs the tests;
+that waits for you), `notify` (a test notification), `models` (checks Ollama and Claude). `test` runs the tests;
 `run` and `worker` start the parts by hand. Helios is at http://127.0.0.1:8600 (`/lite` is the small status page).
 
-Phone: set `NTFY_TOPIC` in `.env` (a long random name) and subscribe to it in the ntfy app. Approve / Reject on
-the phone go over Tailscale: set `approvals.public_url` and `approvals.phone` in `argus.yaml`.
+Phone: install the Argus app (`android/README.md`) and sign it in; it collects your notifications itself, with the
+app closed, and Approve / Reject work over Tailscale. Set `approvals.phone` in `argus.yaml` to hear "back online".
 
 ## Layout
 

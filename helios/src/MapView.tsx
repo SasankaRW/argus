@@ -47,7 +47,7 @@ function sub(n: MapNode): string {
   }
   if (n.id === "approvals") return n.pending ? `${n.pending} waiting for you` : "nothing to decide";
   if (n.id === "scheduler") return "cron · triggers";
-  if (n.id === "ntfy") return n.failed ? `${n.failed} not delivered` : n.unsent ? `${n.unsent} sending` : "all sent";
+  if (n.id === "phone-app") return n.failed ? `${n.failed} not delivered` : n.unsent ? `${n.unsent} waiting for the phone` : "all delivered";
   if (n.kind === "model") {
     const st = n.state === "open" ? "paused" : n.state === "half_open" ? "trying again" : "ready";
     const calls = (n as MapNode & { calls?: number }).calls ?? 0;
@@ -82,7 +82,7 @@ function dotColor(n: MapNode, hot: boolean): string {
   if (n.id === "phone") return n.meta?.online === true ? "var(--ok)" : n.meta?.online === false ? "var(--bad)" : "var(--tx3)";
   if (n.id === "power") return n.meta?.state === "busy" ? "var(--flow)" : n.meta?.state === "would_shutdown" ? "var(--amber)" : "var(--ok)";
   if (n.id === "approvals") return n.pending ? "var(--amber)" : "var(--ok)";
-  if (n.id === "ntfy") return n.failed ? "var(--bad)" : "var(--ok)";
+  if (n.id === "phone-app") return n.failed ? "var(--bad)" : "var(--ok)";
   return "var(--tx3)";
 }
 

@@ -28,7 +28,7 @@ CASES: list[tuple[str, str]] = [
     ("turn on the torch", "phone_torch"),
     ("start a timer for 10 minutes on my phone", "phone_timer"),
     ("where is my phone", "where_is_my_phone|ring_phone|ring_phone_now|phone_status"),
-    ("turn down my volume on my phone", "reply"),
+    ("turn down my volume on my phone", "phone_volume"),
     ("what's on my screen", "look_at_screen"),
     ("sum up what I copied", "summarise_clipboard"),
     ("type hello world", "type_text"),

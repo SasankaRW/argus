@@ -21,7 +21,7 @@ KEY = "argus_overrides"
 
 # (setting, group, label). Order is the order on the page.
 FIELDS: list[tuple[str, str, str]] = [
-    ("ntfy.quiet", "Phone", "Quiet phone: plugins' ordinary messages wait for the evening summary"),
+    ("notify.quiet", "Phone", "Quiet phone: plugins' ordinary messages wait for the evening summary"),
     ("brief.enabled", "Phone", "Morning brief on the phone"),
     ("brief.at", "Phone", "Morning brief at"),
     ("brief.weather", "Phone", "Weather in the brief: your town (e.g. Colombo)"),

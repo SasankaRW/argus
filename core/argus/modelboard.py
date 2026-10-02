@@ -22,7 +22,7 @@ from typing import Any
 from .config import Config
 from .db import Store
 from .events import insert_event
-from .outbox import add_message, ntfy_message
+from .outbox import add_message, phone_message
 from .registry import _upsert_component
 
 CLAUDE_BUDGET = "claude_calls"
@@ -64,7 +64,7 @@ class ModelBoard:
             return
         if not logged_in:
             insert_event(conn, now, "claude.logged_out", src="claude", dst="argus", data={"worker": worker})
-            add_message(conn, now, "ntfy", ntfy_message(
+            add_message(conn, now, "phone", phone_message(
                 "Claude is logged out",
                 f"On {worker or 'the PC'}: open a terminal, run `claude` and log in (/login). Until then plugins that "
                 "need Claude skip it and ask you instead.", priority="high", tags=["key"]),

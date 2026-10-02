@@ -21,7 +21,7 @@ from ..cron import in_window, window_opens
 from ..db import Store
 from ..events import insert_event
 from ..ids import new_id
-from ..outbox import add_message, ntfy_message
+from ..outbox import add_message, phone_message
 from ..registry import ensure_component
 from .states import (
     ACTIVE_STATES,
@@ -194,7 +194,7 @@ class JobStore:
             if parent:
                 self._wake_parent(conn, now, str(parent), job.id)
         if dst is S.DEAD:  # failures reach the phone at once (through the outbox, same transaction)
-            add_message(conn, now, "ntfy", ntfy_message(
+            add_message(conn, now, "phone", phone_message(
                 f"Job failed: {job.plugin}.{job.workflow}",
                 (fields.get("error") or "failed after retries")[:500] + f"\nJob {job.id}",
                 priority="high", tags=["x"]), job_id=job.id)

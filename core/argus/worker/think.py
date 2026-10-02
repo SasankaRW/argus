@@ -216,6 +216,13 @@ def said_back(name: str, args: dict, result: Any) -> str | None:
                 "stop": "Stopped."}.get(str(args.get("action")), "Done.")
     if name == "phone_torch":
         return "Torch on." if args.get("state") == "on" else "Torch off."
+    if name == "phone_volume":
+        if args.get("level") not in (None, ""):
+            return f"Phone volume's at {args['level']}."
+        return {"up": "Turned the phone up.", "down": "Turned the phone down.", "mute": "Phone muted.",
+                "unmute": "Phone sound's back."}.get(str(args.get("change")), "Done.")
+    if name in ("phone_lock", "phone_press", "phone_swipe", "phone_media"):
+        return "Done."
     return None
 
 
@@ -223,6 +230,32 @@ TYPE_NOW = re.compile(_PLEASE + r"type\s+(?P<t>\S.{0,158}?)\W*$", re.I)
 NOT_TEXT = re.compile(r"(?:of|in|into|out|this|that|it|something|up|on|to|for|the|a|an|my|your|these|those)\b", re.I)
 PHONE_VOLUME = re.compile(r"\b(?:(?:volume|sound|louder|quieter|mute)\b.*\b(?:phone|mobile)|"
                           r"(?:phone|mobile)\b.*\b(?:volume|louder|quieter|mute))", re.I)
+
+
+def phone_volume_args(text: str) -> dict | None:
+    """"turn the volume on my phone to 30" / "phone louder" / "mute my phone": the arguments for phone_volume."""
+    t = text.lower()
+    n = re.search(r"\b(\d{1,3})\b", t)
+    out: dict = {}
+    if n and int(n.group(1)) <= 100:
+        out["level"] = int(n.group(1))
+    elif re.search(r"\b(?:un-?mute)\b", t):
+        out["change"] = "unmute"
+    elif re.search(r"\bmute\b", t):
+        out["change"] = "mute"
+    elif re.search(r"\b(?:up|louder|raise|increase|higher)\b", t):
+        out["change"] = "up"
+    elif re.search(r"\b(?:down|quieter|lower|softer|decrease|less)\b", t):
+        out["change"] = "down"
+    else:
+        return None
+    if re.search(r"\b(?:ringer|ringtone|ring)\b", t):
+        out["stream"] = "ring"
+    elif re.search(r"\balarm\b", t):
+        out["stream"] = "alarm"
+    return out
+
+
 CANT_PHONE_VOLUME = ("I can't change the phone's volume yet. I can ring it, switch Do Not Disturb, or do the torch "
                      "and timers.")
 
@@ -243,6 +276,10 @@ def straight_to(tools: dict[str, dict], text: str) -> tuple[str, dict] | None:
             return "set_volume", {"level": int(lvl)}
         if d:
             return "set_volume", {"change": d}
+    if phone and "phone_volume" in tools and PHONE_VOLUME.search(text):
+        pv = phone_volume_args(text)
+        if pv:
+            return "phone_volume", pv
     md = MEDIA.match(text)
     if md and "media_control" in tools and not phone:
         act = ("play_pause" if md.group("pp") else "next" if md.group("next") else

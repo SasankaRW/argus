@@ -32,6 +32,8 @@ Approvals (C8):
                                       one-time token>&answer=... from the phone buttons (no body needed)
     GET  /a/{id}?t=<token>            the phone page behind the notification's Open button
     GET  /outbox                      recent outgoing messages and counts (token)
+    GET  /phone/inbox?wait=25         the phone app collects its notifications (long poll, token)
+    POST /phone/inbox/ack             {ids}: the app showed them (token)
     POST /outbox/test                 send a test notification (token)
 
 Scheduler and triggers (C9):
@@ -78,7 +80,7 @@ from ..events import EventFilter, insert_event, read_events
 from ..expressive import plain
 from ..ids import new_id
 from ..jobs import InvalidTransition, Job, JobNotFound, JobState, LeaseLost, QueueFull, Step
-from ..outbox import PRIORITIES, add_message, ntfy_message
+from ..outbox import PRIORITIES, add_message, phone_message
 from ..power import PowerError
 from ..presence import describe_phone
 from ..shares import ShareError, ShareStore, kinds_of
@@ -124,6 +126,10 @@ class SubmitJob(BaseModel):
     delay: float = Field(0, ge=0)
     model: str | None = Field(None, max_length=100)  # groups GPU jobs by model (fewer swaps)
     window: str | None = Field(None, max_length=40)  # only start inside this window (e.g. night)
+
+
+class InboxAck(BaseModel):
+    ids: list[str] = Field(default_factory=list, max_length=100)
 
 
 class RegisterWorker(BaseModel):
@@ -695,14 +701,14 @@ def create_app(argus: Argus) -> FastAPI:
     # -------------------------------------------------------------- find my phone
 
     async def ring_phone() -> dict:
-        """Three urgent notifications, 20 s apart: loud even on silent if ntfy may override Do Not Disturb."""
-        if not argus.outbox.senders.get("ntfy") or not argus.outbox.senders["ntfy"].enabled:
-            raise HTTPException(status_code=409, detail="ntfy is off: set NTFY_TOPIC in .env")
+        """Three urgent notifications, 20 s apart: the app plays them loud, even on silent."""
+        if argus.outbox.inbox is None:
+            raise HTTPException(status_code=409, detail="the phone app is off")
 
         def fn(conn):
             now = time.time()
             for i in range(3):
-                add_message(conn, now, "ntfy", ntfy_message("Here I am!", "Argus is ringing your phone.",
+                add_message(conn, now, "phone", phone_message("Here I am!", "Argus is ringing your phone.",
                                                             priority="urgent", tags=["rotating_light", "iphone"]),
                             dedupe_key=f"ring:{int(now)}:{i}", send_at=now + 20 * i)
             insert_event(conn, now, "phone.ring", src="helios", dst="phone")
@@ -1847,7 +1853,7 @@ def create_app(argus: Argus) -> FastAPI:
     async def notify(job_id: str, body: Notify) -> dict:
         if body.priority not in PRIORITIES:
             raise HTTPException(status_code=422, detail=f"priority must be one of {', '.join(PRIORITIES)}")
-        msg = ntfy_message(body.title, body.text, priority=body.priority, tags=body.tags, click=body.link)
+        msg = phone_message(body.title, body.text, priority=body.priority, tags=body.tags, click=body.link)
         return {"queued": await argus.notify_from_job(job_id, body.worker, body.key, msg)}
 
     @app.get("/approvals", dependencies=guarded)
@@ -1891,19 +1897,29 @@ def create_app(argus: Argus) -> FastAPI:
 
     @app.post("/outbox/test", dependencies=guarded)
     async def outbox_test() -> dict:
-        """Send a test notification, to check the ntfy topic and the phone app."""
-        ntfy = argus.outbox.senders.get("ntfy")
-        if not (ntfy and ntfy.enabled):
-            raise HTTPException(status_code=409, detail="ntfy is off: set NTFY_TOPIC in .env and restart argusd")
+        """Send a test notification, to check the phone app."""
+        if argus.outbox.inbox is None:
+            raise HTTPException(status_code=409, detail="the phone app is off")
 
         def fn(conn):
-            return add_message(conn, time.time(), "ntfy", ntfy_message(
-                "Argus test", f"ntfy works. Sent by {argus.cfg.instance.name} on {argus.cfg.instance.host}.",
+            return add_message(conn, time.time(), "phone", phone_message(
+                "Argus test", f"The phone app works. Sent by {argus.cfg.instance.name} on {argus.cfg.instance.host}.",
                 tags=["wave"]))
 
         oid = await argus.store.write(fn)
         argus.outbox.poke()
         return {"queued": oid}
+
+    @app.get("/phone/inbox", dependencies=guarded)
+    async def phone_inbox(device: str = "", wait: float = Query(0, ge=0, le=30), limit: int = Query(20, ge=1, le=50)
+                          ) -> dict:
+        """The phone app's messages it has not collected yet (a long poll: with `wait=N` it hears the moment one
+        is queued). It shows them as notifications, then acknowledges them."""
+        return {"messages": await argus.outbox.inbox_fetch(device, wait, limit)}
+
+    @app.post("/phone/inbox/ack", dependencies=guarded)
+    async def phone_inbox_ack(body: InboxAck) -> dict:
+        return {"acked": await argus.outbox.inbox_ack(body.ids)}
 
     @app.get("/outbox", dependencies=guarded)
     async def outbox(limit: int = 50) -> dict:

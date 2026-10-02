@@ -1,4 +1,4 @@
-"""C8: approvals, the outbox and ntfy. Gate: approving from the phone resumes the job in under 1 s, and a
+"""C8: approvals, the outbox and the phone app. Gate: approving from the phone resumes the job in under 1 s, and a
 crash never sends the same notification twice."""
 
 from __future__ import annotations
@@ -19,19 +19,18 @@ from argus.jobs import JobState
 from argus.outbox import Outbox
 from argus.worker import Worker, WorkflowRegistry, workflow
 from conftest import run
-from fakes import FakeNtfy
+from fakes import FakePhoneApp
 from test_worker import Server, client, wait_for
 
 
 def cfg_with(public_url: str | None = "http://phone-reachable:8600") -> Config:
     c = Config()
     c.approvals.public_url = public_url
-    c.secrets.ntfy_topic = "argus-test-topic"
     return c
 
 
 class Sender:
-    """Stands in for ntfy inside unit tests."""
+    """A push sender (a webhook, say) inside unit tests."""
 
     enabled = True
 
@@ -42,7 +41,7 @@ class Sender:
     def send(self, payload: dict) -> None:
         if self.fail:
             self.fail -= 1
-            raise RuntimeError("ntfy down")
+            raise RuntimeError("sender down")
         self.sent.append(payload)
 
 
@@ -85,89 +84,74 @@ def test_request_is_idempotent_and_queues_one_message(store, clock):
     assert msg["title"] == "demo: CEB bill" and "amount: 4,250.00" in msg["message"]
     labels = [x["label"] for x in msg["actions"]]
     assert labels == ["Approve", "Reject", "Open"] and msg["actions"][0]["method"] == "POST"
-    # default: the buttons go straight to Argus over Tailscale; knowing the ntfy topic is not enough
-    assert ap.reply_topic is None and "body" not in msg["actions"][0]
-    assert msg["message"].endswith("Approve / Reject need Tailscale.")
+    assert "body" not in msg["actions"][0]  # the buttons go straight to Argus with the one-time token
     assert msg["actions"][0]["url"] == (f"http://phone-reachable:8600/approvals/{a1['id']}/decide"
                                         f"?t={ap.token(a1['id'])}&answer=approve")
     assert msg["actions"][2]["url"].startswith("http://phone-reachable:8600/a/")
 
 
-def test_ntfy_mode_buttons_post_to_the_reply_topic(store, clock):
-    cfg = cfg_with()
-    cfg.approvals.buttons = "ntfy"
-    jobs, ap, _ = setup(store, clock, cfg)
-
-    async def go():
-        jid = await _leased(jobs)
-        return (await ap.request(jid, "w1", "k", "entry", "CEB bill", fields={"amount": "1"}))[0]
-
-    a1 = run(go())
-    msg = json.loads(store.read_sync(lambda c: c.execute("SELECT payload FROM outbox").fetchone()[0]))
-    reply = ap.reply_topic
-    assert reply.startswith("argus-test-topic-reply-") and len(reply) == len("argus-test-topic-reply-") + 10
-    assert msg["actions"][0]["url"] == f"https://ntfy.sh/{reply}"
-    assert msg["actions"][0]["body"] == f"approve {a1['id']} {ap.token(a1['id'])}"
-    assert msg["actions"][1]["body"].startswith("reject ")
-    assert msg["actions"][2]["url"].startswith("http://phone-reachable:8600/a/")  # Open still needs Tailscale
-
-
-def test_buttons_without_public_url(store, clock):
+def test_buttons_are_relative_links_without_public_url(store, clock):
+    """The app puts its own Argus address in front of them, so they work wherever the app reaches Argus."""
     jobs, ap, cfg = setup(store, clock, cfg_with(None))
-    cfg.approvals.buttons = "ntfy"  # ntfy mode: Approve / Reject without Tailscale, but no Open page
-
-    async def go1():
-        jid = await _leased(jobs)
-        return await ap.request(jid, "w1", "k0", "entry", "Rent", fields={"amount": "1"})
-
-    run(go1())
-    msg = json.loads(store.read_sync(lambda c: c.execute("SELECT payload FROM outbox").fetchone()[0]))
-    assert [a["label"] for a in msg["actions"]] == ["Approve", "Reject"] and "click" not in msg
-    store.write_sync(lambda c: c.execute("DELETE FROM outbox"))
-    cfg.approvals.buttons = "tailscale"  # Tailscale mode without an address: no buttons at all
 
     async def go():
         jid = await _leased(jobs)
-        return await ap.request(jid, "w1", "k", "draft", "Invoice", summary=["INV-14", "3 lines"])
+        return (await ap.request(jid, "w1", "k0", "entry", "Rent", fields={"amount": "1"}))[0]
+
+    a = run(go())
+    msg = json.loads(store.read_sync(lambda c: c.execute("SELECT payload FROM outbox").fetchone()[0]))
+    assert [x["label"] for x in msg["actions"]] == ["Approve", "Reject", "Open"]
+    assert msg["actions"][0]["url"] == f"/approvals/{a['id']}/decide?t={ap.token(a['id'])}&answer=approve"
+    assert msg["click"].startswith("/a/")
+
+
+def test_the_phone_app_collects_acknowledges_and_expires(store, clock):
+    from argus.outbox import add_message, phone_message
+
+    cfg = cfg_with()
+    ob = Outbox(store, cfg, clock=clock)  # the app's inbox is the default
+    assert ob.inbox is not None and ob.pulled_kinds() == ["phone", "ntfy"]
+    store.write_sync(lambda c: add_message(c, clock(), "phone", phone_message(
+        "bill", "m", actions=[{"action": "http", "label": "Approve", "url": "/x?t=secret"}]), dedupe_key="a"))
+    store.write_sync(lambda c: add_message(c, clock(), "ntfy", phone_message("old row", "m"), dedupe_key="b"))
+
+    async def go():
+        assert await ob.send_due() == 0  # nothing is pushed: the app collects
+        first = await ob.inbox_fetch("pixel")
+        again = await ob.inbox_fetch("pixel")  # not acknowledged: the same messages
+        assert [m["title"] for m in first] == [m["title"] for m in again] == ["bill", "old row"]
+        assert first[0]["actions"][0]["label"] == "Approve" and ob.health()["phone"] is True
+        assert await ob.inbox_ack([first[0]["id"], "nope"]) == 1
+        assert await ob.inbox_ack([first[0]["id"]]) == 0  # once only
+        left = await ob.inbox_fetch("pixel")
+        assert [m["title"] for m in left] == ["old row"]
+        clock.advance(49 * 3600)  # nobody collected it in time
+        assert await ob.send_due() == 0
+        assert await ob.inbox_fetch("pixel") == []
+        clock.advance(100)
+        assert ob.health()["phone"] is False  # the app has not asked for a while
 
     run(go())
-    msg = json.loads(store.read_sync(lambda c: c.execute("SELECT payload FROM outbox").fetchone()[0]))
-    assert "actions" not in msg and "Decide in Helios." in msg["message"] and "INV-14" in msg["message"]
+    rows = {r["dedupe_key"]: r for r in store.read_sync(lambda c: c.execute("SELECT * FROM outbox").fetchall())}
+    assert rows["a"]["state"] == "sent" and "actions" not in json.loads(rows["a"]["payload"])  # token scrubbed
+    assert rows["b"]["state"] == "skipped" and rows["b"]["last_error"] == "not collected in time"
 
 
-def test_relay_decides_confirms_and_ignores_forgeries(store, clock):
-    from argus.relay import ReplyRelay
+def test_a_long_poll_hears_a_new_message_at_once(store, clock):
+    from argus.outbox import add_message, phone_message
 
-    jobs, ap, cfg = setup(store, clock)
-    ob = Outbox(store, cfg, clock=clock, senders={"ntfy": Sender()})
-    inbox: list[dict] = []
-    relay = ReplyRelay(store, cfg, ap, ob, clock=clock, fetch=lambda since: [m for m in inbox if m["id"] > since])
+    ob = Outbox(store, cfg_with(), clock=clock)
 
     async def go():
-        jid = await _leased(jobs)
-        a, _ = await ap.request(jid, "w1", "k", "entry", "CEB bill", fields={"amount": "10"})
-        await jobs.wait(jid, "w1", f"approval:{a['id']}")
-        tok = ap.token(a["id"])
-        inbox.extend([
-            {"id": "m1", "message": "hello"},                                   # noise
-            {"id": "m2", "message": f"approve {a['id']} {'0' * 40}"},           # forged token
-            {"id": "m3", "message": f"approve {a['id']} {tok}"},                # the tap
-            {"id": "m4", "message": f"reject {a['id']} {tok}"},                 # a second tap
-            {"id": "m5", "message": f"reject {a['id']} {tok}"},                 # and a third
-        ])
-        n = await relay.poll_once()
-        again = await relay.poll_once()  # the since-cursor was saved: nothing is handled twice
-        return jid, a, n, again
+        import asyncio
 
-    jid, a, n, again = run(go())
-    assert n == 5 and again == 0 and relay.handled == 1
-    assert run(ap.get(a["id"]))["state"] == "approved" and run(ap.get(a["id"]))["decided_by"] == "phone"
-    assert run(jobs.get(jid)).state is JobState.QUEUED
-    titles = store.read_sync(lambda c: [json.loads(r[0])["title"] for r in c.execute(
-        "SELECT payload FROM outbox ORDER BY created_at")])
-    assert titles == ["demo: CEB bill", "Approved: CEB bill", "Already approved: CEB bill"]
-    kinds = store.read_sync(lambda c: [r[0] for r in c.execute("SELECT kind FROM events WHERE kind LIKE 'approval.%'")])
-    assert "approval.reply_refused" in kinds and kinds.count("approval.reply") == 2
+        task = asyncio.create_task(ob.inbox_fetch("pixel", wait=5))
+        await asyncio.sleep(0.05)
+        store.write_sync(lambda c: add_message(c, clock(), "phone", phone_message("hi", "m")))
+        ob.poke()
+        return await asyncio.wait_for(task, 2)
+
+    assert [m["title"] for m in run(go())] == ["hi"]
 
 
 def test_batch_totals_are_computed_in_code():
@@ -259,7 +243,7 @@ def test_only_the_lease_holder_can_ask(store, clock):
 def test_outbox_sends_once_retries_with_backoff_and_scrubs_tokens(store, clock):
     jobs, ap, cfg = setup(store, clock)
     sender = Sender(fail=1)
-    ob = Outbox(store, cfg, clock=clock, senders={"ntfy": sender})
+    ob = Outbox(store, cfg, clock=clock, senders={"phone": sender})
 
     async def go():
         jid = await _leased(jobs)
@@ -280,39 +264,30 @@ def test_outbox_sends_once_retries_with_backoff_and_scrubs_tokens(store, clock):
 
 def test_outbox_gives_up_after_max_attempts(store, clock):
     cfg = cfg_with()
-    cfg.ntfy.max_attempts = 2
-    from argus.outbox import add_message, ntfy_message
+    cfg.notify.max_attempts = 2
+    from argus.outbox import add_message, phone_message
 
-    store.write_sync(lambda c: add_message(c, clock(), "ntfy", ntfy_message("t", "m")))
-    ob = Outbox(store, cfg, clock=clock, senders={"ntfy": Sender(fail=5)})
+    store.write_sync(lambda c: add_message(c, clock(), "phone", phone_message("t", "m")))
+    ob = Outbox(store, cfg, clock=clock, senders={"phone": Sender(fail=5)})
     run(ob.send_due())
     clock.advance(10)
     run(ob.send_due())
     row = store.read_sync(lambda c: c.execute("SELECT state, last_error FROM outbox").fetchone())
-    assert row["state"] == "failed" and "ntfy down" in row["last_error"]
-
-
-def test_outbox_without_a_topic_skips(store, clock):
-    from argus.outbox import NtfySender, add_message, ntfy_message
-
-    store.write_sync(lambda c: add_message(c, clock(), "ntfy", ntfy_message("t", "m")))
-    ob = Outbox(store, Config(), clock=clock, senders={"ntfy": NtfySender("http://unused", None)})
-    run(ob.send_due())
-    assert store.read_sync(lambda c: c.execute("SELECT state FROM outbox").fetchone()[0]) == "skipped"
+    assert row["state"] == "failed" and "sender down" in row["last_error"]
 
 
 def test_crash_while_sending_resends_on_restart_but_never_twice_after_sent(store, clock):
-    from argus.outbox import add_message, ntfy_message
+    from argus.outbox import add_message, phone_message
 
-    store.write_sync(lambda c: add_message(c, clock(), "ntfy", ntfy_message("a", "m"), dedupe_key="a"))
-    store.write_sync(lambda c: add_message(c, clock(), "ntfy", ntfy_message("b", "m"), dedupe_key="b"))
+    store.write_sync(lambda c: add_message(c, clock(), "phone", phone_message("a", "m"), dedupe_key="a"))
+    store.write_sync(lambda c: add_message(c, clock(), "phone", phone_message("b", "m"), dedupe_key="b"))
     # "b" was being sent when argusd died; "a" had been sent
     store.write_sync(lambda c: c.execute("UPDATE outbox SET state = CASE dedupe_key WHEN 'a' THEN 'sent'"
                                          " ELSE 'sending' END"))
-    assert store.write_sync(lambda c: add_message(c, clock(), "ntfy", ntfy_message("a", "m"),
+    assert store.write_sync(lambda c: add_message(c, clock(), "phone", phone_message("a", "m"),
                                                   dedupe_key="a")) is None  # queued again: no-op
     sender = Sender()
-    ob = Outbox(store, cfg_with(), clock=clock, senders={"ntfy": sender})
+    ob = Outbox(store, cfg_with(), clock=clock, senders={"phone": sender})
 
     async def go():
         await ob.start()
@@ -323,119 +298,95 @@ def test_crash_while_sending_resends_on_restart_but_never_twice_after_sent(store
     assert [m["title"] for m in sender.sent] == ["b"]
 
 
-# ------------------------------------------------------------------ end to end: worker, phone, ntfy
+# ------------------------------------------------------------------ end to end: worker, phone app
 
 
-def make_argus(tmp_path, ntfy_url: str, public_url: str | None = "http://127.0.0.1:1", token: str = "tok",
-               extra: str = "", buttons: str = "tailscale") -> Argus:
+def make_argus(tmp_path, token: str = "tok", extra: str = "") -> Argus:
     (tmp_path / "argus.yaml").write_text(
         "logging:\n  file: null\n"
-        "jobs:\n  watchdog_interval_seconds: 0.1\n  lease_seconds: 5\n  heartbeat_seconds: 1\n"
-        f"ntfy:\n  url: {ntfy_url}\n  reply_retry_seconds: 0.05\n"
-        f"approvals:\n  buttons: {buttons}\n" + (f"  public_url: {public_url}\n" if public_url else "") + extra,
+        "jobs:\n  watchdog_interval_seconds: 0.1\n  lease_seconds: 5\n  heartbeat_seconds: 1\n" + extra,
         encoding="utf-8")
-    (tmp_path / ".env").write_text(f"ARGUS_WORKER_TOKEN={token}\nNTFY_TOPIC=argus-e2e\n", encoding="utf-8")
+    (tmp_path / ".env").write_text(f"ARGUS_WORKER_TOKEN={token}\n", encoding="utf-8")
     return Argus(load_config(tmp_path / "argus.yaml"))
 
 
-def phone_tap(action: dict, base: str) -> tuple[int, dict]:
-    """What the ntfy app does for an http button: POST the URL, no body, no Argus token."""
-    url = base + action["url"].split("127.0.0.1:1", 1)[1]
-    req = urllib.request.Request(url, data=b"", method=action.get("method", "POST"))
-    try:
-        with urllib.request.urlopen(req, timeout=5) as r:
-            return r.status, json.loads(r.read())
-    except urllib.error.HTTPError as e:
-        return e.code, json.loads(e.read())
-
-
 def test_approve_from_the_phone_resumes_the_job_in_under_a_second(tmp_path):
-    """ntfy mode end to end: tap -> reply topic -> relay -> decision -> job done -> confirmation."""
-    with FakeNtfy() as ntfy:
-        argus = make_argus(tmp_path, ntfy.url, buttons="ntfy").open()
-        with Server(argus) as srv:
-            cl = client(srv.url, "tok")
-            w = Worker(cl, "w-phone")
-            w.register()
-            jid = cl.post("/jobs", {"plugin": "demo", "workflow": "approval",
-                                    "input": {"vendor": "CEB", "amount": "4250"}})["id"]
-            assert w.run_once(wait=2)
-            job = cl.get(f"/jobs/{jid}")
-            assert job["state"] == "waiting" and job["wait_reason"].startswith("approval:")
-            wait_for(lambda: ntfy.messages)
-            msg = ntfy.messages[0]
-            assert msg["topic"] == "argus-e2e" and msg["title"] == "demo: CEB bill" and msg["priority"] == 4
+    """The app collects the notification, a tap on Approve goes to Argus, the job finishes."""
+    argus = make_argus(tmp_path).open()
+    with Server(argus) as srv:
+        cl = client(srv.url, "tok")
+        app = FakePhoneApp(srv.url)
+        w = Worker(cl, "w-phone")
+        w.register()
+        jid = cl.post("/jobs", {"plugin": "demo", "workflow": "approval",
+                                "input": {"vendor": "CEB", "amount": "4250"}})["id"]
+        assert w.run_once(wait=2)
+        job = cl.get(f"/jobs/{jid}")
+        assert job["state"] == "waiting" and job["wait_reason"].startswith("approval:")
+        msg = app.wait_messages(1)[0]
+        assert msg["title"] == "demo: CEB bill" and msg["priority"] == 4
 
-            # the Open button's page works without the Argus token and shows the bill
-            page = urllib.request.urlopen(srv.url + msg["actions"][2]["url"].split("127.0.0.1:1", 1)[1])
-            html = page.read().decode()
-            assert "CEB bill" in html and "4,250.00" in html and "no-store" in page.headers["Cache-Control"]
+        # the Open button's page works without the Argus token and shows the bill
+        page = urllib.request.urlopen(srv.url + msg["actions"][2]["url"])
+        html = page.read().decode()
+        assert "CEB bill" in html and "4,250.00" in html and "no-store" in page.headers["Cache-Control"]
 
-            t0 = time.monotonic()
-            assert ntfy.tap(msg["actions"][0]) == 200  # Approve: goes to ntfy, not to Argus
-            assert w.run_once(wait=2)  # the relay picks it up; the resumed job is claimed and finished
-            elapsed = time.monotonic() - t0
-            job = cl.get(f"/jobs/{jid}")
-            assert job["state"] == "succeeded" and job["result"]["filed"] is True
-            assert job["result"]["amount"] == "4,250.00"
-            limit = 6.0 if os.environ.get("CI") else 1.0  # shared CI runners are slow and noisy
-            assert elapsed < limit, f"approve -> job done took {elapsed:.2f} s"
+        t0 = time.monotonic()
+        assert app.tap(msg["actions"][0])[0] == 200  # Approve: straight to Argus, no Argus token
+        assert w.run_once(wait=2)  # the resumed job is claimed and finished
+        elapsed = time.monotonic() - t0
+        job = cl.get(f"/jobs/{jid}")
+        assert job["state"] == "succeeded" and job["result"]["filed"] is True
+        assert job["result"]["amount"] == "4,250.00"
+        limit = 6.0 if os.environ.get("CI") else 1.0  # shared CI runners are slow and noisy
+        assert elapsed < limit, f"approve -> job done took {elapsed:.2f} s"
 
-            # the parse step ran once; the approve step ran twice (asked, then answered); one approval only
-            assert [s["name"] for s in job["steps"]] == ["parse", "approve", "file"]
-            assert len(cl.get(f"/approvals?job={jid}")) == 1
-            wait_for(lambda: len(ntfy.messages) == 2)
-            assert ntfy.messages[1]["title"] == "Approved: CEB bill"
-            # the plugin's ordinary "Filed" message waits for the evening summary (quiet by default)
-            held = run(argus.store.read(lambda c: [r[0] for r in c.execute("SELECT title FROM held_notes")]))
-            assert held == ["Filed: CEB bill"]
+        # the parse step ran once; the approve step ran twice (asked, then answered); one approval only
+        assert [s["name"] for s in job["steps"]] == ["parse", "approve", "file"]
+        assert len(cl.get(f"/approvals?job={jid}")) == 1
+        # the plugin's ordinary "Filed" message waits for the evening summary (quiet by default)
+        held = run(argus.store.read(lambda c: [r[0] for r in c.execute("SELECT title FROM held_notes")]))
+        assert held == ["Filed: CEB bill"]
 
-            # tapping Reject afterwards changes nothing and says so; the direct link (Tailscale) is one-time too
-            ntfy.tap(msg["actions"][1])
-            wait_for(lambda: len(ntfy.messages) == 3)
-            assert ntfy.messages[2]["title"] == "Already approved: CEB bill"
-            assert cl.get(f"/approvals?job={jid}")[0]["state"] == "approved"
-            aid = cl.get(f"/approvals?job={jid}")[0]["id"]
-            direct = {"url": f"http://127.0.0.1:1/approvals/{aid}/decide?t={argus.approvals.token(aid)}&answer=reject"}
-            assert phone_tap(direct, srv.url)[0] == 409
-            wrong = {"url": f"http://127.0.0.1:1/approvals/{aid}/decide?t={'0' * 40}&answer=reject"}
-            assert phone_tap(wrong, srv.url)[0] in (403, 409)
-            assert cl.post("/outbox/test")["queued"]
-            wait_for(lambda: len(ntfy.messages) == 4)
-            assert ntfy.messages[3]["title"] == "Argus test"
-            # ntfy has the message a moment before the outbox marks it sent: wait for the count
-            box = wait_for(lambda: (b := cl.get("/outbox"))["counts"].get("sent") == 4 and b)
-            assert box["ntfy"] is True
-            assert cl.get("/health")["replies"]["handled"] == 1
-            evs = [e["kind"] for e in cl.get(f"/jobs/{jid}/events")]
-            assert "approval.requested" in evs and "approval.approved" in evs and "outbox.sent" in evs
+        # tapping Reject afterwards changes nothing; a wrong token is refused
+        assert app.tap(msg["actions"][1])[0] == 409
+        assert cl.get(f"/approvals?job={jid}")[0]["state"] == "approved"
+        aid = cl.get(f"/approvals?job={jid}")[0]["id"]
+        wrong = {"url": f"/approvals/{aid}/decide?t={'0' * 40}&answer=reject"}
+        assert app.tap(wrong)[0] in (403, 409)
+        assert cl.post("/outbox/test")["queued"]
+        assert app.wait_messages(2)[1]["title"] == "Argus test"
+        box = wait_for(lambda: (b := cl.get("/outbox"))["counts"].get("sent") == 2 and b)
+        assert box["phone"] is True and box["phone_device"] == "test-phone"
+        evs = [e["kind"] for e in cl.get(f"/jobs/{jid}/events")]
+        assert "approval.requested" in evs and "approval.approved" in evs and "outbox.sent" in evs
+        # without the Argus token the inbox is closed
+        assert FakePhoneApp(srv.url, "wrong")._call("GET", "/phone/inbox")[0] == 401
 
 
 def test_reject_in_helios_and_edits(tmp_path):
-    with FakeNtfy() as ntfy:
-        argus = make_argus(tmp_path, ntfy.url, public_url=None).open()
-        with Server(argus) as srv:
-            cl = client(srv.url, "tok")
-            w = Worker(cl, "w")
-            w.register()
-            j1 = cl.post("/jobs", {"plugin": "demo", "workflow": "approval", "input": {"amount": "10"}})["id"]
-            j2 = cl.post("/jobs", {"plugin": "demo", "workflow": "approval", "input": {"amount": "20"}})["id"]
-            assert w.run_once(wait=2) and w.run_once(wait=2)
-            pending = cl.get("/approvals?state=pending")
-            assert len(pending) == 2
-            by_job = {a["job_id"]: a["id"] for a in pending}
-            # without the Argus token and without ?t= nothing can be decided
-            anon = client(srv.url)
-            with pytest.raises(Exception, match="401"):
-                anon.post(f"/approvals/{by_job[j1]}/decide", {"answer": "approve"})
-            cl.post(f"/approvals/{by_job[j1]}/decide", {"answer": "reject"})
-            cl.post(f"/approvals/{by_job[j2]}/decide", {"answer": "approve", "fields": {"amount": "25.00"}})
-            with pytest.raises(Exception, match="422"):
-                cl.post(f"/approvals/{by_job[j2]}/decide", {"answer": "maybe"})
-            assert w.run_once(wait=2) and w.run_once(wait=2)
-            assert cl.get(f"/jobs/{j1}")["result"] == {"filed": False, "because": "rejected"}
-            assert cl.get(f"/jobs/{j2}")["result"]["amount"] == "25.00"
-            assert "actions" not in ntfy.messages[0] and "Decide in Helios." in ntfy.messages[0]["message"]
+    argus = make_argus(tmp_path).open()
+    with Server(argus) as srv:
+        cl = client(srv.url, "tok")
+        w = Worker(cl, "w")
+        w.register()
+        j1 = cl.post("/jobs", {"plugin": "demo", "workflow": "approval", "input": {"amount": "10"}})["id"]
+        j2 = cl.post("/jobs", {"plugin": "demo", "workflow": "approval", "input": {"amount": "20"}})["id"]
+        assert w.run_once(wait=2) and w.run_once(wait=2)
+        pending = cl.get("/approvals?state=pending")
+        assert len(pending) == 2
+        by_job = {a["job_id"]: a["id"] for a in pending}
+        # without the Argus token and without ?t= nothing can be decided
+        anon = client(srv.url)
+        with pytest.raises(Exception, match="401"):
+            anon.post(f"/approvals/{by_job[j1]}/decide", {"answer": "approve"})
+        cl.post(f"/approvals/{by_job[j1]}/decide", {"answer": "reject"})
+        cl.post(f"/approvals/{by_job[j2]}/decide", {"answer": "approve", "fields": {"amount": "25.00"}})
+        with pytest.raises(Exception, match="422"):
+            cl.post(f"/approvals/{by_job[j2]}/decide", {"answer": "maybe"})
+        assert w.run_once(wait=2) and w.run_once(wait=2)
+        assert cl.get(f"/jobs/{j1}")["result"] == {"filed": False, "because": "rejected"}
+        assert cl.get(f"/jobs/{j2}")["result"]["amount"] == "25.00"
 
 
 def test_worker_crash_after_asking_sends_no_second_notification(tmp_path):
@@ -447,65 +398,68 @@ def test_worker_crash_after_asking_sends_no_second_notification(tmp_path):
     def pay(ctx):
         return ctx.step("ask", lambda: ctx.approve("entry", "rent", {"amount": "100"}).state)
 
-    with FakeNtfy() as ntfy:
-        argus = make_argus(tmp_path, ntfy.url).open()
-        with Server(argus) as srv:
-            cl = client(srv.url, "tok")
-            jid = cl.post("/jobs", {"plugin": "bills", "workflow": "pay"})["id"]
-            # worker 1 claims, starts and asks, then "dies" (never calls /wait, no more heartbeats)
-            job = cl.claim("w-dead", [], ["bills"], 2)
-            cl.start(jid, "w-dead")
-            key = f"{jid}:0:1"
-            a = cl.approval(jid, "w-dead", {"key": key, "type": "entry", "title": "rent", "fields": {"amount": "100"}})
-            assert job and a["state"] == "pending"
-            wait_for(lambda: cl.get(f"/jobs/{jid}")["state"] == "queued", timeout=10)
-            w2 = Worker(cl, "w2", registry=reg)
-            w2.register()
-            assert w2.run_once(wait=2)
-            assert cl.get(f"/jobs/{jid}")["state"] == "waiting"
-            time.sleep(0.5)
-            assert len(ntfy.messages) == 1 and len(cl.get(f"/approvals?job={jid}")) == 1
+    argus = make_argus(tmp_path).open()
+    with Server(argus) as srv:
+        cl = client(srv.url, "tok")
+        app = FakePhoneApp(srv.url)
+        jid = cl.post("/jobs", {"plugin": "bills", "workflow": "pay"})["id"]
+        # worker 1 claims, starts and asks, then "dies" (never calls /wait, no more heartbeats)
+        job = cl.claim("w-dead", [], ["bills"], 2)
+        cl.start(jid, "w-dead")
+        key = f"{jid}:0:1"
+        a = cl.approval(jid, "w-dead", {"key": key, "type": "entry", "title": "rent", "fields": {"amount": "100"}})
+        assert job and a["state"] == "pending"
+        wait_for(lambda: cl.get(f"/jobs/{jid}")["state"] == "queued", timeout=10)
+        w2 = Worker(cl, "w2", registry=reg)
+        w2.register()
+        assert w2.run_once(wait=2)
+        assert cl.get(f"/jobs/{jid}")["state"] == "waiting"
+        time.sleep(0.5)
+        app.wait_messages(1)
+        app.pull()
+        assert len(app.messages) == 1 and len(cl.get(f"/approvals?job={jid}")) == 1
 
 
-def test_dead_job_notifies_and_argusd_restart_keeps_unsent_messages(tmp_path):
-    with FakeNtfy(fail_next=100) as ntfy:  # ntfy is down
-        argus = make_argus(tmp_path, ntfy.url).open()
-        with Server(argus) as srv:
-            cl = client(srv.url, "tok")
-            jid = cl.post("/jobs", {"plugin": "demo", "workflow": "fail", "input": {"permanent": True}})["id"]
-            assert Worker(cl, "w").run_once(wait=2)
-            assert cl.get(f"/jobs/{jid}")["state"] == "dead"
-            wait_for(lambda: cl.get("/outbox")["counts"].get("pending"))
-        ntfy.fail_next = 0  # ntfy is back; argusd restarts
-        argus2 = Argus(load_config(tmp_path / "argus.yaml")).open()
-        argus2.outbox.poll_seconds = 0.1
-        with Server(argus2) as srv2:
-            wait_for(lambda: ntfy.messages)
-            time.sleep(0.3)
-            assert [m["title"] for m in ntfy.messages] == ["Job failed: demo.fail"]
-            assert client(srv2.url, "tok").get("/health")["outbox"]["alive"] is True
+def test_dead_job_notifies_and_the_message_waits_for_a_phone_that_is_off(tmp_path):
+    """The phone is not asking (off, away from Tailscale): the message stays queued, through an argusd restart,
+    and the app gets it, once, when it asks."""
+    argus = make_argus(tmp_path).open()
+    with Server(argus) as srv:
+        cl = client(srv.url, "tok")
+        jid = cl.post("/jobs", {"plugin": "demo", "workflow": "fail", "input": {"permanent": True}})["id"]
+        assert Worker(cl, "w").run_once(wait=2)
+        assert cl.get(f"/jobs/{jid}")["state"] == "dead"
+        wait_for(lambda: cl.get("/outbox")["counts"].get("pending"))
+        time.sleep(0.3)
+        assert cl.get("/outbox")["counts"].get("pending") == 1  # nothing was pushed, nothing lost
+    argus2 = Argus(load_config(tmp_path / "argus.yaml")).open()  # argusd restarts; the phone is back
+    with Server(argus2) as srv2:
+        app = FakePhoneApp(srv2.url)
+        assert [m["title"] for m in app.wait_messages(1)] == ["Job failed: demo.fail"]
+        app.pull()
+        assert len(app.messages) == 1
+        assert client(srv2.url, "tok").get("/health")["outbox"]["alive"] is True
 
 
 def test_page_escapes_and_rejects_bad_links(tmp_path):
-    with FakeNtfy() as ntfy:
-        argus = make_argus(tmp_path, ntfy.url).open()
-        with Server(argus) as srv:
-            cl = client(srv.url, "tok")
-            w = Worker(cl, "w")
-            w.register()
-            cl.post("/jobs", {"plugin": "demo", "workflow": "approval",
-                              "input": {"vendor": "<script>alert(1)</script>"}})
-            assert w.run_once(wait=2)
-            a = cl.get("/approvals?state=pending")[0]
-            good = argus.approvals.token(a["id"])
-            html = urllib.request.urlopen(f"{srv.url}/a/{a['id']}?t={good}").read().decode()
-            assert "<script>alert(1)" not in html and "&lt;script&gt;" in html
-            with pytest.raises(urllib.error.HTTPError) as e:
-                urllib.request.urlopen(f"{srv.url}/a/{a['id']}?t=nope")
-            assert e.value.code == 404
+    argus = make_argus(tmp_path).open()
+    with Server(argus) as srv:
+        cl = client(srv.url, "tok")
+        w = Worker(cl, "w")
+        w.register()
+        cl.post("/jobs", {"plugin": "demo", "workflow": "approval",
+                          "input": {"vendor": "<script>alert(1)</script>"}})
+        assert w.run_once(wait=2)
+        a = cl.get("/approvals?state=pending")[0]
+        good = argus.approvals.token(a["id"])
+        html = urllib.request.urlopen(f"{srv.url}/a/{a['id']}?t={good}").read().decode()
+        assert "<script>alert(1)" not in html and "&lt;script&gt;" in html
+        with pytest.raises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(f"{srv.url}/a/{a['id']}?t=nope")
+        assert e.value.code == 404
 
 
-# ------------------------------------------------------------------ phone presence (Tailscale mode)
+# ------------------------------------------------------------------ phone presence (Tailscale)
 
 
 def _status(online: bool) -> dict:
@@ -530,7 +484,7 @@ def test_phone_back_online_pushes_what_is_waiting_once(store, clock):
     jobs, ap, _ = setup(store, clock, cfg)
     seq = iter([False, True, True, False, True, False, True])
     sender = Sender()
-    ob = Outbox(store, cfg, clock=clock, senders={"ntfy": sender})
+    ob = Outbox(store, cfg, clock=clock, senders={"phone": sender})
     watch = PhoneWatch(store, cfg, ap, ob, clock=clock, status=lambda: _status(next(seq)))
 
     async def go():
@@ -566,7 +520,7 @@ def test_phone_back_online_pushes_what_is_waiting_once(store, clock):
     assert meta["online"] is True and meta["device"] == "pixel-8" and meta["since"] == clock()
 
 
-def test_phone_watch_is_off_in_ntfy_mode_or_without_a_phone(store, clock):
+def test_phone_watch_is_off_without_a_phone(store, clock):
     from argus.presence import PhoneWatch
 
     cfg = cfg_with()
@@ -574,8 +528,6 @@ def test_phone_watch_is_off_in_ntfy_mode_or_without_a_phone(store, clock):
     assert not PhoneWatch(store, cfg, ap, None).enabled  # no phone set
     cfg.approvals.phone = "pixel-8"
     assert PhoneWatch(store, cfg, ap, None).enabled
-    cfg.approvals.buttons = "ntfy"
-    assert not PhoneWatch(store, cfg, ap, None).enabled
 
 
 # ------------------------------------------------------------------ review fixes

@@ -12,6 +12,8 @@
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- so the connection (and your notifications) survive deep sleep: the setup page asks for this once -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!-- to find an app by its name ("open Spotify") -->
     <queries>
@@ -54,7 +56,26 @@
         <receiver android:name=".BootReceiver" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+
+        <receiver android:name=".KeepAlive" android:exported="false" />
+        <receiver android:name=".ActionReceiver" android:exported="false" />
+
+        <!-- phone control for Ari (press buttons, read the screen, tap, type): off until you switch it on in
+             Android Settings > Accessibility -->
+        <service
+            android:name=".ControlService"
+            android:exported="false"
+            android:label="Argus phone control"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_config" />
+        </service>
     </application>
 </manifest>

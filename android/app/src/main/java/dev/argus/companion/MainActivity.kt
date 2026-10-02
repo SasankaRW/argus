@@ -12,6 +12,7 @@ import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import android.text.InputType
 import android.view.Gravity
@@ -27,6 +28,7 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import org.json.JSONObject
 import kotlin.concurrent.thread
 
 /**
@@ -58,13 +60,14 @@ class MainActivity : Activity() {
 
     private fun route(intent: Intent?) {
         val prefs = Prefs(this)
-        if (!prefs.ready || intent?.action == "dev.argus.companion.SETTINGS") setup() else helios()
+        if (!prefs.ready || intent?.action == "dev.argus.companion.SETTINGS") setup()
+        else helios(intent?.getStringExtra("path"))  // a notification's tap opens its page
     }
 
     // ------------------------------------------------------------------ Helios
 
     @SuppressLint("SetJavaScriptEnabled")
-    private fun helios() {
+    private fun helios(path: String? = null) {
         onSetup = false
         val prefs = Prefs(this)
         WorkerService.start(this)
@@ -97,7 +100,13 @@ class MainActivity : Activity() {
                 }
             }
         }
-        if (w.url == null) w.loadUrl("${prefs.url}/helios/?app=1&token=${Uri.encode(prefs.token)}")
+        val target = path?.trim()?.takeIf { it.isNotEmpty() }?.let { if (it.startsWith("/")) prefs.url + it else it }
+        when {
+            target != null && target.startsWith(prefs.url) -> w.loadUrl(target)
+            target != null && (target.startsWith("http://") || target.startsWith("https://")) ->
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(target)))
+            w.url == null -> w.loadUrl("${prefs.url}/helios/?app=1&token=${Uri.encode(prefs.token)}")
+        }
         setContentView(w)
     }
 
@@ -158,8 +167,32 @@ class MainActivity : Activity() {
             }
         })
         col.addView(status)
-        col.addView(label("Phone permissions", 17f, ink, bold = true, top = dp(28)))
-        col.addView(label("So Ari can do what you ask on this phone. Each opens Android's own setting.", 13f, dim))
+        col.addView(label("Notifications and staying connected", 17f, ink, bold = true, top = dp(28)))
+        col.addView(label("Argus collects your notifications itself, so they arrive with this app closed. Android " +
+            "must let it keep running in the background.", 13f, dim))
+        val notifOk = Build.VERSION.SDK_INT < 33 ||
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        col.addView(button(check(notifOk) + "Show notifications") {
+            if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
+        })
+        val pm = getSystemService(PowerManager::class.java)
+        col.addView(button(check(pm.isIgnoringBatteryOptimizations(packageName)) + "Run in the background (no battery limit)") {
+            startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
+        })
+        col.addView(button("Send me a test notification") {
+            thread {
+                val ok = try { Api(prefs.url, prefs.token).post("/outbox/test", JSONObject()).status in 200..299 } catch (e: Exception) { false }
+                runOnUiThread { status.text = if (ok) "Sent: it should appear within a few seconds." else "Couldn't reach Argus." }
+            }
+        })
+        col.addView(label("Phone control", 17f, ink, bold = true, top = dp(28)))
+        col.addView(label("So Ari can do things on this phone. Each opens Android's own setting. The first one lets " +
+            "her press Back and Home, lock the screen, read the screen, tap and type, only when you ask her to " +
+            "(she asks you first before tapping or typing). If Android greys it out: App info > ⋮ > Allow " +
+            "restricted settings, then try again.", 13f, dim))
+        col.addView(button(check(ControlService.enabled(this)) + "Phone control (Accessibility > Argus)") {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        })
         val nm = getSystemService(NotificationManager::class.java)
         col.addView(button(check(nm.isNotificationPolicyAccessGranted) + "Do Not Disturb control") {
             startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
@@ -171,9 +204,10 @@ class MainActivity : Activity() {
             PackageManager.PERMISSION_GRANTED) + "Microphone (talk to Ari in Helios)") {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 2)
         })
-        col.addView(button((if (prefs.worker) "✓  " else "") + "Let Argus use this phone (phone tools)") {
+        col.addView(button((if (prefs.worker) "✓  " else "○  ") + "Let Argus use this phone (phone tools)") {
             prefs.worker = !prefs.worker
-            if (prefs.worker) WorkerService.start(this) else WorkerService.stop(this)
+            WorkerService.stop(this)
+            WorkerService.start(this)  // notifications keep coming either way
             setup()
         })
         setContentView(ScrollView(this).apply { setBackgroundColor(bg); addView(col) })

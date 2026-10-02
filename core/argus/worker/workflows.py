@@ -394,7 +394,7 @@ class Context:
 
     def notify(self, title: str, text: str = "", *, priority: str = "default", tags: list[str] | None = None,
                link: str | None = None) -> bool:
-        """Send a phone message (ntfy). Sent once even if this step runs again. Returns True if queued now."""
+        """Send a phone message. Sent once even if this step runs again. Returns True if queued now."""
         self._check_lease()
         body = {"key": self._key("notify"), "title": title, "text": text, "priority": priority,
                 "tags": tags or [], "link": link}

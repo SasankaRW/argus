@@ -14,7 +14,7 @@
 #   .\scripts\dev.ps1 helios  rebuild Helios after changing helios/src (needs Node.js; the built copy is in Git)
 #   .\scripts\dev.ps1 models  check Ollama, the tier models and Claude ("models claude" also makes one real Claude call)
 #   .\scripts\dev.ps1 classify  send a model job; T1's answer is rejected on purpose so you see an escalation
-#   .\scripts\dev.ps1 ntfy      send a test notification to your phone (NTFY_TOPIC in .env)
+#   .\scripts\dev.ps1 notify    send a test notification to the Argus phone app
 #   .\scripts\dev.ps1 approval  send a pretend bill that waits for your approval (phone or Helios)
 #   .\scripts\dev.ps1 approve   approve the newest waiting approval ("approve no" rejects it)
 #   .\scripts\dev.ps1 mcp       let Claude Code use Argus (adds Argus as an MCP server to the claude CLI)
@@ -296,11 +296,11 @@ switch ($Command) {
         $File = if ($Arg) { $Arg } else { "lecture_07.pdf" }
         Submit-Job ('{"plugin":"demo","workflow":"classify","input":{"filename":"' + $File + '","reject_tier":"T1"}}') 600
     }
-    "ntfy" {
+    { $_ -in "notify", "ntfy" } {
         $H = @{}; $T = Token; if ($T) { $H["Authorization"] = "Bearer $T" }
         try { Invoke-RestMethod -Method Post -Uri "$ArgusUrl/outbox/test" -Headers $H | Out-Null }
-        catch { throw "Could not send: $($_.ErrorDetails.Message) (is argusd running? is NTFY_TOPIC set in .env?)" }
-        Write-Host "Test message queued. Check the ntfy app on your phone (topic from NTFY_TOPIC)."
+        catch { throw "Could not send: $($_.ErrorDetails.Message) (is argusd running? is the phone app signed in?)" }
+        Write-Host "Test message queued. The Argus phone app shows it within a second or two (or when it next connects)."
     }
     "mcp" {
         $T = Token

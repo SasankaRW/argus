@@ -134,24 +134,31 @@ class EventsConfig(_Strict):
     stream_queue: int = Field(200, ge=10, le=10000)  # batches a slow viewer may lag before it is dropped
 
 
-class NtfyConfig(_Strict):
-    # Phone notifications. The topic is a secret (NTFY_TOPIC in .env): anyone who knows it can read it.
-    url: str = "https://ntfy.sh"          # or your own ntfy server
-    timeout_seconds: float = Field(10, gt=0, le=120)
-    max_attempts: int = Field(8, ge=1, le=50)  # then the message is marked failed (and shown in Helios)
-    reply_retry_seconds: float = Field(5, gt=0, le=300)  # wait before reconnecting to the reply topic
+class NotifyConfig(_Strict):
+    """Phone notifications, delivered by the Argus phone app (it asks for its messages; see outbox.py)."""
+
     # Quiet by default: a plugin's ordinary messages (ctx.notify with priority min/low/default) wait for the evening
     # summary. Approvals, failures, reminders, warnings and high/urgent messages always come at once.
+    quiet: bool = True
+    keep_hours: float = Field(48, gt=0, le=24 * 30)  # a message the phone never collected is dropped after this
+    max_attempts: int = Field(8, ge=1, le=50)  # for push senders (webhooks later): then marked failed
+
+
+class NtfyConfig(_Strict):
+    """Old section, no longer used (ntfy was replaced by the phone app). Still accepted so an existing argus.yaml
+    loads; `quiet: false` here still counts."""
+
+    url: str = "https://ntfy.sh"
+    timeout_seconds: float = 10
+    max_attempts: int = 8
+    reply_retry_seconds: float = 5
     quiet: bool = True
 
 
 class ApprovalsConfig(_Strict):
-    # How the phone's Approve / Reject buttons reach Argus:
-    #   tailscale (default): straight to Argus at public_url, so they only work while the phone is on Tailscale.
-    #       When the phone comes back online, Argus pushes whatever is still waiting (see `phone`).
-    #   ntfy: through a private reply topic on the ntfy server, so they work anywhere; anyone who knows your
-    #       ntfy topic could then approve too. Use only with your own ntfy server behind a login.
-    buttons: Literal["tailscale", "ntfy"] = "tailscale"
+    # The phone's Approve / Reject buttons are links the app opens against Argus (over Tailscale), or against
+    # public_url when that is set. `buttons` is no longer used ("tailscale" and "ntfy" are accepted, ignored).
+    buttons: Literal["app", "tailscale", "ntfy"] = "app"
     public_url: str | None = None  # how the phone reaches Argus, e.g. https://saspc.tail1234.ts.net
     phone: str | None = None  # the phone's Tailscale device name; empty = no "back online" push
     presence_seconds: float = Field(30, ge=5, le=3600)  # how often `tailscale status` is checked
@@ -363,10 +370,6 @@ class Secrets(BaseModel):
     model_config = ConfigDict(extra="ignore")
     admin_password: str | None = Field(None, repr=False)
     worker_token: str | None = Field(None, repr=False)
-    ntfy_topic: str | None = Field(None, repr=False)
-    ntfy_token: str | None = Field(None, repr=False)  # only for a private ntfy server with access control
-    ntfy_reply_topic: str | None = Field(None, repr=False)  # optional; derived from the topic when unset
-    ntfy_reply_write_token: str | None = Field(None, repr=False)  # ntfy mode with a login: write-only token
     webhooks: dict[str, str] = Field(default_factory=dict, repr=False)  # hook name -> its secret
     env: dict[str, str] = Field(default_factory=dict, repr=False)  # .env as read, for secrets named later
 
@@ -381,7 +384,8 @@ class Config(_Strict):
     claude: ClaudeConfig = Field(default_factory=ClaudeConfig)
     jobs: JobsConfig = Field(default_factory=JobsConfig)
     events: EventsConfig = Field(default_factory=EventsConfig)
-    ntfy: NtfyConfig = Field(default_factory=NtfyConfig)
+    notify: NotifyConfig = Field(default_factory=NotifyConfig)
+    ntfy: NtfyConfig = Field(default_factory=NtfyConfig)  # old, unused
     approvals: ApprovalsConfig = Field(default_factory=ApprovalsConfig)
     windows: dict[str, str] = Field(default_factory=lambda: {"night": "01:00-06:00"})
     schedules: list[ScheduleConfig] = Field(default_factory=list)
@@ -487,14 +491,10 @@ def load_config(path: str | os.PathLike | None = None) -> Config:
 
     cfg.base_dir = cfg_path.parent
     env = parse_env_file(cfg_path.parent / ".env")
-    env.update({k: v for k, v in os.environ.items() if k.startswith(("ARGUS_", "NTFY_"))})
+    env.update({k: v for k, v in os.environ.items() if k.startswith("ARGUS_")})
     cfg.secrets = Secrets(
         admin_password=env.get("ARGUS_ADMIN_PASSWORD") or None,
         worker_token=env.get("ARGUS_WORKER_TOKEN") or None,  # an empty value means "not set"
-        ntfy_topic=env.get("NTFY_TOPIC") or None,
-        ntfy_token=env.get("NTFY_TOKEN") or None,
-        ntfy_reply_topic=env.get("NTFY_REPLY_TOPIC") or None,
-        ntfy_reply_write_token=env.get("NTFY_REPLY_WRITE_TOKEN") or None,
     )
     cfg.secrets.env = env
     missing = []
