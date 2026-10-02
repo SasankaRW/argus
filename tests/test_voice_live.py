@@ -338,3 +338,54 @@ def test_the_first_piece_is_short_so_speech_starts_sooner():
     assert vl.sentences("Your week's been busy! 344 jobs done.") == ["Your week's been busy!", "344 jobs done."]
     assert vl.sentences("Okay. Done.") == ["Okay. Done."]  # a tiny first one is joined to the next
     assert vl.sentences("Short one, with a comma.") == ["Short one, with a comma."]
+
+
+def test_a_silent_room_does_not_run_the_voice_model():
+    runs = []
+    q = vl.Quiet(lambda f: runs.append(1) or 0.9)
+    quiet = np.full(vl.FRAME, 0.001, np.float32)
+    loud = np.full(vl.FRAME, 0.05, np.float32)
+    for _ in range(100):
+        assert q(quiet) == 0.0
+    assert runs == [] and q.share_skipped() == 1.0
+    assert q(loud) == 0.9 and len(runs) == 1  # someone talks: the model scores it
+    for _ in range(q.hang_frames):
+        q(quiet)  # ... and the next moments too (a word's end)
+    assert len(runs) == 1 + q.hang_frames
+    q(quiet)
+    assert len(runs) == 1 + q.hang_frames  # then quiet again
+
+
+def test_the_model_is_let_go_while_you_are_away_and_loaded_when_you_are_back(monkeypatch):
+    import threading as th
+    import urllib.request
+
+    from argus import ari_listen
+    from argus.config import Config
+
+    pings = []
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=0: pings.append(1) or __import__("io").BytesIO())
+    away = {"s": 0.0}
+    cfg = Config.model_validate({"models": {"tiers": {"T1": {"provider": "ollama", "model": "qwen3"}},
+                                            "chain": ["T1"]}, "ari": {"rest_after_min": 1}})
+    started = []
+    monkeypatch.setattr(th.Thread, "start", lambda self: started.append(self))
+    ari_listen.keep_warm(cfg, every=1000, check=0, away=lambda: away["s"])
+    loop = started[0]._target
+    sleeps = []
+
+    def fake_sleep(s):
+        sleeps.append(s)
+        if len(sleeps) == 1:
+            away["s"] = 120  # gone for two minutes
+        elif len(sleeps) == 3:
+            away["s"] = 0  # back
+        elif len(sleeps) == 4:
+            raise StopIteration
+
+    monkeypatch.setattr(ari_listen.time, "sleep", fake_sleep)
+    try:
+        loop()
+    except StopIteration:
+        pass
+    assert len(pings) == 2  # at the start, then not while away, then at once when back

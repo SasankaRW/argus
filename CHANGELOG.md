@@ -5,6 +5,11 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Lighter when idle: the island and the "Hey Ari" listener wait for news from Argus (a long poll, `GET /events?wait=20`) instead of asking every second all day; a Talk press or a state change still lands at once.
+- The voice detector (Silero) only runs when the room isn't silent: plainly quiet moments are skipped (the minute "microphone level" log line shows how much, `vad_skipped`).
+- While you're away (no keyboard, mouse or question for `ari.rest_after_min`, 30 by default) Ari stops keeping its model warm, so Ollama lets it go; it is loaded again the moment you're back, before you speak. 0 keeps it always warm.
+- The listener's clock ticks twice a second while nothing is going on (10 times a second in a conversation).
+- Helios doesn't poll the status while its tab is hidden.
 - Fix: the expressive voice loaded its model twice at start-up (the warm-up and the first sentence asked at the same moment): double the GPU memory and a slower first sentence. It loads once now.
 - The voice server's log says what each sentence took ("said [calm] 52 chars in 310 ms").
 - Ari's expressive voice is warmed up when Argus starts (one short word, so the model, the voice clip and the GPU are ready before your first question), instead of the first sentence paying for it.

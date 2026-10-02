@@ -975,24 +975,27 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
     app.primaryScreen().geometryChanged.connect(lambda _g: island.place())
 
     def feed() -> None:
-        """Follow Ari: a light poll of the event stream (faster while Ari is busy), and "I'm here" every 30 s."""
+        """Follow Ari: a long poll of the event stream (Argus answers the moment something happens, else after 20 s,
+        so nothing is asked every second all day), and "I'm here" every 30 s."""
         seq, last_ping = -1, 0.0
         while True:
+            t0 = time.monotonic()
             try:
                 if time.monotonic() - last_ping > 30:
                     api.call("POST", "/ari/popup")
                     last_ping = time.monotonic()
                 if seq < 0:
                     seq = int(api.call("GET", "/events?kinds=ari.state&limit=1&newest=true").get("seq") or 0)
-                r = api.call("GET", f"/events?kinds=ari.state,step.running&after={seq}&limit=200")
+                r = api.call("GET", f"/events?kinds=ari.state,step.running&after={seq}&limit=200&wait=20",
+                             timeout=30)
                 evs = r.get("events") or []
                 if evs:
                     seq = max(int(e["seq"]) for e in evs)
                     bus.events.emit(evs)
+                elif time.monotonic() - t0 < 1:  # an older Argus that doesn't wait: don't ask in a tight loop
+                    time.sleep(1.2)
             except Exception:  # Argus restarting or out of reach: look again later
                 time.sleep(4)
-            busy = island.ari.phase not in ("idle",)
-            time.sleep(0.5 if busy else 1.2)
 
     threading.Thread(target=feed, daemon=True, name="ari-feed").start()
     print("Ari's island is on (top of the screen).", flush=True)

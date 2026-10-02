@@ -53,7 +53,7 @@ export function MiniLog({ n = 40 }: { n?: number }) {
       } catch { /* argusd restarting */ }
     };
     tick();
-    const i = window.setInterval(tick, 3000);
+    const i = window.setInterval(() => { if (!document.hidden) tick(); }, 3000);  // not while the tab is hidden
     return () => { stop = true; window.clearInterval(i); };
   }, [n]);
   useEffect(() => { if (box.current) box.current.scrollTop = box.current.scrollHeight; }, [lines]);

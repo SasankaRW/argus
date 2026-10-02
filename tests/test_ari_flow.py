@@ -326,3 +326,29 @@ def test_a_task_answer_is_said_while_it_is_written_unless_it_is_about_to_use_a_t
         r = cl.post("/ari", {"text": "explain what a mutex is in one sentence"})
         settle(cl, w, r["conv"])
         assert cl.get(f"/events?kinds=plugin.ari.partial&job={r['job_id']}")["events"] == []
+
+
+def test_events_can_wait_for_something_new(tmp_path):
+    import threading
+    import time
+
+    with Server(make(tmp_path).open()) as srv:
+        cl = client(srv.url)
+        seq = cl.get("/events?limit=1&newest=true")["seq"]
+        t0 = time.monotonic()
+        assert cl.get(f"/events?kinds=ari.state&after={seq}&wait=0.4")["events"] == []  # nothing: after the wait
+        assert time.monotonic() - t0 >= 0.35
+        got = {}
+
+        def poll():
+            got["r"] = cl.get(f"/events?kinds=ari.state&after={seq}&wait=10")
+            got["t"] = time.monotonic()
+
+        th = threading.Thread(target=poll)
+        th.start()
+        time.sleep(0.3)
+        t1 = time.monotonic()
+        cl.post("/ari/state", {"phase": "listening"})
+        th.join(5)
+        assert [e["data"]["phase"] for e in got["r"]["events"]] == ["listening"]
+        assert got["t"] - t1 < 2  # answered when it happened, not after the 10 s

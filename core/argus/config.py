@@ -268,6 +268,9 @@ class AriConfig(_Strict):
     personality: str = ""
     call_me: str = ""  # what Ari calls you now and then (e.g. "Sas"); empty: no name
     keep_warm: bool = True  # keep the first local model loaded in Ollama while the listener runs (fast replies)
+    # ...but not while you're away: after this many minutes with no keyboard, mouse or question, the model is let go
+    # (GPU memory and power); it is loaded again the moment you're back. 0: always warm.
+    rest_after_min: int = Field(30, ge=0, le=1440)
     # Ari's natural voice: a Piper voice file (.onnx, with its .onnx.json next to it) on the machine running argusd.
     # Empty: the browser's own voice.
     # Get one: python -m piper.download_voices en_US-lessac-medium --data-dir data/voices

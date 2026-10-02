@@ -227,11 +227,13 @@ class AriClient:
         except Exception:  # argusd restarting
             pass
 
-    def wakes(self, after: int, kinds: str = "ari.wake") -> tuple[list[dict], int]:
-        """Talk-button presses (and important notices) since event `after`: (events, the newest seq)."""
+    def wakes(self, after: int, kinds: str = "ari.wake", wait: float = 0) -> tuple[list[dict], int]:
+        """Talk-button presses (and important notices) since event `after`: (events, the newest seq). `wait`: when
+        there are none yet, Argus waits up to that long for one (a long poll)."""
         try:
-            r = json.loads(self._req("GET", f"/events?kinds={kinds}&after={max(after, 0)}&limit=20", None,
-                                     timeout=5))
+            more = f"&wait={wait:g}" if wait and after >= 0 else ""
+            r = json.loads(self._req("GET", f"/events?kinds={kinds}&after={max(after, 0)}&limit=20{more}", None,
+                                     timeout=5 + wait))
         except Exception:
             return [], after
         if after < 0:  # the first look: only what comes from now on
@@ -260,6 +262,7 @@ class AriClient:
     def say(self, text: str, on_partial: Callable[[str, str], None] | None = None) -> dict:
         """Ask Ari. `on_partial(text_so_far, mood)`: the finished sentences of a reply still being written (small
         talk streams), so they can be spoken before the rest is ready."""
+        LAST_ASKED[0] = time.monotonic()
         if self.conv and time.time() - self.used > self.NEW_CHAT_S:
             self.conv = None  # a while since we last talked: a fresh chat, so old ones don't leak into this one
         self.used = time.time()
@@ -435,7 +438,7 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device) -> i
     models = cfg.db_path.parent / "models"
     sil = vl.silero_path()
     try:
-        vad = vl.Silero(sil) if sil else vl.LoudnessVad()
+        vad = vl.Quiet(vl.Silero(sil)) if sil else vl.LoudnessVad()  # Silero only when the room isn't silent
     except Exception as e:  # noqa: BLE001 - onnxruntime missing or broken: the loudness gate still works
         log.warning("no Silero VAD", extra={"error": str(e)[:200]})
         vad = vl.LoudnessVad()
@@ -504,17 +507,13 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device) -> i
     spoke_up = [0.0]
     voc_at = [time.monotonic()]
 
-    def side() -> None:
-        """The Talk button, important notices (as in the classic mode) and the "done talking" report."""
-        seq, last = -1, 0.0
+    def watch() -> None:
+        """The Talk button, important notices and pause / resume: a long poll, so Argus is asked about once every
+        20 s while nothing happens, and a press still lands at once."""
+        seq = -1
         while True:
-            if time.monotonic() - last > 30:
-                client.here()
-                if time.monotonic() - voc_at[0] > 600:
-                    client.vocabulary()
-                    voc_at[0] = time.monotonic()
-                last = time.monotonic()
-            evs, seq = client.wakes(seq, "ari.wake,ari.notice,ari.listening")
+            t0 = time.monotonic()
+            evs, seq = client.wakes(seq, "ari.wake,ari.notice,ari.listening", wait=20)
             hush_from(evs)
             if any(e.get("kind") == "ari.wake" for e in evs):
                 log.info("talk button")
@@ -527,11 +526,26 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device) -> i
                 spoke_up[0] = time.monotonic()
                 log.info("speaking up", extra={"title": d.get("title")})
                 player.say(vl.sentences(notice_text(str(d.get("title") or ""), str(d.get("text") or ""))))
-            for _ in range(8):
-                player.poll()
-                talk.tick()
-                time.sleep(0.1)
+            if not evs and time.monotonic() - t0 < 1:  # Argus down, or one that doesn't wait: not a tight loop
+                time.sleep(2)
 
+    def side() -> None:
+        """"I'm here" and the vocabulary now and then; the conversation's clock. Ticks often only while there is
+        something to time (a conversation, Ari talking); otherwise twice a second."""
+        last = 0.0
+        while True:
+            if time.monotonic() - last > 30:
+                client.here()
+                if time.monotonic() - voc_at[0] > 600:
+                    client.vocabulary()
+                    voc_at[0] = time.monotonic()
+                last = time.monotonic()
+            player.poll()
+            talk.tick()
+            busy = player.busy or talk.in_conversation or talk.turns.talking
+            time.sleep(0.1 if busy else 0.5)
+
+    threading.Thread(target=watch, daemon=True, name="ari-watch").start()
     threading.Thread(target=side, daemon=True, name="ari-side").start()
     print("Listening for \"Hey Ari\" (Ctrl+C to stop). Then just talk; \"thanks Ari\" ends it.", flush=True)
     loudest, since = 0.0, time.monotonic()
@@ -541,7 +555,8 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device) -> i
                 continue
             loudest = max(loudest, float(np.sqrt(np.mean(np.square(frame)))))
             if time.monotonic() - since > 60:
-                log.info("microphone level", extra={"loudest": round(loudest, 4)})
+                skipped = vad.share_skipped() if isinstance(vad, vl.Quiet) else 0.0
+                log.info("microphone level", extra={"loudest": round(loudest, 4), "vad_skipped": round(skipped, 2)})
                 loudest, since = 0.0, time.monotonic()
             if paused():  # the pause button / voice training: hear nothing, say nothing new
                 if talk.turns.talking or talk.in_conversation:
@@ -564,9 +579,15 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device) -> i
 LOCK_PORT = 8619
 
 
-def keep_warm(cfg, every: float = 240.0) -> threading.Thread | None:
-    """Ari's first local model stays loaded in Ollama while this listener runs (ari.keep_warm): loading it on your
-    first question costs seconds. A tiny request now and every few minutes, so it is never unloaded."""
+LAST_ASKED = [0.0]  # when Ari was last asked something here (monotonic)
+
+
+def keep_warm(cfg, every: float = 240.0, check: float = 15.0,
+              away: Callable[[], float] | None = None) -> threading.Thread | None:
+    """Ari's first local model stays loaded in Ollama while you're around (ari.keep_warm): loading it on your first
+    question costs seconds. A tiny request now and every few minutes, so it is never unloaded. When you've been
+    away (no keyboard or mouse, nothing asked) for ari.rest_after_min, it stops, and Ollama lets the model go
+    (GPU memory and power back); the moment you're back it is loaded again, before you say anything."""
     t1 = cfg.models.tiers.get(cfg.models.chain[0]) if cfg.models.chain else None
     if not cfg.ari.keep_warm or t1 is None or t1.provider != "ollama" or not t1.model:
         return None
@@ -575,20 +596,31 @@ def keep_warm(cfg, every: float = 240.0) -> threading.Thread | None:
 
     body = json.dumps({"model": t1.model, "prompt": "", "keep_alive": "10m",  # the same context as Ari's requests
                        "options": {"num_ctx": cfg.ollama.num_ctx}}).encode()
+    rest_s = float(cfg.ari.rest_after_min) * 60
+    gone = away or (lambda: min(idle_seconds(), time.monotonic() - LAST_ASKED[0]))
 
     def loop() -> None:
+        last, resting = -1e9, False
         while True:
-            try:
-                req = urllib.request.Request(cfg.ollama.url.rstrip("/") + "/api/generate", data=body, method="POST",
-                                             headers={"Content-Type": "application/json"})
-                urllib.request.urlopen(req, timeout=120).read()  # noqa: S310 - the local Ollama
-            except Exception as e:  # noqa: BLE001 - Ollama down: try again later
-                log.info("could not warm the model", extra={"error": str(e)[:120]})
-            time.sleep(every)
+            now_resting = rest_s > 0 and gone() > rest_s
+            if now_resting and not resting:
+                log.info("you're away: letting the model unload")
+            if not now_resting and (resting or time.monotonic() - last >= every):
+                try:
+                    req = urllib.request.Request(cfg.ollama.url.rstrip("/") + "/api/generate", data=body,
+                                                 method="POST", headers={"Content-Type": "application/json"})
+                    urllib.request.urlopen(req, timeout=120).read()  # noqa: S310 - the local Ollama
+                    if resting:
+                        log.info("you're back: model loaded again")
+                except Exception as e:  # noqa: BLE001 - Ollama down: try again later
+                    log.info("could not warm the model", extra={"error": str(e)[:120]})
+                last = time.monotonic()
+            resting = now_resting
+            time.sleep(check)
 
     th = threading.Thread(target=loop, daemon=True, name="keep-warm")
     th.start()
-    log.info("keeping the model warm", extra={"model": t1.model})
+    log.info("keeping the model warm", extra={"model": t1.model, "rest_after_min": cfg.ari.rest_after_min})
     return th
 
 
@@ -696,7 +728,8 @@ def main(argv: list[str] | None = None) -> int:
             if time.monotonic() - last > 30:
                 client.here()
                 last = time.monotonic()
-            evs, seq = client.wakes(seq, "ari.wake,ari.notice,ari.listening")
+            t0 = time.monotonic()
+            evs, seq = client.wakes(seq, "ari.wake,ari.notice,ari.listening", wait=20)  # a long poll
             hush_from(evs)
             if any(e.get("kind") == "ari.wake" for e in evs):
                 log.info("talk button")
@@ -709,7 +742,8 @@ def main(argv: list[str] | None = None) -> int:
                 spoke_up[0] = time.monotonic()
                 log.info("speaking up", extra={"title": d.get("title")})
                 speak(notice_text(str(d.get("title") or ""), str(d.get("text") or "")))
-            time.sleep(0.8)
+            if not evs and time.monotonic() - t0 < 1:  # Argus down, or one that doesn't wait
+                time.sleep(2)
 
     threading.Thread(target=talk_button, daemon=True, name="talk-button").start()
     log.info("listening for Hey Ari", extra={"device": device})

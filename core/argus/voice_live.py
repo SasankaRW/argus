@@ -89,6 +89,42 @@ def silero_path() -> Path | None:
     return p if p.exists() else None
 
 
+class Quiet:
+    """In front of the voice model: a plainly silent frame (not much above the room's background) is scored 0
+    without running the model, so a quiet room costs next to nothing. After anything louder the model runs for a
+    while (`hang_s`), so a word's start and end are still scored by it."""
+
+    def __init__(self, vad: Callable[[Any], float], ratio: float = 2.5, least: float = 0.002, hang_s: float = 0.6):
+        self.vad, self.ratio, self.least = vad, ratio, least
+        self.floor = 0.004
+        self.hang_frames = round(hang_s * RATE / FRAME)
+        self.hang = 0
+        self.ran = self.skipped = 0
+
+    def __call__(self, frame) -> float:
+        import numpy as np
+
+        rms = float(np.sqrt(np.mean(np.square(frame)))) if len(frame) else 0.0
+        # the background: follows quiet quickly, noise only slowly (a fan coming on)
+        self.floor = 0.9 * self.floor + 0.1 * rms if rms < self.floor else 0.999 * self.floor + 0.001 * rms
+        if rms >= max(self.floor * self.ratio, self.least):
+            self.hang = self.hang_frames
+        elif self.hang > 0:
+            self.hang -= 1
+        else:
+            self.skipped += 1
+            return 0.0
+        self.ran += 1
+        return self.vad(frame)
+
+    def share_skipped(self) -> float:
+        """How much of the time the model was not needed (since last asked)."""
+        n = self.ran + self.skipped
+        out = self.skipped / n if n else 0.0
+        self.ran = self.skipped = 0
+        return out
+
+
 class LoudnessVad:
     """Without Silero: louder than the room's background (learned as it goes) counts as voice."""
 

@@ -46,6 +46,7 @@ Errors: 404 unknown job, 409 lease lost or transition not allowed, 429 plugin qu
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 import hmac
 import json
@@ -1542,10 +1543,31 @@ def create_app(argus: Argus) -> FastAPI:
 
     @app.get("/events", dependencies=guarded)
     async def events(after: int = 0, limit: int = Query(200, ge=1, le=1000), kinds: str | None = None,
-                     job: str | None = None, component: str | None = None, newest: bool = False) -> dict:
-        """Event history. `newest=true` returns the latest `limit` matches (oldest first)."""
+                     job: str | None = None, component: str | None = None, newest: bool = False,
+                     wait: float = Query(0, ge=0, le=30)) -> dict:
+        """Event history. `newest=true` returns the latest `limit` matches (oldest first). `wait=N`: when there is
+        nothing new yet, wait up to N seconds for it (a long poll: the island and the listener ask once and hear at
+        once, instead of asking every second all day)."""
         flt = EventFilter.parse(kinds, job, component)
-        rows = await argus.store.read(lambda c: read_events(c, after, limit=limit, flt=flt, newest=newest))
+
+        def read() -> Any:
+            return argus.store.read(lambda c: read_events(c, after, limit=limit, flt=flt, newest=newest))
+
+        if wait <= 0 or newest:
+            return {"events": await read(), "seq": argus.hub.cursor}
+        sub = argus.hub.subscribe(flt)  # before reading: nothing can slip in between
+        try:
+            rows = await read()
+            if not rows:
+                with contextlib.suppress(TimeoutError):
+                    async with asyncio.timeout(wait):
+                        while True:
+                            batch = await sub.queue.get()
+                            if batch is None or any(int(e.get("seq") or 0) > after for e in batch):
+                                break
+                rows = await read()
+        finally:
+            argus.hub.unsubscribe(sub)
         return {"events": rows, "seq": argus.hub.cursor}
 
     @app.get("/registry", dependencies=guarded)
