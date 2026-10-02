@@ -170,8 +170,52 @@ export function SettingsView() {
           ))}
         </div>
       </section>
+      <AriHealth />
       <ToolTest />
     </div>
+  );
+}
+
+type HealthRow = { name: string; level: "ok" | "warn" | "bad"; detail: string; fix: string };
+type Health = { at: number; ok: boolean; problems: number; checks: HealthRow[] };
+
+// Ari's setup, checked: Ollama and its model, web search, the voice, Whisper, the listener, and whether the local
+// model still picks the right tool. Also runs by itself every morning; the phone hears only when something is wrong.
+function AriHealth() {
+  const [h, setH] = useState<Health | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => { api<{ health: Health | null }>("/ari/health").then((r) => setH(r.health)).catch(() => {}); }, []);
+  const run = async () => {
+    setBusy(true); setErr(null);
+    try { setH((await api<{ health: Health }>("/ari/health", { method: "POST", body: "{}" })).health); }
+    catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    setBusy(false);
+  };
+  const bad = h?.checks.filter((c) => c.level !== "ok").length ?? 0;
+  return (
+    <section className="panel ttest">
+      <div className="ph">
+        <span className="pt">check ari</span>
+        <span className="muted">Ollama, web search, the voice, Whisper, the listener, and tool picking{h ? ` · last ${new Date(h.at * 1000).toLocaleString([], { hour: "2-digit", minute: "2-digit", day: "numeric", month: "short" })}` : ""}</span>
+        <div className="tools"><button type="button" className="primary" disabled={busy} onClick={run}>{busy ? "checking…" : "check"}</button></div>
+      </div>
+      {err && <div className="tip bad setp-err">{err}</div>}
+      {busy && <div className="tip">Asking the services and the model a few questions… about ten seconds.</div>}
+      {h && (
+        <div className="ttrows">
+          <div className={`ttsum mono ${bad ? "bad" : "ok"}`}>{bad ? `${bad} to look at` : "all fine"}</div>
+          {h.checks.map((c) => (
+            <div key={c.name} className={`ttrow${c.level === "ok" ? "" : " bad"}`}>
+              <i aria-hidden="true">{c.level === "ok" ? "✓" : c.level === "warn" ? "!" : "✗"}</i>
+              <span className="mono">{c.name}</span>
+              <span className="muted">{c.level}</span>
+              <span className="ttabout">{c.detail}{c.fix ? ` — ${c.fix}` : ""}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from datetime import datetime
 
 from . import __version__
@@ -74,6 +75,9 @@ class Argus:
         self.brief_sent: str | None = None
         self.summary_sent: str | None = None
         self.guidance_sent: str | None = None
+        self.health_sent: str | None = None
+        self.health_tools: Callable[[], list[dict]] = lambda: []  # Ari's tools (set by the API)
+        self.listener_seen: Callable[[], float] = lambda: 0.0  # when the PC's listener last said it runs
         self._next_touch = 0.0
         self.resumed: dict | None = None  # set at start when the last run ended abruptly
         self.started_at: float | None = None
@@ -180,10 +184,38 @@ class Argus:
             if day:
                 self.guidance_sent = day
                 await self.guidance_review()
+        if self.cfg.ari_health.enabled:
+            day = brief_due(self.cfg.ari_health.at, now, self.health_sent, until_hour=23)
+            if day:
+                self.health_sent = day
+                asyncio.create_task(self.run_health(push=True))  # takes a while (it asks the model): not in the tick
         if self.cfg.summary.enabled:
             day = brief_due(self.cfg.summary.at, now, self.summary_sent, until_hour=23)
             if day:
                 await self.send_summary(day)
+
+    async def run_health(self, push: bool = False) -> dict:
+        """Ari's health check (health.py), kept as an event; the phone hears only when something is bad."""
+        from . import health
+
+        workers = await self.registry.workers()
+        gpu = sum(1 for w in workers if w["state"] == "online" and "gpu" in w["capabilities"])
+        result = await asyncio.to_thread(health.run, self.cfg, tools=self.health_tools(),
+                                         listener_seen=self.listener_seen(), gpu_workers=gpu)
+
+        def fn(conn):
+            now = time.time()
+            insert_event(conn, now, "ari.health", src="argus", data=result)
+            if push and not result["ok"]:
+                day = datetime.fromtimestamp(now).strftime("%Y-%m-%d")
+                add_message(conn, now, "ntfy", ntfy_message("Ari needs a look", health.summary(result),
+                                                            priority="low", tags=["stethoscope"]),
+                            dedupe_key=f"health:{day}")
+
+        await self.store.write(fn)
+        if push:
+            self.outbox.poke()
+        return result
 
     async def guidance_review(self) -> dict:
         """Queue the review of new mistakes (a job for a worker with Claude). Nothing to do: no job."""

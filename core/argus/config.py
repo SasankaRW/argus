@@ -320,6 +320,12 @@ class GuidanceConfig(_Strict):
     max_per_review: int = Field(12, ge=1, le=50)  # mistakes shown to Claude per playbook
 
 
+class AriHealthConfig(_Strict):
+    enabled: bool = True  # a daily look at what Ari needs (Ollama, SearXNG, the voice, Whisper, the listener)
+    # local time; the phone hears only if something is wrong
+    at: str = Field("09:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
 class BriefConfig(_Strict):
     enabled: bool = True
     at: str = Field("07:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")  # local time: the phone gets the morning brief
@@ -386,6 +392,7 @@ class Config(_Strict):
     ari: AriConfig = Field(default_factory=AriConfig)
     brief: BriefConfig = Field(default_factory=BriefConfig)
     guidance: GuidanceConfig = Field(default_factory=GuidanceConfig)
+    ari_health: AriHealthConfig = Field(default_factory=AriHealthConfig)
     summary: SummaryConfig = Field(default_factory=SummaryConfig)
     health: HealthConfig = Field(default_factory=HealthConfig)
     backup: BackupConfig = Field(default_factory=BackupConfig)

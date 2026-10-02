@@ -27,6 +27,39 @@ STYLE = {
 PIPER_SPEED = {"excited": 1.08, "cheerful": 1.04, "playful": 1.04, "calm": 0.95, "sympathetic": 0.93,
                "serious": 0.97}
 
+# Moods a model makes up ("[curious]", "[warm]") are not in the list: each maps to the nearest one, and any other
+# tag is dropped. Left alone it was read out loud ("curious ...") and shown on the island.
+ALIASES = {
+    "curious": "playful", "amused": "playful", "teasing": "playful", "mischievous": "playful", "witty": "playful",
+    "joking": "playful", "thoughtful": "calm", "gentle": "calm", "reflective": "calm", "thinking": "calm",
+    "relaxed": "calm", "soothing": "calm", "warm": "cheerful", "friendly": "cheerful", "upbeat": "cheerful",
+    "pleased": "cheerful", "enthusiastic": "excited", "thrilled": "excited", "delighted": "excited",
+    "concerned": "sympathetic", "empathetic": "sympathetic", "worried": "sympathetic", "caring": "sympathetic",
+    "apologetic": "sympathetic", "firm": "serious", "stern": "serious", "confident": "neutral",
+    "casual": "neutral", "matter-of-fact": "neutral",
+}
+_BRACKET = re.compile(r"\[\s*([A-Za-z][A-Za-z -]{0,19}?)\s*\]")
+_SOUND_WORDS = {*SOUNDS, "laughs", "sighs", "chuckles"}
+
+
+def _fix_tag(m: re.Match) -> str:
+    w = m.group(1).strip().lower()
+    if w in MOODS or w in _SOUND_WORDS:
+        return m.group(0)
+    return f"[{ALIASES[w]}]" if w in ALIASES else " "
+
+
+def normalise(text: str) -> str:
+    """The text with made-up mood tags mapped to a real mood and unknown tags dropped."""
+    return re.sub(r" {2,}", " ", _BRACKET.sub(_fix_tag, text or ""))
+
+
+def mood_name(mood: str) -> str:
+    """A mood word from a model as one of MOODS ("" when it isn't one and has no near match)."""
+    w = (mood or "").strip().lower()
+    return w if w in MOODS else ALIASES.get(w, "")
+
+
 _MOOD = re.compile(r"^\s*\[(" + "|".join(MOODS) + r")\]\s*", re.I)
 _TAG = re.compile(r"\s*\[(?:" + "|".join(MOODS + SOUNDS) + r"|laughs|sighs|chuckles)\]\s*", re.I)
 _BAD = re.compile(r"\s*\[(?:whisper(?:ing)?|angry|fear|surprised|crying|happy|sad|sarcastic|dramatic|"
@@ -35,13 +68,14 @@ _BAD = re.compile(r"\s*\[(?:whisper(?:ing)?|angry|fear|surprised|crying|happy|sa
 
 def mood_of(text: str) -> tuple[str, str]:
     """("cheerful", the rest) for a reply starting with a mood tag; ("neutral", text) otherwise."""
-    m = _MOOD.match(text or "")
-    return (m.group(1).lower(), text[m.end():]) if m else ("neutral", text or "")
+    text = normalise(text)
+    m = _MOOD.match(text)
+    return (m.group(1).lower(), text[m.end():]) if m else ("neutral", text.strip())
 
 
 def plain(text: str) -> str:
     """The words alone (for the screen, Piper, the popup): no mood, no [laugh]."""
-    t = _TAG.sub(" ", _BAD.sub(" ", text or ""))
+    t = _TAG.sub(" ", _BAD.sub(" ", normalise(text)))
     t = re.sub(r"\s+([.,!?])", r"\1", re.sub(r"\s{2,}", " ", t)).strip()
     return t
 
@@ -53,14 +87,15 @@ def phrases(text: str, mood: str = "neutral") -> list[tuple[str, str]]:
     """A reply cut where its mood changes: "[excited] We won! [sympathetic] Shame about the rain." ->
     [("excited", "We won!"), ("sympathetic", "Shame about the rain.")]. A mood holds until the next tag; text before
     the first tag gets `mood`. Sounds ([laugh]) stay with their words."""
+    text = normalise(text)
     out: list[tuple[str, str]] = []
     pos = 0
-    for m in _ANY_MOOD.finditer(text or ""):
+    for m in _ANY_MOOD.finditer(text):
         chunk = text[pos:m.start()].strip()
         if chunk:
             out.append((mood, chunk))
         mood, pos = m.group(1).lower(), m.end()
-    chunk = (text or "")[pos:].strip()
+    chunk = text[pos:].strip()
     if chunk:
         out.append((mood, chunk))
     merged: list[tuple[str, str]] = []
@@ -85,7 +120,7 @@ def for_voice(text: str) -> tuple[str, str]:
 
 def tidy(reply: str, mood: str) -> str:
     """A model's reply and mood as Ari stores it: "[mood] words" (no tag for neutral), at most two sounds."""
-    mood = (mood or "").strip().lower()
+    mood = mood_name(mood)
     _, words = mood_of(reply)
     n = 0
 
@@ -96,4 +131,6 @@ def tidy(reply: str, mood: str) -> str:
 
     words = re.sub(r"\[(?:" + "|".join(SOUNDS) + r")\]", keep, words, flags=re.I)
     words = re.sub(r"\s{2,}", " ", _BAD.sub(" ", words)).strip()
+    trailing = r"(?:\s*\[(?:" + "|".join(MOODS) + r")\])+$"  # a mood with nothing after it
+    words = re.sub(trailing, "", words, flags=re.I).strip()
     return f"[{mood}] {words}" if mood in MOODS and mood != "neutral" and words else words

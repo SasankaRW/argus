@@ -921,6 +921,21 @@ def create_app(argus: Argus) -> FastAPI:
         return {"ok": True}
 
     listener = {"seen": 0.0}
+    argus.listener_seen = lambda: listener["seen"]
+    argus.health_tools = lambda: [{**t.brief(), "plugin": t.plugin, "risky": t.risky}
+                                  for t in tools.all().values() if t.for_ari]
+
+    @app.get("/ari/health", dependencies=guarded)
+    async def ari_health_last() -> dict:
+        """The newest health check (Ari's setup: Ollama, SearXNG, the voice, Whisper, the listener), or null."""
+        rows = await argus.store.read(lambda c: read_events(c, 0, limit=1, flt=EventFilter.parse("ari.health"),
+                                                            newest=True))
+        return {"health": rows[-1]["data"] if rows else None}
+
+    @app.post("/ari/health", dependencies=guarded)
+    async def ari_health_run() -> dict:
+        """Check now (takes a few seconds: it asks the model a few questions)."""
+        return {"health": await argus.run_health(push=False)}
     hush = {"until": 0.0}  # Ari isn't listening (anywhere) until then; 0 = listening
 
     def listening_now() -> dict:

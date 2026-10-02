@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- Check Ari (Helios > Settings > Ari, and every morning at `ari_health.at`, 09:00): looks at Ollama and the models (and whether the first one is fully on the GPU), SearXNG (answers, JSON on), the expressive voice (running, loaded, on the GPU), Whisper (GPU), the PC listener and worker, and asks the local model a few questions to see it still picks the right tool and how fast. Each problem says what to do. The phone hears only when something is wrong (one message a day). `POST /ari/health` runs it, `GET /ari/health` returns the last one.
+- Fix: a mood the model made up ("[curious]", "[warm]") was read out loud ("curious ...") and shown on the island. Made-up moods now map to the nearest real one (curious → playful, warm → cheerful, thoughtful → calm, ...), and any other tag is dropped.
 - Lighter when idle: the island and the "Hey Ari" listener wait for news from Argus (a long poll, `GET /events?wait=20`) instead of asking every second all day; a Talk press or a state change still lands at once.
 - The voice detector (Silero) only runs when the room isn't silent: plainly quiet moments are skipped (the minute "microphone level" log line shows how much, `vad_skipped`).
 - While you're away (no keyboard, mouse or question for `ari.rest_after_min`, 30 by default) Ari stops keeping its model warm, so Ollama lets it go; it is loaded again the moment you're back, before you speak. 0 keeps it always warm.

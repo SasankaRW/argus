@@ -249,3 +249,16 @@ def test_the_model_is_loaded_once_even_when_two_ask_at_the_same_time():
     [t.start() for t in ts]
     [t.join() for t in ts]
     assert len(loads) == 1
+
+
+def test_made_up_moods_are_neither_spoken_nor_shown():
+    from argus.expressive import for_voice, mood_name, normalise, phrases, plain, tidy
+
+    r = "[curious] Hmm, you're asking about advanced motors? [warm] Tell me more [laugh]. [quirky] Sure."
+    assert plain(r) == "Hmm, you're asking about advanced motors? Tell me more. Sure."
+    assert phrases(r) == [("playful", "Hmm, you're asking about advanced motors?"),
+                          ("cheerful", "Tell me more [laugh]. Sure.")]
+    assert for_voice("[curious] Hmm.") == ("playful", "Hmm.")
+    assert tidy("[thoughtful] Let me think.", "curious") == "[playful] Let me think."  # "curious" -> playful
+    assert mood_name("Gentle") == "calm" and mood_name("zzz") == ""
+    assert normalise("Option [1] and [clear throat] [Sic]") == "Option [1] and [clear throat] "

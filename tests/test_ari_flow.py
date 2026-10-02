@@ -352,3 +352,13 @@ def test_events_can_wait_for_something_new(tmp_path):
         th.join(5)
         assert [e["data"]["phase"] for e in got["r"]["events"]] == ["listening"]
         assert got["t"] - t1 < 2  # answered when it happened, not after the 10 s
+
+
+def test_the_health_check_is_run_and_kept(tmp_path):
+    with Server(make(tmp_path).open()) as srv:
+        cl = client(srv.url)
+        assert cl.get("/ari/health")["health"] is None
+        r = cl.post("/ari/health", {})["health"]
+        names = [c["name"] for c in r["checks"]]
+        assert "ollama" in names and "web search" in names and "voice" in names and "worker" in names
+        assert cl.get("/ari/health")["health"]["at"] == r["at"]
