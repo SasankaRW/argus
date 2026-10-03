@@ -15,7 +15,9 @@ from test_worker import Server, client, wait_for
 
 ROOT = Path(__file__).resolve().parents[1]
 TICKETS = [{"id": 7, "key": "ACME-12", "title": "Checkout broken", "status": "todo", "priority": 1,
-            "due_date": "2020-01-02", "timer_running": False},
+            "due_date": "2020-01-02", "timer_running": False, "type": "bug", "labels": ["payments", "web"],
+            "description": "Pay button does nothing.", "checklist": [{"text": "repro", "done": True},
+                                                                     {"text": "fix", "done": False}]},
            {"id": 8, "key": "SITE-3", "title": "Footer", "status": "done", "priority": 3, "due_date": None}]
 
 
@@ -40,8 +42,19 @@ class Fake:
                     return self.send(200, TICKETS)
                 if p == "/api/tickets/quick":
                     return self.send(200, dict(TICKETS[0], key="ACME-13", title=body["text"]))
-                if p.startswith("/api/tickets/7") and method == "PATCH":
-                    return self.send(200, dict(TICKETS[0], status=body["status"]))
+                if p == "/api/tickets/7" and method == "PATCH":
+                    return self.send(200, dict(TICKETS[0], **body))
+                if p == "/api/tickets/7/comments":
+                    if method == "POST":
+                        return self.send(200, {"id": 1, "body": body["body"], "created_at": "2026-10-03T10:00:00"})
+                    return self.send(200, [{"id": 1, "body": "seen on mobile", "created_at": "2026-10-02T09:30:00"}])
+                if p == "/api/tickets/7/attachments":
+                    return self.send(200, [{"id": 3, "filename": "trace.log", "content_type": "text/plain",
+                                            "size": 10, "created_at": "2026-10-02T09:31:00"}])
+                if p == "/api/projects":
+                    return self.send(200, [{"key": "ACME", "name": "Acme shop", "kind": "freelance", "open_count": 1,
+                                            "archived": False},
+                                           {"key": "OLD", "name": "Old", "kind": "startup", "archived": True}])
                 if p == "/api/items":
                     return self.send(200, [{"name": "milk", "quantity": "2", "store": "Keells", "status": "to_buy"},
                                            {"name": "eggs", "status": "bought"}])
@@ -112,7 +125,25 @@ def test_tracker_and_lifehub(tmp_path, monkeypatch):
         assert call("tracker", "add", text="ACME bug P1 Login fails @fri")["added"]["key"] == "ACME-13"
         assert call("tracker", "move", key="acme-12", status="done")["moved"]["status"] == "done"
         assert ("PATCH", "/api/tickets/7", {"status": "done"}) in tr.calls
+        one = call("tracker", "show", key="acme-12")
+        assert one["key"] == "ACME-12" and one["checklist"]["done"] == 1 and one["checklist"]["total"] == 2
+        assert one["comments"][0]["text"] == "seen on mobile" and one["attachments"] == ["trace.log"]
+        assert call("tracker", "projects")["projects"] == [{"key": "ACME", "name": "Acme shop", "kind": "freelance",
+                                                            "open": 1}]
+        assert call("tracker", "comment", key="ACME-12", text="fixed on staging")["commented"] == "ACME-12"
+        assert ("POST", "/api/tickets/7/comments", {"body": "fixed on staging"}) in tr.calls
+        e = call("tracker", "edit", key="ACME-12", priority="p0", due="none", add_labels="ai-fix",
+                 remove_labels="#web")
+        assert e["fields"] == ["due_date", "labels", "priority"]
+        assert ("PATCH", "/api/tickets/7", {"priority": 0, "due_date": None,
+                                            "labels": ["payments", "ai-fix"]}) in tr.calls
+        bad = cl.post("/jobs", {"plugin": "tracker", "workflow": "edit", "input": {"key": "ACME-12", "priority": "P5"}})
+        w.run_once(wait=1)
+        bad = wait_for(lambda: (x := cl.get(f"/jobs/{bad['id']}"))["state"] in ("succeeded", "dead") and x)
+        assert bad["state"] == "dead" and "P0, P1, P2 or P3" in bad["error"]
+        assert tools["comment_issue"]["risky"] and tools["edit_issue"]["risky"] and not tools["show_issue"]["risky"]
         assert [i["name"] for i in call("lifehub", "lists")["items"]] == ["milk"]
         assert call("lifehub", "add", text="2x bread @keells")["added"]["name"] == "2x bread @keells"
         m = call("lifehub", "money")
         assert m["safe_to_spend"] == 41000 and m["spent_this_month"] == 88000
+

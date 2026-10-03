@@ -321,7 +321,9 @@ daily cap.
 - **Remembering**: when you mention a lasting fact (a person, a place, a preference), Ari asks "Want me to
   remember that?"; yes keeps it (never passwords, money or health).
 - **Tracker** (`tracker`) and **Life Hub** (`lifehub`): "what's urgent at work?", "add an issue: ACME bug P1
-  checkout broken @fri" (asks first), "move ACME-12 to done", "start the timer on ACME-12"; "add milk to the
+  checkout broken @fri" (asks first), "show ACME-12", "move ACME-12 to done" (asks first), "comment on ACME-12:
+  fixed on staging" and "make ACME-12 P0, due Friday" (ask first), "what projects do I have?", "start the timer
+  on ACME-12"; "add milk to the
   shopping list", "what's on my wishlist?", "how's my money this month?" (read only, never sent to Claude). Put
   Tracker's and Life Hub's `API_KEY` in Argus's .env as `TRACKER_API_KEY` / `LIFEHUB_API_KEY`, and their
   addresses in each plugin's settings (default http://127.0.0.1:8080 and :8081; the laptop's name after the move).
