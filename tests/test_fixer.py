@@ -12,6 +12,7 @@ import sqlite3
 import subprocess
 import sys
 import threading
+import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -28,13 +29,20 @@ spec = importlib.util.spec_from_file_location("fixer_rules", ROOT / "plugins" / 
 fx = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fx)
 
-def finished(cl, job_id: str, states=("succeeded", "dead", "failed")) -> dict:
-    """Wait for the job to end; on a timeout say what state it is stuck in (a plain timeout hides the cause)."""
-    try:
-        return wait_for(lambda: (j := cl.get(f"/jobs/{job_id}"))["state"] in states and j, timeout=30)
-    except AssertionError:
+def finished(cl, job_id: str, w=None, states=("succeeded", "dead", "failed")) -> dict:
+    """Run the worker until the job reaches one of `states` (it keeps claiming, so a claim that came to nothing,
+    or a job that came back to the queue, is simply tried again). On a timeout say what state it is stuck in."""
+    end = time.monotonic() + 40
+    while time.monotonic() < end:
         j = cl.get(f"/jobs/{job_id}")
-        raise AssertionError(f"job {job_id} is {j['state']!r}, error: {j.get('error')}") from None
+        if j["state"] in states:
+            return j
+        if w is not None:
+            w.run_once(wait=0.5)
+        else:
+            time.sleep(0.05)
+    j = cl.get(f"/jobs/{job_id}")
+    raise AssertionError(f"job {job_id} is {j['state']!r}, error: {j.get('error')}")
 
 
 PLAN = "\n".join(f"## {s}\n{'Details about it. ' * 4}" for s in fx.SECTIONS)
@@ -196,8 +204,7 @@ def test_plan_attached_then_approved(tmp_path, monkeypatch):
     tr, cl, w, srv, project = start(tmp_path, monkeypatch, ["ai-fix", "plan:haiku"], claude)
     try:
         job = post(cl, "plan", key="trk-5")
-        assert w.run_once(wait=2)
-        done = finished(cl, job["id"])
+        done = finished(cl, job["id"], w)
         assert done["state"] == "succeeded", done["error"]
         assert len(seen) == 2 and "refused" in seen[1]["prompt"] and "too short" in seen[1]["prompt"]
         assert seen[0]["cwd"] == project.as_posix() and seen[0]["timeout"] == 600
@@ -210,21 +217,18 @@ def test_plan_attached_then_approved(tmp_path, monkeypatch):
         assert "run the fix for TRK-5" in tr.comments[0] and cl.get("/approvals?state=pending") == []
         # the question is its own job, so waiting for your answer never blocks the scan
         ask = post(cl, "ask")
-        assert w.run_once(wait=2)
-        wait_for(lambda: cl.get(f"/jobs/{ask['id']}")["state"] == "waiting")
+        assert finished(cl, ask["id"], w, states=("waiting", "succeeded", "dead", "failed"))["state"] == "waiting"
         a = cl.get("/approvals?state=pending")[0]
         assert a["title"] == "Run the fix for TRK-5 with sonnet?"
         cl.post(f"/approvals/{a['id']}/decide", {"answer": "approve"})
         wait_for(lambda: cl.get(f"/jobs/{ask['id']}")["state"] == "queued")
-        assert w.run_once(wait=2)
-        done = finished(cl, ask["id"])
+        done = finished(cl, ask["id"], w)
         assert done["state"] == "succeeded", done["error"]
         assert done["result"]["approved"] is True and done["result"]["asked"] == "TRK-5"
         assert "fix-approved" in tr.ticket["labels"] and "plan-ready" not in tr.ticket["labels"]
         assert "ai-fix" in tr.ticket["labels"] and len(seen) == 2  # not planned again after the approval
         again = post(cl, "ask")  # asked about this plan already
-        assert w.run_once(wait=2)
-        assert finished(cl, again["id"])["result"] == {"asked": None}
+        assert finished(cl, again["id"], w)["result"] == {"asked": None}
     finally:
         srv.__exit__(None, None, None)
 
@@ -236,15 +240,12 @@ def test_rejected_and_failed_plans_say_so_on_the_ticket(tmp_path, monkeypatch):
     tr, cl, w, srv, _ = start(tmp_path, monkeypatch, ["ai-fix"], claude)
     try:
         job = post(cl, "plan", key="TRK-5")
-        assert w.run_once(wait=2)
-        assert finished(cl, job["id"])["state"] == "succeeded"
+        assert finished(cl, job["id"], w)["state"] == "succeeded"
         ask = post(cl, "ask")
-        assert w.run_once(wait=2)
-        wait_for(lambda: cl.get(f"/jobs/{ask['id']}")["state"] == "waiting")
+        assert finished(cl, ask["id"], w, states=("waiting", "succeeded", "dead", "failed"))["state"] == "waiting"
         cl.post(f"/approvals/{cl.get('/approvals?state=pending')[0]['id']}/decide", {"answer": "reject"})
         wait_for(lambda: cl.get(f"/jobs/{ask['id']}")["state"] == "queued")
-        assert w.run_once(wait=2)
-        done = finished(cl, ask["id"])
+        done = finished(cl, ask["id"], w)
         assert done["result"]["approved"] is False and "plan-rejected" in tr.ticket["labels"]
         assert tr.comments[-1].startswith("Fix not approved")
 
@@ -253,8 +254,7 @@ def test_rejected_and_failed_plans_say_so_on_the_ticket(tmp_path, monkeypatch):
 
         monkeypatch.setattr(sys.modules["argus_plugin_fixer"], "run_claude", broken)
         job = post(cl, "plan", key="TRK-5")
-        assert w.run_once(wait=2)
-        dead = finished(cl, job["id"])
+        dead = finished(cl, job["id"], w)
         assert dead["state"] == "dead" and "took longer" in dead["error"]
         assert "plan-failed" in tr.ticket["labels"] and "ai-planning" not in tr.ticket["labels"]
         assert tr.comments[-1].startswith("Fix plan failed (opus)")
@@ -269,8 +269,7 @@ def test_only_mapped_projects_and_bad_input_are_refused(tmp_path, monkeypatch):
         for inp, why in (({"key": "OTH-1"}, "isn't mapped"), ({"key": ""}, "which issue"),
                          ({"key": "TRK-5", "plan_model": "gpt-4"}, "use opus")):
             job = cl.post("/jobs", {"plugin": "fixer", "workflow": "plan", "needs": ["desktop"], "input": inp})
-            assert w.run_once(wait=2)
-            dead = finished(cl, job["id"])
+            dead = finished(cl, job["id"], w)
             assert dead["state"] == "dead" and why in dead["error"], (inp, dead["error"])
         assert called == []  # Claude never ran
     finally:
@@ -284,19 +283,16 @@ def test_the_scan_plans_a_labelled_ticket_and_reports_status(tmp_path, monkeypat
     tr, cl, w, srv, _ = start(tmp_path, monkeypatch, ["ai-fix"], claude)
     try:
         scan = post(cl, "scan")
-        assert w.run_once(wait=2)
-        done = finished(cl, scan["id"])  # the scan plans it itself and ends: it never waits for your answer
+        done = finished(cl, scan["id"], w)  # the scan plans it itself and ends: it never waits for your answer
         assert done["state"] == "succeeded" and done["result"]["planned"] == "TRK-5", done
         assert tr.ticket["labels"] == ["ai-fix", "plan-ready"]  # planning came and went
         assert cl.get("/approvals?state=pending") == []
         ask = post(cl, "ask")
-        assert w.run_once(wait=2)
-        wait_for(lambda: cl.get(f"/jobs/{ask['id']}")["state"] == "waiting")
+        assert finished(cl, ask["id"], w, states=("waiting", "succeeded", "dead", "failed"))["state"] == "waiting"
         assert [a["title"] for a in cl.get("/approvals?state=pending")] == ["Run the fix for TRK-5 with sonnet?"]
         for inp, rows in (({}, 1), ({"key": "trk-5"}, 1), ({"key": "TRK-9"}, 0)):
             st = post(cl, "status", **inp)
-            assert w.run_once(wait=1)
-            got = finished(cl, st["id"])
+            got = finished(cl, st["id"], w)
             assert len(got["result"]["fixes"]) == rows, inp
         assert got["result"]["today"] == 1 and got["result"]["projects"] == ["TRK"]
         assert got["result"]["tracker"].startswith("http://127.0.0.1:")  # the Helios tab links to it
@@ -311,8 +307,7 @@ def test_ari_queues_and_approves_without_waiting(tmp_path, monkeypatch):
     try:
         def run(workflow, **inp):
             job = post(cl, workflow, **inp)
-            assert w.run_once(wait=2)
-            return finished(cl, job["id"])
+            return finished(cl, job["id"], w)
 
         done = run("queue", key="trk-5", plan_model="Haiku", fix_model="opus")
         assert done["state"] == "succeeded", done["error"]
@@ -344,8 +339,7 @@ def test_a_limit_keeps_the_ticket_queued_and_a_broken_set_up_is_shown(tmp_path, 
     try:
         def scan():
             job = post(cl, "scan")
-            assert w.run_once(wait=2)
-            return finished(cl, job["id"])
+            return finished(cl, job["id"], w)
 
         assert scan()["result"]["planned"] == "TRK-5"
         tr.ticket["labels"] = ["ai-fix"]  # asked to plan again, but today's one run is used up
@@ -471,8 +465,7 @@ def fake_session(files, proof=None, final="Kept the card on drop.", boom=None):
 
 def run_fix(cl, w, key="TRK-5", **extra):
     job = cl.post("/jobs", {"plugin": "fixer", "workflow": "fix", "needs": ["desktop"], "input": {"key": key, **extra}})
-    assert w.run_once(wait=2)
-    return finished(cl, job['id'])
+    return finished(cl, job['id'], w)
 
 
 def git_out(project, *a):
@@ -589,14 +582,12 @@ def test_the_scan_runs_an_approved_fix(tmp_path, monkeypatch):
         tr.blobs["TRK-5-fix-plan.md"] = PLAN.encode()
         tr.ids["TRK-5-fix-plan.md"] = 7
         scan = post(cl, "scan")
-        assert w.run_once(wait=2)
-        done = finished(cl, scan["id"])  # the scan does the whole fix itself
+        done = finished(cl, scan["id"], w)  # the scan does the whole fix itself
         assert done["state"] == "succeeded" and done["result"]["fixed"] == "TRK-5" and done["result"]["ok"] is True
         assert "fix-done" in tr.ticket["labels"] and tr.ticket["status"] == "review"
         assert len(session.calls) == 1 and planner == []  # fixed, and nothing was planned
         st = post(cl, "status")
-        assert w.run_once(wait=1)
-        got = finished(cl, st["id"])
+        got = finished(cl, st["id"], w)
         assert got["result"]["fixes"][0]["stage"] == "fix done, in review" and got["result"]["today"] == 1
     finally:
         srv.__exit__(None, None, None)
