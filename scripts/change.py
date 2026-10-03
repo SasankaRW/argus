@@ -194,12 +194,11 @@ def apply(package: Path, tests: bool = True) -> str:
         print("Helios source changed: rebuilding")
         rebuild_helios()
     if tests:
-        print("lint + tests (a few minutes)")
+        print("lint + tests (a few minutes; progress below)", flush=True)
         run(sys.executable, "-m", "ruff", "check", "core", "tests", "scripts")
-        p = run(sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", check=False)
+        p = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"], cwd=ROOT)
         if p.returncode != 0:
-            tail = "\n".join(p.stdout.strip().splitlines()[-15:])
-            raise ChangeError(f"tests failed, nothing committed (you are on {meta['branch']}):\n{tail}")
+            raise ChangeError(f"tests failed (above), nothing committed; you are on {meta['branch']}")
     git("add", "-A")
     msg = ROOT / ".git" / "argus-change" / f"{meta['branch'].replace('/', '__')}.md"
     msg.parent.mkdir(parents=True, exist_ok=True)

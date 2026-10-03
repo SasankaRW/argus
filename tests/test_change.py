@@ -76,6 +76,8 @@ def repo(tmp_path, monkeypatch):
     git(root, "config", "user.email", "t@t")
     git(root, "config", "user.name", "t")
     shutil.copytree(REPO / ".githooks", root / ".githooks")
+    for hook in (root / ".githooks").iterdir():  # Windows checkouts may lose the executable bit
+        hook.chmod(0o755)
     git(root, "config", "core.hooksPath", ".githooks")
     (root / "CHANGELOG.md").write_text("# Changelog\n\n## Unreleased\n\n## 0.1.0\n", encoding="utf-8")
     (root / "old.txt").write_text("bye", encoding="utf-8")
