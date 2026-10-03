@@ -92,6 +92,52 @@ def test_plan_checks_and_the_claude_command_is_read_only():
     assert b'filename="a.md"' in body and b"hello" in body and ctype.startswith("multipart/form-data; boundary=")
 
 
+def test_claude_events_become_live_lines_and_the_answer_is_found_in_a_stream():
+    events = [
+        {"type": "system", "subtype": "init", "model": "claude-opus-4"},
+        {"type": "assistant", "message": {"content": [
+            {"type": "text", "text": "Looking at the sidebar."},
+            {"type": "tool_use", "name": "Bash", "input": {"command": "npm run build"}},
+            {"type": "tool_use", "name": "Read", "input": {"file_path": "web/src/App.tsx"}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "content": "built in 2s", "is_error": False},
+            {"type": "tool_result", "content": [{"type": "text", "text": "boom"}], "is_error": True}]}},
+        {"type": "result", "is_error": False, "result": "The plan."},
+    ]
+    lines = [x for ev in events for x in fx.describe_event(ev)]
+    assert lines == [("info", "Claude started (claude-opus-4)"), ("say", "Looking at the sidebar."),
+                     ("tool", "Bash npm run build"), ("tool", "Read web/src/App.tsx"), ("result", "built in 2s"),
+                     ("error", "boom"), ("done", "The plan.")]
+    failed = {"type": "result", "is_error": True, "result": "rate limited"}
+    assert fx.describe_event(failed) == [("error", "rate limited")]
+    stream = "\n".join(json.dumps(e) for e in events)
+    assert fx.claude_text(stream) == "The plan."
+    with pytest.raises(fx.PlanError):
+        fx.claude_text(stream.replace('"is_error": false, "result": "The plan."', '"is_error": true, "result": "no"'))
+
+
+def test_a_running_claude_is_streamed_line_by_line_and_can_be_stopped():
+    script = (
+        "import sys, json, time\n"
+        "prompt = sys.stdin.read()\n"
+        "say = {'type': 'assistant', 'message': {'content': [{'type': 'text', 'text': 'got ' + prompt}]}}\n"
+        "print(json.dumps(say), flush=True)\n"
+        "time.sleep(float(sys.argv[1]))\n"
+        "print(json.dumps({'type': 'result', 'is_error': False, 'result': 'ok'}), flush=True)\n")
+    got: list[tuple[str, str]] = []
+    fx._LIVE.send = lambda kind, text: got.append((kind, text))
+    try:
+        out, rc, _ = fx.stream_process([sys.executable, "-c", script, "0"], "hello", str(ROOT), 30, "plan")
+        assert rc == 0 and fx.claude_text(out) == "ok"
+        assert got == [("say", "got hello"), ("done", "ok")]
+        with pytest.raises(fx.PlanError, match="the fix took longer than 0 minutes"):
+            fx.stream_process([sys.executable, "-c", script, "30"], "x", str(ROOT), 1, "fix")
+    finally:
+        fx._LIVE.send = None
+    with pytest.raises(fx.PlanError, match="wasn't found"):
+        fx.stream_process(["no-such-claude-command"], "x", str(ROOT), 5, "plan")
+
+
 class Tracker:
     def __init__(self, labels):
         self.ticket = {"id": 5, "key": "TRK-5", "title": "Board drops cards", "status": "todo", "priority": 1,
@@ -513,6 +559,14 @@ def test_the_fix_lands_on_a_branch_with_proof_attached(tmp_path, monkeypatch):
         assert not {"ai-fixing", "fix-approved"} & set(tr.ticket["labels"])
         assert tr.comments[0].startswith("Fix started with sonnet on branch `fix/trk-5-board-drops-cards`")
         assert tr.comments[-1].startswith("Fix ready for review (sonnet)") and "nothing was pushed" in tr.comments[-1]
+        # the live view: the run's lines are events the Helios Fixes tab can show, in order
+        evs = cl.get("/events?kinds=plugin.fixer.live&limit=100")["events"]
+        lines = [(e["data"]["kind"], e["data"]["text"]) for e in evs if e["data"]["key"] == "TRK-5"]
+        assert lines[0] == ("info", "Fixing TRK-5 with sonnet")
+        assert any(t.startswith("Working on branch fix/trk-5-board-drops-cards") for _, t in lines)
+        assert any(k == "error" and "tests failed" in t for k, t in lines)  # the tests before the fix fail
+        assert any(k == "result" and "tests passed" in t for k, t in lines)
+        assert lines[-1][0] == "done" and {e["data"]["phase"] for e in evs} == {"fix"}
     finally:
         srv.__exit__(None, None, None)
 

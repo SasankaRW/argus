@@ -348,7 +348,8 @@ daily cap.
   are ever used. Claude may run only the commands in `fix_allow` (npm run/test/ci, npx playwright/vitest, node,
   pytest, read-only git by default; add yours, such as `docker compose *`); `git commit`, `push`, web access and
   `.env` files are always refused. Helios: Plugins > Ticket fixer > Fixes lists the tickets and has the
-  Plan / Run the fix buttons and model dropdowns. Time limits: `plan_minutes` (10), `fix_minutes` (30), `test_minutes` (10).
+  Plan / Run the fix buttons and model dropdowns, and a Live log below it: what Claude says, each command it
+  runs and its output, and the test results, as they happen (earlier runs stay there too). Time limits: `plan_minutes` (10), `fix_minutes` (30), `test_minutes` (10).
   It needs the `claude` command (Claude Code, logged in) on the PC, and `TRACKER_API_KEY` in .env. Models can
   also be set per ticket with the labels `plan:opus` and `fix:sonnet`; a `ui` label makes before/after
   screenshots required. Turn the plugin live with `plugins.live: [fixer]`.
