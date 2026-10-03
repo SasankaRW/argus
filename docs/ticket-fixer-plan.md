@@ -206,3 +206,13 @@ Today Claude runs only with tools off. The fixer needs tools, so the exception i
   for approval.
 - First mapped project: Tracker itself (`G:\Projects\tracker`). Its test command is still to be confirmed.
 - The project to folder mapping stays in Argus config, not in Tracker.
+
+## Status
+
+- Step 1 (Tracker tools for Ari): done.
+- Step 2 (plan phase): `plugins/fixer`. Labels: `ai-fix` starts it; `ai-planning`, `plan-ready`,
+  `plan-rejected`, `plan-failed`, `fix-approved` show where it is. The plugin's `projects` setting is the
+  allowlist (`KEY | folder | test command | plan model | fix model`). Approving only adds `fix-approved`. Not yet
+  tried with the real `claude` command and Tracker (the tests use fakes); the tool rules passed to Claude are
+  `--permission-mode plan`, `--allowedTools Read,Grep,Glob` and a deny list.
+- Tracker's test command for the first project is `cd web && npm run build` (Tracker has no tests yet).

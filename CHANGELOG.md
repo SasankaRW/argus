@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Ticket fixer (plan phase):** label a Tracker ticket `ai-fix` (or tell Ari "fix ACME-12") and Claude reads the project's code read-only, attaches a fix plan to the ticket and asks you before any fix runs; choose the plan and fix models per request, ticket label or project. Turn on with `plugins.live: [fixer]` and map projects in its settings. See docs/ticket-fixer-plan.md.
+
 - **Tracker from Ari:** show a ticket in detail, list projects, comment on and edit tickets (title, priority, due date, labels; asks first). "show ACME-12", "move ACME-12 to done" (asks first) and "what's urgent at work" skip the model step. Plan for the ticket fixer in docs/ticket-fixer-plan.md.
 - **Change flow:** `dev.ps1 apply <package>` (new branch, changelog, Helios rebuild, tests, one clear commit), PR title and description from the commit (What / Why / How tested / Risk), squash-merge as `<title> (#N)`, `dev.ps1 rerun` for a flaky CI job, a commit-msg hook and a PR title check in CI. See CONTRIBUTING.md.
 
