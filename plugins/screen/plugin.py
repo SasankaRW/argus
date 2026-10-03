@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import io
 import platform
+import re
 import subprocess
 
 from pydantic import BaseModel, Field
@@ -101,8 +102,33 @@ def read_clipboard() -> dict:
     return {"text": p.stdout} if p.stdout.strip() else {}
 
 
+VISUAL = re.compile(r"\b(?:colou?r|picture|image|photo|chart|graph|diagram|layout|logo|icon|look(?:s|ing)? like|"
+                    r"video|drawing|design|wallpaper|theme)\b", re.I)
+MIN_TEXT = 60  # characters of OCR text before the text model is trusted to answer
+
+
+def text_first(ctx: Context, img, question: str) -> dict | None:
+    """Most screen questions ("what's the error?", "what's open?") are about words: read them with OCR (fast) and
+    let the small text model answer. None when it isn't that kind of question, OCR is thin, or the answer failed."""
+    if VISUAL.search(question) or not ctx.config.get("ocr_first", True):
+        return None
+    text = screen_text(img)
+    if len(text) < MIN_TEXT:
+        return None
+    try:
+        a = ctx.llm(LOOK_TEXT, {"question": question, "text_on_screen": text}, schema=Answer, check=check,
+                    tiers=ctx.local_tiers() or None, claude_last=False)
+    except EscalationExhausted:
+        return None
+    return {"answer": a.answer.strip(), "how": f"the text on it ({ctx.last_answer.tier})"}
+
+
 def see(ctx: Context, img, question: str) -> dict:
-    """Ask V1 about a picture; without V1, T1 about its text."""
+    """OCR + the text model when the question is about words; else ask V1 about the picture (and without V1, T1
+    about its text)."""
+    quick = text_first(ctx, img, question)
+    if quick:
+        return quick
     pic = png(img, int(ctx.config.get("max_side", 1280)))
     try:
         a = ctx.llm(LOOK, {"question": question}, schema=Answer, check=check, tiers=["V1"], images=[pic],

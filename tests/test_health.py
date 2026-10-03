@@ -77,8 +77,8 @@ def test_searxng_refusing_json_is_named():
 
 def test_tool_picking_counts_right_and_slow():
     tools = [{"name": n, "does": n} for n in ("phone_timer", "weather", "lab_status", "backup_status", "web_search")]
-    answers = {"start a timer": "phone_timer", "weather": "weather", "laptop server": "lab_status",
-               "backup": "web_search"}  # one wrong
+    answers = {"start a timer": "phone_timer", "weather": "weather", "laptop server": "web_search",
+               "backup": "backup_status"}  # one wrong
 
     def decide(task):
         m = task["message"]
@@ -88,4 +88,10 @@ def test_tool_picking_counts_right_and_slow():
         return {"need_web": True} if "cricket" in m else {}
 
     c = health.routing(cfg(), tools, decide)
-    assert c["level"] in ("ok", "warn") and "right" in c["detail"] and "backup" in c["detail"]
+    assert c["level"] in ("ok", "warn") and "right" in c["detail"] and "server" in c["detail"]
+
+
+def test_tool_picking_keeps_numbers_for_the_trend():
+    tools = [{"name": n, "does": n} for n in ("phone_timer", "weather", "lab_status", "backup_status", "web_search")]
+    c = health.routing(cfg(), tools, lambda task: {})
+    assert set(c["data"]) == {"right", "total", "p50", "direct"} and c["data"]["total"] >= 4

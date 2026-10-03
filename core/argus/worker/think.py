@@ -202,6 +202,29 @@ TORCH = re.compile(_PLEASE + r"(?:(?:turn|switch|put)\s+(?P<s1>on|off)\s+(?:the\
                    r"(?:torch|flashlight)\s+(?P<s3>on|off))(?:\s+on\s+(?:my|the)\s+phone)?\W*$", re.I)
 
 
+WEATHER = re.compile(_PLEASE + r"(?:what'?s|what is|how'?s|how is|show me|tell me)?\s*(?:the\s+)?"
+                     r"(?:weather|forecast)(?:\s+(?:like|looking))?(?:\s+(?P<d1>today|tomorrow|tonight))?"
+                     r"(?:\s+(?:in|for|at)\s+(?P<place>[A-Za-z][A-Za-z .'-]{1,30}?))?(?:\s+(?P<d2>today|tomorrow))?"
+                     r"(?:\s+(?:please|for me))?\W*$", re.I)
+STATUS_TOOLS = (  # (tool, anchored phrase): read-only, no arguments, so the model need not pick them
+    ("backup_status", re.compile(_PLEASE + r"(?:are|is|how'?s|how are)?\s*(?:the\s+|my\s+|argus\s+)?backups?"
+                                 r"(?:\s+(?:ok|okay|fine|good|working|status|looking|doing))?\W*$", re.I)),
+    ("argus_status", re.compile(_PLEASE + r"(?:(?:what'?s|what is|show me|give me)\s+)?(?:the\s+)?argus\s+"
+                                r"(?:status|health)\W*$|" + _PLEASE + r"(?:is|how'?s)\s+argus\s+(?:ok|okay|fine|up|"
+                                r"healthy|doing|running)\W*$", re.I)),
+    ("lab_status", re.compile(_PLEASE + r"(?:(?:what'?s|what is|show me|give me|check)\s+)?(?:the\s+|my\s+)?"
+                              r"(?:home\s?lab|lab|server)\s+(?:status|health)\W*$|" + _PLEASE + r"(?:is|how'?s)\s+"
+                              r"(?:the\s+|my\s+)?(?:home\s?lab|lab|server)\s+(?:ok|okay|fine|up|healthy|doing)\W*$",
+                              re.I)),
+    ("list_routines", re.compile(_PLEASE + r"(?:(?:what|which|list|show me|show)\s+(?:are\s+)?)?(?:all\s+)?"
+                                 r"(?:my\s+|the\s+)?routines(?:\s+do i have)?\W*$", re.I)),
+    ("money_this_month", re.compile(_PLEASE + r"(?:(?:how much|what)\s+)?(?:can i|safe to|do i have to|have i)?\s*"
+                                    r"(?:safe to spend|spend|spent)(?:\s+(?:this month|until payday|before payday|"
+                                    r"left|now|today))\W*$|" + _PLEASE + r"how'?s\s+(?:my\s+)?(?:money|budget)"
+                                    r"(?:\s+(?:looking|this month|doing))?\W*$", re.I)),
+)
+
+
 def said_back(name: str, args: dict, result: Any) -> str | None:
     """What Ari says after a simple tool, written in code (no second model call): short, a bit of personality."""
     if isinstance(result, dict) and result.get("dry_run"):
@@ -221,6 +244,8 @@ def said_back(name: str, args: dict, result: Any) -> str | None:
             return f"Phone volume's at {args['level']}."
         return {"up": "Turned the phone up.", "down": "Turned the phone down.", "mute": "Phone muted.",
                 "unmute": "Phone sound's back."}.get(str(args.get("change")), "Done.")
+    if name == "weather" and isinstance(result, dict) and str(result.get("forecast") or "").strip():
+        return spoken(str(result["forecast"]))
     if name in ("phone_lock", "phone_press", "phone_swipe", "phone_media"):
         return "Done."
     return None
@@ -294,6 +319,21 @@ def straight_to(tools: dict[str, dict], text: str) -> tuple[str, dict] | None:
     m = OPEN_APP.match(text)
     if m and "open_app" in tools and not NOT_APP.search(m.group("app")):
         return "open_app", {"name": m.group("app").strip()}
+    wx = WEATHER.match(text)
+    if wx and "weather" in tools:
+        day = (wx.group("d1") or wx.group("d2") or "").lower()
+        place = (wx.group("place") or "").strip()
+        if place.lower() in ("today", "tomorrow", "tonight", "me", "here"):
+            place = ""
+        args: dict = {}
+        if place:
+            args["place"] = place
+        if day == "tomorrow":
+            args["tomorrow"] = True
+        return "weather", args
+    for tool, rx in STATUS_TOOLS:
+        if tool in tools and rx.match(text):
+            return tool, {}
     if "look_at_screen" in tools and SCREEN.search(text):
         return "look_at_screen", {"question": text}
     if "summarise_clipboard" in tools and CLIPBOARD.search(text):
@@ -660,7 +700,7 @@ def think(ctx: Context):
         if name == "type_text":  # it types into whatever is in front: only after your yes
             return {"reply": f"Shall I type \"{args['text'][:80]}\" into the window in front?",
                     "pending": {"kind": "tool", "name": name, "args": args}, "used": []}
-        private_tool = name in ("look_at_screen", "summarise_clipboard")
+        private_tool = name in ("look_at_screen", "summarise_clipboard", "money_this_month")
         got = ctx.step(f"tool 1: {name}", use_direct if private_tool else use_direct_app)
         res = got.get("result")
         if "error" not in got and name not in ("open_app", "look_at_screen", "summarise_clipboard"):

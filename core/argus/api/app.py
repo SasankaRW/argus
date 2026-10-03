@@ -940,6 +940,20 @@ def create_app(argus: Argus) -> FastAPI:
                                                             newest=True))
         return {"health": rows[-1]["data"] if rows else None}
 
+    @app.get("/ari/health/history", dependencies=guarded)
+    async def ari_health_history(limit: int = 30) -> dict:
+        """Tool-picking accuracy and model step time per check (oldest first), for the trend in Helios."""
+        rows = await argus.store.read(lambda c: read_events(c, 0, limit=max(1, min(limit, 120)),
+                                                            flt=EventFilter.parse("ari.health"), newest=True))
+        out = []
+        for r in rows:
+            d = r["data"] or {}
+            pick = next((c for c in d.get("checks", []) if c.get("name") == "tool picking" and c.get("data")), None)
+            out.append({"at": d.get("at") or r.get("ts"), "ok": bool(d.get("ok")),
+                        "problems": d.get("problems") or 0, **(pick["data"] if pick else {})})
+        out.sort(key=lambda x: x["at"] or 0)
+        return {"history": out}
+
     @app.post("/ari/health", dependencies=guarded)
     async def ari_health_run() -> dict:
         """Check now (takes a few seconds: it asks the model a few questions)."""

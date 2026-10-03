@@ -8,7 +8,7 @@ from pathlib import Path
 from argus.config import load_config
 from argus.context import Argus
 from argus.worker import Worker
-from argus.worker.think import offered, straight_to
+from argus.worker.think import offered, said_back, straight_to
 from fakes import FakeOllama
 from test_ari_think import settle
 from test_worker import Server, client
@@ -45,7 +45,7 @@ def test_the_screen_is_only_offered_when_asked_about():
     assert "summarise_clipboard" in offered(TOOLS, "sum up what I copied", [])
     assert "look_at_screen" in offered(TOOLS, "and the other one?", [{"text": "what's on my screen?"}])
     assert straight_to(TOOLS, "what's on my screen?") == ("look_at_screen", {"question": "what's on my screen?"})
-    assert straight_to(TOOLS, "how's the weather") is None
+    assert straight_to(TOOLS, "how's the weather") == ("weather", {})
 
 
 def make(tmp_path: Path) -> Argus:
@@ -374,6 +374,7 @@ def test_the_health_check_is_run_and_kept(tmp_path):
         names = [c["name"] for c in r["checks"]]
         assert "ollama" in names and "web search" in names and "voice" in names and "worker" in names
         assert cl.get("/ari/health")["health"]["at"] == r["at"]
+        assert len(cl.get("/ari/health/history")["history"]) == 1
 
 
 def test_a_chat_exports_as_one_file_with_secrets_and_private_results_left_out(tmp_path):
@@ -402,3 +403,17 @@ def test_a_chat_exports_as_one_file_with_secrets_and_private_results_left_out(tm
             raise AssertionError("expected 404")
         except urllib.error.HTTPError as e:
             assert e.code == 404
+
+
+def test_plain_status_questions_skip_the_model_picker():
+    names = "weather backup_status argus_status lab_status list_routines money_this_month".split()
+    tools = {n: {"name": n} for n in names}
+    assert straight_to(tools, "weather in Kandy tomorrow") == ("weather", {"place": "Kandy", "tomorrow": True})
+    assert straight_to(tools, "are the backups ok?") == ("backup_status", {})
+    assert straight_to(tools, "is argus ok") == ("argus_status", {})
+    assert straight_to(tools, "home lab status") == ("lab_status", {})
+    assert straight_to(tools, "what routines do i have") == ("list_routines", {})
+    assert straight_to(tools, "how much can i spend this month") == ("money_this_month", {})
+    assert straight_to(tools, "explain the weather patterns of monsoon") is None
+    assert straight_to(tools, "backup my files") is None
+    assert said_back("weather", {}, {"forecast": "Sunny, 31C."}) == "Sunny, 31C."

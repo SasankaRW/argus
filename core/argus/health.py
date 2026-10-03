@@ -184,7 +184,9 @@ def routing(cfg: Config, tools: list[dict], decide: Callable | None = None) -> C
     if wrong:
         detail += "; wrong: " + "; ".join(wrong[:3])
     fix = "" if level == "ok" else "run .\\.venv\\Scripts\\python -m argus.ari_eval: the misses and times"
-    return row("tool picking", level, detail, fix)
+    out = row("tool picking", level, detail, fix)
+    out["data"] = {"right": right, "total": len(cases), "p50": round(p50, 2), "direct": len(cases) - len(times)}
+    return out
 
 
 def run(cfg: Config, *, tools: list[dict], listener_seen: float = 0.0, gpu_workers: int | None = None,

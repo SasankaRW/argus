@@ -244,10 +244,12 @@ function AriHealth() {
   const [h, setH] = useState<Health | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  useEffect(() => { api<{ health: Health | null }>("/ari/health").then((r) => setH(r.health)).catch(() => {}); }, []);
+  const [hist, setHist] = useState<{ at: number; right?: number; total?: number; p50?: number }[]>([]);
+  const loadHist = () => api<{ history: typeof hist }>("/ari/health/history?limit=30").then((r) => setHist(r.history)).catch(() => {});
+  useEffect(() => { api<{ health: Health | null }>("/ari/health").then((r) => setH(r.health)).catch(() => {}); loadHist(); }, []);
   const run = async () => {
     setBusy(true); setErr(null);
-    try { setH((await api<{ health: Health }>("/ari/health", { method: "POST", body: "{}" })).health); }
+    try { setH((await api<{ health: Health }>("/ari/health", { method: "POST", body: "{}" })).health); loadHist(); }
     catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
     setBusy(false);
   };
@@ -272,6 +274,22 @@ function AriHealth() {
               <span className="ttabout">{c.detail}{c.fix ? ` — ${c.fix}` : ""}</span>
             </div>
           ))}
+        </div>
+      )}
+      {hist.some((x) => x.total) && (
+        <div className="ttrows">
+          <div className="ttsum mono">tool picking over time</div>
+          {hist.filter((x) => x.total).slice(-14).map((x) => {
+            const pct = Math.round(((x.right ?? 0) / (x.total || 1)) * 100);
+            return (
+              <div key={x.at} className={`ttrow${pct >= 85 ? "" : " bad"}`}>
+                <i aria-hidden="true">{pct >= 85 ? "✓" : "!"}</i>
+                <span className="mono">{new Date(x.at * 1000).toLocaleDateString([], { day: "numeric", month: "short" })}</span>
+                <span className="muted">{pct}%</span>
+                <span className="ttabout">{x.right} of {x.total} right · a model step {x.p50?.toFixed(1)} s</span>
+              </div>
+            );
+          })}
         </div>
       )}
     </section>
