@@ -353,24 +353,26 @@ class Http:
         raise PermissionDenied(f"{self.plugin} may not call {u.hostname!r} (add it under permissions.network)")
 
     def request(self, method: str, url: str, *, json_body: Any = None, headers: dict | None = None,
-                max_bytes: int | None = None, public_only: bool = False) -> tuple[int, bytes]:
+                max_bytes: int | None = None, public_only: bool = False, data: bytes | None = None,
+                content_type: str | None = None) -> tuple[int, bytes]:
         """public_only: a page someone else chose (a search result): public websites only, even if this plugin
         may also call a local service (e.g. its search engine), also after redirects."""
         if public_only and not self.any_public:
             raise PermissionDenied(f"{self.plugin} may not visit websites (permissions.network has no \"*\")")
         self._strict = public_only
         try:
-            return self._request(method, url, json_body, headers, max_bytes)
+            return self._request(method, url, json_body, headers, max_bytes, data, content_type)
         finally:
             self._strict = False
 
     def _request(self, method: str, url: str, json_body: Any, headers: dict | None,
-                 max_bytes: int | None) -> tuple[int, bytes]:
+                 max_bytes: int | None, raw: bytes | None = None, content_type: str | None = None
+                 ) -> tuple[int, bytes]:
         self._check(url)
-        data = json.dumps(json_body).encode() if json_body is not None else None
+        data = raw if raw is not None else json.dumps(json_body).encode() if json_body is not None else None
         req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
         if data is not None:
-            req.add_header("Content-Type", "application/json")
+            req.add_header("Content-Type", content_type or "application/json")
         self._trace("http.request", {"method": method, "host": urllib.parse.urlparse(url).hostname})
         try:
             with self._opener.open(req, timeout=self.timeout) as r:
