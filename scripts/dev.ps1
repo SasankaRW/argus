@@ -21,9 +21,11 @@
 #
 # Version control (see CONTRIBUTING.md):
 #   .\scripts\dev.ps1 github            one-time: log in to GitHub, create the private repo, push everything
+#   .\scripts\dev.ps1 apply pkg.tgz     a change package: new branch, files, changelog, Helios, tests, one commit
 #   .\scripts\dev.ps1 branch feat/name  start work on a new branch from an up-to-date main
-#   .\scripts\dev.ps1 pr                push the branch and open a pull request
+#   .\scripts\dev.ps1 pr                push the branch and open a pull request (title + description from the commit)
 #   .\scripts\dev.ps1 merge             wait for CI, then squash-merge the pull request and return to main
+#   .\scripts\dev.ps1 rerun             re-run CI's failed jobs once (a flaky test unrelated to the change)
 #   .\scripts\dev.ps1 sync              bring main up to date with GitHub
 #   .\scripts\dev.ps1 release minor     release: tests, version bump, changelog, tag, push, GitHub release
 param(
@@ -372,22 +374,47 @@ switch ($Command) {
         Write-Host "Connected: https://github.com/$Repo"
     }
     "branch" {
-        if (-not $Arg) { throw "Name the branch, e.g. .\scripts\dev.ps1 branch feat/models" }
+        if (-not $Arg) { throw "Name the branch, e.g. .\scripts\dev.ps1 branch feat/ari-direct-paths" }
+        if ($Arg -cnotmatch '^(feat|fix|perf|refactor|docs|test|chore|ci|build)/[a-z0-9][a-z0-9.-]{2,48}$') {
+            throw "Name it type/short-topic in lower case, e.g. feat/ari-direct-paths (see CONTRIBUTING.md)"
+        }
         Ensure-Hooks
         if (git status --porcelain) { throw "You have uncommitted changes. Commit or stash them first." }
+        if (Get-Command gh -ErrorAction SilentlyContinue) {
+            $Used = gh pr list --head $Arg --state all --json number 2>$null | ConvertFrom-Json
+            if ($Used) { throw "Pull request #$($Used[0].number) already used $Arg. Pick a new name." }
+        }
         GitOk switch main
         if ((git remote) -contains "origin") { GitOk pull --ff-only --quiet }
         GitOk switch -c $Arg
         Write-Host "On $Arg. When ready: .\scripts\dev.ps1 pr"
     }
+    "apply" {
+        if (-not $Arg) { throw "Name the package, e.g. .\scripts\dev.ps1 apply $HOME\Downloads\argus-change.tgz" }
+        Need-Venv
+        Ensure-Hooks
+        & $Py scripts/change.py apply $Arg
+        if ($LASTEXITCODE -ne 0) { throw "Not applied (see above)" }
+    }
     "pr" {
         Need-Gh
+        Need-Venv
+        Ensure-Hooks
         $B = Current-Branch
         if ($B -eq "main") { throw "You are on main. Start a branch: .\scripts\dev.ps1 branch feat/name" }
         if (git status --porcelain) { throw "You have uncommitted changes. Commit them first." }
+        $Title = @(git log --reverse --format=%s main..HEAD)[0]
+        if (-not $Title) { throw "This branch has no commits yet." }
+        & $Py scripts/change.py check-title $Title
+        if ($LASTEXITCODE -ne 0) { throw "Fix the first commit's title (git commit --amend while it is the only one)." }
         GitOk push -u origin $B
         if ((Quiet { gh pr view $B --json url -q .url }) -ne 0) {
-            gh pr create --base main --head $B --fill
+            # The description: what apply kept, else the commit bodies.
+            $Kept = Join-Path $Root (".git\argus-change\" + ($B -replace "/", "__") + ".md")
+            $BodyFile = Join-Path $env:TEMP "argus-pr-body.md"
+            if (Test-Path $Kept) { Copy-Item $Kept $BodyFile -Force }
+            else { [IO.File]::WriteAllText($BodyFile, ((git log --reverse --format="%b" main..HEAD) -join "`n")) }
+            gh pr create --base main --head $B --title $Title --body-file $BodyFile
             if ($LASTEXITCODE -ne 0) { throw "Could not open the pull request" }
         }
         Write-Host "Pull request: $(gh pr view $B --json url -q .url)"
@@ -413,12 +440,32 @@ switch ($Command) {
             Start-Sleep -Seconds 5
         }
         gh pr checks $B --watch --fail-fast --interval 10
-        if ($LASTEXITCODE -ne 0) { throw "CI is not green. Fix it, commit, run .\scripts\dev.ps1 pr, then merge again." }
-        gh pr merge $B --squash --delete-branch
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host ""
+            Write-Host "CI is not green. Open the failed job's log and read the first error:" -ForegroundColor Yellow
+            Write-Host "  - caused by this change: fix it, commit, .\scripts\dev.ps1 pr, then merge again"
+            Write-Host "  - a test this change doesn't touch, failing on one runner only: .\scripts\dev.ps1 rerun (once)"
+            Write-Host "  - the same test fails twice: it is real, fix it"
+            throw "Not merged"
+        }
+        # One commit on main: the PR title (#number) and its description.
+        $Info = gh pr view $B --json number,title,body | ConvertFrom-Json
+        $BodyFile = Join-Path $env:TEMP "argus-merge-body.md"
+        [IO.File]::WriteAllText($BodyFile, [string]$Info.body)
+        gh pr merge $B --squash --delete-branch --subject "$($Info.title) (#$($Info.number))" --body-file $BodyFile
         if ($LASTEXITCODE -ne 0) { throw "Merge failed" }
         GitOk switch main
         GitOk pull --ff-only --quiet
         Write-Host "Merged into main. (Releases happen at milestones: .\scripts\dev.ps1 release minor)"
+    }
+    "rerun" {
+        Need-Gh
+        $B = Current-Branch
+        $Runs = gh run list --branch $B --limit 1 --json databaseId | ConvertFrom-Json
+        if (-not $Runs) { throw "No CI run found for $B" }
+        gh run rerun $Runs[0].databaseId --failed
+        if ($LASTEXITCODE -ne 0) { throw "Could not re-run the failed jobs" }
+        Write-Host "Re-running the failed jobs. Then: .\scripts\dev.ps1 merge"
     }
     "sync" {
         Ensure-Hooks
@@ -435,6 +482,6 @@ switch ($Command) {
         if ($LASTEXITCODE -ne 0) { throw "Release stopped" }
     }
     default {
-        Get-Content $PSCommandPath | Select-Object -Skip 1 -First 26 | ForEach-Object { $_.TrimStart("#") }
+        Get-Content $PSCommandPath | Select-Object -Skip 1 -First 28 | ForEach-Object { $_.TrimStart("#") }
     }
 }

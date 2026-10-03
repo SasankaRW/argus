@@ -64,7 +64,7 @@ def repo(tmp_path, monkeypatch):
     for k, v in {"user.name": "T", "user.email": "t@t"}.items():
         git(work, "config", k, v)
     git(work, "add", ".")
-    git(work, "commit", "-q", "-m", "init")
+    git(work, "commit", "-q", "-m", "chore: init")
     git(work, "remote", "add", "origin", str(origin))
     git(work, "push", "-q", "-u", "origin", "main", env={"ARGUS_ALLOW_MAIN": "1"})
     monkeypatch.setattr(release, "ROOT", work)
@@ -109,7 +109,7 @@ def test_hook_protects_main(repo):
     work, _ = repo
     (work / "a.txt").write_text("x")
     git(work, "add", "a.txt")
-    git(work, "commit", "-q", "-m", "direct")
+    git(work, "commit", "-q", "-m", "chore: direct")
     blocked = git(work, "push", "origin", "main", check=False)
     assert blocked.returncode != 0 and "pull request" in blocked.stderr
     git(work, "push", "-q", "origin", "main", env={"ARGUS_ALLOW_MAIN": "1"})  # explicit override works

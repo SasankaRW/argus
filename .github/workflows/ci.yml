@@ -39,11 +39,24 @@ jobs:
             echo "helios_dist is out of date: run .\scripts\dev.ps1 helios and commit the result."
             exit 1
           fi
+  title:
+    # The PR title becomes the commit on main: "type(scope): what changed" (CONTRIBUTING.md).
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: python scripts/change.py check-title "$TITLE"
   ci-ok:
     # The one check GitHub requires before merging: everything above passed.
     if: always()
-    needs: [test, helios]
+    needs: [test, helios, title]
     runs-on: ubuntu-latest
     steps:
       - run: |
           if [ "${{ needs.test.result }}" != "success" ] || [ "${{ needs.helios.result }}" != "success" ]; then exit 1; fi
+          if [ "${{ needs.title.result }}" = "failure" ] || [ "${{ needs.title.result }}" = "cancelled" ]; then exit 1; fi
