@@ -1,0 +1,28 @@
+#!/bin/sh
+# Commit messages follow CONTRIBUTING.md: "type(scope): what changed" (<= 72 chars, no full stop),
+# a blank line, then the body. No Claude attribution lines. Release, merge, revert and fixup commits pass.
+msg="$1"
+subject=$(sed -n '1p' "$msg")
+case "$subject" in
+  "Release v"*|"Merge "*|"Revert "*|"fixup! "*|"squash! "*) exit 0 ;;
+esac
+types='feat|fix|perf|refactor|docs|test|chore|ci|build'
+if ! printf '%s\n' "$subject" | grep -Eq "^($types)(\([a-z0-9][a-z0-9-]*\))?!?: [^ ].*[^.]$"; then
+  echo "commit-msg: the first line must be 'type(scope): what changed', no full stop." >&2
+  echo "  types: $types   e.g. feat(ari): answer weather without the model" >&2
+  echo "  yours: $subject" >&2
+  exit 1
+fi
+if [ "${#subject}" -gt 72 ]; then
+  echo "commit-msg: the first line is ${#subject} characters; keep it to 72." >&2
+  exit 1
+fi
+if [ -n "$(sed -n '2p' "$msg" | tr -d '[:space:]')" ]; then
+  echo "commit-msg: leave the second line empty (title, blank line, body)." >&2
+  exit 1
+fi
+if grep -Eiq '^(co-authored-by:.*claude|claude-session:)' "$msg"; then
+  echo "commit-msg: no Claude attribution lines in commits." >&2
+  exit 1
+fi
+exit 0
