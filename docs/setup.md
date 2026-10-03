@@ -327,10 +327,13 @@ daily cap.
   shopping list", "what's on my wishlist?", "how's my money this month?" (read only, never sent to Claude). Put
   Tracker's and Life Hub's `API_KEY` in Argus's .env as `TRACKER_API_KEY` / `LIFEHUB_API_KEY`, and their
   addresses in each plugin's settings (default http://127.0.0.1:8080 and :8081; the laptop's name after the move).
-- **Ticket fixer** (`fixer`): label a Tracker ticket `ai-fix` (or tell Ari "fix ACME-12"; add "plan with opus,
-  fix with sonnet" to pick models) and Claude reads the project's code, read-only, in the folder you mapped. The
-  plan is attached to the ticket as `KEY-fix-plan.md` with a summary comment, and the phone and Helios ask "Run
-  the fix for KEY with <model>?". Approving marks the ticket `fix-approved`; within two minutes the fix starts on
+- **Ticket fixer** (`fixer`): label a Tracker ticket `ai-fix` (or tell Ari "fix ACME-12", "plan ACME-12 with
+  opus and fix with sonnet"; Ari asks first, then queues it at once) and within two minutes Claude reads the
+  project's code, read-only, in the folder you mapped. The plan is attached to the ticket as `KEY-fix-plan.md`
+  with a summary comment, and then the phone and Helios ask "Run the fix for KEY with <model>?". You can also
+  say "run the fix for ACME-12" to Ari (asks first) or add the label `fix-approved` yourself; "how's the ACME-12
+  fix going?" and "what's being fixed?" answer from Tracker's labels. Approving marks the ticket `fix-approved`;
+  within two minutes the fix starts on
   a **new branch in a separate git worktree** (`fix/key-title`, from `main`), so your own checkout is never
   touched. Claude edits there, saves proof (before/after screenshots, logs, `proof.md`), and Argus runs the
   project's test command before and after, checks the proof, makes one commit and attaches everything to the

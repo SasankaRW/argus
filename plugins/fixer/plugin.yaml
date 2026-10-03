@@ -1,6 +1,6 @@
 id: fixer
 name: Ticket fixer
-version: 0.2.0
+version: 0.3.0
 kind: workflow
 argus_api: ">=1.0 <2.0"
 description: 'Fixes Tracker tickets in two phases (plan, then execute), each with its own Claude model. PLAN: a ticket labelled "ai-fix" in a mapped project is read in the project folder (read-only), the plan is attached to the ticket and you are asked before any fix runs. EXECUTE: the approved fix is made on a new git branch in a worktree, with tests and proof (screenshots, logs) attached to the ticket; it never pushes or merges. See docs/ticket-fixer-plan.md.'
@@ -8,8 +8,9 @@ runs_on: desktop
 
 triggers:
   - schedule: {workflow: scan, cron: "*/2 * * * *"}   # ai-fix tickets get a plan, fix-approved tickets get their fix
+  - schedule: {workflow: ask, cron: "*/2 * * * *"}    # a ready plan gets the phone / Helios approval question
 
-workflows: [scan, plan, fix, status]
+workflows: [scan, ask, plan, fix, queue, approve, status]
 
 permissions:
   files: {read: [], write: [], delete: none}   # project folders come from "projects" below; the plugin only runs Claude inside those
@@ -39,8 +40,8 @@ config:
 ari:
   tools:
     - name: fix_ticket
-      description: "Plan the fix for a Tracker ticket: Claude reads the project's code (read-only), attaches a fix plan to the ticket and asks the user before any fix runs. Optionally name the models."
-      workflow: plan
+      description: "Start the AI fix for a Tracker ticket: it is queued, Claude reads the project's code (read-only) in the background, attaches a fix plan to the ticket and the user is asked before any fix runs. Optionally name the models."
+      workflow: queue
       risky: true
       input:
         key: {type: string, description: "the issue key, e.g. ACME-12"}
@@ -48,16 +49,18 @@ ari:
         fix_model: {type: string, description: "model for the fix: opus, sonnet or haiku (optional)"}
       required: [key]
     - name: run_fix
-      description: "Run the fix for a Tracker ticket that has a plan: Claude edits the project on a new git branch, runs the tests and saves proof (screenshots, logs); everything is attached to the ticket and it moves to review. Never pushes or merges. Needs the plan first (fix_ticket). Optionally name the fix model."
-      workflow: fix
+      description: "Approve and start the fix for a Tracker ticket that already has a plan: Claude edits the project on a new git branch, runs the tests and saves proof (screenshots, logs); it all goes on the ticket and the ticket moves to review. Never pushes or merges."
+      workflow: approve
       risky: true
       input:
         key: {type: string, description: "the issue key, e.g. ACME-12"}
         fix_model: {type: string, description: "model for the fix: opus, sonnet or haiku (optional)"}
       required: [key]
     - name: fix_status
-      description: Which Tracker tickets are being planned or fixed, and at what stage (waiting for a plan, plan ready, approved, failed).
+      description: Which Tracker tickets are being planned or fixed, and at what stage (waiting for a plan, plan ready, approved, fixing, done, failed). Give a key for one ticket.
       workflow: status
+      input:
+        key: {type: string, description: "the issue key, e.g. ACME-12 (optional)"}
 
 helios:
   node: {label: Ticket fixer, group: assistant}

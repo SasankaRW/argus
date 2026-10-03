@@ -1,6 +1,6 @@
 # Ticket fixer: Tracker + Argus + Ari (plan)
 
-Version 0.5 (2026-10-03; execute phase built)
+Version 0.6 (2026-10-03; Ari commands built)
 
 Goal: manage Tracker tickets from Ari, and let a ticket in a chosen project be fixed by an LLM working in
 that project's folder, in two phases, **plan** then **execute**, with a separate model for each phase.
@@ -224,6 +224,16 @@ Today Claude runs only with tools off. The fixer needs tools, so the exception i
   `KEY-fix-report.md` attached, label `fix-done`, ticket to review, phone message. Failure: wip commit on the
   kept branch, what exists is attached, label `fix-failed`, ticket stays in progress.
   Labels added: `ai-fixing`, `fix-done`, `fix-failed`.
+- Step 4 (Ari): `fix_ticket` (asks first) only queues: it adds the label `ai-fix` (and `plan:`/`fix:` model labels)
+  and answers at once; `run_fix` (asks first) adds `fix-approved` once a plan is attached; `fix_status` reads the
+  labels (one ticket or all). Direct paths need no model: "fix ACME-12", "plan ACME-12 with opus and fix with
+  sonnet", "run the fix for ACME-12", "how's the ACME-12 fix going?", "what's being fixed?". After your yes,
+  Ari answers from the result. The playbook tells Ari to read the plan summary before running a fix.
+  `cancel_fix` is not built yet. Jobs: `scan` (every two minutes) does the work itself, one at a time, and never
+  waits for you; `ask` (every two minutes) is the separate job that waits for your phone/Helios answer, so an
+  unanswered question can't block planning or fixing (an unanswered one is simply left, and Ari or the label can
+  still approve it). A limit or a run in progress leaves the ticket queued for the next scan; any other failure
+  before the run starts is shown on the ticket (`plan-failed` / `fix-failed` plus a comment).
 - Differences from the plan above: the allowed commands are the `fix_allow` list (default npm run/test/ci,
   npx playwright/vitest, node, pytest, read-only git), not just the test command, because Claude needs to start
   the app and take screenshots; the Argus-side screenshot fallback for non-Claude models is not built. A

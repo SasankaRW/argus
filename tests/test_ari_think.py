@@ -4,6 +4,7 @@ first, Claude with web search for current things."""
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 from argus.config import load_config
@@ -226,3 +227,87 @@ def test_ari_offers_to_remember_and_a_yes_keeps_it(tmp_path):
         yes = cl.post("/ari", {"text": "yes", "conv": r["conv"]})
         assert yes["reply"] == "Got it, I'll remember that."
         assert any(m["fact"] == "sister Nimali lives in Kandy" for m in cl.get("/ari-memory"))
+
+
+FIX_YAML = """id: fixer
+name: Fixer stand-in
+version: 1.0.0
+kind: workflow
+argus_api: ">=1.0 <2.0"
+runs_on: desktop
+needs: [session]
+permissions: {models: []}
+ari:
+  tools:
+    - {name: fix_ticket, description: Start the AI fix., workflow: queue, risky: true,
+       input: {key: {type: string, description: key}, plan_model: {type: string, description: m},
+               fix_model: {type: string, description: m}}, required: [key]}
+    - {name: run_fix, description: Run the fix., workflow: approve, risky: true,
+       input: {key: {type: string, description: key}, fix_model: {type: string, description: m}}, required: [key]}
+    - {name: fix_status, description: Where the fixes are., workflow: status,
+       input: {key: {type: string, description: key}}}
+"""
+
+FIX_PY = """from argus.worker import workflow
+
+@workflow("fixer", "queue")
+def queue(ctx):
+    return {"queued": ctx.input["key"], "plan_model": ctx.input.get("plan_model") or "opus", "fix_model": "sonnet"}
+
+@workflow("fixer", "approve")
+def approve(ctx):
+    return {"approved": ctx.input["key"], "fix_model": ctx.input.get("fix_model") or "sonnet"}
+
+@workflow("fixer", "status")
+def status(ctx):
+    return {"fixes": [{"key": "TRK-5", "title": "x", "stage": "plan ready, waiting for your approval"}]}
+"""
+
+
+def test_fix_commands_ask_first_then_run_without_a_model(tmp_path):
+    pdir = tmp_path / "plugins" / "fixer"
+    pdir.mkdir(parents=True)
+    (pdir / "plugin.yaml").write_text(FIX_YAML)
+    (pdir / "plugin.py").write_text(FIX_PY)
+    (tmp_path / "argus.yaml").write_text(
+        "logging:\n  file: null\njobs:\n  watchdog_interval_seconds: 0.1\n"
+        "models:\n  tiers:\n    T1: {provider: ollama, model: 'qwen2.5-coder:7b'}\n  chain: [T1]\n"
+        f"plugins:\n  dirs: ['{(tmp_path / 'plugins').as_posix()}']\n  live: [fixer]\n", encoding="utf-8")
+    with FakeOllama({}) as ol, Server(Argus(load_config(tmp_path / "argus.yaml")).open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop", "session"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+
+        def yes_to(conv):  # the tool runs as a job: the worker must be working while the answer waits for it
+            stop = threading.Event()
+
+            def pump():
+                while not stop.is_set():
+                    w.run_once(wait=0.2)
+
+            t = threading.Thread(target=pump, daemon=True)
+            t.start()
+            try:
+                return cl.post("/ari", {"text": "yes", "conv": conv})
+            finally:
+                stop.set()
+                t.join(5)
+
+        def say(text, conv=None):
+            r = cl.post("/ari", {"text": text, **({"conv": conv} if conv else {})})
+            return r, settle(cl, w, r["conv"])
+
+        r, last = say("plan trk-5 with haiku and fix with opus")
+        assert last["text"] == ("Start the AI fix for TRK-5 (plan with haiku, fix with opus)? Claude reads the code "
+                                "and attaches a plan first; nothing changes until you approve it.")
+        assert last["pending"]["name"] == "fix_ticket" and [j for j in cl.get("/jobs?plugin=fixer")] == []
+        yes = yes_to(r["conv"])
+        assert yes["reply"] == "Queued TRK-5. Claude plans it with haiku in the next few minutes, and I'll ask you " \
+                               "before any fix runs."
+        r, last = say("run the fix for TRK-5")
+        assert last["pending"]["name"] == "run_fix" and last["pending"]["args"] == {"key": "TRK-5"}
+        assert last["text"].startswith("Run the fix for TRK-5? It works on a new git branch")
+        yes = yes_to(r["conv"])
+        assert yes["reply"].startswith("Approved. TRK-5 gets fixed with sonnet on a new branch")
+        r, last = say("how's the TRK-5 fix going")  # read only: answered at once
+        assert last["text"] == "TRK-5 plan ready, waiting for your approval."

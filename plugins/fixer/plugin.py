@@ -1,8 +1,9 @@
 """Ticket fixer: Claude plans and then fixes Tracker tickets, inside the project's folder, in two phases.
 
 PLAN: a ticket with the label `ai-fix` in a mapped project (see `projects`) is read by Claude in the project folder
-with READ-ONLY tools; the plan is attached to the ticket as KEY-fix-plan.md with a summary comment, and you are asked
-(phone or Helios) before any fix runs. Approving adds the label `fix-approved`.
+with READ-ONLY tools; the plan is attached to the ticket as KEY-fix-plan.md with a summary comment (label plan-ready).
+A separate job (`ask`) then asks you on the phone or Helios; approving adds `fix-approved`. Telling Ari "run the fix
+for KEY" or adding that label yourself does the same. Ari's fix_ticket only adds the label `ai-fix`.
 
 EXECUTE: a ticket labelled `fix-approved` gets its fix. A new git worktree and branch (fix/key-slug) is made from main;
 Claude edits there with a short list of allowed commands and saves proof (screenshots, logs, proof.md) in a folder
@@ -33,7 +34,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from argus.worker import Context, LeaseLostError, PermanentError, ToolFailed, WaitSignal, workflow
+from argus.worker import Context, LeaseLostError, PermanentError, WaitSignal, workflow
 
 PLUGIN = "fixer"
 TRIGGER = "ai-fix"
@@ -61,6 +62,10 @@ SECRET_WORDS = re.compile(r"(?i)\b(api[_-]?key|token|secret|password|passwd)\b(\
 
 class PlanError(Exception):
     pass
+
+
+class Deferred(PermanentError):
+    """Not now (a daily limit, another run in progress): the ticket stays queued and a later scan tries again."""
 
 
 # ---------------------------------------------------------------------- pure helpers (tested)
@@ -614,12 +619,12 @@ def make_plan(ctx: Context, info: dict) -> str:
     today = time.strftime("%Y-%m-%d")
     runs = ctx.store.get("runs") or {}
     if runs.get("day") == today and runs.get("n", 0) >= limit:
-        raise PermanentError(f"already {limit} plans and fixes today (fixes_per_day)")
+        raise Deferred(f"already {limit} plans and fixes today (fixes_per_day)")
     busy = ctx.store.get("busy") or {}
     minutes = float(ctx.config.get("plan_minutes") or 10)
     fresh = time.time() - busy.get("at", 0) < busy_window(ctx)
     if busy.get("key") and busy["key"] != info["ticket"]["key"] and fresh:
-        raise PermanentError(f"{busy['key']} is being worked on right now; one at a time")
+        raise Deferred(f"{busy['key']} is being worked on right now; one at a time")
     folder = info["project"]["path"]
     if not inside(folder, projects_of(ctx)):
         raise PermanentError(f"{folder} isn't a mapped project folder")
@@ -653,14 +658,17 @@ def attach_plan(ctx: Context, info: dict, text: str) -> dict:
     name = f"{t['key']}-fix-plan.md"
     attach(ctx, t["id"], name, f"# {t['key']}: {t['title']}\n\n_Plan by {info['plan_model']}; "
                                 f"fix model: {info['fix_model']}_\n\n{text}\n")
+    how = (f"Nothing runs until you approve: on the phone or Helios, by telling Ari \"run the fix for {t['key']}\", "
+           "or by adding the label fix-approved here.")
     comment(ctx, t["id"], f"Fix plan ready (plan: {info['plan_model']}, fix: {info['fix_model']}).\n\n"
-                          f"{clip(section(text, 'Summary'), 600)}\n\nFull plan attached: {name}. "
-                          "Waiting for approval before any fix runs.")
+                          f"{clip(section(text, 'Summary'), 600)}\n\nFull plan attached: {name}. {how}")
     set_labels(ctx, t["id"], add=(READY,), remove=(PLANNING,))
     return {"attached": name}
 
 
 def ask(ctx: Context, info: dict, text: str) -> dict:
+    """Ask on the phone and Helios. Approved: label fix-approved. Rejected: label plan-rejected. Not answered in
+    time: nothing changes (Ari or the label can still approve). Skipped if the ticket moved on meanwhile."""
     t = info["ticket"]
     lines = [f"{t['key']}: {clip(t['title'], 80)}", f"Plan by {info['plan_model']}; the fix would run with "
              f"{info['fix_model']} on a new branch in {info['project']['key']}.",
@@ -669,14 +677,37 @@ def ask(ctx: Context, info: dict, text: str) -> dict:
                     link=str(ctx.config.get("tracker_url") or "") or None)
     if ctx.dry_run:
         return {"approved": False, "dry_run": True}
+    now = {str(x).lower() for x in (call(ctx, "GET", f"/api/tickets/{t['id']}") or {}).get("labels") or []}
+    if READY not in now:
+        return {"approved": False, "state": d.state, "skipped": "the ticket has moved on since"}
     if d.approved:
         set_labels(ctx, t["id"], add=(APPROVED,), remove=(READY,))
         comment(ctx, t["id"], f"Fix approved ({info['fix_model']}). It starts within a couple of minutes, on a new "
                               "branch; you'll get the proof and a report here when it is done.")
-    else:
+    elif d.state == "rejected":
         set_labels(ctx, t["id"], add=(REJECTED,), remove=(READY,))
         comment(ctx, t["id"], "Fix not approved. Edit the ticket or the plan and re-label it ai-fix to plan again.")
     return {"approved": bool(d.approved), "state": d.state}
+
+
+def load_plan(ctx: Context, key: str) -> dict:
+    info = load(ctx, key)
+    info["plan_text"] = newest_plan(ctx, info["ticket"]["id"], info["ticket"]["key"])
+    return info
+
+
+def mark_failed(ctx: Context, key: str, what: str, why: str) -> None:
+    """A run that ended before it could label the ticket itself: show the failure on the ticket, once."""
+    try:
+        t = find(ctx, key)
+        have = {str(x).lower() for x in t.get("labels") or []}
+        bad, busy_label = (FAILED, PLANNING) if what == "plan" else (FIXFAILED, FIXING)
+        if bad in have:
+            return
+        set_labels(ctx, t["id"], add=(bad,), remove=(busy_label,))
+        comment(ctx, t["id"], f"The {what} didn't run: {clip(why, 300)}")
+    except PermanentError:
+        pass
 
 
 # ---------------------------------------------------------------------- the execute phase
@@ -711,7 +742,7 @@ def load_fix(ctx: Context, key: str) -> dict:
     t, project = info["ticket"], info["project"]
     busy = ctx.store.get("busy") or {}
     if busy.get("key") and busy["key"] != t["key"] and time.time() - busy.get("at", 0) < busy_window(ctx):
-        raise PermanentError(f"{busy['key']} is being worked on right now; one at a time")
+        raise Deferred(f"{busy['key']} is being worked on right now; one at a time")
     folder = Path(project["path"])
     top = git(folder, "rev-parse", "--show-toplevel", check=False)
     if not top or Path(top).resolve() != folder.resolve():
@@ -723,7 +754,7 @@ def load_fix(ctx: Context, key: str) -> dict:
     runs = ctx.store.get("runs") or {}
     limit = int(ctx.config.get("fixes_per_day") or 6)
     if runs.get("day") == time.strftime("%Y-%m-%d") and runs.get("n", 0) >= limit:
-        raise PermanentError(f"already {limit} plans and fixes today (fixes_per_day)")
+        raise Deferred(f"already {limit} plans and fixes today (fixes_per_day)")
     info["plan_text"] = plan
     return info
 
@@ -920,26 +951,16 @@ def failed(ctx: Context, info: dict, why: str) -> None:
         pass  # Tracker itself is down: the job's error is all there is
 
 
-@workflow(PLUGIN, "plan")
-def plan(ctx: Context):
-    key = str(ctx.input.get("key") or "").strip()
-    if not key:
-        raise PermanentError("which issue? (e.g. ACME-12)")
+def plan_flow(ctx: Context, key: str) -> dict:
+    """Plan phase: read the code (read-only), attach the plan, label plan-ready. Asking you is a separate job."""
     info = ctx.step("load", lambda: load(ctx, key))
     text = ctx.step("plan", lambda: make_plan(ctx, info))
     attached = ctx.step("attach", lambda: attach_plan(ctx, info, text))
-    decision = ctx.step("approve", lambda: ask(ctx, info, text))
-    return {"key": info["ticket"]["key"], "plan_model": info["plan_model"], "fix_model": info["fix_model"],
-            **attached, **decision}
+    return {"key": info["ticket"]["key"], "plan_model": info["plan_model"], "fix_model": info["fix_model"], **attached}
 
 
-@workflow(PLUGIN, "fix")
-def fix(ctx: Context):
-    """Execute phase: worktree + branch, Claude's edits, tests before and after, proof, one commit, ticket to review.
-    Reached through Ari's run_fix (you said yes) or the scan (the ticket carries fix-approved)."""
-    key = str(ctx.input.get("key") or "").strip()
-    if not key:
-        raise PermanentError("which issue? (e.g. ACME-12)")
+def fix_flow(ctx: Context, key: str) -> dict:
+    """Execute phase: worktree + branch, Claude's edits, tests before and after, proof, one commit, ticket to review."""
     info = ctx.step("load", lambda: load_fix(ctx, key))
     if ctx.dry_run:
         return {"dry_run": True, "would_fix": info["ticket"]["key"], "fix_model": info["fix_model"]}
@@ -961,10 +982,108 @@ def fix(ctx: Context):
         ctx.store.set("busy", {})
 
 
+def need_key(ctx: Context) -> str:
+    key = str(ctx.input.get("key") or "").strip()
+    if not key:
+        raise PermanentError("which issue? (e.g. ACME-12)")
+    return key
+
+
+@workflow(PLUGIN, "plan")
+def plan(ctx: Context):
+    return plan_flow(ctx, need_key(ctx))
+
+
+@workflow(PLUGIN, "fix")
+def fix(ctx: Context):
+    return fix_flow(ctx, need_key(ctx))
+
+
+@workflow(PLUGIN, "queue")
+def queue(ctx: Context):
+    """Ari's fix_ticket: mark the ticket for planning (label ai-fix, models as labels) and answer at once."""
+    key = need_key(ctx)
+
+    def go() -> dict:
+        info = load(ctx, key)  # the project must be mapped, the folder must exist, the models must be known
+        t = info["ticket"]
+        have = {str(x).lower() for x in t["labels"]}
+        if have & {PLANNING, FIXING}:
+            raise PermanentError(f"{t['key']} is already being worked on ({stage(t['labels'])})")
+        if ctx.dry_run:
+            return {"dry_run": True, "would_queue": t["key"]}
+        labels = [x for x in call(ctx, "GET", f"/api/tickets/{t['id']}").get("labels") or []
+                  if x.lower() not in (READY, REJECTED, FAILED, APPROVED, FIXFAILED, DONE)]
+        for phase in ("plan", "fix"):
+            if ctx.input.get(f"{phase}_model"):
+                labels = [x for x in labels if not x.lower().startswith(f"{phase}:")] + \
+                         [f"{phase}:{info[phase + '_model']}"]
+        if TRIGGER not in {x.lower() for x in labels}:
+            labels.append(TRIGGER)
+        call(ctx, "PATCH", f"/api/tickets/{t['id']}", {"labels": labels})
+        comment(ctx, t["id"], f"Queued for an AI fix from Ari (plan: {info['plan_model']}, fix: {info['fix_model']}). "
+                              "Planning starts within a couple of minutes.")
+        return {"queued": t["key"], "plan_model": info["plan_model"], "fix_model": info["fix_model"]}
+
+    return ctx.step("queue", go)
+
+
+@workflow(PLUGIN, "approve")
+def approve(ctx: Context):
+    """Ari's run_fix (you said yes): mark the planned ticket fix-approved and answer at once; the scan starts it."""
+    key = need_key(ctx)
+
+    def go() -> dict:
+        info = load_plan(ctx, key)
+        t = info["ticket"]
+        have = {str(x).lower() for x in t["labels"]}
+        if have & {PLANNING, FIXING}:
+            raise PermanentError(f"{t['key']} is already being worked on ({stage(t['labels'])})")
+        problem = plan_problem(info["plan_text"])
+        if problem:
+            raise PermanentError(f"the plan attached to {t['key']} can't be used: {problem}")
+        if ctx.dry_run:
+            return {"dry_run": True, "would_approve": t["key"]}
+        set_labels(ctx, t["id"], add=(APPROVED,), remove=(READY, REJECTED, FAILED, FIXFAILED, DONE))
+        comment(ctx, t["id"], f"Fix approved from Ari ({info['fix_model']}). It starts within a couple of minutes, "
+                              "on a new branch; you'll get the proof and a report here when it is done.")
+        return {"approved": t["key"], "fix_model": info["fix_model"]}
+
+    return ctx.step("approve", go)
+
+
+@workflow(PLUGIN, "ask")
+def ask_next(ctx: Context):
+    """Every two minutes: a ticket with a ready plan that you haven't been asked about yet gets the phone/Helios
+    question (this job waits for the answer; it never blocks the scan)."""
+    def pick() -> dict:
+        projects = projects_of(ctx)
+        asked = ctx.store.get("asked") or {}
+        for t in call(ctx, "GET", "/api/tickets") or []:
+            labels = {str(x).lower() for x in t.get("labels") or []}
+            if READY not in labels or str(t.get("key", "")).split("-")[0].upper() not in projects:
+                continue
+            files = [f for f in call(ctx, "GET", f"/api/tickets/{t['id']}/attachments") or []
+                     if str(f.get("filename", "")).endswith("-fix-plan.md")]
+            marker = f"{t['key']}:{max((int(f.get('id') or 0) for f in files), default=0)}"
+            if marker in asked or not files:
+                continue
+            if not ctx.dry_run:
+                ctx.store.set("asked", dict(list({**asked, marker: time.time()}.items())[-50:]))
+            return {"key": t["key"]}
+        return {}
+
+    chosen = ctx.step("pick", pick)
+    if not chosen:
+        return {"asked": None}
+    info = ctx.step("load", lambda: load_plan(ctx, chosen["key"]))
+    return {"asked": chosen["key"], **ctx.step("approve", lambda: ask(ctx, info, info["plan_text"]))}
+
+
 @workflow(PLUGIN, "scan")
 def scan(ctx: Context):
-    """Every two minutes: an approved fix is run first, otherwise the first ticket labelled ai-fix that has no plan
-    gets one (this job just waits for it)."""
+    """Every two minutes: an approved fix runs first, otherwise the first ticket labelled ai-fix gets its plan. The
+    work happens in this job (one at a time); asking you about a plan is the separate `ask` job."""
     def pick() -> dict:
         projects = projects_of(ctx)
         if not projects:
@@ -984,18 +1103,21 @@ def scan(ctx: Context):
     chosen = ctx.step("pick", pick)
     if not chosen:
         return {"planned": None}
-
-    def run() -> dict:
-        if ctx.dry_run:
-            return {"would_" + chosen["what"]: chosen["key"], "dry_run": True}
-        tool = "run_fix" if chosen["what"] == "fix" else "fix_ticket"
+    key, what = chosen["key"], chosen["what"]
+    if ctx.dry_run:
+        return {"would_" + what: key, "dry_run": True}
+    done = "planned" if what == "plan" else "fixed"
+    try:
+        return {done: key, **(plan_flow(ctx, key) if what == "plan" else fix_flow(ctx, key))}
+    except Deferred as e:  # a limit or another run: back to the queue, the next scan tries again
         try:
-            done = "planned" if chosen["what"] == "plan" else "fixed"
-            return {done: chosen["key"], **(ctx.tool(tool, {"key": chosen["key"]}) or {})}
-        except ToolFailed as e:
-            return {chosen["what"]: chosen["key"], "failed": str(e)[:300]}
-
-    return ctx.step("run", run)
+            set_labels(ctx, find(ctx, key)["id"], remove=(PLANNING if what == "plan" else FIXING,))
+        except PermanentError:
+            pass
+        return {what: key, "deferred": str(e)[:300]}
+    except PermanentError as e:
+        mark_failed(ctx, key, what, str(e))
+        return {what: key, "failed": str(e)[:300]}
 
 
 @workflow(PLUGIN, "status")
@@ -1003,7 +1125,10 @@ def status(ctx: Context):
     def go() -> dict:
         projects, bad = parse_projects(list(ctx.config.get("projects") or []))
         rows = []
+        want = str(ctx.input.get("key") or "").strip().upper()
         for t in call(ctx, "GET", "/api/tickets") or []:
+            if want and str(t.get("key", "")).upper() != want:
+                continue
             if str(t.get("key", "")).split("-")[0].upper() in projects and stage(t.get("labels") or []):
                 rows.append({"key": t["key"], "title": clip(t["title"], 80), "stage": stage(t["labels"])})
         runs = ctx.store.get("runs") or {}

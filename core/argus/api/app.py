@@ -886,7 +886,8 @@ def create_app(argus: Argus) -> FastAPI:
             try:
                 res = await tools.run_now(q["name"], q.get("args") or {})
                 nxt = str(res.get("next") or "") if isinstance(res, dict) else ""
-                reply = f"It's ready: {nxt}." if nxt else "Done."  # "It's ready: press Enter to send."
+                reply = (think_mod.said_back(q["name"], q.get("args") or {}, res)
+                         or (f"It's ready: {nxt}." if nxt else "Done."))  # "It's ready: press Enter to send."
                 out = {"tool": q["name"], "result": res}
             except ToolError as e:
                 reply, out = f"I couldn't: {e}.", {}

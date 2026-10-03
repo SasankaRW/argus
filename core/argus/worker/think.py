@@ -230,8 +230,31 @@ SHOW_ISSUE = re.compile(_PLEASE + r"(?:show(?: me)?|open|what'?s|what is|tell me
                         r"what'?s (?:going on )?with)\s+(?:the\s+)?(?:issue\s+|ticket\s+)?" + _KEY + r"\W*$", re.I)
 MOVE_ISSUE = re.compile(_PLEASE + r"(?:move|mark|set|put)\s+(?:the\s+)?(?:issue\s+|ticket\s+)?" + _KEY +
                         r"\s+(?:to|as|in(?:to)?)\s+(?P<st>backlog|to ?do|in[ _]progress|review|done)\W*$", re.I)
+_MODEL = r"(?P<{}>opus|sonnet|haiku)"
+FIX_TICKET = re.compile(_PLEASE + r"(?:fix|plan(?:\s+the\s+fix\s+for)?)\s+(?:the\s+)?(?:issue\s+|ticket\s+)?" + _KEY +
+                        r"(?P<rest>(?:[\s,]+.{0,80})?)\W*$", re.I)
+RUN_FIX = re.compile(_PLEASE + r"(?:(?:run|start|do|approve|go ahead with)\s+(?:the\s+)?fix(?:\s+(?:for|on))?|"
+                     r"go ahead with)\s+(?:the\s+)?(?:issue\s+|ticket\s+)?" + _KEY +
+                     r"(?P<rest>(?:[\s,]+.{0,60})?)\W*$", re.I)
+FIX_STATUS = re.compile(_PLEASE + r"(?:(?:how'?s|how is|status of|what'?s the status of)\s+(?:the\s+)?" + _KEY +
+                        r"\s+fix(?:\s+going)?|how'?s the fix for\s+" + _KEY.replace("key", "key2") +
+                        r"(?:\s+going)?|(?:what'?s|what is) being fixed|(?:ai\s+)?fix(?:es)?\s+status)\W*$", re.I)
 WORK_NOW = re.compile(_PLEASE + r"(?:(?:what'?s|what is|anything)\s+(?:urgent|overdue|due(?: this week)?|on my plate)"
                       r"\s+(?:at|for)\s+work|work summary|what needs me at work)\W*$", re.I)
+
+
+def _models_said(args: dict) -> str:
+    parts = [f"{ph} with {args[ph + '_model']}" for ph in ("plan", "fix") if args.get(ph + "_model")]
+    return f" ({', '.join(parts)})" if parts else ""
+
+
+ASKS_FIRST_LINE = {
+    "move_issue": lambda a: f"Move {a['key']} to {a['status'].replace('_', ' ')}?",
+    "fix_ticket": lambda a: (f"Start the AI fix for {a['key']}{_models_said(a)}? Claude reads the code and attaches "
+                             "a plan first; nothing changes until you approve it."),
+    "run_fix": lambda a: (f"Run the fix for {a['key']}{_models_said(a)}? It works on a new git branch and attaches "
+                          "proof to the ticket; nothing is pushed or merged."),
+}
 
 
 def said_back(name: str, args: dict, result: Any) -> str | None:
@@ -255,6 +278,18 @@ def said_back(name: str, args: dict, result: Any) -> str | None:
                 "unmute": "Phone sound's back."}.get(str(args.get("change")), "Done.")
     if name == "weather" and isinstance(result, dict) and str(result.get("forecast") or "").strip():
         return spoken(str(result["forecast"]))
+    if name == "fix_ticket" and isinstance(result, dict) and result.get("queued"):
+        return (f"Queued {result['queued']}. Claude plans it with {result.get('plan_model')} in the next few "
+                "minutes, and I'll ask you before any fix runs.")
+    if name == "run_fix" and isinstance(result, dict) and result.get("approved"):
+        return (f"Approved. {result['approved']} gets fixed with {result.get('fix_model')} on a new branch within a "
+                "couple of minutes; the proof lands on the ticket.")
+    if name == "fix_status" and isinstance(result, dict) and "fixes" in result:
+        rows = result["fixes"]
+        if not rows:
+            return "Nothing is being planned or fixed right now."
+        say = "; ".join(f"{r['key']} {r['stage']}" for r in rows[:4])
+        return say + (f" and {len(rows) - 4} more." if len(rows) > 4 else ".")
     if name == "move_issue" and isinstance(result, dict) and result.get("moved"):
         return f"Moved {result['moved'].get('key')} to {str(result['moved'].get('status')).replace('_', ' ')}."
     if name in ("phone_lock", "phone_press", "phone_swipe", "phone_media"):
@@ -335,6 +370,32 @@ def straight_to(tools: dict[str, dict], text: str) -> tuple[str, dict] | None:
         st = re.sub(r"[ _]", "", mv.group("st").lower())
         return "move_issue", {"key": mv.group("key").upper(),
                               "status": {"todo": "todo", "inprogress": "in_progress"}.get(st, st)}
+    fs = FIX_STATUS.match(text)
+    if fs and "fix_status" in tools:
+        key = fs.group("key") or fs.group("key2")
+        return "fix_status", {"key": key.upper()} if key else {}
+    rf = RUN_FIX.match(text)
+    if rf and "run_fix" in tools:
+        out = {"key": rf.group("key").upper()}
+        m = re.search(r"\bwith\s+(opus|sonnet|haiku)\b", rf.group("rest") or "", re.I)
+        if m:
+            out["fix_model"] = m.group(1).lower()
+        return "run_fix", out
+    ft = FIX_TICKET.match(text)
+    if ft and "fix_ticket" in tools:
+        out = {"key": ft.group("key").upper()}
+        rest = ft.group("rest") or ""
+        pm = re.search(r"\bplan(?:ning)?\s+(?:it\s+)?with\s+(opus|sonnet|haiku)\b", rest, re.I)
+        fm = re.search(r"\bfix(?:ing)?\s+(?:it\s+)?with\s+(opus|sonnet|haiku)\b", rest, re.I)
+        bare = re.match(r"\s*with\s+(opus|sonnet|haiku)\b", rest, re.I)  # "fix ACME-1 with opus"
+        if pm:
+            out["plan_model"] = pm.group(1).lower()
+        if fm:
+            out["fix_model"] = fm.group(1).lower()
+        if bare:  # the model named right after the key goes to whichever phase wasn't named; to both if neither was
+            for ph in ("plan", "fix"):
+                out.setdefault(ph + "_model", bare.group(1).lower())
+        return "fix_ticket", out
     if "work_summary" in tools and WORK_NOW.match(text):
         return "work_summary", {}
     m = OPEN_APP.match(text)
@@ -547,7 +608,9 @@ How to decide:
   summarise_clipboard), web pages to keep an eye on (watch_page, list_watches, stop_watching), pages to read
   later (save_for_later, reading_list), PDFs and pictures (merge_pdfs, images_to_pdf, pdf_pages, shrink_images:
   find the files first with find_file), how the week went (weekly_review), work issues
-  (work_summary, list_issues, add_issue, move_issue, issue_timer), the shopping list and wishlist (shopping_list,
+  (work_summary, list_issues, add_issue, move_issue, issue_timer; fix_ticket starts the AI fix for a ticket:
+  Claude plans it and attaches the plan; before run_fix, read the plan summary to the user (show_issue, or
+  fix_status for where it is) and only run it after they say yes), the shopping list and wishlist (shopping_list,
   add_to_list), money this month (money_this_month), the weather (weather), WhatsApp messages
   (whatsapp_message: open_app is not needed first), the PC (apps, windows, volume, media,
   clipboard).
@@ -721,8 +784,8 @@ def think(ctx: Context):
         if name == "type_text":  # it types into whatever is in front: only after your yes
             return {"reply": f"Shall I type \"{args['text'][:80]}\" into the window in front?",
                     "pending": {"kind": "tool", "name": name, "args": args}, "used": []}
-        if name == "move_issue" and tools[name].get("asks_first"):  # it changes Tracker: only after your yes
-            return {"reply": f"Move {args['key']} to {args['status'].replace('_', ' ')}?",
+        if name in ASKS_FIRST_LINE and tools[name].get("asks_first"):  # it changes Tracker or code: after your yes
+            return {"reply": ASKS_FIRST_LINE[name](args),
                     "pending": {"kind": "tool", "name": name, "args": args}, "used": []}
         private_tool = name in ("look_at_screen", "summarise_clipboard", "money_this_month")
         got = ctx.step(f"tool 1: {name}", use_direct if private_tool else use_direct_app)

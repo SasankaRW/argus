@@ -431,3 +431,29 @@ def test_tracker_requests_skip_the_model_picker():
     assert straight_to(tools, "move the meeting to friday") is None
     assert said_back("move_issue", {}, {"moved": {"key": "ACME-12", "status": "in_progress"}}) == \
         "Moved ACME-12 to in progress."
+
+
+def test_fix_commands_skip_the_model_picker():
+    tools = {n: {"name": n} for n in ("fix_ticket", "run_fix", "fix_status", "show_issue")}
+    assert straight_to(tools, "fix TRK-5") == ("fix_ticket", {"key": "TRK-5"})
+    assert straight_to(tools, "please plan the fix for trk-5") == ("fix_ticket", {"key": "TRK-5"})
+    assert straight_to(tools, "fix TRK-5 with opus") == ("fix_ticket", {"key": "TRK-5", "plan_model": "opus",
+                                                                       "fix_model": "opus"})
+    assert straight_to(tools, "plan TRK-5 with opus and fix with sonnet") == \
+        ("fix_ticket", {"key": "TRK-5", "plan_model": "opus", "fix_model": "sonnet"})
+    assert straight_to(tools, "fix TRK-5, plan with haiku and fix with sonnet") == \
+        ("fix_ticket", {"key": "TRK-5", "plan_model": "haiku", "fix_model": "sonnet"})
+    assert straight_to(tools, "run the fix for TRK-5") == ("run_fix", {"key": "TRK-5"})
+    assert straight_to(tools, "go ahead with the fix for TRK-5 with haiku") == \
+        ("run_fix", {"key": "TRK-5", "fix_model": "haiku"})
+    assert straight_to(tools, "how's the TRK-5 fix going") == ("fix_status", {"key": "TRK-5"})
+    assert straight_to(tools, "status of the TRK-5 fix") == ("fix_status", {"key": "TRK-5"})
+    assert straight_to(tools, "what's being fixed") == ("fix_status", {})
+    assert straight_to(tools, "show TRK-5") == ("show_issue", {"key": "TRK-5"})
+    for other in ("fix the login page", "fix my printer", "plan my week", "run the backup"):
+        assert straight_to(tools, other) is None, other
+    assert straight_to({"show_issue": {}}, "fix TRK-5") is None  # without the tool, nothing is routed
+    assert said_back("fix_status", {}, {"fixes": []}) == "Nothing is being planned or fixed right now."
+    rows = [{"key": f"TRK-{i}", "stage": "fixing"} for i in range(1, 7)]
+    assert said_back("fix_status", {}, {"fixes": rows}).endswith("TRK-4 fixing and 2 more.")
+    assert said_back("run_fix", {}, {"dry_run": True}).startswith("I would, but")
