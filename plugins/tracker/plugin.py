@@ -50,7 +50,7 @@ def find(ctx: Context, key: str) -> dict:
     for t in call(ctx, "GET", "/api/tickets") or []:
         if str(t.get("key", "")).upper() == key:
             return t
-    raise PermanentError(f"no issue {key} in Tracker")
+    raise PermanentError(f"no issue {key or '(no key given)'} in Tracker")
 
 
 @workflow(PLUGIN, "summary")
@@ -85,6 +85,99 @@ def issues(ctx: Context):
         return {"issues": [brief(t) for t in rows[:25]], "more": max(0, len(rows) - 25)}
 
     return ctx.step("list", go)
+
+
+def clip(text: str, n: int) -> str:
+    text = " ".join(str(text or "").split())
+    return text if len(text) <= n else text[:n - 1] + "…"
+
+
+@workflow(PLUGIN, "show")
+def show(ctx: Context):
+    key = str(ctx.input.get("key") or "").strip()
+    if not key:
+        raise PermanentError("which issue? (e.g. ACME-12)")
+
+    def go():
+        t = find(ctx, key)
+        comments = call(ctx, "GET", f"/api/tickets/{t['id']}/comments") or []
+        files = call(ctx, "GET", f"/api/tickets/{t['id']}/attachments") or []
+        checklist = t.get("checklist") or []
+        return {**brief(t), "type": t.get("type"), "labels": t.get("labels") or [],
+                "description": clip(t.get("description"), 1500),
+                "checklist": {"done": sum(1 for c in checklist if c.get("done")), "total": len(checklist),
+                              "items": [("[x] " if c.get("done") else "[ ] ") + clip(c.get("text"), 120)
+                                        for c in checklist[:12]]},
+                "comments": [{"at": str(c.get("created_at", ""))[:16], "text": clip(c.get("body"), 400)}
+                             for c in comments[-5:]],
+                "attachments": [f["filename"] for f in files][:20]}
+
+    return ctx.step("show", go)
+
+
+@workflow(PLUGIN, "projects")
+def projects(ctx: Context):
+    def go():
+        rows = [p for p in call(ctx, "GET", "/api/projects") or [] if not p.get("archived")]
+        return {"projects": [{"key": p["key"], "name": p["name"], "kind": p.get("kind"),
+                              "open": p.get("open_count", 0)} for p in rows]}
+
+    return ctx.step("projects", go)
+
+
+@workflow(PLUGIN, "comment")
+def comment(ctx: Context):
+    text = str(ctx.input.get("text") or "").strip()
+    if not text:
+        raise PermanentError("what should the comment say?")
+
+    def go():
+        t = find(ctx, str(ctx.input.get("key") or ""))
+        if ctx.dry_run:
+            return {"would_comment": t["key"], "text": text, "dry_run": True}
+        call(ctx, "POST", f"/api/tickets/{t['id']}/comments", {"body": text})
+        return {"commented": t["key"]}
+
+    return ctx.step("comment", go)
+
+
+def changes(inp: dict, labels: list[str]) -> dict:
+    """The PATCH body for edit: title, priority (P0-P3 or 0-3), due (YYYY-MM-DD or none), labels to add/remove."""
+    out: dict = {}
+    if str(inp.get("title") or "").strip():
+        out["title"] = str(inp["title"]).strip()[:200]
+    pr = str(inp.get("priority") or "").strip().upper().lstrip("P")
+    if pr:
+        if pr not in ("0", "1", "2", "3"):
+            raise PermanentError("priority is P0, P1, P2 or P3")
+        out["priority"] = int(pr)
+    due = str(inp.get("due") or "").strip().lower()
+    if due:
+        if due in ("none", "no", "clear", "-"):
+            out["due_date"] = None
+        elif len(due) == 10 and due[4] == due[7] == "-" and due.replace("-", "").isdigit():
+            out["due_date"] = due
+        else:
+            raise PermanentError("due is a date like 2026-10-31, or 'none'")
+    add = [x.strip().lstrip("#").lower() for x in str(inp.get("add_labels") or "").split(",") if x.strip()]
+    drop = {x.strip().lstrip("#").lower() for x in str(inp.get("remove_labels") or "").split(",") if x.strip()}
+    if add or drop:
+        out["labels"] = [x for x in labels if x.lower() not in drop] + [x for x in add if x not in labels]
+    if not out:
+        raise PermanentError("nothing to change: title, priority, due or labels")
+    return out
+
+
+@workflow(PLUGIN, "edit")
+def edit(ctx: Context):
+    def go():
+        t = find(ctx, str(ctx.input.get("key") or ""))
+        body = changes(ctx.input, list(t.get("labels") or []))
+        if ctx.dry_run:
+            return {"would_change": t["key"], "changes": body, "dry_run": True}
+        return {"changed": brief(call(ctx, "PATCH", f"/api/tickets/{t['id']}", body)), "fields": sorted(body)}
+
+    return ctx.step("edit", go)
 
 
 @workflow(PLUGIN, "add")

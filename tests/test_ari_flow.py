@@ -417,3 +417,17 @@ def test_plain_status_questions_skip_the_model_picker():
     assert straight_to(tools, "explain the weather patterns of monsoon") is None
     assert straight_to(tools, "backup my files") is None
     assert said_back("weather", {}, {"forecast": "Sunny, 31C."}) == "Sunny, 31C."
+
+
+def test_tracker_requests_skip_the_model_picker():
+    tools = {n: {"name": n} for n in ("show_issue", "move_issue", "work_summary", "open_app")}
+    assert straight_to(tools, "show ACME-12") == ("show_issue", {"key": "ACME-12"})
+    assert straight_to(tools, "what's going on with site-3?") == ("show_issue", {"key": "SITE-3"})
+    assert straight_to(tools, "move ACME-12 to in progress") == ("move_issue", {"key": "ACME-12",
+                                                                               "status": "in_progress"})
+    assert straight_to(tools, "mark acme-12 as done") == ("move_issue", {"key": "ACME-12", "status": "done"})
+    assert straight_to(tools, "what's urgent at work") == ("work_summary", {})
+    assert straight_to(tools, "open spotify") == ("open_app", {"name": "spotify"})
+    assert straight_to(tools, "move the meeting to friday") is None
+    assert said_back("move_issue", {}, {"moved": {"key": "ACME-12", "status": "in_progress"}}) == \
+        "Moved ACME-12 to in progress."

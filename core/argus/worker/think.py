@@ -225,6 +225,15 @@ STATUS_TOOLS = (  # (tool, anchored phrase): read-only, no arguments, so the mod
 )
 
 
+_KEY = r"(?P<key>[A-Za-z][A-Za-z0-9]{1,9}-\d{1,6})"
+SHOW_ISSUE = re.compile(_PLEASE + r"(?:show(?: me)?|open|what'?s|what is|tell me about|details (?:of|for|on)|"
+                        r"what'?s (?:going on )?with)\s+(?:the\s+)?(?:issue\s+|ticket\s+)?" + _KEY + r"\W*$", re.I)
+MOVE_ISSUE = re.compile(_PLEASE + r"(?:move|mark|set|put)\s+(?:the\s+)?(?:issue\s+|ticket\s+)?" + _KEY +
+                        r"\s+(?:to|as|in(?:to)?)\s+(?P<st>backlog|to ?do|in[ _]progress|review|done)\W*$", re.I)
+WORK_NOW = re.compile(_PLEASE + r"(?:(?:what'?s|what is|anything)\s+(?:urgent|overdue|due(?: this week)?|on my plate)"
+                      r"\s+(?:at|for)\s+work|work summary|what needs me at work)\W*$", re.I)
+
+
 def said_back(name: str, args: dict, result: Any) -> str | None:
     """What Ari says after a simple tool, written in code (no second model call): short, a bit of personality."""
     if isinstance(result, dict) and result.get("dry_run"):
@@ -246,6 +255,8 @@ def said_back(name: str, args: dict, result: Any) -> str | None:
                 "unmute": "Phone sound's back."}.get(str(args.get("change")), "Done.")
     if name == "weather" and isinstance(result, dict) and str(result.get("forecast") or "").strip():
         return spoken(str(result["forecast"]))
+    if name == "move_issue" and isinstance(result, dict) and result.get("moved"):
+        return f"Moved {result['moved'].get('key')} to {str(result['moved'].get('status')).replace('_', ' ')}."
     if name in ("phone_lock", "phone_press", "phone_swipe", "phone_media"):
         return "Done."
     return None
@@ -316,6 +327,16 @@ def straight_to(tools: dict[str, dict], text: str) -> tuple[str, dict] | None:
     tc = TORCH.match(text)
     if tc and "phone_torch" in tools:
         return "phone_torch", {"state": (tc.group("s1") or tc.group("s2") or tc.group("s3")).lower()}
+    iss = SHOW_ISSUE.match(text)
+    if iss and "show_issue" in tools:
+        return "show_issue", {"key": iss.group("key").upper()}
+    mv = MOVE_ISSUE.match(text)
+    if mv and "move_issue" in tools:
+        st = re.sub(r"[ _]", "", mv.group("st").lower())
+        return "move_issue", {"key": mv.group("key").upper(),
+                              "status": {"todo": "todo", "inprogress": "in_progress"}.get(st, st)}
+    if "work_summary" in tools and WORK_NOW.match(text):
+        return "work_summary", {}
     m = OPEN_APP.match(text)
     if m and "open_app" in tools and not NOT_APP.search(m.group("app")):
         return "open_app", {"name": m.group("app").strip()}
@@ -699,6 +720,9 @@ def think(ctx: Context):
 
         if name == "type_text":  # it types into whatever is in front: only after your yes
             return {"reply": f"Shall I type \"{args['text'][:80]}\" into the window in front?",
+                    "pending": {"kind": "tool", "name": name, "args": args}, "used": []}
+        if name == "move_issue" and tools[name].get("asks_first"):  # it changes Tracker: only after your yes
+            return {"reply": f"Move {args['key']} to {args['status'].replace('_', ' ')}?",
                     "pending": {"kind": "tool", "name": name, "args": args}, "used": []}
         private_tool = name in ("look_at_screen", "summarise_clipboard", "money_this_month")
         got = ctx.step(f"tool 1: {name}", use_direct if private_tool else use_direct_app)
