@@ -1133,6 +1133,7 @@ def status(ctx: Context):
                 rows.append({"key": t["key"], "title": clip(t["title"], 80), "stage": stage(t["labels"])})
         runs = ctx.store.get("runs") or {}
         return {"fixes": rows, "projects": sorted(projects), "problems": bad,
+                "tracker": str(ctx.config.get("tracker_url") or ""),
                 "today": runs.get("n", 0) if runs.get("day") == time.strftime("%Y-%m-%d") else 0}
 
     return ctx.step("status", go)

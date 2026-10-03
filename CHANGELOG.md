@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Helios Fixes tab:** see where each ticket is in the AI fix flow, plan it or run the fix with a chosen model, from the Ticket fixer page.
+
 - **Ari can fix tickets:** "fix TRK-5", "run the fix for TRK-5", "how's the TRK-5 fix going?". Unanswered plan approvals no longer block the fixer, and failures show on the ticket.
 
 - **Ticket fixer can fix:** an approved ticket is fixed on a new git branch in a worktree, with before/after tests, screenshots, logs and a report attached to the ticket and the ticket moved to review. It never pushes or merges.

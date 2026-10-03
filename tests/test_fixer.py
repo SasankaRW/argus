@@ -299,6 +299,7 @@ def test_the_scan_plans_a_labelled_ticket_and_reports_status(tmp_path, monkeypat
             got = finished(cl, st["id"])
             assert len(got["result"]["fixes"]) == rows, inp
         assert got["result"]["today"] == 1 and got["result"]["projects"] == ["TRK"]
+        assert got["result"]["tracker"].startswith("http://127.0.0.1:")  # the Helios tab links to it
         assert got["result"]["fixes"] == [] and fx.stage(["ai-fix", "plan-ready"]).startswith("plan ready")
     finally:
         srv.__exit__(None, None, None)
