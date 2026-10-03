@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type Job } from "./api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { api, type ArgusEvent, type Job } from "./api";
 
 // The Ticket fixer's "Fixes" tab: where each ticket is, and the buttons that start a plan or approve a fix.
 // Everything goes through the plugin's own workflows (status, queue, approve), so Helios and Ari do the same thing.
@@ -27,6 +27,91 @@ async function runJob(workflow: string, input: Record<string, string>): Promise<
     if (["succeeded", "dead", "cancelled"].includes(j.state)) return j;
   }
   throw new Error("the PC didn't answer in time: is the worker running?");
+}
+
+// What Claude is doing right now (and did before): the fixer sends each message, command and result as an event.
+type Line = { seq: number; at: number; key: string; phase: string; kind: string; text: string };
+const LIVE = "/events?kinds=plugin.fixer.live";
+
+function toLine(e: ArgusEvent): Line {
+  const d = (e.data ?? {}) as Record<string, unknown>;
+  return { seq: e.seq, at: e.at, key: String(d.key ?? ""), phase: String(d.phase ?? ""), kind: String(d.kind ?? "info"), text: String(d.text ?? "") };
+}
+
+function LiveLog() {
+  const [lines, setLines] = useState<Line[]>([]);
+  const [pick, setPick] = useState("");
+  const [now, setNow] = useState(Date.now() / 1000);
+  const box = useRef<HTMLDivElement>(null);
+  const stick = useRef(true);
+
+  useEffect(() => {
+    let stop = false;
+    (async () => {
+      let after = 0;
+      try {
+        const r = await api<{ events: ArgusEvent[] }>(`${LIVE}&newest=true&limit=400`);
+        const first = r.events.map(toLine);
+        if (first.length) after = first[first.length - 1].seq;
+        if (!stop) setLines(first);
+      } catch { /* the loop below tries again */ }
+      while (!stop) {
+        try {
+          const r = await api<{ events: ArgusEvent[] }>(`${LIVE}&after=${after}&wait=20&limit=200`);
+          if (stop) return;
+          if (r.events.length) {
+            after = r.events[r.events.length - 1].seq;
+            setLines((old) => [...old, ...r.events.map(toLine)].slice(-1500));
+          }
+        } catch { await new Promise((ok) => setTimeout(ok, 5000)); }
+      }
+    })();
+    const tick = window.setInterval(() => setNow(Date.now() / 1000), 15000);
+    return () => { stop = true; window.clearInterval(tick); };
+  }, []);
+
+  const keys = useMemo(() => {
+    const last = new Map<string, number>();
+    for (const l of lines) last.set(l.key, l.seq);
+    return [...last.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k);
+  }, [lines]);
+  const key = pick && keys.includes(pick) ? pick : keys[0] ?? "";
+  const mine = useMemo(() => lines.filter((l) => l.key === key), [lines, key]);
+  const newest = mine.length ? mine[mine.length - 1] : null;
+  const running = !!newest && newest.kind !== "done" && now - newest.at < 120 && !(newest.kind === "error" && newest.text.startsWith("The fix stopped"));
+
+  useEffect(() => {
+    const el = box.current;
+    if (el && stick.current) el.scrollTop = el.scrollHeight;
+  }, [mine.length, key]);
+
+  if (!lines.length) {
+    return <p className="muted">When Claude works on a ticket, its messages and the commands it runs show up here as they happen.</p>;
+  }
+  const time = (t: number) => new Date(t * 1000).toLocaleTimeString([], { hour12: false });
+  return (
+    <div className="fx-live">
+      <div className="fx-bar">
+        <b>Live</b>
+        <select value={key} onChange={(e) => setPick(e.target.value)} aria-label="Ticket">
+          {keys.map((k) => <option key={k} value={k}>{k}</option>)}
+        </select>
+        {newest && <span className="muted">{newest.phase === "plan" ? "planning" : "fixing"}</span>}
+        <span className="grow" />
+        {running ? <span className="fx-pulse">● running</span> : <span className="muted">idle</span>}
+      </div>
+      <div className="fx-log" ref={box}
+        onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40; }}>
+        {mine.map((l) => (
+          <div key={l.seq} className={`fx-ln ${l.kind}`}>
+            <span className="fx-t">{time(l.at)}</span>
+            <span className="fx-tag">{l.kind === "say" ? "Claude" : l.kind === "tool" ? "$" : l.kind === "result" ? "out" : l.kind === "error" ? "!" : l.kind === "done" ? "✓" : "·"}</span>
+            <span className="fx-tx">{l.text}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 export function FixerPanel() {
@@ -118,6 +203,7 @@ export function FixerPanel() {
           ))}
         </div>
       )}
+      <LiveLog />
       <p className="muted">Plans wait for your answer on the phone or in the Inbox. The proof for a finished fix (screenshots, test log, report) is attached to the ticket in Tracker.</p>
     </div>
   );

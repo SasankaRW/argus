@@ -28,6 +28,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import urllib.parse
 import uuid
@@ -220,17 +221,26 @@ the cause, say so plainly under Root cause and list what you checked. Output onl
 
 def claude_args(command: str, model: str) -> list[str]:
     exe = shutil.which(command) or command
-    return [exe, "-p", "--model", model, "--output-format", "json", "--permission-mode", "plan",
+    return [exe, "-p", "--model", model, "--output-format", "stream-json", "--verbose", "--permission-mode", "plan",
             "--allowedTools", "Read,Grep,Glob", "--disallowedTools", PLAN_DENY, "--max-turns", "40",
             "--no-session-persistence"]
 
 
 def claude_text(stdout: str) -> str:
-    """The answer from `claude -p --output-format json` (falls back to the raw text)."""
+    """The answer from `claude -p` (one JSON result, or stream-json lines whose last event is the result)."""
     try:
         data = json.loads(stdout)
     except ValueError:
-        return stdout.strip()
+        data = None
+        for line in stdout.splitlines():
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(ev, dict) and ev.get("type") == "result":
+                data = ev
+        if data is None:
+            return stdout.strip()
     if isinstance(data, dict):
         if data.get("is_error"):
             raise PlanError(clip(data.get("result") or "claude reported an error", 300))
@@ -392,6 +402,68 @@ def parse_stream(out: str, secrets: tuple[str, ...] = ()) -> dict:
     return {"log": scrub("\n".join(log), secrets), "final": scrub(final, secrets), "error": scrub(error, secrets)}
 
 
+# ---------------------------------------------------------------------- live view (Helios Fixes tab)
+
+_LIVE = threading.local()
+
+
+def live(kind: str, text: str) -> None:
+    """One line of what Claude or the tests are doing now: an event the Helios Fixes tab shows as it happens.
+    Best effort; does nothing outside a fix or plan run."""
+    send = getattr(_LIVE, "send", None)
+    if send and str(text).strip():
+        try:
+            send(kind, str(text).strip()[:1500])
+        except Exception:  # noqa: BLE001
+            pass
+
+
+class watching:  # noqa: N801
+    """`with watching(ctx, key, "fix"):` sends every live() line from this thread as a plugin.fixer.live event."""
+
+    def __init__(self, ctx: Context, key: str, phase: str):
+        secrets = (ctx.secrets.get("TRACKER_API_KEY") or "",)
+        self.send = lambda kind, text: ctx.progress("plugin.fixer.live", {
+            "key": key, "phase": phase, "kind": kind, "text": scrub(text, secrets)})
+
+    def __enter__(self) -> None:
+        _LIVE.send = self.send
+
+    def __exit__(self, *exc: Any) -> None:
+        _LIVE.send = None
+
+
+def tool_line(name: str, args: Any) -> str:
+    args = args if isinstance(args, dict) else {}
+    what = next((str(args[k]) for k in ("command", "file_path", "path", "pattern", "url") if args.get(k)), "")
+    return f"{name} {what or json.dumps(args, ensure_ascii=False)}".strip()
+
+
+def describe_event(ev: dict) -> list[tuple[str, str]]:
+    """One stream-json event of `claude -p` as (kind, text) lines: say, tool, result, error, info, done."""
+    out: list[tuple[str, str]] = []
+    kind = ev.get("type")
+    if kind == "system" and ev.get("subtype") == "init":
+        out.append(("info", f"Claude started ({ev.get('model') or 'model'})"))
+    elif kind == "assistant":
+        for part in (ev.get("message") or {}).get("content") or []:
+            if part.get("type") == "text" and str(part.get("text") or "").strip():
+                out.append(("say", str(part["text"])))
+            elif part.get("type") == "tool_use":
+                out.append(("tool", tool_line(str(part.get("name")), part.get("input"))))
+    elif kind == "user":
+        content = (ev.get("message") or {}).get("content")
+        for part in content if isinstance(content, list) else []:
+            if isinstance(part, dict) and part.get("type") == "tool_result":
+                body = part.get("content")
+                if isinstance(body, list):
+                    body = "\n".join(str(b.get("text") or "") for b in body if isinstance(b, dict))
+                out.append(("error" if part.get("is_error") else "result", str(body or "").strip()[-800:]))
+    elif kind == "result":
+        out.append(("error" if ev.get("is_error") else "done", str(ev.get("result") or "finished")))
+    return [(k, t) for k, t in out if t.strip()]
+
+
 def fix_args(command: str, model: str, allow: list[str], proof_dir: str) -> list[str]:
     exe = shutil.which(command) or command
     tools = ["Read", "Grep", "Glob", "Edit", "Write", "MultiEdit"] + [f"Bash({a})" for a in allow]
@@ -464,18 +536,64 @@ def state_word(rc: int | None) -> str:
 # ---------------------------------------------------------------------- the outside world
 
 
-def run_claude(args: list[str], prompt: str, cwd: str, timeout: float) -> str:
-    """Run the claude CLI in `cwd` with the prompt on stdin; its answer text. Tests replace this."""
+def stream_process(args: list[str], prompt: str, cwd: str, timeout: float, what: str) -> tuple[str, int, str]:
+    """Run the claude CLI (stream-json) with the prompt on stdin, sending each event to the live view as it
+    arrives: (stdout, exit code, stderr)."""
     try:
-        r = subprocess.run(args, input=prompt, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                           cwd=cwd, timeout=timeout, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        p = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                             encoding="utf-8", errors="replace", cwd=cwd,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except FileNotFoundError:
         raise PlanError("the claude command wasn't found: install Claude Code, or set claude_command") from None
+    lines: list[str] = []
+    errs: list[str] = []
+    send = getattr(_LIVE, "send", None)
+
+    def feed() -> None:
+        try:
+            p.stdin.write(prompt)  # type: ignore[union-attr]
+            p.stdin.close()  # type: ignore[union-attr]
+        except OSError:
+            pass
+
+    def read_out() -> None:
+        for line in p.stdout:  # type: ignore[union-attr]
+            lines.append(line)
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(ev, dict) and send:
+                for kind, text in describe_event(ev):
+                    try:
+                        send(kind, text[:1500])
+                    except Exception:  # noqa: BLE001
+                        pass
+
+    def read_err() -> None:
+        errs.append(p.stderr.read())  # type: ignore[union-attr]
+
+    threads = [threading.Thread(target=f, daemon=True) for f in (feed, read_out, read_err)]
+    for t in threads:
+        t.start()
+    try:
+        p.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
-        raise PlanError(f"the plan took longer than {int(timeout // 60)} minutes and was stopped") from None
-    if r.returncode != 0:
-        raise PlanError(clip(r.stderr or r.stdout or f"claude exited with {r.returncode}", 300))
-    return claude_text(r.stdout)
+        kill_tree(p)
+        for t in threads:
+            t.join(5)
+        raise PlanError(f"the {what} took longer than {int(timeout // 60)} minutes and was stopped") from None
+    for t in threads:
+        t.join(10)
+    return "".join(lines), p.returncode, "".join(errs)
+
+
+def run_claude(args: list[str], prompt: str, cwd: str, timeout: float) -> str:
+    """Run the claude CLI in `cwd` with the prompt on stdin; its answer text. Tests replace this."""
+    out, rc, err = stream_process(args, prompt, cwd, timeout, "plan")
+    if rc != 0:
+        raise PlanError(clip(err or out or f"claude exited with {rc}", 300))
+    return claude_text(out)
 
 
 def kill_tree(p: subprocess.Popen) -> None:
@@ -487,20 +605,9 @@ def kill_tree(p: subprocess.Popen) -> None:
 
 def run_session(args: list[str], prompt: str, cwd: str, timeout: float) -> str:
     """Run the claude CLI for the fix (stream-json output); the raw output. Tests replace this."""
-    try:
-        p = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                             encoding="utf-8", errors="replace", cwd=cwd,
-                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    except FileNotFoundError:
-        raise PlanError("the claude command wasn't found: install Claude Code, or set claude_command") from None
-    try:
-        out, err = p.communicate(prompt, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        kill_tree(p)
-        p.communicate()
-        raise PlanError(f"the fix took longer than {int(timeout // 60)} minutes and was stopped") from None
-    if p.returncode != 0 and not out.strip():
-        raise PlanError(clip(err or f"claude exited with {p.returncode}", 300))
+    out, rc, err = stream_process(args, prompt, cwd, timeout, "fix")
+    if rc != 0 and not out.strip():
+        raise PlanError(clip(err or f"claude exited with {rc}", 300))
     return out
 
 
@@ -806,7 +913,9 @@ def run_tests(ctx: Context, info: dict, run: dict, which: str) -> dict:
     test = info["project"].get("test") or ""
     if not test:
         return {"rc": None}
+    live("info", f"Running the tests {which} the fix: {test}")
     rc, out = run_shell(test, run["tree"], test_seconds(ctx))
+    live("result" if rc == 0 else "error", f"tests {state_word(rc)}\n{out.strip()[-600:]}")
     name = "tests-before" if which == "before" else "tests"
     text = scrub(out[-100000:], (ctx.secrets.get("TRACKER_API_KEY") or "",))
     (Path(run["proof"]) / f"{info['ticket']['key']}-{name}.log").write_text(
@@ -954,8 +1063,11 @@ def failed(ctx: Context, info: dict, why: str) -> None:
 def plan_flow(ctx: Context, key: str) -> dict:
     """Plan phase: read the code (read-only), attach the plan, label plan-ready. Asking you is a separate job."""
     info = ctx.step("load", lambda: load(ctx, key))
-    text = ctx.step("plan", lambda: make_plan(ctx, info))
-    attached = ctx.step("attach", lambda: attach_plan(ctx, info, text))
+    with watching(ctx, info["ticket"]["key"], "plan"):
+        live("info", f"Planning {info['ticket']['key']} with {info['plan_model']}")
+        text = ctx.step("plan", lambda: make_plan(ctx, info))
+        attached = ctx.step("attach", lambda: attach_plan(ctx, info, text))
+        live("done", "Plan attached to the ticket.")
     return {"key": info["ticket"]["key"], "plan_model": info["plan_model"], "fix_model": info["fix_model"], **attached}
 
 
@@ -965,21 +1077,30 @@ def fix_flow(ctx: Context, key: str) -> dict:
     if ctx.dry_run:
         return {"dry_run": True, "would_fix": info["ticket"]["key"], "fix_model": info["fix_model"]}
     run = None
-    try:
-        run = ctx.step("begin", lambda: begin(ctx, info))
-        before = ctx.step("tests-before", lambda: run_tests(ctx, info, run, "before"))
-        fixed = ctx.step("fix", lambda: do_fix(ctx, info, run))
-        got = ctx.step("collect", lambda: collect(ctx, info, run, before))
-        proof = ctx.step("proof", lambda: check_proof(ctx, info, run, got, fixed))
-        return ctx.step("finish", lambda: finish(ctx, info, run, before, fixed, got, proof))
-    except (WaitSignal, LeaseLostError):
-        raise
-    except Exception as e:
-        failed(ctx, info, str(e) or type(e).__name__)
-        raise PermanentError(f"the fix for {info['ticket']['key']} stopped: {e}") from None
-    finally:
-        cleanup(info, run)
-        ctx.store.set("busy", {})
+    with watching(ctx, info["ticket"]["key"], "fix"):
+        try:
+            live("info", f"Fixing {info['ticket']['key']} with {info['fix_model']}")
+            run = ctx.step("begin", lambda: begin(ctx, info))
+            live("info", f"Working on branch {run['branch']} (from {run['base']})")
+            before = ctx.step("tests-before", lambda: run_tests(ctx, info, run, "before"))
+            fixed = ctx.step("fix", lambda: do_fix(ctx, info, run))
+            live("info", "Claude has finished; collecting the changes and the proof.")
+            got = ctx.step("collect", lambda: collect(ctx, info, run, before))
+            proof = ctx.step("proof", lambda: check_proof(ctx, info, run, got, fixed))
+            done = ctx.step("finish", lambda: finish(ctx, info, run, before, fixed, got, proof))
+            live("done" if done["ok"] else "error",
+                 "Committed on the branch; the proof is attached and the ticket is in review." if done["ok"]
+                 else "Not finished: " + "; ".join(done["problems"]))
+            return done
+        except (WaitSignal, LeaseLostError):
+            raise
+        except Exception as e:
+            live("error", f"The fix stopped: {e}")
+            failed(ctx, info, str(e) or type(e).__name__)
+            raise PermanentError(f"the fix for {info['ticket']['key']} stopped: {e}") from None
+        finally:
+            cleanup(info, run)
+            ctx.store.set("busy", {})
 
 
 def need_key(ctx: Context) -> str:

@@ -1091,7 +1091,25 @@ button:focus-visible, .chip:focus-visible, a:focus-visible {
 .fx-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fx-stage { color: var(--tx2); font-size: 12.5px; }
 .fx-act { display: flex; gap: 6px; justify-content: flex-end; min-width: 90px; }
+.fx-live { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+.fx-live select { font: inherit; font-size: 13px; height: 28px; color: var(--tx); background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 0 6px; }
+.fx-pulse { color: #5dd39e; font-size: 12.5px; animation: fxpulse 1.4s ease-in-out infinite; }
+@keyframes fxpulse { 50% { opacity: .35; } }
+.fx-log { max-height: 460px; overflow-y: auto; background: #0b1013; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; font-size: 12.5px; line-height: 1.5; }
+.fx-ln { display: grid; grid-template-columns: 58px 46px 1fr; gap: 8px; padding: 2px 0; align-items: baseline; }
+.fx-t { color: var(--tx2); font-variant-numeric: tabular-nums; font-size: 11.5px; }
+.fx-tag { color: var(--tx2); font-size: 11.5px; }
+.fx-tx { white-space: pre-wrap; overflow-wrap: anywhere; }
+.fx-ln.tool .fx-tx, .fx-ln.result .fx-tx, .fx-ln.error .fx-tx { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12px; }
+.fx-ln.tool .fx-tx { color: #9cc7ff; }
+.fx-ln.result .fx-tx { color: var(--tx2); max-height: 9.5em; overflow: auto; }
+.fx-ln.say .fx-tag { color: #5dd39e; }
+.fx-ln.error .fx-tag, .fx-ln.error .fx-tx { color: #ff8f8f; }
+.fx-ln.done .fx-tag, .fx-ln.done .fx-tx { color: #5dd39e; }
+.fx-ln.info .fx-tx { color: var(--tx2); }
 @media (max-width: 640px) {
+  .fx-ln { grid-template-columns: 1fr; gap: 0; }
+  .fx-t, .fx-tag { display: inline; }
   .fx-row { grid-template-columns: 70px 1fr; }
   .fx-stage, .fx-act { grid-column: 1 / -1; justify-content: flex-start; }
 }
