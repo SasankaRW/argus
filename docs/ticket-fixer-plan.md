@@ -1,6 +1,6 @@
 # Ticket fixer: Tracker + Argus + Ari (plan)
 
-Version 0.4 (agreed, 2026-10-03; Claude saves its own proof)
+Version 0.5 (2026-10-03; execute phase built)
 
 Goal: manage Tracker tickets from Ari, and let a ticket in a chosen project be fixed by an LLM working in
 that project's folder, in two phases, **plan** then **execute**, with a separate model for each phase.
@@ -210,9 +210,26 @@ Today Claude runs only with tools off. The fixer needs tools, so the exception i
 ## Status
 
 - Step 1 (Tracker tools for Ari): done.
-- Step 2 (plan phase): `plugins/fixer`. Labels: `ai-fix` starts it; `ai-planning`, `plan-ready`,
-  `plan-rejected`, `plan-failed`, `fix-approved` show where it is. The plugin's `projects` setting is the
-  allowlist (`KEY | folder | test command | plan model | fix model`). Approving only adds `fix-approved`. Not yet
-  tried with the real `claude` command and Tracker (the tests use fakes); the tool rules passed to Claude are
-  `--permission-mode plan`, `--allowedTools Read,Grep,Glob` and a deny list.
-- Tracker's test command for the first project is `cd web && npm run build` (Tracker has no tests yet).
+- Step 2 (plan phase): done. Labels: `ai-fix` starts it; `ai-planning`, `plan-ready`, `plan-rejected`,
+  `plan-failed`, `fix-approved` show where it is. The plugin's `projects` setting is the allowlist
+  (`KEY | folder | test command | plan model | fix model`).
+- Step 3 (execute phase and proof): built, tested with a real git repo and a fake Claude. The scan runs a ticket
+  labelled `fix-approved` (or Ari's `run_fix`): worktree and branch `fix/key-slug` from main, test command before,
+  Claude (stream-json, `acceptEdits`, tools limited by `fix_allow`, deny list for commit/push/web/.env), what
+  Claude changed is staged (build output from the test command is left out), forbidden files (.env, keys,
+  `.github/workflows`, `.git`) are reverted and fail the run, the test command runs again, the diff is saved, and
+  the proof is checked in code (names, size, `proof.md` lines against plan steps, a before/after pair when the
+  ticket has the label `ui` or the plan asks for screenshots, tests passing). Success: one commit with a
+  change-flow message (`fix(trk): TRK-5 title`; What/Why/How tested/Risk from the plan), proof and
+  `KEY-fix-report.md` attached, label `fix-done`, ticket to review, phone message. Failure: wip commit on the
+  kept branch, what exists is attached, label `fix-failed`, ticket stays in progress.
+  Labels added: `ai-fixing`, `fix-done`, `fix-failed`.
+- Differences from the plan above: the allowed commands are the `fix_allow` list (default npm run/test/ci,
+  npx playwright/vitest, node, pytest, read-only git), not just the test command, because Claude needs to start
+  the app and take screenshots; the Argus-side screenshot fallback for non-Claude models is not built. A
+  project's test command must be self-contained (include `npm ci`), because it runs in a fresh worktree.
+- Not yet tried with the real `claude` command and Tracker (the tests use fakes). The flags passed
+  (`--permission-mode acceptEdits`, `--allowedTools`, `--disallowedTools`, `--add-dir`, `--output-format
+  stream-json --verbose`) and the `Bash(cmd *)` pattern form are from the Claude Code documentation as I know
+  it and need one real run to confirm.
+- Tracker's test command for the first project is `cd web && npm ci && npm run build` (Tracker has no tests yet).
