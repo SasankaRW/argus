@@ -1,13 +1,17 @@
-"""The ticket fixer's plan phase: Tracker (fake) -> Claude in the project folder (fake, read-only) -> plan attached
-to the ticket -> your approval -> label fix-approved. Plus the pure rules (models, labels, plan checks)."""
+"""The ticket fixer. PLAN: Tracker (fake) -> Claude in the project folder (fake, read-only) -> plan attached to the
+ticket -> your approval -> label fix-approved. EXECUTE: a real git repo in a temp folder, a fake Claude that edits the
+worktree and saves proof, the real test command -> branch, one commit, proof attached, ticket to review.
+Plus the pure rules (models, labels, plan checks, proof checks, commit messages)."""
 
 from __future__ import annotations
 
 import importlib.util
 import json
 import re
+import subprocess
 import sys
 import threading
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -78,6 +82,8 @@ class Tracker:
         self.other = {"id": 9, "key": "OTH-1", "title": "Other", "status": "todo", "labels": ["ai-fix"]}
         self.comments: list[str] = []
         self.files: dict[str, str] = {}
+        self.blobs: dict[str, bytes] = {}
+        self.ids: dict[str, int] = {}
         self.calls: list[tuple[str, str]] = []
         me = self
 
@@ -104,9 +110,19 @@ class Tracker:
                 if p == "/api/tickets/5/attachments":
                     if method == "POST":
                         name = re.search(rb'filename="([^"]+)"', raw).group(1).decode()
-                        me.files[name] = raw.split(b"\r\n\r\n", 1)[1].rsplit(b"\r\n--", 1)[0].decode()
-                        return self.send(200, {"id": 1, "filename": name})
-                    return self.send(200, [{"filename": "screen.png"}])
+                        me.blobs[name] = raw.split(b"\r\n\r\n", 1)[1].rsplit(b"\r\n--", 1)[0]
+                        me.files[name] = me.blobs[name].decode("utf-8", "replace")
+                        me.ids.setdefault(name, 100 + len(me.ids))
+                        return self.send(200, {"id": me.ids[name], "filename": name})
+                    return self.send(200, [{"id": 1, "filename": "screen.png"}]
+                                     + [{"id": i, "filename": n} for n, i in me.ids.items()])
+                m = re.fullmatch(r"/api/files/(\d+)/(.+)", p)
+                if m and urllib.parse.unquote(m.group(2)) in me.blobs:
+                    data = me.blobs[urllib.parse.unquote(m.group(2))]
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return None
                 return self.send(404, {})
 
             def send(self, code, obj):
@@ -128,7 +144,7 @@ class Tracker:
         self.url = f"http://127.0.0.1:{self.srv.server_address[1]}"
 
 
-def start(tmp_path, monkeypatch, labels, claude):
+def start(tmp_path, monkeypatch, labels, claude, test="npm run build", session=None):
     tr = Tracker(labels)
     project = tmp_path / "trk"
     project.mkdir()
@@ -137,7 +153,7 @@ def start(tmp_path, monkeypatch, labels, claude):
         "logging:\n  file: null\njobs:\n  watchdog_interval_seconds: 0.1\n"
         f"plugins:\n  dirs: ['{(ROOT / 'plugins').as_posix()}']\n  live: [fixer]\n  config:\n    fixer:\n"
         f"      tracker_url: '{tr.url}'\n      claude_command: fakeclaude\n      plan_model: opus\n"
-        f"      projects:\n        - 'TRK | {project.as_posix()} | npm run build | opus | sonnet'\n", encoding="utf-8")
+        f"      projects:\n        - 'TRK | {project.as_posix()} | {test} | opus | sonnet'\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     srv = Server(Argus(load_config(tmp_path / "argus.yaml")).open())
     srv.__enter__()
@@ -146,6 +162,8 @@ def start(tmp_path, monkeypatch, labels, claude):
     w.register()
     assert "fixer" in w.plugins, w.plugin_errors
     monkeypatch.setattr(sys.modules["argus_plugin_fixer"], "run_claude", claude)
+    if session:
+        monkeypatch.setattr(sys.modules["argus_plugin_fixer"], "run_session", session)
     return tr, cl, w, srv, project
 
 
@@ -251,5 +269,246 @@ def test_the_scan_plans_a_labelled_ticket_and_reports_status(tmp_path, monkeypat
                                            "stage": "plan ready, waiting for your approval"}]
         assert got["result"]["today"] == 1 and got["result"]["projects"] == ["TRK"]
         assert scan["id"]
+    finally:
+        srv.__exit__(None, None, None)
+
+
+# ---------------------------------------------------------------------- the execute phase
+
+cspec = importlib.util.spec_from_file_location("change_rules", ROOT / "scripts" / "change.py")
+change = importlib.util.module_from_spec(cspec)
+cspec.loader.exec_module(change)
+
+CHECK = 'import os, sys\nopen("build.out", "w").write("artifact")\nsys.exit(0 if os.path.exists("fixed.txt") else 1)\n'
+GOOD_PROOF = {
+    "TRK-5-before-board.png": b"PNG-before", "TRK-5-after-board.png": b"PNG-after",
+    "TRK-5-board.log": "GET /board 200", "notes.docx": "not an allowed name",
+    "proof.md": "- [x] step 1: the card stays on drop (TRK-5-board.log)\n\n## How to check it yourself\nDrag a card.\n"}
+
+
+def test_branch_commit_and_proof_rules():
+    assert fx.branch_name("TRK-5", "Board drops cards!") == "fix/trk-5-board-drops-cards"
+    long = fx.branch_name("TRK-5", "A very long title about the board that keeps going and going and going")
+    assert change.branch_problem(long) is None and len(long) <= 48 + 4
+    ticket = {"key": "TRK-5", "type": "bug", "title": "Board drops cards when you drag them"}
+    assert fx.commit_title("TRK", ticket) == "fix(trk): TRK-5 board drops cards when you drag them"
+    for tk in (ticket, {**ticket, "type": "feature", "title": "x " * 60 + "."}, {**ticket, "type": "task"}):
+        title = fx.commit_title("TRK", tk)
+        assert change.title_problem(title) is None and len(title) <= 72, title
+    assert fx.commit_title("TRK", {**ticket, "type": "feature"}).startswith("feat(trk): ")
+    body = fx.commit_body(PLAN, "npm test", 1, 0, ["a.py"])
+    assert change.body_problem(body) is None and "failed (exit 1)" in body and "passed" in body
+    assert fx.forbidden(["src/app.py", ".env", "web/.env.local", "keys/server.pem", ".github/workflows/ci.yml",
+                         "docs/credentials.md", "a/.git/config"]) == [".env", "web/.env.local", "keys/server.pem",
+                                                                       ".github/workflows/ci.yml",
+                                                                       "docs/credentials.md", "a/.git/config"]
+    assert fx.forbidden(["src/app.py", "README.md", "web/src/Board.tsx"]) == []
+
+    ok = {"proof.md": 10, "TRK-5-before-board.png": 5, "TRK-5-after-board.png": 5}
+    md = "- [x] one\n- [x] two\n"
+    plan = PLAN.replace("## Steps\n", "## Steps\n1. first\n2. second\n")
+    assert fx.plan_steps(plan) == 2
+    assert fx.proof_problems("TRK-5", ok, plan, ["ui"], md, test="npm test", tests_ok=True) == []
+    got = fx.proof_problems("TRK-5", {"proof.md": 10}, plan, ["ui"], "- [x] one\n", test="npm test", tests_ok=False)
+    assert len(got) == 3 and "tests fail" in got[0] and "1 line(s) for 2" in got[1] and "before-<what>" in got[2]
+    assert "proof.md is missing" in fx.proof_problems("TRK-5", {}, plan, [], "", test="", tests_ok=True)[0]
+    assert fx.needs_screenshots(["bug"], "Take a screenshot of the board") and not fx.needs_screenshots(["bug"], "none")
+    assert fx.proof_kind("TRK-5-before-board.png", "TRK-5") == "shot" and fx.proof_kind("proof.md", "TRK-5") == "notes"
+    for bad in ("TRK-5-before-board.exe", "OTHER-1-board.log", "TRK-5-Board.log", "x.png", "TRK-5-before-.png"):
+        assert fx.proof_kind(bad, "TRK-5") == "", bad
+
+
+def test_the_fix_command_and_the_session_log():
+    args = fx.fix_args("claude", "sonnet", ["npm run *", "git diff*"], "/p/proof")
+    allowed = args[args.index("--allowedTools") + 1].split(",")
+    deny = args[args.index("--disallowedTools") + 1].split(",")
+    assert allowed == ["Read", "Grep", "Glob", "Edit", "Write", "MultiEdit", "Bash(npm run *)", "Bash(git diff*)"]
+    assert {"WebFetch", "WebSearch", "Bash(git commit*)", "Bash(git push*)", "Read(**/.env*)",
+            "Edit(**/.env*)"} <= set(deny)
+    assert args[args.index("--add-dir") + 1] == "/p/proof" and "acceptEdits" in args and "stream-json" in args
+    events = [{"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "name": "Bash", "input": {"command": "curl -H 'api_key: abcd1234' x"}},
+        {"type": "text", "text": "token=SECRET123 and sk-abcdefghijklmnopqrstuv"}]}},
+        {"type": "result", "is_error": True, "result": "max turns reached"}]
+    got = fx.parse_stream("not json\n" + "\n".join(json.dumps(e) for e in events), ("SECRET123",))
+    assert "abcd1234" not in got["log"] and "SECRET123" not in got["log"] and "sk-abcdef" not in got["log"]
+    assert "Bash:" in got["log"] and got["error"] == "max turns reached"
+    tickets = [{"key": "TRK-1", "labels": ["ai-fix", "fix-approved"], "status": "todo"},
+               {"key": "TRK-2", "labels": ["fix-approved", "ai-fixing"], "status": "todo"},
+               {"key": "TRK-3", "labels": ["fix-approved", "fix-done"], "status": "todo"},
+               {"key": "OTH-4", "labels": ["fix-approved"], "status": "todo"}]
+    assert [t["key"] for t in fx.ready_to_fix(tickets, {"TRK": {}})] == ["TRK-1"]
+    assert fx.stage(["ai-fix", "fix-approved", "fix-done"]) == "fix done, in review"
+
+
+def make_repo(project: Path) -> str:
+    def g(*a):
+        return subprocess.run(["git", *a], cwd=project, check=True, capture_output=True, text=True).stdout.strip()
+
+    g("init", "-q", "-b", "main")
+    g("config", "user.email", "t@example.com")
+    g("config", "user.name", "t")
+    (project / "app.txt").write_text("v1\n")
+    (project / "check.py").write_text(CHECK)
+    g("add", "-A")
+    g("commit", "-q", "-m", "init")
+    return g("rev-parse", "main")
+
+
+def fake_session(files, proof=None, final="Kept the card on drop.", boom=None):
+    calls: list[dict] = []
+
+    def run(args, prompt, cwd, timeout):
+        calls.append({"args": args, "prompt": prompt, "cwd": cwd, "timeout": timeout})
+        if boom:
+            raise sys.modules["argus_plugin_fixer"].PlanError(boom)
+        for name, text in files.items():
+            (Path(cwd) / name).write_text(text)
+        for name, data in (proof or {}).items():
+            target = Path(args[args.index("--add-dir") + 1]) / name
+            target.write_bytes(data if isinstance(data, bytes) else data.encode())
+        events = [{"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": "Edit", "input": {"file_path": "app.txt"}},
+            {"type": "text", "text": "password: hunter2 then done"}]}},
+            {"type": "result", "is_error": False, "result": final}]
+        return "\n".join(json.dumps(e) for e in events)
+
+    run.calls = calls
+    return run
+
+
+def run_fix(cl, w, key="TRK-5", **extra):
+    job = cl.post("/jobs", {"plugin": "fixer", "workflow": "fix", "needs": ["desktop"], "input": {"key": key, **extra}})
+    assert w.run_once(wait=2)
+    return wait_for(lambda: (j := cl.get(f"/jobs/{job['id']}"))["state"] in ("succeeded", "dead", "failed") and j)
+
+
+def git_out(project, *a):
+    return subprocess.run(["git", *a], cwd=project, check=True, capture_output=True, text=True).stdout.strip()
+
+
+def test_the_fix_lands_on_a_branch_with_proof_attached(tmp_path, monkeypatch):
+    session = fake_session({"fixed.txt": "yes\n", "app.txt": "v2\n"}, GOOD_PROOF)
+    tr, cl, w, srv, project = start(tmp_path, monkeypatch, ["ai-fix", "fix-approved"], None, test="python check.py",
+                                    session=session)
+    try:
+        main_before = make_repo(project)
+        tr.blobs["TRK-5-fix-plan.md"] = PLAN.encode()
+        tr.ids["TRK-5-fix-plan.md"] = 7
+        done = run_fix(cl, w)
+        assert done["state"] == "succeeded", done["error"]
+        assert done["result"]["ok"] is True and done["result"]["branch"] == "fix/trk-5-board-drops-cards"
+        # Claude's call: the worktree, the models and the rules
+        call = session.calls[0]
+        assert "work" in Path(call["cwd"]).parts and call["cwd"] != str(project) and call["timeout"] == 1800
+        assert call["args"][call["args"].index("--model") + 1] == "sonnet"
+        assert "Bash(npm run *)" in call["args"][call["args"].index("--allowedTools") + 1]
+        assert "Bash(git commit*)" in call["args"][call["args"].index("--disallowedTools") + 1]
+        assert "TRK-5-before-<what>.png" in call["prompt"] and "Details about it." in call["prompt"]
+        # the branch: one commit with a change-flow message, no build output, main untouched
+        branch = done["result"]["branch"]
+        assert git_out(project, "rev-parse", "main") == main_before
+        assert git_out(project, "log", "-1", "--format=%s", branch) == "fix(trk): TRK-5 board drops cards"
+        message = git_out(project, "log", "-1", "--format=%B", branch)
+        assert change.body_problem(message) is None and "claude" not in message.lower()
+        assert sorted(git_out(project, "diff", "--name-only", f"main...{branch}").split()) == ["app.txt", "fixed.txt"]
+        assert git_out(project, "rev-list", "--count", f"main..{branch}") == "1"
+        assert len(git_out(project, "worktree", "list").splitlines()) == 1  # the worktree is gone, the branch stays
+        # the ticket: proof attached, nothing else, status and labels
+        names = set(tr.files) - {"TRK-5-fix-plan.md"}
+        assert names == {"TRK-5-before-board.png", "TRK-5-after-board.png", "TRK-5-board.log", "proof.md",
+                         "TRK-5-tests-before.log", "TRK-5-tests.log", "TRK-5-fix.diff", "TRK-5-session.log",
+                         "TRK-5-fix-report.md"}
+        assert tr.blobs["TRK-5-after-board.png"] == b"PNG-after"
+        assert "exit code 1" in tr.files["TRK-5-tests-before.log"] and "exit code 0" in tr.files["TRK-5-tests.log"]
+        assert "hunter2" not in tr.files["TRK-5-session.log"] and "Edit:" in tr.files["TRK-5-session.log"]
+        assert "+yes" in tr.files["TRK-5-fix.diff"] and "build.out" not in tr.files["TRK-5-fix.diff"]
+        assert "ready for review" in tr.files["TRK-5-fix-report.md"]
+        assert tr.ticket["status"] == "review" and "fix-done" in tr.ticket["labels"]
+        assert not {"ai-fixing", "fix-approved"} & set(tr.ticket["labels"])
+        assert tr.comments[0].startswith("Fix started with sonnet on branch `fix/trk-5-board-drops-cards`")
+        assert tr.comments[-1].startswith("Fix ready for review (sonnet)") and "nothing was pushed" in tr.comments[-1]
+    finally:
+        srv.__exit__(None, None, None)
+
+
+def test_missing_proof_or_forbidden_files_keep_the_ticket_in_progress(tmp_path, monkeypatch):
+    session = fake_session({"fixed.txt": "yes\n"}, {"TRK-5-board.log": "ok"})
+    tr, cl, w, srv, project = start(tmp_path, monkeypatch, ["ai-fix", "fix-approved", "ui"], None,
+                                    test="python check.py", session=session)
+    try:
+        make_repo(project)
+        tr.blobs["TRK-5-fix-plan.md"] = PLAN.encode()
+        tr.ids["TRK-5-fix-plan.md"] = 7
+        done = run_fix(cl, w)
+        assert done["state"] == "succeeded" and done["result"]["ok"] is False
+        assert any("proof.md is missing" in p for p in done["result"]["problems"])
+        assert any("before-<what>" in p for p in done["result"]["problems"])
+        assert "fix-failed" in tr.ticket["labels"] and "fix-done" not in tr.ticket["labels"]
+        assert tr.ticket["status"] == "in_progress"
+        assert tr.comments[-1].startswith("Fix not finished (sonnet). Missing:") and "proof.md" in tr.comments[-1]
+        assert git_out(project, "log", "-1", "--format=%s", "fix/trk-5-board-drops-cards") == \
+            "chore(trk): wip TRK-5 not finished"
+        assert "TRK-5-tests.log" in tr.files and "TRK-5-board.log" in tr.files  # what exists is attached
+        # try again: the branch name is never reused
+        tr.ticket["labels"] = ["ai-fix", "fix-approved"]
+        session.calls.clear()
+        again = fake_session({"fixed.txt": "yes\n", ".env": "KEY=1\n", "app.txt": "v2\n"}, GOOD_PROOF)
+        monkeypatch.setattr(sys.modules["argus_plugin_fixer"], "run_session", again)
+        second = run_fix(cl, w)
+        assert second["result"]["branch"] == "fix/trk-5-board-drops-cards-2" and second["result"]["ok"] is False
+        assert "may never touch" in second["result"]["problems"][0] and ".env" in second["result"]["problems"][0]
+        assert ".env" not in git_out(project, "diff", "--name-only", "main...fix/trk-5-board-drops-cards-2").split()
+    finally:
+        srv.__exit__(None, None, None)
+
+
+def test_a_claude_error_and_bad_set_ups_are_reported(tmp_path, monkeypatch):
+    session = fake_session({}, None, boom="the fix took longer than 30 minutes and was stopped")
+    tr, cl, w, srv, project = start(tmp_path, monkeypatch, ["ai-fix", "fix-approved"], None, session=session)
+    try:
+        dead = run_fix(cl, w)  # the folder isn't a git repo
+        assert dead["state"] == "dead" and "git repository" in dead["error"] and session.calls == []
+        make_repo(project)
+        dead = run_fix(cl, w)  # git is fine, but no plan was attached
+        assert dead["state"] == "dead" and "no fix plan attached" in dead["error"]
+        tr.blobs["TRK-5-fix-plan.md"] = b"## Summary\nshort"
+        tr.ids["TRK-5-fix-plan.md"] = 7
+        dead = run_fix(cl, w)
+        assert dead["state"] == "dead" and "can't be used" in dead["error"] and session.calls == []
+        tr.blobs["TRK-5-fix-plan.md"] = PLAN.encode()
+        done = run_fix(cl, w)
+        assert done["result"]["ok"] is False
+        assert done["result"]["problems"][0].startswith("Claude stopped early: the fix took longer than 30 minutes")
+        assert "no files were changed" in done["result"]["problems"]
+        assert "fix-failed" in tr.ticket["labels"] and len(session.calls) == 1
+        assert "isn't mapped" in run_fix(cl, w, key="OTH-1")["error"]
+    finally:
+        srv.__exit__(None, None, None)
+
+
+def test_the_scan_runs_an_approved_fix(tmp_path, monkeypatch):
+    session = fake_session({"fixed.txt": "yes\n", "app.txt": "v2\n"}, GOOD_PROOF)
+    planner: list = []
+    tr, cl, w, srv, project = start(tmp_path, monkeypatch, ["ai-fix", "fix-approved"], lambda *a: planner.append(a),
+                                    test="python check.py", session=session)
+    try:
+        make_repo(project)
+        tr.blobs["TRK-5-fix-plan.md"] = PLAN.encode()
+        tr.ids["TRK-5-fix-plan.md"] = 7
+        cl.post("/jobs", {"plugin": "fixer", "workflow": "scan", "needs": ["desktop"], "input": {}})
+        for _ in range(10):
+            w.run_once(wait=0.3)
+            if "fix-done" in tr.ticket["labels"]:
+                break
+        assert "fix-done" in tr.ticket["labels"] and tr.ticket["status"] == "review"
+        assert len(session.calls) == 1 and planner == []  # fixed, and nothing was planned
+        st = cl.post("/jobs", {"plugin": "fixer", "workflow": "status", "needs": ["desktop"], "input": {}})
+        for _ in range(6):  # the scan's own job may still be finishing: keep working until status has run
+            w.run_once(wait=0.3)
+            if cl.get(f"/jobs/{st['id']}")["state"] in ("succeeded", "dead"):
+                break
+        got = wait_for(lambda: (j := cl.get(f"/jobs/{st['id']}"))["state"] in ("succeeded", "dead") and j)
+        assert got["result"]["fixes"][0]["stage"] == "fix done, in review" and got["result"]["today"] == 1
     finally:
         srv.__exit__(None, None, None)

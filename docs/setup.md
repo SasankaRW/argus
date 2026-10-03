@@ -327,16 +327,27 @@ daily cap.
   shopping list", "what's on my wishlist?", "how's my money this month?" (read only, never sent to Claude). Put
   Tracker's and Life Hub's `API_KEY` in Argus's .env as `TRACKER_API_KEY` / `LIFEHUB_API_KEY`, and their
   addresses in each plugin's settings (default http://127.0.0.1:8080 and :8081; the laptop's name after the move).
-- **Ticket fixer** (`fixer`, plan phase): label a Tracker ticket `ai-fix` (or tell Ari "fix ACME-12"; add
-  "plan with opus, fix with sonnet" to pick models) and Claude reads the project's code, read-only, in the folder
-  you mapped. The plan is attached to the ticket as `KEY-fix-plan.md` with a summary comment, and the phone and
-  Helios ask "Run the fix for KEY with <model>?". Approving only marks the ticket `fix-approved`; nothing is
-  changed in your code yet (the execute phase comes next). Set it up in the plugin's settings: the Tracker
-  address, and one line per project, `KEY | folder | test command | plan model | fix model` (the last three are
-  optional), e.g. `TRK | G:\Projects\tracker | cd web && npm run build`. Only folders listed there are ever used. It
-  needs the `claude` command (Claude Code, logged in) on the PC, and `TRACKER_API_KEY` in .env. Models can also
-  be set per ticket with the labels `plan:opus` and `fix:sonnet`. Turn the plugin live with `plugins.live:
-  [fixer]`.
+- **Ticket fixer** (`fixer`): label a Tracker ticket `ai-fix` (or tell Ari "fix ACME-12"; add "plan with opus,
+  fix with sonnet" to pick models) and Claude reads the project's code, read-only, in the folder you mapped. The
+  plan is attached to the ticket as `KEY-fix-plan.md` with a summary comment, and the phone and Helios ask "Run
+  the fix for KEY with <model>?". Approving marks the ticket `fix-approved`; within two minutes the fix starts on
+  a **new branch in a separate git worktree** (`fix/key-title`, from `main`), so your own checkout is never
+  touched. Claude edits there, saves proof (before/after screenshots, logs, `proof.md`), and Argus runs the
+  project's test command before and after, checks the proof, makes one commit and attaches everything to the
+  ticket (`KEY-fix-report.md`, `KEY-fix.diff`, `KEY-tests.log`, `KEY-session.log`, the screenshots) and moves it
+  to **review**. It never pushes or merges: look at the branch (`git diff main...fix/key-title`), then your usual
+  pr / merge. If the tests fail, proof is missing or a forbidden file (.env, keys, CI workflows) was touched, the
+  ticket gets a comment saying what, the label `fix-failed`, and the branch is kept; remove `fix-failed` and add
+  `fix-approved` to try again. Set it up in the plugin's settings: the Tracker address, and one line per
+  project, `KEY | folder | test command | plan model | fix model` (the last three are optional), e.g.
+  `TRK | G:\Projects\tracker | cd web && npm ci && npm run build`. The test command runs in a fresh worktree, so it
+  must install what it needs. The folder must be the top folder of a git repository. Only folders listed there
+  are ever used. Claude may run only the commands in `fix_allow` (npm run/test/ci, npx playwright/vitest, node,
+  pytest, read-only git by default; add yours, such as `docker compose *`); `git commit`, `push`, web access and
+  `.env` files are always refused. Time limits: `plan_minutes` (10), `fix_minutes` (30), `test_minutes` (10).
+  It needs the `claude` command (Claude Code, logged in) on the PC, and `TRACKER_API_KEY` in .env. Models can
+  also be set per ticket with the labels `plan:opus` and `fix:sonnet`; a `ui` label makes before/after
+  screenshots required. Turn the plugin live with `plugins.live: [fixer]`.
 - **Read later** (in `web`): "save this for later" or the phone's share menu: the page's text and a short local
   summary go to Documents/read-later (searchable); "what did I save about Kandy?".
 - **File tools** (`file-tools`): "merge these PDFs", "make a PDF of these photos", "pages 2-5 of the contract",
