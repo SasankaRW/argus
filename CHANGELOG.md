@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Change flow:** `dev.ps1 apply <package>` (new branch, changelog, Helios rebuild, tests, one clear commit), PR title and description from the commit (What / Why / How tested / Risk), squash-merge as `<title> (#N)`, `dev.ps1 rerun` for a flaky CI job, a commit-msg hook and a PR title check in CI. See CONTRIBUTING.md.
+
 - Notifications page: an approval notification now has **review & decide** (the same card as the Inbox, with Approve / Reject and edits) while it is pending, and shows its outcome after.
 - **Fix:** the phone app asked for any job and failed the ones that weren't phone jobs ("the phone only runs the phone plugin", seen as "Job failed: guidance.review"); it now only asks for phone-plugin jobs.
 
