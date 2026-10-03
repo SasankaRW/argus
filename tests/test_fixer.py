@@ -8,6 +8,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -26,6 +27,15 @@ ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("fixer_rules", ROOT / "plugins" / "fixer" / "plugin.py")
 fx = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fx)
+
+def finished(cl, job_id: str, states=("succeeded", "dead", "failed")) -> dict:
+    """Wait for the job to end; on a timeout say what state it is stuck in (a plain timeout hides the cause)."""
+    try:
+        return wait_for(lambda: (j := cl.get(f"/jobs/{job_id}"))["state"] in states and j, timeout=30)
+    except AssertionError:
+        j = cl.get(f"/jobs/{job_id}")
+        raise AssertionError(f"job {job_id} is {j['state']!r}, error: {j.get('error')}") from None
+
 
 PLAN = "\n".join(f"## {s}\n{'Details about it. ' * 4}" for s in fx.SECTIONS)
 
@@ -158,6 +168,10 @@ def start(tmp_path, monkeypatch, labels, claude, test="npm run build", session=N
     srv = Server(Argus(load_config(tmp_path / "argus.yaml")).open())
     srv.__enter__()
     cl = client(srv.url)
+    # The plugin's own two-minute scan schedule must not fire during a test: the worker would pick its job before
+    # the test's (that made these tests fail whenever a run crossed an even minute).
+    with sqlite3.connect(tmp_path / "data" / "argus.db", timeout=10) as db:
+        db.execute("UPDATE schedules SET enabled = 0")
     w = Worker(cl, "pc", capabilities=["desktop"], watch_folders=False)
     w.register()
     assert "fixer" in w.plugins, w.plugin_errors
@@ -194,7 +208,7 @@ def test_plan_attached_then_approved(tmp_path, monkeypatch):
         cl.post(f"/approvals/{a['id']}/decide", {"answer": "approve"})
         wait_for(lambda: cl.get(f"/jobs/{job['id']}")["state"] == "queued")
         assert w.run_once(wait=2)
-        done = wait_for(lambda: (j := cl.get(f"/jobs/{job['id']}"))["state"] in ("succeeded", "dead") and j)
+        done = finished(cl, job['id'])
         assert done["state"] == "succeeded", done["error"]
         assert done["result"]["approved"] is True and done["result"]["plan_model"] == "haiku"
         assert "fix-approved" in tr.ticket["labels"] and "plan-ready" not in tr.ticket["labels"]
@@ -216,7 +230,7 @@ def test_rejected_and_failed_plans_say_so_on_the_ticket(tmp_path, monkeypatch):
         cl.post(f"/approvals/{cl.get('/approvals?state=pending')[0]['id']}/decide", {"answer": "reject"})
         wait_for(lambda: cl.get(f"/jobs/{job['id']}")["state"] == "queued")
         assert w.run_once(wait=2)
-        done = wait_for(lambda: (j := cl.get(f"/jobs/{job['id']}"))["state"] in ("succeeded", "dead") and j)
+        done = finished(cl, job['id'])
         assert done["result"]["approved"] is False and "plan-rejected" in tr.ticket["labels"]
         assert tr.comments[-1].startswith("Fix not approved")
 
@@ -226,7 +240,7 @@ def test_rejected_and_failed_plans_say_so_on_the_ticket(tmp_path, monkeypatch):
         monkeypatch.setattr(sys.modules["argus_plugin_fixer"], "run_claude", broken)
         job = cl.post("/jobs", {"plugin": "fixer", "workflow": "plan", "needs": ["desktop"], "input": {"key": "TRK-5"}})
         assert w.run_once(wait=2)
-        dead = wait_for(lambda: (j := cl.get(f"/jobs/{job['id']}"))["state"] in ("succeeded", "dead") and j)
+        dead = finished(cl, job['id'])
         assert dead["state"] == "dead" and "took longer" in dead["error"]
         assert "plan-failed" in tr.ticket["labels"] and "ai-planning" not in tr.ticket["labels"]
         assert tr.comments[-1].startswith("Fix plan failed (opus)")
@@ -242,7 +256,7 @@ def test_only_mapped_projects_and_bad_input_are_refused(tmp_path, monkeypatch):
                          ({"key": "TRK-5", "plan_model": "gpt-4"}, "use opus")):
             job = cl.post("/jobs", {"plugin": "fixer", "workflow": "plan", "needs": ["desktop"], "input": inp})
             assert w.run_once(wait=2)
-            dead = wait_for(lambda jid=job["id"]: (j := cl.get(f"/jobs/{jid}"))["state"] in ("succeeded", "dead") and j)
+            dead = finished(cl, job["id"])
             assert dead["state"] == "dead" and why in dead["error"], (inp, dead["error"])
         assert called == []  # Claude never ran
     finally:
@@ -264,7 +278,7 @@ def test_the_scan_plans_a_labelled_ticket_and_reports_status(tmp_path, monkeypat
         assert tr.ticket["labels"] == ["ai-fix", "plan-ready"]  # planning came and went
         st = cl.post("/jobs", {"plugin": "fixer", "workflow": "status", "needs": ["desktop"], "input": {}})
         w.run_once(wait=1)
-        got = wait_for(lambda: (j := cl.get(f"/jobs/{st['id']}"))["state"] in ("succeeded", "dead") and j)
+        got = finished(cl, st["id"])
         assert got["result"]["fixes"] == [{"key": "TRK-5", "title": "Board drops cards",
                                            "stage": "plan ready, waiting for your approval"}]
         assert got["result"]["today"] == 1 and got["result"]["projects"] == ["TRK"]
@@ -380,7 +394,7 @@ def fake_session(files, proof=None, final="Kept the card on drop.", boom=None):
 def run_fix(cl, w, key="TRK-5", **extra):
     job = cl.post("/jobs", {"plugin": "fixer", "workflow": "fix", "needs": ["desktop"], "input": {"key": key, **extra}})
     assert w.run_once(wait=2)
-    return wait_for(lambda: (j := cl.get(f"/jobs/{job['id']}"))["state"] in ("succeeded", "dead", "failed") and j)
+    return finished(cl, job['id'])
 
 
 def git_out(project, *a):
@@ -508,7 +522,7 @@ def test_the_scan_runs_an_approved_fix(tmp_path, monkeypatch):
             w.run_once(wait=0.3)
             if cl.get(f"/jobs/{st['id']}")["state"] in ("succeeded", "dead"):
                 break
-        got = wait_for(lambda: (j := cl.get(f"/jobs/{st['id']}"))["state"] in ("succeeded", "dead") and j)
+        got = finished(cl, st["id"])
         assert got["result"]["fixes"][0]["stage"] == "fix done, in review" and got["result"]["today"] == 1
     finally:
         srv.__exit__(None, None, None)
