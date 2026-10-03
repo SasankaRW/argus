@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Ari can fix tickets:** "fix TRK-5", "run the fix for TRK-5", "how's the TRK-5 fix going?". Unanswered plan approvals no longer block the fixer, and failures show on the ticket.
+
 - **Ticket fixer can fix:** an approved ticket is fixed on a new git branch in a worktree, with before/after tests, screenshots, logs and a report attached to the ticket and the ticket moved to review. It never pushes or merges.
 
 - **Ticket fixer (plan phase):** label a Tracker ticket `ai-fix` (or tell Ari "fix ACME-12") and Claude reads the project's code read-only, attaches a fix plan to the ticket and asks you before any fix runs; choose the plan and fix models per request, ticket label or project. Turn on with `plugins.live: [fixer]` and map projects in its settings. See docs/ticket-fixer-plan.md.
