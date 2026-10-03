@@ -1,6 +1,6 @@
 # Ticket fixer: Tracker + Argus + Ari (plan)
 
-Version 0.6 (2026-10-03; Ari commands built)
+Version 0.7 (2026-10-03; Helios tab built)
 
 Goal: manage Tracker tickets from Ari, and let a ticket in a chosen project be fixed by an LLM working in
 that project's folder, in two phases, **plan** then **execute**, with a separate model for each phase.
@@ -234,6 +234,11 @@ Today Claude runs only with tools off. The fixer needs tools, so the exception i
   unanswered question can't block planning or fixing (an unanswered one is simply left, and Ari or the label can
   still approve it). A limit or a run in progress leaves the ticket queued for the next scan; any other failure
   before the run starts is shown on the ticket (`plan-failed` / `fix-failed` plus a comment).
+- Step 5 (Helios): the Ticket fixer's page (Plugins > Ticket fixer) has a **Fixes** tab: every ticket that is in the
+  flow with its stage, a "Plan" or "Run the fix" button that fits the stage (the same `queue` / `approve`
+  workflows Ari uses), model dropdowns for the plan and fix phases (blank = the ticket label, project line or
+  default), a box to start a plan for any ticket, and a link to Tracker. Project folders, test commands and the
+  default models are in the page's Settings tab. Plan approvals stay in the Inbox. Cancel is not built.
 - Differences from the plan above: the allowed commands are the `fix_allow` list (default npm run/test/ci,
   npx playwright/vitest, node, pytest, read-only git), not just the test command, because Claude needs to start
   the app and take screenshots; the Argus-side screenshot fallback for non-Claude models is not built. A

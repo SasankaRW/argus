@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, Job } from "./api";
+import { FixerPanel } from "./FixerPanel";
 import { ago, tone } from "./format";
 import type { Selection } from "./MapView";
 
@@ -22,7 +23,7 @@ type Detail = {
 };
 
 const GROUPS: [string, string][] = [["files", "Files"], ["pc", "PC control"], ["assistant", "Assistant"], ["", "Other"]];
-const TABS = ["Overview", "Settings", "Runs", "Learning"] as const;
+const TABS = ["Overview", "Fixes", "Settings", "Runs", "Learning"] as const;
 type Tab = typeof TABS[number];
 
 function mins(s: number) { const m = Math.round(s / 60); return m < 1 ? "—" : m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`; }
@@ -143,7 +144,7 @@ function PluginDetail({ id, onSelect, onChanged }: { id: string; onSelect: (s: S
         {err && <div className="tip bad">{err}</div>}
       </div>
       <div className="tabs" role="tablist">
-        {TABS.map((t) => (
+        {TABS.filter((t) => t !== "Fixes" || d.id === "fixer").map((t) => (
           <button key={t} type="button" role="tab" aria-selected={tab === t} className={`tab ${tab === t ? "on" : ""}`} onClick={() => setTab(t)}>
             {t}{t === "Settings" && d.settings.length ? ` (${d.settings.length})` : ""}{t === "Learning" && toReview ? <span className="dotbadge">{toReview}</span> : null}
           </button>
@@ -151,6 +152,7 @@ function PluginDetail({ id, onSelect, onChanged }: { id: string; onSelect: (s: S
       </div>
       <div className="pd-body">
         {tab === "Overview" && <Overview d={d} />}
+        {tab === "Fixes" && <FixerPanel />}
         {tab === "Settings" && <Settings d={d} onSaved={() => { load(); onChanged(); setMsg("Saved: used from the next job on."); }} />}
         {tab === "Runs" && <Runs runs={d.runs} onSelect={onSelect} />}
         {tab === "Learning" && <Learning d={d} reload={load} />}
