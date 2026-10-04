@@ -58,7 +58,7 @@ fixer:
   plan_model: claude:opus        # default per phase
   fix_model: claude:sonnet
   max_minutes: {plan: 10, fix: 30}
-  fixes_per_day: 6
+  fixes_per_day: 12
   projects:
     ACME:
       path: G:\Projects\acme

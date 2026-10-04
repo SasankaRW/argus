@@ -41,7 +41,7 @@ config:
     default: ["npm run *", "npm test*", "npm ci", "npx playwright *", "npx vitest *", "node *", "python -m pytest*", "pytest*", "git status*", "git diff*", "git log*", "git show*"]
     label: "Commands the fixing Claude may run (besides editing files). Add yours, e.g. docker compose *. git commit, push and web access are always refused."
   require_screenshots: {type: bool, default: false, label: "A UI fix must come with before/after screenshots (off: it goes to review with a note instead)"}
-  fixes_per_day: {type: int, default: 6, label: Plans and fixes per day}
+  fixes_per_day: {type: int, default: 12, label: Plans and fixes per day}
 
 ari:
   tools:

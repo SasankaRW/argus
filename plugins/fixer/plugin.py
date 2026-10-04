@@ -781,7 +781,7 @@ def load(ctx: Context, key: str) -> dict:
 def make_plan(ctx: Context, info: dict) -> str:
     if ctx.dry_run:
         return f"(dry run) would plan {info['ticket']['key']} with {info['plan_model']}"
-    limit = int(ctx.config.get("fixes_per_day") or 6)
+    limit = int(ctx.config.get("fixes_per_day") or 12)
     today = time.strftime("%Y-%m-%d")
     runs = ctx.store.get("runs") or {}
     if runs.get("day") == today and runs.get("n", 0) >= limit:
@@ -887,6 +887,15 @@ def test_seconds(ctx: Context) -> float:
     return float(ctx.config.get("test_minutes") or 10) * 60
 
 
+def daily_limit_reached(ctx: Context) -> str:
+    """Why no more plans or fixes may start today ("" when they may)."""
+    limit = int(ctx.config.get("fixes_per_day") or 12)
+    runs = ctx.store.get("runs") or {}
+    if runs.get("day") == time.strftime("%Y-%m-%d") and runs.get("n", 0) >= limit:
+        return f"already {limit} plans and fixes today (fixes_per_day)"
+    return ""
+
+
 def busy_window(ctx: Context) -> float:
     """How long a "busy" mark counts (seconds): a whole fix is the plan or fix time plus two test runs, plus slack."""
     plan = float(ctx.config.get("plan_minutes") or 10)
@@ -918,7 +927,7 @@ def load_fix(ctx: Context, key: str) -> dict:
     if problem:
         raise PermanentError(f"the plan attached to {t['key']} can't be used: {problem}")
     runs = ctx.store.get("runs") or {}
-    limit = int(ctx.config.get("fixes_per_day") or 6)
+    limit = int(ctx.config.get("fixes_per_day") or 12)
     if runs.get("day") == time.strftime("%Y-%m-%d") and runs.get("n", 0) >= limit:
         raise Deferred(f"already {limit} plans and fixes today (fixes_per_day)")
     info["plan_text"] = plan
@@ -1475,6 +1484,14 @@ def scan(ctx: Context):
         if not fixes and not plans:
             return {}
         t, what = (fixes[0], "fix") if fixes else (plans[0], "plan")
+        wait = daily_limit_reached(ctx)
+        if wait:  # stay quiet: no label changes, one comment per ticket and reason, the next scan looks again
+            told = ctx.store.get("told") or {}
+            if not ctx.dry_run and told.get(t["key"]) != wait:
+                comment(ctx, t["id"], f"Waiting: {wait}. It starts by itself tomorrow, or raise the limit in the "
+                                      "fixer's settings.")
+                ctx.store.set("told", {**told, t["key"]: wait})
+            return {"waiting": wait, "key": t["key"]}
         if not ctx.dry_run:
             set_labels(ctx, t["id"], add=(FIXING if what == "fix" else PLANNING,))  # so the next scan skips it
         return {"key": t["key"], "what": what}
@@ -1482,6 +1499,8 @@ def scan(ctx: Context):
     chosen = ctx.step("pick", pick)
     if not chosen:
         return {"planned": None}
+    if chosen.get("waiting"):
+        return {"waiting": chosen["waiting"], "key": chosen["key"]}
     key, what = chosen["key"], chosen["what"]
     if ctx.dry_run:
         return {"would_" + what: key, "dry_run": True}
@@ -1537,6 +1556,7 @@ def status(ctx: Context):
                 rows.append({"key": t["key"], "title": clip(t["title"], 80), "stage": stage(t["labels"])})
         runs = ctx.store.get("runs") or {}
         return {"fixes": rows, "projects": sorted(projects), "problems": bad,
+                "limit": int(ctx.config.get("fixes_per_day") or 12), "waiting": daily_limit_reached(ctx),
                 "tracker": str(ctx.config.get("tracker_url") or ""),
                 "today": runs.get("n", 0) if runs.get("day") == time.strftime("%Y-%m-%d") else 0}
 
