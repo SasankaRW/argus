@@ -5,7 +5,7 @@ import { api, type ArgusEvent, type Job } from "./api";
 // Everything goes through the plugin's own workflows (status, queue, approve), so Helios and Ari do the same thing.
 
 type Row = { key: string; title: string; stage: string };
-type Status = { fixes: Row[]; projects: string[]; problems: string[]; today: number; tracker?: string; dry_run?: boolean };
+type Status = { fixes: Row[]; projects: string[]; problems: string[]; today: number; limit?: number; waiting?: string; tracker?: string; dry_run?: boolean };
 
 const MODELS = ["", "opus", "sonnet", "haiku"];
 
@@ -185,11 +185,12 @@ export function FixerPanel() {
         <button type="submit" className="primary" disabled={busy || !key.trim()}>Plan a fix</button>
       </form>
       {msg && <div className={`tip${msg.ok ? "" : " bad"}`}>{msg.text}</div>}
+      {data?.waiting ? <div className="tip bad">Waiting: {data.waiting}. Raise it in Settings, or it starts again tomorrow.</div> : null}
       {data?.problems?.length ? <div className="tip bad">Project settings: {data.problems.join("; ")}</div> : null}
       {data && data.projects.length === 0 && <div className="tip">No project is mapped yet: add one in Settings (KEY | folder | test command).</div>}
       {data && (
         <p className="muted">
-          {data.projects.length ? `Projects: ${data.projects.join(", ")} · ` : ""}{data.today} plan{data.today === 1 ? "" : "s"} and fixes today
+          {data.projects.length ? `Projects: ${data.projects.join(", ")} · ` : ""}{data.today}{data.limit ? ` of ${data.limit}` : ""} plan{data.today === 1 ? "" : "s"} and fixes today
           {data.tracker ? <> · <a href={data.tracker} target="_blank" rel="noreferrer">open Tracker</a></> : null}
         </p>
       )}

@@ -396,20 +396,19 @@ def test_a_limit_keeps_the_ticket_queued_and_a_broken_set_up_is_shown(tmp_path, 
             job = post(cl, "scan")
             return finished(cl, job["id"], w)
 
-        assert scan()["result"]["planned"] == "TRK-5"
-        tr.ticket["labels"] = ["ai-fix"]  # asked to plan again, but today's one run is used up
-        got = scan()
-        assert got["state"] == "succeeded" and "already 1 plans and fixes today" in got["result"]["deferred"]
-        assert tr.ticket["labels"] == ["ai-fix"]  # still queued: not stuck on ai-planning, not failed
         # an approved ticket whose plan is missing: the scan says so on the ticket instead of leaving ai-fixing
         make_repo(project)
         tr.ticket["labels"] = ["ai-fix", "fix-approved"]
-        tr.blobs.pop("TRK-5-fix-plan.md")
-        tr.ids.pop("TRK-5-fix-plan.md")
         got = scan()
         assert "no fix plan attached" in got["result"]["failed"]
         assert "fix-failed" in tr.ticket["labels"] and "ai-fixing" not in tr.ticket["labels"]
         assert tr.comments[-1].startswith("The fix didn't run: ")
+        tr.ticket["labels"] = ["ai-fix"]
+        assert scan()["result"]["planned"] == "TRK-5"
+        tr.ticket["labels"] = ["ai-fix"]  # asked to plan again, but today's one run is used up
+        got = scan()
+        assert got["state"] == "succeeded" and "already 1 plans and fixes today" in got["result"]["waiting"]
+        assert tr.ticket["labels"] == ["ai-fix"]  # still queued: not stuck on ai-planning, not failed
     finally:
         srv.__exit__(None, None, None)
 
@@ -807,6 +806,31 @@ def test_a_fix_session_can_be_carried_on_in_a_terminal(tmp_path, monkeypatch):
         assert opened[0]["folder"] == str(tree) and opened[0]["args"][1:] == ["--resume", sid]
         again = finished(cl, post(cl, "terminal", key="TRK-5")["id"], w)  # and again, with the folder already there
         assert again["state"] == "succeeded" and len(opened) == 2
+    finally:
+        srv.__exit__(None, None, None)
+
+
+def test_at_the_daily_limit_the_scan_waits_quietly_instead_of_flipping_labels(tmp_path, monkeypatch):
+    session = fake_session({"fixed.txt": "yes\n", "app.txt": "v2\n"}, GOOD_PROOF)
+    tr, cl, w, srv, project = start(tmp_path, monkeypatch, ["ai-fix", "fix-approved"], None, test="python check.py",
+                                    session=session, extra="      fixes_per_day: 1\n")
+    try:
+        make_repo(project)
+        tr.blobs["TRK-5-fix-plan.md"] = PLAN.encode()
+        tr.ids["TRK-5-fix-plan.md"] = 7
+        assert finished(cl, post(cl, "scan")["id"], w)["result"]["fixed"] == "TRK-5"  # the one run of the day
+        tr.ticket["labels"] = ["ai-fix", "fix-approved"]  # approved again
+        tr.comments.clear()
+        patches = len([c for c in tr.calls if c[0] == "PATCH"])
+        for _ in range(3):
+            got = finished(cl, post(cl, "scan")["id"], w)["result"]
+            assert got == {"waiting": "already 1 plans and fixes today (fixes_per_day)", "key": "TRK-5"}
+        assert tr.ticket["labels"] == ["ai-fix", "fix-approved"]  # no ai-fixing on and off every two minutes
+        assert len([c for c in tr.calls if c[0] == "PATCH"]) == patches
+        assert len(tr.comments) == 1 and tr.comments[0].startswith("Waiting: already 1 plans and fixes today")
+        st = finished(cl, post(cl, "status")["id"], w)["result"]
+        assert st["limit"] == 1 and st["waiting"].startswith("already 1") and st["today"] == 1
+        assert len(session.calls) == 1
     finally:
         srv.__exit__(None, None, None)
 
