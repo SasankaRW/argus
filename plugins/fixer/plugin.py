@@ -24,14 +24,20 @@ and may run only the commands in `fix_allow`. Time limits per phase; runs per da
 from __future__ import annotations
 
 import json
+import mimetypes
+import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
+import urllib.error
 import urllib.parse
+import urllib.request
 import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
@@ -101,6 +107,26 @@ def parse_projects(lines: list[str]) -> tuple[dict[str, dict], list[str]]:
             continue
         out[parts[0].upper()] = {"key": parts[0].upper(), "path": parts[1], "test": parts[2] if len(parts) > 2 else "",
                                  "plan_model": plan_m, "fix_model": fix_m}
+    return out, bad
+
+
+def parse_screens(lines: list[str]) -> tuple[dict[str, dict], list[str]]:
+    """"KEY | built-site folder | pages" per line (the folder inside the project that its build command fills,
+    e.g. web/dist; pages like `/, /?view=board`, default `/`) -> ({KEY: {"dir", "pages"}}, problems)."""
+    out: dict[str, dict] = {}
+    bad: list[str] = []
+    for raw in lines or []:
+        line = str(raw).strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = [p.strip() for p in line.split("|")]
+        folder = parts[1].replace("\\", "/").strip("/") if len(parts) > 1 else ""
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9]{1,9}", parts[0]) or not folder or ".." in folder.split("/") \
+                or re.match(r"^[A-Za-z]:", folder):
+            bad.append(f"{line!r}: need KEY | a folder inside the project (e.g. web/dist) | pages")
+            continue
+        pages = [x.strip() for x in (parts[2] if len(parts) > 2 else "").split(",") if x.strip()] or ["/"]
+        out[parts[0].upper()] = {"dir": folder, "pages": [x if x.startswith("/") else "/" + x for x in pages][:6]}
     return out, bad
 
 
@@ -352,7 +378,7 @@ def proof_kind(name: str, key: str) -> str:
 
 
 def proof_problems(key: str, sizes: dict[str, int], plan: str, labels: list[str], proof_md: str, *, test: str,
-                   tests_ok: bool) -> list[str]:
+                   tests_ok: bool, screenshots: bool = True) -> list[str]:
     """What is missing before the ticket can go to review. `sizes`: the accepted proof files and their sizes."""
     out = []
     if test and not tests_ok:
@@ -363,11 +389,11 @@ def proof_problems(key: str, sizes: dict[str, int], plan: str, labels: list[str]
         steps, lines = plan_steps(plan), proof_lines(proof_md)
         if lines < steps:
             out.append(f"proof.md has {lines} line(s) for {steps} plan step(s): each step needs one")
-    if needs_screenshots(labels, plan):
+    if screenshots and needs_screenshots(labels, plan):
         before = {n[len(key) + 8:-4] for n in sizes if n.startswith(f"{key}-before-")}
         after = {n[len(key) + 7:-4] for n in sizes if n.startswith(f"{key}-after-")}
         if not before & after:
-            out.append(f"a UI fix needs a matching pair {key}-before-<what>.png and {key}-after-<what>.png")
+            out.append(f"a UI fix needs a matching pair `{key}-before-NAME.png` and `{key}-after-NAME.png`")
     return out
 
 
@@ -464,12 +490,13 @@ def describe_event(ev: dict) -> list[tuple[str, str]]:
     return [(k, t) for k, t in out if t.strip()]
 
 
-def fix_args(command: str, model: str, allow: list[str], proof_dir: str) -> list[str]:
+def fix_args(command: str, model: str, allow: list[str], proof_dir: str, session: str = "") -> list[str]:
     exe = shutil.which(command) or command
     tools = ["Read", "Grep", "Glob", "Edit", "Write", "MultiEdit"] + [f"Bash({a})" for a in allow]
     return [exe, "-p", "--model", model, "--output-format", "stream-json", "--verbose",
             "--permission-mode", "acceptEdits", "--allowedTools", ",".join(tools), "--disallowedTools", FIX_DENY,
-            "--add-dir", proof_dir, "--max-turns", "80", "--no-session-persistence"]
+            "--add-dir", proof_dir, "--max-turns", "80"] + (["--session-id", session] if session else
+                                                            ["--no-session-persistence"])
 
 
 def fix_prompt(info: dict, proof_dir: str) -> str:
@@ -495,14 +522,23 @@ Rules:
 - The project's test command is: {test or '(none set)'}. Run what you need; Argus runs it again after you.
 
 Proof (required). Save these in {proof_dir} (use the full path), with exactly these names:
-- {key}-before-<what>.png and {key}-after-<what>.png : screenshots of the same view before and after your change, for
-  any change a person can see (<what> is a short lower-case name like board or login-dialog). Start the app on
-  localhost and use a headless browser (for example `npx playwright screenshot <url> <file>`). For the "before" shot,
-  take the "before" shot before you edit anything, and if you cannot, say why in proof.md.
+{shots_rule(info, key)}
 - {key}-<what>.log : output that shows the fix works (a command and its result, a request and its response).
 - proof.md : one line per plan step, as a checklist ("- [x] step: what you did, evidence file or test name"), then a
   short section "How to check it yourself". Say plainly what you could not do.
 Use no other file names in that folder. Finish by writing proof.md, then give a two-line summary of what you changed."""
+
+
+def shots_rule(info: dict, key: str) -> str:
+    if info.get("auto_shots"):
+        return (f"- Screenshots: Argus takes the before and after screenshots of the built app itself\n"
+                f"  ({key}-before-... and {key}-after-...), so do not take screenshots and do not start the app.\n"
+                "  Make sure the project's build command still succeeds, and say in proof.md which page shows it.")
+    return (f"- {key}-before-<what>.png and {key}-after-<what>.png : screenshots of the same view before and after\n"
+            "  your change, for any change a person can see (<what> is a short lower-case name like board or\n"
+            "  login-dialog). Start the app on localhost and use a headless browser (for example\n"
+            "  `npx playwright screenshot <url> <file>`). Take the \"before\" shot before you edit anything, and if\n"
+            "  you cannot, say why in proof.md.")
 
 
 def fix_report(info: dict, run: dict, outcome: dict) -> str:
@@ -519,8 +555,10 @@ def fix_report(info: dict, run: dict, outcome: dict) -> str:
     else:
         lines += ["No test command is set for this project."]
     lines += ["", "## Proof files", ""] + [f"- {n}" for n in outcome["files"]] + [""]
+    lines += ["Claude's session trace and the test log from before the fix are only on the PC, in "
+              f"`{run['proof']}`.", ""]
     if outcome.get("notes"):
-        lines += ["## Ignored", ""] + [f"- {n}" for n in outcome["notes"]] + [""]
+        lines += ["## Notes", ""] + [f"- {n}" for n in outcome["notes"]] + [""]
     if outcome.get("final"):
         lines += ["## What Claude said", "", clip(outcome["final"], 1500), ""]
     lines += ["## Review it", "",
@@ -655,6 +693,11 @@ def projects_of(ctx: Context) -> dict[str, dict]:
     return found
 
 
+def screens_of(ctx: Context) -> dict[str, dict]:
+    found, _ = parse_screens(list(ctx.config.get("screens") or []))
+    return found
+
+
 def find(ctx: Context, key: str) -> dict:
     key = key.strip().upper()
     for t in call(ctx, "GET", "/api/tickets") or []:
@@ -683,6 +726,22 @@ def attach(ctx: Context, ticket_id: int, name: str, text: str) -> None:
 def attach_bytes(ctx: Context, ticket_id: int, name: str, data: bytes, content_type: str) -> None:
     body, ctype = multipart(name, data, content_type)
     call(ctx, "POST", f"/api/tickets/{ticket_id}/attachments", raw=body, content_type=ctype)
+
+
+def attachable(name: str) -> bool:
+    """Is this proof file worth putting on the ticket? The trace of Claude's session and the "before" test log
+    stay on the PC (the report says how the tests did before and after, and the Live log has the session)."""
+    return not name.endswith(("-tests-before.log", "-session.log"))
+
+
+def clear_proof(ctx: Context, ticket_id: int, key: str) -> None:
+    """Remove what an earlier attempt attached (proof, screenshots, report), so the ticket shows only the latest."""
+    k = re.escape(key)
+    owned = re.compile(rf"{k}-(?:before|after)-[a-z0-9-]+\.(?:png|jpg)|{k}-[a-z0-9-]+\.(?:log|txt|diff)"
+                       rf"|{k}-fix-report\.md|proof\.md")
+    for a in call(ctx, "GET", f"/api/tickets/{ticket_id}/attachments") or []:
+        if owned.fullmatch(str(a.get("filename", ""))):
+            call(ctx, "DELETE", f"/api/attachments/{a['id']}")
 
 
 def content_type_of(name: str) -> str:
@@ -863,6 +922,8 @@ def load_fix(ctx: Context, key: str) -> dict:
     if runs.get("day") == time.strftime("%Y-%m-%d") and runs.get("n", 0) >= limit:
         raise Deferred(f"already {limit} plans and fixes today (fixes_per_day)")
     info["plan_text"] = plan
+    info["auto_shots"] = bool(screens_of(ctx).get(project["key"])) and \
+        needs_screenshots(t.get("labels") or [], plan)
     return info
 
 
@@ -904,9 +965,13 @@ def begin(ctx: Context, info: dict) -> dict:
     proof = Path(ctx.data_dir) / "proof" / t["key"]
     shutil.rmtree(proof, ignore_errors=True)
     proof.mkdir(parents=True)
+    session = str(uuid.uuid4())
+    kept = ctx.store.get("sessions") or {}
+    kept[t["key"]] = {"session": session, "tree": str(tree), "branch": branch, "project": folder, "at": time.time()}
+    ctx.store.set("sessions", dict(sorted(kept.items(), key=lambda kv: kv[1].get("at", 0))[-20:]))
     comment(ctx, t["id"], f"Fix started with {info['fix_model']} on branch `{branch}` (from {base}). "
                           "Nothing is pushed or merged.")
-    return {"branch": branch, "base": base, "tree": str(tree), "proof": str(proof)}
+    return {"branch": branch, "base": base, "tree": str(tree), "proof": str(proof), "session": session}
 
 
 def run_tests(ctx: Context, info: dict, run: dict, which: str) -> dict:
@@ -923,10 +988,174 @@ def run_tests(ctx: Context, info: dict, run: dict, which: str) -> dict:
     return {"rc": rc, "pre": changed_paths(run["tree"]) if which == "before" else []}
 
 
+# ---------------------------------------------------------------------- screenshots taken by Argus
+
+SIZES = (("desktop", 1440, 900), ("mobile", 390, 844))
+for _ext, _type in ((".js", "text/javascript"), (".mjs", "text/javascript"), (".css", "text/css"),
+                    (".svg", "image/svg+xml"), (".woff2", "font/woff2"), (".json", "application/json"),
+                    (".webmanifest", "application/manifest+json")):
+    mimetypes.add_type(_type, _ext)  # Windows can map these from the registry to the wrong thing
+
+
+def page_name(path: str) -> str:
+    """`/` -> home, `/?view=board` -> view-board: the <what> of a screenshot file name."""
+    name = re.sub(r"[^a-z0-9]+", "-", urllib.parse.unquote(path).lower()).strip("-")
+    return (name or "home")[:20].strip("-") or "home"
+
+
+class SiteServer:
+    """Serves a built web app from a folder on 127.0.0.1 so a headless browser can photograph it. Requests under
+    /api go (GET only, with the Tracker key) to the real Tracker, so the page shows real data and nothing can be
+    changed through it; anything else not found is the app's index.html (client-side routes)."""
+
+    def __init__(self, root: Path, tracker: str, key: str):
+        site = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *a: Any) -> None:
+                pass
+
+            def send(self, status: int, body: bytes, kind: str) -> None:
+                self.send_response(status)
+                self.send_header("Content-Type", kind)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                if self.command != "HEAD":
+                    self.wfile.write(body)
+
+            def do_HEAD(self) -> None:  # noqa: N802
+                self.do_GET()
+
+            def do_GET(self) -> None:  # noqa: N802
+                path = urllib.parse.urlsplit(self.path).path
+                if path.startswith("/api/"):
+                    return self.send(*site.proxy(self.path))
+                target = (site.root / urllib.parse.unquote(path).lstrip("/")).resolve()
+                if not target.is_file() or site.root not in target.parents:
+                    target = site.root / "index.html"
+                kind = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+                self.send(200, target.read_bytes(), kind)
+
+            def refuse(self) -> None:
+                self.send(405, b"read-only", "text/plain")
+
+            do_POST = do_PUT = do_PATCH = do_DELETE = refuse  # noqa: N815
+
+        self.root = root.resolve()
+        self.tracker = tracker.rstrip("/")
+        self.key = key
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.port = self.httpd.server_address[1]
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def proxy(self, path: str) -> tuple[int, bytes, str]:
+        req = urllib.request.Request(self.tracker + path, headers={"X-API-Key": self.key, "Accept": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=20) as r:  # noqa: S310
+                return r.status, r.read(), r.headers.get("Content-Type", "application/json")
+        except urllib.error.HTTPError as e:
+            return e.code, e.read(), e.headers.get("Content-Type", "text/plain")
+        except OSError:
+            return 502, b"Tracker isn't answering", "text/plain"
+
+    def stop(self) -> None:
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+
+def find_browser(configured: str = "") -> str | None:
+    """A Chromium-based browser for headless screenshots: the setting, else Edge or Chrome (always on Windows)."""
+    names = [configured] if configured else []
+    names += ["msedge", "chrome", "google-chrome", "chromium", "chromium-browser"]
+    for n in names:
+        exe = shutil.which(n)
+        if exe:
+            return exe
+        if n and os.path.isfile(n):
+            return n
+    for base in (os.environ.get("ProgramFiles(x86)"), os.environ.get("ProgramFiles"), os.environ.get("LocalAppData")):
+        for rel in ("Microsoft/Edge/Application/msedge.exe", "Google/Chrome/Application/chrome.exe"):
+            if base and os.path.isfile(os.path.join(base, rel)):
+                return os.path.join(base, rel)
+    return None
+
+
+def run_browser(args: list[str], timeout: float) -> int:
+    """One headless-browser run (it writes the screenshot itself). Tests replace this."""
+    try:
+        r = subprocess.run(args, capture_output=True, timeout=timeout, stdin=subprocess.DEVNULL,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except (OSError, subprocess.TimeoutExpired):
+        return 1
+    return r.returncode
+
+
+def shoot(browser: str, url: str, out: Path, width: int, height: int) -> bool:
+    out.unlink(missing_ok=True)
+    with tempfile.TemporaryDirectory() as profile:  # its own profile: never touches the browser you use
+        run_browser([browser, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run",
+                     f"--user-data-dir={profile}", f"--window-size={width},{height}", "--virtual-time-budget=12000",
+                     f"--screenshot={out}", url], 90)
+    return out.is_file() and out.stat().st_size > 0
+
+
+def keep_site(ctx: Context, info: dict, run: dict, which: str) -> dict:
+    """Copy the built web app (what the test command just built) aside, so it can be photographed later: the
+    "before" copy has to be taken before Claude edits anything."""
+    key = info["ticket"]["key"]
+    cfg = screens_of(ctx).get(info["project"]["key"])
+    if not cfg or not needs_screenshots(info["ticket"].get("labels") or [], info.get("plan_text") or ""):
+        return {"kept": False}
+    src = Path(run["tree"]) / cfg["dir"]
+    if not (src / "index.html").is_file():
+        live("info", f"No built app in {cfg['dir']} {which} the fix, so no automatic screenshots "
+                     "(the test command should build it).")
+        return {"kept": False, "why": f"no index.html in {cfg['dir']} {which} the fix"}
+    dst = Path(ctx.data_dir) / "site" / key / which
+    shutil.rmtree(dst, ignore_errors=True)
+    shutil.copytree(src, dst)
+    return {"kept": True}
+
+
+def take_screens(ctx: Context, info: dict, run: dict, before: dict) -> dict:
+    """Argus's own screenshots: the app as built before and after the fix, the same pages and sizes, saved in the
+    proof folder as KEY-before-<page>-<size>.png and KEY-after-<page>-<size>.png."""
+    key = info["ticket"]["key"]
+    cfg = screens_of(ctx).get(info["project"]["key"])
+    if not cfg or not needs_screenshots(info["ticket"].get("labels") or [], info.get("plan_text") or ""):
+        return {"files": [], "note": None}
+    after = keep_site(ctx, info, run, "after")
+    if not before.get("kept") or not after.get("kept"):
+        why = before.get("why") or after.get("why") or "the app wasn't built"
+        return {"files": [], "note": f"Argus took no screenshots: {why}"}
+    browser = find_browser(str(ctx.config.get("browser_command") or ""))
+    if not browser:
+        return {"files": [], "note": "Argus took no screenshots: no Edge or Chrome found (set browser_command)"}
+    base = str(ctx.config.get("tracker_url") or "http://127.0.0.1:8080")
+    api_key = ctx.secrets.get("TRACKER_API_KEY") or ""
+    made: list[str] = []
+    for which in ("before", "after"):
+        site = SiteServer(Path(ctx.data_dir) / "site" / key / which, base, api_key)
+        try:
+            for page in cfg["pages"]:
+                for size, w, h in SIZES:
+                    name = f"{key}-{which}-{page_name(page)}-{size}.png"
+                    live("info", f"Photographing {which} the fix: {page} ({size})")
+                    if shoot(browser, f"http://127.0.0.1:{site.port}{page}", Path(run["proof"]) / name, w, h):
+                        made.append(name)
+        finally:
+            site.stop()
+    pairs = {n[len(key) + 8:] for n in made if n.startswith(f"{key}-before-")} & \
+        {n[len(key) + 7:] for n in made if n.startswith(f"{key}-after-")}
+    live("info", f"{len(made)} screenshot(s) taken")
+    return {"files": sorted(made), "note": None if pairs else "Argus took no screenshots: the browser made no picture"}
+
+
 def do_fix(ctx: Context, info: dict, run: dict) -> dict:
     key = info["ticket"]["key"]
     allow = [str(a).strip() for a in ctx.config.get("fix_allow") or [] if str(a).strip()] or list(FIX_ALLOW)
-    args = fix_args(str(ctx.config.get("claude_command") or "claude"), info["fix_model"], allow, run["proof"])
+    args = fix_args(str(ctx.config.get("claude_command") or "claude"), info["fix_model"], allow, run["proof"],
+                    run.get("session") or "")
     secrets = (ctx.secrets.get("TRACKER_API_KEY") or "",)
     try:
         res = parse_stream(run_session(args, fix_prompt(info, run["proof"]), run["tree"], fix_minutes(ctx) * 60),
@@ -963,7 +1192,7 @@ def collect(ctx: Context, info: dict, run: dict, before: dict) -> dict:
             "stat": git(tree, "diff", "--cached", "--stat", check=False)[-3000:]}
 
 
-def check_proof(ctx: Context, info: dict, run: dict, got: dict, fixed: dict) -> dict:
+def check_proof(ctx: Context, info: dict, run: dict, got: dict, fixed: dict, shots: dict | None = None) -> dict:
     key, proof = info["ticket"]["key"], Path(run["proof"])
     sizes: dict[str, int] = {}
     notes: list[str] = []
@@ -978,8 +1207,15 @@ def check_proof(ctx: Context, info: dict, run: dict, got: dict, fixed: dict) -> 
             sizes[f.name] = f.stat().st_size
     md = (proof / "proof.md").read_text(encoding="utf-8", errors="replace") if "proof.md" in sizes else ""
     test = info["project"].get("test") or ""
-    problems = proof_problems(key, sizes, info["plan_text"], info["ticket"].get("labels") or [], md, test=test,
-                              tests_ok=got["after"] in (None, 0))
+    if shots and shots.get("note"):
+        notes.append(shots["note"])
+    strict = bool(ctx.config.get("require_screenshots"))
+    labels = info["ticket"].get("labels") or []
+    problems = proof_problems(key, sizes, info["plan_text"], labels, md, test=test,
+                              tests_ok=got["after"] in (None, 0), screenshots=strict)
+    if not strict and not (shots and shots.get("note")) and needs_screenshots(labels, info["plan_text"]) and not any(
+            n.startswith((f"{key}-before-", f"{key}-after-")) for n in sizes):
+        notes.append("no before/after screenshots were taken: look at the change in a browser before merging")
     if not got["files"]:
         problems.insert(0, "no files were changed")
     if got["bad"]:
@@ -1003,7 +1239,8 @@ def finish(ctx: Context, info: dict, run: dict, before: dict, fixed: dict, got: 
     t, key, project = info["ticket"], info["ticket"]["key"], info["project"]
     problems, ok = proof["problems"], not proof["problems"]
     report = f"{key}-fix-report.md"
-    outcome = {"problems": problems, "files": proof["files"] + [report], "notes": proof["notes"],
+    outcome = {"problems": problems, "files": [n for n in proof["files"] if attachable(n)] + [report],
+               "notes": proof["notes"],
                "final": fixed.get("final"), "stat": got["stat"], "before": before["rc"], "after": got["after"]}
     if got["files"]:
         if ok:
@@ -1018,6 +1255,7 @@ def finish(ctx: Context, info: dict, run: dict, before: dict, fixed: dict, got: 
     proof_dir = Path(run["proof"])
     (proof_dir / report).write_text(fix_report(info, run, outcome), encoding="utf-8")
     secrets = (ctx.secrets.get("TRACKER_API_KEY") or "",)
+    clear_proof(ctx, t["id"], key)
     for name in outcome["files"]:
         data = (proof_dir / name).read_bytes()
         kind = content_type_of(name)
@@ -1028,8 +1266,9 @@ def finish(ctx: Context, info: dict, run: dict, before: dict, fixed: dict, got: 
     if ok:
         comment(ctx, t["id"], f"Fix ready for review ({info['fix_model']}), branch `{branch}`.\n\n"
                               f"{clip(fixed.get('final') or '', 600)}\n\n{len(got['files'])} file(s) changed; tests "
-                              f"{state_word(got['after'])}. Proof and {report} are attached. Review with "
-                              f"`git diff {run['base']}...{branch}`; nothing was pushed or merged.")
+                              f"{state_word(got['after'])}. Proof and {report} are attached. "
+                              + "".join(f"Note: {n}. " for n in proof["notes"]) + "Review with "
+                              f"`git diff {run['base']}...{branch}`; nothing was pushed or merged. {CONTINUE}")
         set_labels(ctx, t["id"], add=(DONE,), remove=(FIXING,))
         call(ctx, "PATCH", f"/api/tickets/{t['id']}", {"status": "review"})
         ctx.notify(f"Fix ready: {key}", clip(t["title"], 80) + f"\nBranch {branch}, proof attached.",
@@ -1037,11 +1276,28 @@ def finish(ctx: Context, info: dict, run: dict, before: dict, fixed: dict, got: 
     else:
         missing = "\n".join(f"- {p}" for p in problems)
         comment(ctx, t["id"], f"Fix not finished ({info['fix_model']}). Missing:\n{missing}\n\n"
-                              f"The work is kept on branch `{branch}`; what exists is attached. To try again, "
-                              "remove the label fix-failed and add fix-approved.")
+                              f"The work is kept on branch `{branch}`; what exists is attached. {CONTINUE} "
+                              "To try again instead, remove the label fix-failed and add fix-approved.")
         set_labels(ctx, t["id"], add=(FIXFAILED,), remove=(FIXING,))
         ctx.notify(f"Fix not finished: {key}", clip("; ".join(problems), 200), priority="high")
     return {"key": key, "ok": ok, "branch": branch, "problems": problems, "files": outcome["files"]}
+
+
+CONTINUE = "To carry on yourself with Claude's session: Helios > Ticket fixer > Fixes > Continue in terminal."
+
+
+def open_terminal(folder: str, args: list[str], script_dir: Path) -> bool:
+    """A terminal window on this PC, in `folder`, running `args` (Windows). Tests replace this."""
+    if sys.platform != "win32":
+        return False
+    script = script_dir / "continue.cmd"
+    script.write_text(f'@echo off\r\ncd /d "{folder}"\r\n{subprocess.list2cmdline(args)}\r\n', encoding="utf-8")
+    try:
+        subprocess.Popen(["cmd.exe", "/k", str(script)], cwd=folder,
+                         creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
+    except OSError:
+        return False
+    return True
 
 
 def cleanup(info: dict, run: dict | None) -> None:
@@ -1083,10 +1339,12 @@ def fix_flow(ctx: Context, key: str) -> dict:
             run = ctx.step("begin", lambda: begin(ctx, info))
             live("info", f"Working on branch {run['branch']} (from {run['base']})")
             before = ctx.step("tests-before", lambda: run_tests(ctx, info, run, "before"))
+            site = ctx.step("site-before", lambda: keep_site(ctx, info, run, "before"))
             fixed = ctx.step("fix", lambda: do_fix(ctx, info, run))
             live("info", "Claude has finished; collecting the changes and the proof.")
             got = ctx.step("collect", lambda: collect(ctx, info, run, before))
-            proof = ctx.step("proof", lambda: check_proof(ctx, info, run, got, fixed))
+            shots = ctx.step("screens", lambda: take_screens(ctx, info, run, site))
+            proof = ctx.step("proof", lambda: check_proof(ctx, info, run, got, fixed, shots))
             done = ctx.step("finish", lambda: finish(ctx, info, run, before, fixed, got, proof))
             live("done" if done["ok"] else "error",
                  "Committed on the branch; the proof is attached and the ticket is in review." if done["ok"]
@@ -1241,10 +1499,35 @@ def scan(ctx: Context):
         return {what: key, "failed": str(e)[:300]}
 
 
+@workflow(PLUGIN, "terminal")
+def terminal(ctx: Context):
+    """Open Claude's own session for a fix in a terminal on this PC, so you can carry on with it: the worktree is
+    made again (same folder, same branch) and `claude --resume <session>` is started in it."""
+    key = need_key(ctx).upper()
+    rec = (ctx.store.get("sessions") or {}).get(key)
+    if not rec:
+        raise PermanentError(f"no fix session is kept for {key}: it has to be fixed by Argus first")
+    project, tree = str(rec["project"]), Path(rec["tree"])
+    if not inside(project, projects_of(ctx)):
+        raise PermanentError(f"{project} isn't a mapped project folder")
+    named = str(ctx.config.get("claude_command") or "claude")
+    exe = shutil.which(named) or named
+    args = [exe, "--resume", rec["session"]]
+    command = f'cd "{tree}" && claude --resume {rec["session"]}'
+    if ctx.dry_run:
+        return {"dry_run": True, "command": command}
+    if not tree.is_dir():
+        git(project, "worktree", "prune", check=False)
+        git(project, "worktree", "add", str(tree), rec["branch"])
+    return {"key": key, "opened": open_terminal(str(tree), args, Path(ctx.data_dir)), "command": command,
+            "branch": rec["branch"]}
+
+
 @workflow(PLUGIN, "status")
 def status(ctx: Context):
     def go() -> dict:
         projects, bad = parse_projects(list(ctx.config.get("projects") or []))
+        bad += parse_screens(list(ctx.config.get("screens") or []))[1]
         rows = []
         want = str(ctx.input.get("key") or "").strip().upper()
         for t in call(ctx, "GET", "/api/tickets") or []:

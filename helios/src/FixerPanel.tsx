@@ -9,12 +9,17 @@ type Status = { fixes: Row[]; projects: string[]; problems: string[]; today: num
 
 const MODELS = ["", "opus", "sonnet", "haiku"];
 
-function actions(stage: string): { workflow: "queue" | "approve"; label: string; ask: string }[] {
+type Action = { workflow: "queue" | "approve" | "terminal"; label: string; ask: string };
+const CONTINUE: Action = { workflow: "terminal", label: "Continue in terminal", ask: "" };
+
+function actions(stage: string): Action[] {
   if (stage.startsWith("plan ready") || stage === "fix failed, branch kept" || stage.startsWith("fix approved")) {
-    return [{ workflow: "approve", label: stage.startsWith("fix approved") ? "Start now" : "Run the fix", ask: "Run the fix on a new branch now?" }];
+    const run: Action = { workflow: "approve", label: stage.startsWith("fix approved") ? "Start now" : "Run the fix", ask: "Run the fix on a new branch now?" };
+    return stage === "fix failed, branch kept" ? [CONTINUE, run] : [run];
   }
   if (stage === "waiting for a plan" || stage === "plan rejected" || stage === "plan failed" || stage === "fix done, in review") {
-    return [{ workflow: "queue", label: stage === "fix done, in review" ? "Plan again" : "Plan", ask: "" }];
+    const plan: Action = { workflow: "queue", label: stage === "fix done, in review" ? "Plan again" : "Plan", ask: "" };
+    return stage === "fix done, in review" ? [CONTINUE, plan] : [plan];
   }
   return [];
 }
@@ -137,7 +142,7 @@ export function FixerPanel() {
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  const go = async (workflow: "queue" | "approve", k: string, ask: string) => {
+  const go = async (workflow: "queue" | "approve" | "terminal", k: string, ask: string) => {
     if (ask && !window.confirm(`${k}: ${ask}`)) return;
     setBusy(true); setMsg(null);
     const input: Record<string, string> = { key: k };
@@ -149,8 +154,10 @@ export function FixerPanel() {
       if (j.state === "succeeded") {
         const r = j.result as Record<string, unknown>;
         setMsg({ ok: true, text: r.dry_run ? `${k}: dry run, nothing was changed (the plugin isn't live).`
+          : workflow === "terminal" ? (r.opened ? `${k}: a terminal is open on your PC with Claude's session, on branch ${r.branch}.`
+            : `${k}: couldn't open a terminal here. Run: ${r.command}`)
           : workflow === "queue" ? `${k} is queued: planning starts within two minutes.` : `${k} is approved: the fix starts within two minutes.` });
-        setKey("");
+        if (workflow !== "terminal") setKey("");
         await load();
       } else setMsg({ ok: false, text: (j.error ?? "failed").split("\n")[0] });
     } catch (e) { if (alive.current) setMsg({ ok: false, text: e instanceof Error ? e.message : String(e) }); }

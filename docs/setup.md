@@ -351,8 +351,21 @@ daily cap.
   Plan / Run the fix buttons and model dropdowns, and a Live log below it: what Claude says, each command it
   runs and its output, and the test results, as they happen (earlier runs stay there too). Time limits: `plan_minutes` (10), `fix_minutes` (30), `test_minutes` (10).
   It needs the `claude` command (Claude Code, logged in) on the PC, and `TRACKER_API_KEY` in .env. Models can
-  also be set per ticket with the labels `plan:opus` and `fix:sonnet`; a `ui` label makes before/after
-  screenshots required. Turn the plugin live with `plugins.live: [fixer]`.
+  also be set per ticket with the labels `plan:opus` and `fix:sonnet`; a `ui` label asks Claude for before/after
+  screenshots (the setting `require_screenshots` makes them mandatory; off by default, a fix without them goes to
+  review with a note). Argus can take them itself: add a `screens` line such as `TRK | web/dist | /` (the folder the build
+  fills, and the pages). When the ticket needs screenshots, Argus keeps the app the test command built before
+  Claude edits and the one built after, serves each from 127.0.0.1 (the Tracker behind it is read only, with the
+  key added by Argus) and photographs it with Edge or Chrome (`browser_command` to choose) at desktop and phone
+  size. They are attached as KEY-before-home-desktop.png and so on, and Claude is told not to bother. No browser
+  or no build is a note on the ticket, not a failure.
+  Only useful files go on the ticket: the report, proof.md, the screenshots, the diff, the test log after the
+  fix and the logs Claude saved as evidence. Claude's session trace and the test log from before stay on the PC
+  (the report says how the tests did before and after). A new attempt replaces what the last one attached, and
+  Tracker shows each file's time, newest first. **Continue in terminal** (Fixes tab, for a fix that is done or
+  failed) recreates the fix's folder on its branch and opens a terminal on the PC running
+  `claude --resume <session>`, so you carry on with Claude's own session; the command is also shown if no
+  terminal can be opened. Turn the plugin live with `plugins.live: [fixer]`.
 - **Read later** (in `web`): "save this for later" or the phone's share menu: the page's text and a short local
   summary go to Documents/read-later (searchable); "what did I save about Kandy?".
 - **File tools** (`file-tools`): "merge these PDFs", "make a PDF of these photos", "pages 2-5 of the contract",

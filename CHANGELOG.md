@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- The ticket fixer takes before/after screenshots of a UI fix itself (new `screens` setting), attaches only useful files and replaces the previous attempt's, lets a UI fix without screenshots go to review with a note (`require_screenshots`), and has a Continue in terminal button that resumes Claude's session on the fix branch.
+
 - The ticket fixer shows what Claude is doing live (its messages, commands and test results) in the Helios Fixes tab.
 
 - **Helios Fixes tab:** see where each ticket is in the AI fix flow, plan it or run the fix with a chosen model, from the Ticket fixer page.
