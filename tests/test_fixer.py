@@ -149,6 +149,7 @@ class Tracker:
         self.blobs: dict[str, bytes] = {}
         self.ids: dict[str, int] = {}
         self.calls: list[tuple[str, str]] = []
+        self.deleted: list[str] = []
         me = self
 
         class H(BaseHTTPRequestHandler):
@@ -180,6 +181,13 @@ class Tracker:
                         return self.send(200, {"id": me.ids[name], "filename": name})
                     return self.send(200, [{"id": 1, "filename": "screen.png"}]
                                      + [{"id": i, "filename": n} for n, i in me.ids.items()])
+                m = re.fullmatch(r"/api/attachments/(\d+)", p)
+                if m and method == "DELETE":
+                    gone = [n for n, i in me.ids.items() if i == int(m.group(1))]
+                    for n in gone:
+                        me.ids.pop(n), me.blobs.pop(n, None), me.files.pop(n, None)
+                    me.deleted.extend(gone)
+                    return self.send(200, {"ok": True})
                 m = re.fullmatch(r"/api/files/(\d+)/(.+)", p)
                 if m and urllib.parse.unquote(m.group(2)) in me.blobs:
                     data = me.blobs[urllib.parse.unquote(m.group(2))]
@@ -196,6 +204,7 @@ class Tracker:
                 self.end_headers()
                 self.wfile.write(data)
 
+            do_DELETE = lambda self: self.go("DELETE")  # noqa: E731
             do_GET = lambda self: self.go("GET")  # noqa: E731
             do_POST = lambda self: self.go("POST")  # noqa: E731
             do_PATCH = lambda self: self.go("PATCH")  # noqa: E731
@@ -411,7 +420,10 @@ cspec = importlib.util.spec_from_file_location("change_rules", ROOT / "scripts" 
 change = importlib.util.module_from_spec(cspec)
 cspec.loader.exec_module(change)
 
-CHECK = 'import os, sys\nopen("build.out", "w").write("artifact")\nsys.exit(0 if os.path.exists("fixed.txt") else 1)\n'
+CHECK = ('import os, sys\nopen("build.out", "w").write("artifact")\nos.makedirs("web/dist", exist_ok=True)\n'
+         'fixed = os.path.exists("fixed.txt")\n'
+         'open("web/dist/index.html", "w").write("<p>after</p>" if fixed else "<p>before</p>")\n'
+         'sys.exit(0 if fixed else 1)\n')
 GOOD_PROOF = {
     "TRK-5-before-board.png": b"PNG-before", "TRK-5-after-board.png": b"PNG-after",
     "TRK-5-board.log": "GET /board 200", "notes.docx": "not an allowed name",
@@ -442,7 +454,11 @@ def test_branch_commit_and_proof_rules():
     assert fx.plan_steps(plan) == 2
     assert fx.proof_problems("TRK-5", ok, plan, ["ui"], md, test="npm test", tests_ok=True) == []
     got = fx.proof_problems("TRK-5", {"proof.md": 10}, plan, ["ui"], "- [x] one\n", test="npm test", tests_ok=False)
-    assert len(got) == 3 and "tests fail" in got[0] and "1 line(s) for 2" in got[1] and "before-<what>" in got[2]
+    assert len(got) == 3 and "tests fail" in got[0] and "1 line(s) for 2" in got[1]
+    assert "`TRK-5-before-NAME.png`" in got[2]
+    lax = fx.proof_problems("TRK-5", {"proof.md": 10}, plan, ["ui"], md, test="npm test", tests_ok=True,
+                            screenshots=False)
+    assert lax == []  # screenshots not required: the fix can go to review without them
     assert "proof.md is missing" in fx.proof_problems("TRK-5", {}, plan, [], "", test="", tests_ok=True)[0]
     assert fx.needs_screenshots(["bug"], "Take a screenshot of the board") and not fx.needs_screenshots(["bug"], "none")
     assert fx.proof_kind("TRK-5-before-board.png", "TRK-5") == "shot" and fx.proof_kind("proof.md", "TRK-5") == "notes"
@@ -458,6 +474,9 @@ def test_the_fix_command_and_the_session_log():
     assert {"WebFetch", "WebSearch", "Bash(git commit*)", "Bash(git push*)", "Read(**/.env*)",
             "Edit(**/.env*)"} <= set(deny)
     assert args[args.index("--add-dir") + 1] == "/p/proof" and "acceptEdits" in args and "stream-json" in args
+    assert "--no-session-persistence" in args and "--session-id" not in args
+    kept = fx.fix_args("claude", "sonnet", [], "/p/proof", session="abc-123")
+    assert kept[kept.index("--session-id") + 1] == "abc-123" and "--no-session-persistence" not in kept
     events = [{"type": "assistant", "message": {"content": [
         {"type": "tool_use", "name": "Bash", "input": {"command": "curl -H 'api_key: abcd1234' x"}},
         {"type": "text", "text": "token=SECRET123 and sk-abcdefghijklmnopqrstuv"}]}},
@@ -548,11 +567,14 @@ def test_the_fix_lands_on_a_branch_with_proof_attached(tmp_path, monkeypatch):
         # the ticket: proof attached, nothing else, status and labels
         names = set(tr.files) - {"TRK-5-fix-plan.md"}
         assert names == {"TRK-5-before-board.png", "TRK-5-after-board.png", "TRK-5-board.log", "proof.md",
-                         "TRK-5-tests-before.log", "TRK-5-tests.log", "TRK-5-fix.diff", "TRK-5-session.log",
-                         "TRK-5-fix-report.md"}
+                         "TRK-5-tests.log", "TRK-5-fix.diff", "TRK-5-fix-report.md"}  # nothing blind: no traces
         assert tr.blobs["TRK-5-after-board.png"] == b"PNG-after"
-        assert "exit code 1" in tr.files["TRK-5-tests-before.log"] and "exit code 0" in tr.files["TRK-5-tests.log"]
-        assert "hunter2" not in tr.files["TRK-5-session.log"] and "Edit:" in tr.files["TRK-5-session.log"]
+        assert "exit code 0" in tr.files["TRK-5-tests.log"]
+        report = tr.files["TRK-5-fix-report.md"]
+        assert "before failed" in report and "only on the PC" in report
+        kept = {f.name: f.read_text() for f in (tmp_path / "data").rglob("TRK-5-*.log")}  # what stays on the PC
+        assert "exit code 1" in kept["TRK-5-tests-before.log"]
+        assert "hunter2" not in kept["TRK-5-session.log"] and "Edit:" in kept["TRK-5-session.log"]
         assert "+yes" in tr.files["TRK-5-fix.diff"] and "build.out" not in tr.files["TRK-5-fix.diff"]
         assert "ready for review" in tr.files["TRK-5-fix-report.md"]
         assert tr.ticket["status"] == "review" and "fix-done" in tr.ticket["labels"]
@@ -574,7 +596,8 @@ def test_the_fix_lands_on_a_branch_with_proof_attached(tmp_path, monkeypatch):
 def test_missing_proof_or_forbidden_files_keep_the_ticket_in_progress(tmp_path, monkeypatch):
     session = fake_session({"fixed.txt": "yes\n"}, {"TRK-5-board.log": "ok"})
     tr, cl, w, srv, project = start(tmp_path, monkeypatch, ["ai-fix", "fix-approved", "ui"], None,
-                                    test="python check.py", session=session)
+                                    test="python check.py", session=session,
+                                    extra="      require_screenshots: true\n")
     try:
         make_repo(project)
         tr.blobs["TRK-5-fix-plan.md"] = PLAN.encode()
@@ -582,7 +605,7 @@ def test_missing_proof_or_forbidden_files_keep_the_ticket_in_progress(tmp_path, 
         done = run_fix(cl, w)
         assert done["state"] == "succeeded" and done["result"]["ok"] is False
         assert any("proof.md is missing" in p for p in done["result"]["problems"])
-        assert any("before-<what>" in p for p in done["result"]["problems"])
+        assert any("before-NAME" in p for p in done["result"]["problems"])
         assert "fix-failed" in tr.ticket["labels"] and "fix-done" not in tr.ticket["labels"]
         assert tr.ticket["status"] == "in_progress"
         assert tr.comments[-1].startswith("Fix not finished (sonnet). Missing:") and "proof.md" in tr.comments[-1]
@@ -598,6 +621,192 @@ def test_missing_proof_or_forbidden_files_keep_the_ticket_in_progress(tmp_path, 
         assert second["result"]["branch"] == "fix/trk-5-board-drops-cards-2" and second["result"]["ok"] is False
         assert "may never touch" in second["result"]["problems"][0] and ".env" in second["result"]["problems"][0]
         assert ".env" not in git_out(project, "diff", "--name-only", "main...fix/trk-5-board-drops-cards-2").split()
+        # the second attempt replaced what the first one attached: no duplicates, only the latest
+        assert {"TRK-5-fix-report.md", "TRK-5-tests.log", "TRK-5-board.log"} <= set(tr.deleted)
+        assert "TRK-5-fix-plan.md" not in tr.deleted
+    finally:
+        srv.__exit__(None, None, None)
+
+
+def test_a_ui_fix_without_screenshots_goes_to_review_with_a_note_unless_they_are_required(tmp_path, monkeypatch):
+    proof = {k: v for k, v in GOOD_PROOF.items() if "before" not in k and "after" not in k}
+    session = fake_session({"fixed.txt": "yes\n", "app.txt": "v2\n"}, proof)
+    tr, cl, w, srv, project = start(tmp_path, monkeypatch, ["ai-fix", "fix-approved", "ui"], None,
+                                    test="python check.py", session=session)
+    try:
+        make_repo(project)
+        tr.blobs["TRK-5-fix-plan.md"] = PLAN.encode()
+        tr.ids["TRK-5-fix-plan.md"] = 7
+        done = run_fix(cl, w)
+        assert done["state"] == "succeeded", done["error"]
+        assert done["result"]["ok"] is True and done["result"]["problems"] == []
+        assert tr.ticket["status"] == "review" and "fix-done" in tr.ticket["labels"]
+        assert "Note: no before/after screenshots were taken" in tr.comments[-1]
+    finally:
+        srv.__exit__(None, None, None)
+
+
+def test_screens_lines_and_page_names():
+    got, bad = fx.parse_screens(["trk | web\\dist | /, /?view=board, list", "# c", "ACME | out", "X | ../x",
+                                 "Y | C:/abs", "bad"])
+    assert got["TRK"] == {"dir": "web/dist", "pages": ["/", "/?view=board", "/list"]}
+    assert got["ACME"] == {"dir": "out", "pages": ["/"]} and len(bad) == 3
+    assert fx.page_name("/") == "home" and fx.page_name("/?view=board") == "view-board"
+    assert fx.page_name("/a/very/long/path/that/keeps/going") == "a-very-long-path-tha"
+
+
+def test_the_site_server_serves_the_app_and_only_reads_the_tracker(tmp_path):
+    (tmp_path / "site").mkdir()
+    (tmp_path / "site" / "index.html").write_text("<p>home</p>")
+    (tmp_path / "site" / "app.js").write_text("export {}")
+    (tmp_path / "secret.txt").write_text("outside")
+    seen: list[tuple[str, str, str | None]] = []
+
+    class Api(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):  # noqa: N802
+            seen.append(("GET", self.path, self.headers.get("X-API-Key")))
+            body = b'{"ok": true}'
+            self.send_response(200 if self.path != "/api/nope" else 404)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    api = ThreadingHTTPServer(("127.0.0.1", 0), Api)
+    threading.Thread(target=api.serve_forever, daemon=True).start()
+    site = fx.SiteServer(tmp_path / "site", f"http://127.0.0.1:{api.server_address[1]}", "k")
+
+    def get(path, method="GET"):
+        req = urllib.request.Request(f"http://127.0.0.1:{site.port}{path}", method=method,
+                                     data=b"x" if method == "POST" else None)
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.status, r.read(), r.headers["Content-Type"]
+        except urllib.error.HTTPError as e:
+            return e.code, e.read(), e.headers["Content-Type"]
+
+    try:
+        assert get("/") == (200, b"<p>home</p>", "text/html")
+        assert get("/some/route")[1] == b"<p>home</p>"  # client-side routes get the app
+        assert get("/app.js")[2] == "text/javascript"
+        assert get("/../secret.txt")[1] == b"<p>home</p>" and get("/%2e%2e/secret.txt")[1] == b"<p>home</p>"
+        assert get("/api/tickets?x=1")[:2] == (200, b'{"ok": true}')
+        assert get("/api/nope")[0] == 404
+        assert seen == [("GET", "/api/tickets?x=1", "k"), ("GET", "/api/nope", "k")]  # with the key, read only
+        assert get("/api/tickets/5", "POST")[0] == 405 and len(seen) == 2  # nothing is ever written
+    finally:
+        site.stop()
+        api.shutdown()
+    assert fx.SiteServer(tmp_path / "site", "http://127.0.0.1:1", "k").proxy("/api/x")[0] == 502
+
+
+def fake_browser(monkeypatch):
+    shots: list[dict] = []
+
+    def browser(args, timeout):
+        out = next(a for a in args if a.startswith("--screenshot=")).split("=", 1)[1]
+        size = next(a for a in args if a.startswith("--window-size=")).split("=", 1)[1]
+        with urllib.request.urlopen(args[-1], timeout=10) as r:
+            page = r.read().decode()
+        origin = "/".join(args[-1].split("/", 3)[:3])
+        with urllib.request.urlopen(origin + "/api/tickets", timeout=10) as r:
+            tickets = json.loads(r.read())
+        shots.append({"page": page, "size": size, "url": args[-1], "tickets": len(tickets), "args": args})
+        Path(out).write_bytes(b"PNG:" + page.encode())
+        return 0
+
+    monkeypatch.setattr(sys.modules["argus_plugin_fixer"], "run_browser", browser)
+    monkeypatch.setattr(sys.modules["argus_plugin_fixer"], "find_browser", lambda configured="": "fake-edge")
+    return shots
+
+
+SCREENS = "      screens:\n        - 'TRK | web/dist | /'\n      require_screenshots: true\n"
+
+
+def test_argus_takes_the_before_and_after_screenshots_itself(tmp_path, monkeypatch):
+    proof = {k: v for k, v in GOOD_PROOF.items() if "before" not in k and "after" not in k}
+    session = fake_session({"fixed.txt": "yes\n", "app.txt": "v2\n"}, proof)
+    tr, cl, w, srv, project = start(tmp_path, monkeypatch, ["ai-fix", "fix-approved", "ui"], None,
+                                    test="python check.py", session=session, extra=SCREENS)
+    shots = fake_browser(monkeypatch)  # after start: that is when the plugin module is loaded
+    try:
+        make_repo(project)
+        tr.blobs["TRK-5-fix-plan.md"] = PLAN.encode()
+        tr.ids["TRK-5-fix-plan.md"] = 7
+        done = run_fix(cl, w)
+        assert done["state"] == "succeeded", done["error"]
+        assert done["result"]["ok"] is True, done["result"]["problems"]
+        # the app as built before Claude edited, and as built after, at both sizes, with Tracker data behind it
+        assert [(s["page"], s["size"]) for s in shots] == [
+            ("<p>before</p>", "1440,900"), ("<p>before</p>", "390,844"),
+            ("<p>after</p>", "1440,900"), ("<p>after</p>", "390,844")]
+        assert all(s["tickets"] == 2 and "--headless=new" in s["args"] for s in shots)
+        names = set(tr.files) | set(tr.blobs)
+        assert {"TRK-5-before-home-desktop.png", "TRK-5-before-home-mobile.png",
+                "TRK-5-after-home-desktop.png", "TRK-5-after-home-mobile.png"} <= names
+        assert tr.blobs["TRK-5-before-home-desktop.png"] == b"PNG:<p>before</p>"
+        assert tr.blobs["TRK-5-after-home-mobile.png"] == b"PNG:<p>after</p>"
+        # Claude was told not to bother, and the built app is not part of the commit
+        assert "Argus takes the before and after screenshots" in session.calls[0]["prompt"]
+        branch = done["result"]["branch"]
+        assert sorted(git_out(project, "diff", "--name-only", f"main...{branch}").split()) == ["app.txt", "fixed.txt"]
+        assert tr.ticket["status"] == "review"
+    finally:
+        srv.__exit__(None, None, None)
+
+
+def test_no_browser_or_no_build_is_a_note_not_a_crash(tmp_path, monkeypatch):
+    proof = {k: v for k, v in GOOD_PROOF.items() if "before" not in k and "after" not in k}
+    session = fake_session({"fixed.txt": "yes\n"}, proof)
+    tr, cl, w, srv, project = start(tmp_path, monkeypatch, ["ai-fix", "fix-approved", "ui"], None,
+                                    test="python check.py", session=session,
+                                    extra="      screens:\n        - 'TRK | web/dist'\n")
+    shots = fake_browser(monkeypatch)
+    monkeypatch.setattr(sys.modules["argus_plugin_fixer"], "find_browser", lambda configured="": None)
+    try:
+        make_repo(project)
+        tr.blobs["TRK-5-fix-plan.md"] = PLAN.encode()
+        tr.ids["TRK-5-fix-plan.md"] = 7
+        done = run_fix(cl, w)
+        assert done["state"] == "succeeded" and done["result"]["ok"] is True and shots == []
+        assert "no Edge or Chrome found" in tr.files["TRK-5-fix-report.md"]
+        assert "Note: Argus took no screenshots" in tr.comments[-1]
+    finally:
+        srv.__exit__(None, None, None)
+
+
+def test_a_fix_session_can_be_carried_on_in_a_terminal(tmp_path, monkeypatch):
+    session = fake_session({"fixed.txt": "yes\n", "app.txt": "v2\n"}, GOOD_PROOF)
+    tr, cl, w, srv, project = start(tmp_path, monkeypatch, ["ai-fix", "fix-approved"], None, test="python check.py",
+                                    session=session)
+    opened: list[dict] = []
+    monkeypatch.setattr(sys.modules["argus_plugin_fixer"], "open_terminal",
+                        lambda folder, args, script_dir: opened.append({"folder": folder, "args": args}) or True)
+    try:
+        make_repo(project)
+        tr.blobs["TRK-5-fix-plan.md"] = PLAN.encode()
+        tr.ids["TRK-5-fix-plan.md"] = 7
+        none = post(cl, "terminal", key="TRK-5")
+        assert finished(cl, none["id"], w)["state"] == "dead"  # nothing to carry on yet
+        done = run_fix(cl, w)
+        assert done["state"] == "succeeded", done["error"]
+        call = session.calls[0]["args"]
+        sid = call[call.index("--session-id") + 1]  # Claude's session was kept under an id Argus knows
+        assert "--no-session-persistence" not in call and "Continue in terminal" in tr.comments[-1]
+        tree = Path(session.calls[0]["cwd"])
+        assert not tree.exists()  # the worktree was removed after the run
+        job = finished(cl, post(cl, "terminal", key="trk-5")["id"], w)
+        assert job["state"] == "succeeded", job["error"]
+        assert job["result"]["opened"] is True and job["result"]["branch"] == done["result"]["branch"]
+        assert job["result"]["command"] == f'cd "{tree}" && claude --resume {sid}'
+        # the same folder is back, on the fix branch, and the terminal was opened there with --resume
+        assert tree.is_dir() and git_out(tree, "branch", "--show-current") == done["result"]["branch"]
+        assert opened[0]["folder"] == str(tree) and opened[0]["args"][1:] == ["--resume", sid]
+        again = finished(cl, post(cl, "terminal", key="TRK-5")["id"], w)  # and again, with the folder already there
+        assert again["state"] == "succeeded" and len(opened) == 2
     finally:
         srv.__exit__(None, None, None)
 
