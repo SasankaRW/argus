@@ -1,6 +1,7 @@
 """The laptop install scripts: valid shell, Arch ones use pacman (never apt) and keep the firewall rule."""
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -9,10 +10,10 @@ LINUX = Path(__file__).resolve().parents[1] / "deploy" / "linux"
 SCRIPTS = ["install.sh", "install-arch.sh", "tracker-arch.sh", "argus-update.sh"]
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+@pytest.mark.skipif(sys.platform == "win32" or shutil.which("bash") is None,
+                    reason="needs a real bash (Windows only has WSL, often with no distro); Linux CI checks these")
 @pytest.mark.parametrize("name", SCRIPTS)
 def test_scripts_parse(name):
-    # the script goes in on stdin: on Windows `bash` is WSL's and can't open a G:\\ path (and CRLF would fail)
     script = (LINUX / name).read_bytes().replace(b"\r\n", b"\n")
     r = subprocess.run(["bash", "-n"], input=script, capture_output=True)
     assert r.returncode == 0, r.stderr.decode(errors="replace")
