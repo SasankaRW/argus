@@ -326,7 +326,7 @@ daily cap.
   on ACME-12"; "add milk to the
   shopping list", "what's on my wishlist?", "how's my money this month?" (read only, never sent to Claude). Put
   Tracker's and Life Hub's `API_KEY` in Argus's .env as `TRACKER_API_KEY` / `LIFEHUB_API_KEY`, and their
-  addresses in each plugin's settings (default http://127.0.0.1:8080 and :8081; the laptop's name after the move).
+  addresses in each plugin's settings (default http://127.0.0.1:8080 and :8081; after the move to the laptop the `tracker` plugin uses http://127.0.0.1:8282 and the fixer, which runs on the PC, the laptop's Tailscale address https://<laptop>.<tailnet>.ts.net:8443; see deploy/README.md).
 - **Ticket fixer** (`fixer`): label a Tracker ticket `ai-fix` (or tell Ari "fix ACME-12", "plan ACME-12 with
   opus and fix with sonnet"; Ari asks first, then queues it at once) and within two minutes Claude reads the
   project's code, read-only, in the folder you mapped. The plan is attached to the ticket as `KEY-fix-plan.md`

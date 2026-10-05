@@ -5,38 +5,63 @@ worker: the laptop wakes it when there is model or desktop work and shuts it dow
 
 ## What you need
 
-- The laptop with Ubuntu Server 24.04, on a wired connection, BIOS set to "power on after AC loss".
-- Tailscale on the laptop (`curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up`).
+- The laptop with Arch Linux (any install that boots to a shell, with a network connection), wired if you can,
+  BIOS set to "power on after AC loss". The scripts are for Arch (`deploy/linux/install-arch.sh`); Ubuntu Server
+  24.04 uses `install.sh` and the same steps otherwise.
 - The PC: Wake-on-LAN on in the BIOS; network card > Power Management: "Allow this device to wake the computer" and
   "Only allow a magic packet"; Windows Fast Startup off (Control Panel > Power Options > Choose what the power
   buttons do).
+- Tailscale on the phone and PC is already there; the laptop gets it in step 1.
 
-## 1. Laptop
+## 0. Laptop basics (nothing installed yet)
+
+On the laptop, at its keyboard (Hyprland: open a terminal):
 
 ```bash
-git clone https://github.com/SasankaRW/argus.git ~/argus-src      # private repo: gh auth login first
-bash ~/argus-src/deploy/linux/install.sh
+sudo pacman -Syu                         # you update by hand: do it now, reboot if the kernel changed
+sudo pacman -S --needed git openssh github-cli
+sudo systemctl enable --now sshd
+gh auth login && gh auth setup-git       # the repo is private: this lets you clone it
+ip -br a                                 # the laptop's LAN address, to reach it from the PC the first time
 ```
 
-The script installs Python, creates an `argus` user, puts Argus in `/opt/argus`, makes `argus.yaml` from
-`deploy/linux/argus.laptop.yaml` and a `.env` with a new worker token, starts two services at boot (`argusd`,
-`argus-worker`), allows only Tailscale and SSH through the firewall, turns on automatic security updates and runs
-`tailscale serve` for the phone. Running it again is safe.
+From the PC (PowerShell; Windows has `ssh` and `scp`): `ssh <your-user>@<laptop LAN address>`. Make a key if you
+have none (`ssh-keygen -t ed25519`) and `type $HOME\.ssh\id_ed25519.pub | ssh <you>@<laptop> "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys"`.
+After step 1 use the laptop's Tailscale name instead of the LAN address.
 
-Then edit `/opt/argus/argus.yaml`:
+## 1. Argus on the laptop
+
+```bash
+git clone https://github.com/SasankaRW/argus.git ~/argus-src
+bash ~/argus-src/deploy/linux/install-arch.sh
+```
+
+The script installs the packages (Python, Docker, Tailscale, firewall), signs Tailscale in (open the link it prints),
+keeps the laptop running with the lid closed (from the next boot), creates an `argus` user, copies Argus into
+`/opt/argus` (with Python 3.12 from uv if Arch's own Python is newer than 3.13), makes `argus.yaml` from
+`deploy/linux/argus.laptop.yaml` and a `.env` with a new worker token, starts two services at boot (`argusd`,
+`argus-worker`), allows only Tailscale and SSH through the firewall and runs `tailscale serve` for the phone. It
+never updates the system: that stays your `pacman -Syu`. Running it again is safe. Log out and in once afterwards
+(Docker group).
+
+In the Tailscale admin console (DNS page) HTTPS certificates must be on, or `tailscale serve` has nothing to serve.
+
+Then edit `/opt/argus/argus.yaml` (`sudo -u argus nano /opt/argus/argus.yaml`):
 
 | Setting | What |
 | --- | --- |
 | `power.pc_mac` | the PC's wired card: `ipconfig /all` on the PC, "Physical Address" |
-| `approvals.public_url` | the laptop's Tailscale https address |
+| `approvals.public_url` | the laptop's Tailscale https address (`tailscale status` shows the name) |
 | `backup.copy_to` | a folder on the PC for the nightly backup copy |
 
+and `/opt/argus/.env` (`sudo -u argus nano /opt/argus/.env`): copy `ARGUS_ADMIN_PASSWORD`, `TRACKER_API_KEY` and
+`LIFEHUB_API_KEY` from the PC's `G:\Projects\argus\.env`; leave the new `ARGUS_WORKER_TOKEN`.
 `sudo systemctl restart argusd`, and open Helios at the laptop's Tailscale address.
 
 ## 2. Move your data from the PC (once)
 
 On the PC: `.\scripts\dev.ps1 down`. Copy `G:\Projects\argus\data\argus.db` to the laptop
-(`scp ... laptop:/tmp/argus.db`), then on the laptop:
+(`scp G:\Projects\argus\data\argus.db <you>@<laptop>:/tmp/argus.db`), then on the laptop:
 
 ```bash
 sudo systemctl stop argusd
@@ -45,6 +70,36 @@ sudo systemctl start argusd
 ```
 
 Your jobs, schedules, rules, approvals and history come along.
+
+### Tracker
+
+Tracker has no Git remote, so copy the folder, and its database and attachments out of the PC's Docker:
+
+```powershell
+cd G:\Projects\tracker
+docker compose exec -T db pg_dump -U tracker -Fc tracker -f /tmp/tracker.dump
+docker compose cp db:/tmp/tracker.dump .\tracker.dump
+docker compose cp app:/data/uploads .\uploads-export
+cd ..
+tar --exclude=node_modules --exclude=dist --exclude=_to_delete -czf tracker.tgz tracker
+scp tracker.tgz tracker\tracker.dump <you>@<laptop>:~/
+scp -r tracker\uploads-export <you>@<laptop>:~/
+```
+
+On the laptop:
+
+```bash
+tar xzf ~/tracker.tgz -C ~
+bash ~/argus-src/deploy/linux/tracker-arch.sh restore ~/tracker.dump ~/uploads-export
+```
+
+Tracker now answers on the laptop at `http://127.0.0.1:8282` and, through Tailscale, at
+`https://<laptop>.<tailnet>.ts.net:8443` (the phone and PC use that one). Check your tickets and attachments there,
+then on the PC stop the old one (`docker compose down` in `G:\Projects\tracker`; keep the volumes a few weeks as a
+backup). Updating Tracker later: copy the new folder over and `bash ~/argus-src/deploy/linux/tracker-arch.sh up`
+(its web build is baked into the Docker image, so it needs the rebuild). The `tracker` plugin runs on the laptop, so
+its Tracker address stays `http://127.0.0.1:8282`; the fixer runs on the PC, so set **its** `tracker_url` to the
+https address above (Helios > plugins > fixer > Settings).
 
 ## 3. The PC becomes the worker
 
@@ -72,6 +127,8 @@ them; `remove` undoes it. Don't run `dev.ps1 up` on the PC any more (that starts
 - Log in on the PC: the island is at the top of the screen and "Hey Ari" answers; Helios > Map shows the PC
   online (its GPU worker and `desktop-<pc>` are one PC there).
 - Helios > Power: the PC shows **On**; press **Shut down**, then **Wake**: it comes back within a minute or two.
+- Open Tracker from the phone (`https://<laptop>...:8443`); label a small ticket `ai-fix`: the fixer on the PC plans it
+  and the plan shows up in Tracker.
 - Run "Sort Downloads now": the job runs on the PC while Helios runs on the laptop.
 - Leave the PC idle: after 20 minutes the phone says "PC shuts down at …" (tap it to keep it on), and 5 minutes later
   it shuts down. It only does this to a PC Argus woke itself, never while you use the keyboard or mouse.
@@ -79,7 +136,7 @@ them; `remove` undoes it. Don't run `dev.ps1 up` on the PC any more (that starts
 
 ## Updating
 
-The repo is private, so give the laptop's `argus` user read access once: `sudo -u argus ssh-keygen -t ed25519`,
+The repo is private, so give the laptop's `argus` user read access once (the first install copied the code from `~/argus-src`): `sudo -u argus ssh-keygen -t ed25519`,
 add `/home/argus/.ssh/id_ed25519.pub` as a read-only deploy key on GitHub, and
 `sudo -u argus git -C /opt/argus remote set-url origin git@github.com:SasankaRW/argus.git`.
 
