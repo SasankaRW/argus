@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+**Arch laptop install:** `deploy/linux/install-arch.sh` and `tracker-arch.sh` set up Argus and Tracker on an Arch laptop (Tailscale, Docker, firewall, services); `deploy/README.md` walks through the move from the PC.
+
 - The ticket fixer takes before/after screenshots of a UI fix itself (new `screens` setting), attaches only useful files and replaces the previous attempt's, lets a UI fix without screenshots go to review with a note (`require_screenshots`), and has a Continue in terminal button that resumes Claude's session on the fix branch.
 - The ticket fixer waits quietly at its daily limit (default 12) instead of flipping labels every two minutes, and the Fixes tab shows it.
 

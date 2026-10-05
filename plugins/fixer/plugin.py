@@ -1046,6 +1046,12 @@ class SiteServer:
                 self.send(200, target.read_bytes(), kind)
 
             def refuse(self) -> None:
+                # read what was sent first: answering and closing with unread data resets the connection on Windows
+                try:
+                    self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 1_000_000))
+                except (ValueError, OSError):
+                    pass
+                self.close_connection = True
                 self.send(405, b"read-only", "text/plain")
 
             do_POST = do_PUT = do_PATCH = do_DELETE = refuse  # noqa: N815
