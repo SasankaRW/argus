@@ -120,3 +120,37 @@ def test_ari_health_checks_the_pcs_services_on_the_pc(tmp_path, monkeypatch):
         names = [c["name"] for c in got["health"]["checks"]]
         assert "ollama" in names and "web search" in names and "the PC" not in names
         assert cl.get("/jobs?plugin=ari")[0]["needs"] == ["gpu"]
+
+
+def test_the_pc_voice_follows_the_voice_picked_in_helios(tmp_path, monkeypatch):
+    import json
+    import time
+
+    from argus import voice as voice_mod
+
+    voices = tmp_path / "data" / "voices"
+    voices.mkdir(parents=True)
+    for name in ("en_GB-cori-high", "en_US-amy-medium"):
+        (voices / f"{name}.onnx").write_bytes(b"x")
+        (voices / f"{name}.onnx.json").write_text("{}")
+    (voices / "ari-clip.wav").write_bytes(b"OLD")
+    used: list[str] = []
+    monkeypatch.setattr(voice_mod.Voice, "use", lambda self, path, speed=None: used.append(path.stem))
+    monkeypatch.setattr(voice_mod.Voice, "say", lambda self, text: b"NEWCLIP")
+    monkeypatch.setattr(voice_mod.Expressive, "warm", lambda self: True)
+    monkeypatch.setattr(voice_mod.Expressive, "say", lambda self, text: b"GPU")
+    (tmp_path / "argus.yaml").write_text("logging:\n  file: null\nari:\n  voice_engine: expressive\n"
+                                         "  voice: data/voices/en_GB-cori-high.onnx\n", encoding="utf-8")
+    cfg = load_config(tmp_path / "argus.yaml")
+
+    say = ari_listen.local_voice(cfg, lambda: {"current": "en_GB-cori-high", "speed": 1.1})
+    assert say("hello") == b"GPU"  # the expressive voice on this PC
+    wait_for(lambda: (voices / "ari-clip.json").exists())
+    assert (voices / "ari-clip.wav").read_bytes() == b"OLD"  # your existing clip is kept
+    assert json.loads((voices / "ari-clip.json").read_text())["voice"] == "en_GB-cori-high"
+
+    ari_listen.local_voice(cfg, lambda: {"current": "en_US-amy-medium", "speed": 1.0})  # you picked another
+    wait_for(lambda: (voices / "ari-clip.wav").read_bytes() == b"NEWCLIP")
+    time.sleep(0.05)
+    assert json.loads((voices / "ari-clip.json").read_text())["voice"] == "en_US-amy-medium"
+    assert used[-1] == "en_US-amy-medium"

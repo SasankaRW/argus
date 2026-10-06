@@ -2,6 +2,7 @@
 #   .\scripts\pc-worker.ps1 install https://laptop.ts.net   start the worker (and Ollama) at boot, without logging in
 #   .\scripts\pc-worker.ps1 remove                        undo
 #   .\scripts\pc-worker.ps1 status
+#   .\scripts\pc-worker.ps1 restart                       stop everything (old processes too) and start it again
 #   .\scripts\pc-worker.ps1 check https://laptop.ts.net     is everything ready for the move? (changes nothing)
 # The worker runs under the supervisor (restarts it, and restarts on new code after "git pull").
 # Put the laptop's ARGUS_WORKER_TOKEN in this folder's .env first.
@@ -57,6 +58,20 @@ switch ($Command) {
         if (-not $Url) { throw "Usage: .\scripts\pc-worker.ps1 check https://<laptop>.<tailnet>.ts.net" }
         Set-Location $Root
         & $Py -m argus.movecheck $Url
+    }
+    "restart" {
+        # Stopping a task ends only its PowerShell: the Python processes under it (supervisor, worker, listener,
+        # island, voice) keep running, and a new start then finds an old listener holding the microphone.
+        foreach ($T in @($DesktopTask, $Task)) { Stop-ScheduledTask -TaskName $T -ErrorAction SilentlyContinue }
+        $Old = Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'" |
+            Where-Object { $_.CommandLine -match '-m argus\.|voice_server\.py' }
+        foreach ($P in $Old) { Stop-Process -Id $P.ProcessId -Force -ErrorAction SilentlyContinue }
+        Write-Host "[ok] stopped $(@($Old).Count) Argus process(es)"
+        Start-Sleep -Seconds 2
+        foreach ($T in @($OllamaTask, $Task, $DesktopTask)) {
+            if (Get-ScheduledTask -TaskName $T -ErrorAction SilentlyContinue) { Start-ScheduledTask -TaskName $T }
+        }
+        Write-Host "[ok] started again: the worker now, Hey Ari / the island / the voice in a few seconds"
     }
     "remove" {
         foreach ($T in @($Task, $OllamaTask, $DesktopTask)) {
