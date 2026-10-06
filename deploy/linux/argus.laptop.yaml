@@ -19,6 +19,7 @@ models:
     T3: {provider: claude, group: cloud}
     V1: {provider: ollama, model: "qwen2.5vl:7b", group: pc}
   chain: [T1, T2, T3]
+  needs: [gpu]             # model work (Ari's replies, Ask) runs on the PC's worker; the laptop wakes the PC for it
 
 power:
   mode: real               # wake the PC for GPU/desktop work, shut it down when idle (with a phone warning)
@@ -38,3 +39,12 @@ approvals:
 
 plugins:
   live: [downloads-organizer, screenshot-renamer]
+  # A plugin whose address is 127.0.0.1 must run where that service is (its jobs could otherwise land on either
+  # machine). argusd --check warns about the ones that need this.
+  runs_on: {web: desktop, lifehub: desktop, tracker: laptop}   # SearXNG and Life Hub on the PC, Tracker here
+  config:
+    tracker: {url: "http://127.0.0.1:8282"}
+
+ari:
+  voice_engine: piper      # the expressive voice lives on the PC: its listener makes it there (its own argus.yaml)
+  voice: data/voices/en_US-lessac-medium.onnx   # Piper here, for Helios and the phone (pip install -e ".[voice]")

@@ -71,6 +71,9 @@ class ModelsConfig(_Strict):
     attempts_per_tier: int = Field(2, ge=1, le=5)  # tries (with feedback) before moving up a tier
     breaker_failures: int = Field(3, ge=1, le=100)  # consecutive failures that open the circuit breaker
     breaker_open_seconds: float = Field(60, gt=0, le=3600)
+    # What a worker must offer to run model work (Ari's replies, Ask, guidance). Empty: any worker. On the laptop:
+    # [gpu], so the PC's worker (with Ollama) does it and the laptop wakes the PC for it instead of trying itself.
+    needs: list[str] = Field(default_factory=list)
 
     @field_validator("tiers")
     @classmethod
@@ -263,6 +266,9 @@ class PluginsConfig(_Strict):
     dirs: list[Path] = Field(default_factory=lambda: [Path("plugins")])  # folders holding one folder per plugin
     live: list[str] = Field(default_factory=list)  # plugins promoted out of dry-run
     config: dict[str, dict] = Field(default_factory=dict)  # per-plugin settings over the manifest defaults
+    # Where a plugin's jobs run, over its manifest's runs_on: e.g. {web: desktop} when its service (SearXNG) is on
+    # the PC and its address is 127.0.0.1 there; {tracker: laptop} once Tracker runs on the laptop.
+    runs_on: dict[str, Literal["laptop", "desktop", "any"]] = Field(default_factory=dict)
 
 
 class ShareConfig(_Strict):

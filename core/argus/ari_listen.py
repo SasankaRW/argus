@@ -30,6 +30,7 @@ import wave
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 log = logging.getLogger("argus.ari_listen")
 RATE = 16000
@@ -241,8 +242,10 @@ class AriClient:
         evs = r.get("events") or []
         return evs, max([after] + [int(e["seq"]) for e in evs])
 
-    def __init__(self, url: str, token: str | None, conv_file: Path):
+    def __init__(self, url: str, token: str | None, conv_file: Path,
+                 local: Callable[[str], bytes | None] | None = None):
         self.url, self.token, self.conv_file = url.rstrip("/"), token, conv_file
+        self.local = local  # Ari's voice made on this PC (local_voice); argusd's is the fallback
         try:
             self.conv = conv_file.read_text().strip() or None
             self.used = conv_file.stat().st_mtime  # when we last talked (touched on every message)
@@ -328,10 +331,49 @@ class AriClient:
             pass
 
     def voice(self, text: str) -> bytes | None:
+        if self.local is not None:
+            wav = self.local(text)
+            if wav:
+                return wav
         try:
             return self._req("POST", "/ari-voice/say", {"text": text}, timeout=60)
         except urllib.error.HTTPError:
             return None
+
+
+def local_voice(cfg: Any) -> Callable[[str], bytes | None] | None:
+    """Ari's voice made here, where you hear it: the expressive voice server on this PC (its GPU), else Piper here.
+    Otherwise every sentence goes to argusd and back, and after the move argusd is on the laptop, which has
+    neither the GPU nor the voice server. None when this PC has no voice set up (argusd's voice is used)."""
+    from .voice import Expressive, Voice
+
+    a = cfg.ari
+    piper = Voice(a.voice, cfg.base_dir)
+    expr = None
+    if a.voice_engine == "expressive":
+        if a.voice_clip:
+            clip = Path(a.voice_clip).expanduser()
+            clip = clip if clip.is_absolute() else cfg.base_dir / clip
+        else:  # the clip argusd made from the Piper voice when it ran here
+            clip = (piper.path.parent if piper.path is not None else cfg.db_path.parent / "voices") / "ari-clip.wav"
+        expr = Expressive(a.expressive_url, clip, piper)
+        threading.Thread(target=expr.warm, daemon=True, name="voice-warm").start()
+    if expr is None and not piper.configured:
+        return None
+
+    def say(text: str) -> bytes | None:
+        if expr is not None:
+            wav = expr.say(text)
+            if wav:
+                return wav
+        if piper.configured:
+            try:
+                return piper.say(text)
+            except Exception as e:  # noqa: BLE001 - piper-tts or the voice file missing here: argusd's voice
+                log.info("no local voice", extra={"error": str(e)[:200]})
+        return None
+
+    return say
 
 
 # ------------------------------------------------------------------ audio in and out (sounddevice)
@@ -670,7 +712,7 @@ def main(argv: list[str] | None = None) -> int:
     except (ImportError, OSError) as e:
         print(f"ari-listen needs its extras: pip install -e .[listen]  ({e})", file=sys.stderr)
         return 2
-    client = AriClient(args.url, token, cfg.db_path.parent / "ari-listen.conv")
+    client = AriClient(args.url, token, cfg.db_path.parent / "ari-listen.conv", local=local_voice(cfg))
 
     quiet_until = [0.0]  # just after Ari stops talking, the room's echo is dropped
     talking = {"until": 0.0, "text": "", "n": 0}  # while Ari speaks: only "stop" / "Hey Ari" are listened for

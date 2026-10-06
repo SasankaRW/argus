@@ -41,33 +41,34 @@ if [ ! -d "$DIR/.git" ]; then
 fi
 sudo mkdir -p "$DIR/data" "$DIR/logs"
 sudo chown -R argus:argus "$DIR"
+cd "$DIR"    # uv and pip look for config in the current folder and its parents: not your home, which argus can't read
 
 say "python environment"
 # Arch's python is the newest one; Argus is tested on 3.11-3.13. On anything newer, use a pinned 3.12 (via uv).
 PYV=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')
 case "$PYV" in
-  3.11|3.12|3.13) sudo -u argus python3 -m venv "$DIR/.venv" ;;
+  3.11|3.12|3.13) sudo -H -u argus python3 -m venv "$DIR/.venv" ;;
   *)
     echo "system python is $PYV: using Python 3.12 from uv instead"
     sudo pacman -S --needed --noconfirm uv >/dev/null
-    sudo -u argus env UV_PYTHON_INSTALL_DIR="$DIR/pythons" uv venv --python 3.12 --seed "$DIR/.venv"
+    sudo -H -u argus env UV_PYTHON_INSTALL_DIR="$DIR/pythons" uv venv --python 3.12 --seed "$DIR/.venv"
     ;;
 esac
-sudo -u argus "$DIR/.venv/bin/pip" install --quiet --upgrade pip
-sudo -u argus "$DIR/.venv/bin/pip" install --quiet -e "$DIR[plugins]"
+sudo -H -u argus "$DIR/.venv/bin/pip" install --quiet --upgrade pip
+sudo -H -u argus "$DIR/.venv/bin/pip" install --quiet -e "$DIR[plugins]"
 
 say "settings"
 if [ ! -f "$DIR/argus.yaml" ]; then
-  sudo -u argus cp "$DIR/deploy/linux/argus.laptop.yaml" "$DIR/argus.yaml"
+  sudo -H -u argus cp "$DIR/deploy/linux/argus.laptop.yaml" "$DIR/argus.yaml"
   echo "created $DIR/argus.yaml from deploy/linux/argus.laptop.yaml: fill in power.pc_mac and approvals"
 fi
 if [ ! -f "$DIR/.env" ]; then
   tok=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
-  sudo -u argus sh -c "sed 's/^ARGUS_WORKER_TOKEN=.*/ARGUS_WORKER_TOKEN=$tok/' '$DIR/.env.example' > '$DIR/.env'"
+  sudo -H -u argus sh -c "sed 's/^ARGUS_WORKER_TOKEN=.*/ARGUS_WORKER_TOKEN=$tok/' '$DIR/.env.example' > '$DIR/.env'"
   echo "created $DIR/.env with a new worker token (copy it to the PC's .env)"
 fi
 sudo chmod 600 "$DIR/.env"
-sudo -u argus "$DIR/.venv/bin/python" -m argus --config "$DIR/argus.yaml" --check
+sudo -H -u argus "$DIR/.venv/bin/python" -m argus --config "$DIR/argus.yaml" --check
 
 say "services (start at boot, restart on failure)"
 sudo cp "$DIR/deploy/linux/argusd.service" "$DIR/deploy/linux/argus-worker.service" /etc/systemd/system/

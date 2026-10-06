@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 from collections.abc import Callable
@@ -83,6 +84,10 @@ class Argus:
         self.pruned_events = 0
         self.weather = Weather()
         self.base_settings = settings_mod.base_values(cfg)  # argus.yaml's values, before Helios's overrides
+
+    def model_needs(self) -> list[str]:
+        """What a worker must offer to run model work (models.needs: [gpu] on the laptop)."""
+        return list(self.cfg.models.needs)
 
     def open(self) -> Argus:
         """Synchronous part of startup: open the database and run migrations."""
@@ -197,8 +202,9 @@ class Argus:
 
         workers = await self.registry.workers()
         gpu = sum(1 for w in workers if w["state"] == "online" and "gpu" in w["capabilities"])
+        pc = await self._health_on_pc(workers) if self.cfg.models.needs else None
         result = await asyncio.to_thread(health.run, self.cfg, tools=self.health_tools(),
-                                         listener_seen=self.listener_seen(), gpu_workers=gpu)
+                                         listener_seen=self.listener_seen(), gpu_workers=gpu, pc=pc)
 
         def fn(conn):
             now = time.time()
@@ -214,6 +220,30 @@ class Argus:
             self.outbox.poke()
         return result
 
+    async def _health_on_pc(self, workers: list[dict], wait: float = 90) -> list[dict]:
+        """Argus on the laptop: the PC's part of Ari's health check (Ollama, SearXNG, voice, Whisper live there and
+        answer on its 127.0.0.1) runs as a job on the PC's worker. The PC is never woken for it."""
+        from . import health
+
+        want = set(self.cfg.models.needs)
+        if not any(w["state"] == "online" and want <= set(w["capabilities"]) for w in workers):
+            return [health.PC_OFF]
+        job_id, _ = await self.jobs.enqueue("ari", "health", {"tools": self.health_tools()},
+                                            needs=self.model_needs(), priority=PRIORITY_INTERACTIVE,
+                                            max_attempts=1, source="argus")
+        end = time.monotonic() + wait
+        while time.monotonic() < end:
+            j = await self.jobs.get(job_id)
+            if j.state.value == "succeeded":
+                return list((j.result or {}).get("checks") or [])
+            if j.state.value in ("dead", "cancelled"):
+                return [health.row("the PC", "warn", f"its check failed: {(j.error or '?').splitlines()[0][:120]}",
+                                   "see the PC's logs\\worker.log")]
+            await asyncio.sleep(0.5)
+        with contextlib.suppress(Exception):
+            await self.jobs.cancel(job_id, "the PC took too long")  # don't leave it waiting to wake the PC later
+        return [health.row("the PC", "warn", "didn't finish its checks in time", "see the PC's logs\\worker.log")]
+
     async def guidance_review(self) -> dict:
         """Queue the review of new mistakes (a job for a worker with Claude). Nothing to do: no job."""
         from . import guidance
@@ -224,7 +254,8 @@ class Argus:
             if not items:
                 return None
             guidance.mark_reviewed(conn, [s["id"] for it in items for s in it["mistakes"]], now)
-            jid, _ = self.jobs.enqueue_in(conn, now, "guidance", "review", {"playbooks": items}, needs=[],
+            jid, _ = self.jobs.enqueue_in(conn, now, "guidance", "review", {"playbooks": items},
+                                          needs=self.model_needs(),
                                           priority=PRIORITY_BATCH, model_group="cloud", source="argus",
                                           dedupe_key="guidance:review")
             return {"job_id": jid, "playbooks": len(items)}
@@ -241,7 +272,8 @@ class Argus:
                 return None
             if not pb["evals"]:
                 return {"job_id": None, "note": "no tests yet: mark some answers Correct first"}
-            jid, _ = self.jobs.enqueue_in(conn, time.time(), "guidance", "evals", {"playbook": pb}, needs=[],
+            jid, _ = self.jobs.enqueue_in(conn, time.time(), "guidance", "evals", {"playbook": pb},
+                                          needs=self.model_needs(),
                                           priority=PRIORITY_INTERACTIVE, source="helios",
                                           dedupe_key=f"guidance:evals:{key}")
             return {"job_id": jid, "tests": len(pb["evals"])}
@@ -259,7 +291,7 @@ class Argus:
             pb = guidance.playbook_input(conn, s["playbook"])
             inp = {"sample": guidance.sample_json(s), "tier": tier, "playbook": pb["playbook"],
                    "schema": pb["schema"], "lessons": pb["lessons"]}
-            jid, _ = self.jobs.enqueue_in(conn, time.time(), "guidance", "replay", inp, needs=[],
+            jid, _ = self.jobs.enqueue_in(conn, time.time(), "guidance", "replay", inp, needs=self.model_needs(),
                                           priority=PRIORITY_INTERACTIVE, source="helios",
                                           dedupe_key=f"guidance:replay:{sample_id}:{tier}")
             return {"job_id": jid}

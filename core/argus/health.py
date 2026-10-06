@@ -189,23 +189,35 @@ def routing(cfg: Config, tools: list[dict], decide: Callable | None = None) -> C
     return out
 
 
-def run(cfg: Config, *, tools: list[dict], listener_seen: float = 0.0, gpu_workers: int | None = None,
-        get: Callable = fetch, decide: Callable | None = None, now: float | None = None) -> dict:
-    """Every check, in order. {"at", "ok" (nothing bad), "problems" (bad or warn), "checks"}."""
-    now = time.time() if now is None else now
+def pc_part(cfg: Config, tools: list[dict], get: Callable = fetch, decide: Callable | None = None) -> list[Check]:
+    """The checks that look at the PC's own services (Ollama, SearXNG, the voice on the GPU, Whisper) and its
+    model. Run where those are: in argusd when everything is on one PC, else as a job on the PC's worker."""
     checks = ollama(cfg, get)
     checks.append(searxng(cfg, get))
     checks.append(voice(cfg, get))
     checks.append(hearing(cfg))
+    if all(c["level"] != "bad" for c in checks[:1]):  # the model check needs Ollama
+        if (c := routing(cfg, tools, decide)) is not None:
+            checks.append(c)
+    return checks
+
+
+PC_OFF = row("the PC", "ok", "off: Ollama, web search, the voice and Whisper are checked while it's on")
+
+
+def run(cfg: Config, *, tools: list[dict], listener_seen: float = 0.0, gpu_workers: int | None = None,
+        get: Callable = fetch, decide: Callable | None = None, now: float | None = None,
+        pc: list[Check] | None = None) -> dict:
+    """Every check, in order. {"at", "ok" (nothing bad), "problems" (bad or warn), "checks"}. `pc`: the PC's
+    part, already checked on the PC (Argus on the laptop); None: check it here."""
+    now = time.time() if now is None else now
+    checks = list(pc) if pc is not None else pc_part(cfg, tools, get, decide)
     if (c := listener(cfg, listener_seen, now)) is not None:
         checks.append(c)
     if gpu_workers is not None:
         checks.append(row("worker", "ok" if gpu_workers else "warn",
                           f"{gpu_workers} GPU worker(s) online" if gpu_workers else "no GPU worker online",
                           "" if gpu_workers else "dev.ps1 up starts the PC worker"))
-    if all(c["level"] != "bad" for c in checks[:1]):  # the model check needs Ollama
-        if (c := routing(cfg, tools, decide)) is not None:
-            checks.append(c)
     bad = [c for c in checks if c["level"] == "bad"]
     problems = [c for c in checks if c["level"] != "ok"]
     return {"at": now, "ok": not bad, "problems": len(problems), "checks": checks}

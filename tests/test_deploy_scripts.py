@@ -25,6 +25,8 @@ def test_arch_install_uses_pacman_and_stays_lean():
     assert "-Syu" in text and "pacman -Sy " not in text                              # no partial upgrades
     assert "ufw allow in on tailscale0" in text and "ufw allow 22/tcp" in text      # only Tailscale and SSH
     assert "HandleLidSwitch=ignore" in text
+    assert 'cd "$DIR"' in text
+    assert "sudo -u argus" not in text          # -H: otherwise uv and pip read the caller's home and fail
 
 
 def test_tracker_script_binds_to_localhost_only():
