@@ -94,6 +94,8 @@ from ..worker import think as think_mod
 from . import approval_page, mcp
 from .home import HOME_HTML
 
+WAKING = "Waking the PC, about a minute"  # Ari's state while no worker with the models is up
+
 mimetypes.add_type("application/manifest+json", ".webmanifest")  # Helios as an installable app (share menu)
 HELIOS_DIR = Path(__file__).resolve().parent.parent / "helios_dist"  # built by helios/ (npm run build)
 
@@ -602,7 +604,7 @@ def create_app(argus: Argus) -> FastAPI:
             return {"via": "rules", **hit, "label": labels.get(hit.get("action") or "")}
         job_id, _ = await argus.jobs.enqueue(
             "ask", "ask", {"text": body.text, "actions": actions, "snapshot": snap},
-            priority=PRIORITY_INTERACTIVE, source="helios")
+            needs=list(argus.cfg.models.needs), priority=PRIORITY_INTERACTIVE, source="helios")
         return {"via": "model", "job_id": job_id}
 
     async def mcp_auth(request: Request) -> bool:
@@ -1094,9 +1096,11 @@ def create_app(argus: Argus) -> FastAPI:
                              "you_remember": known,
                              "personality": argus.cfg.ari.personality, "call_me": argus.cfg.ari.call_me,
                              "tools": [t.brief() for t in tools.all().values() if t.for_ari]},
-            priority=PRIORITY_INTERACTIVE, source="helios")
+            needs=list(argus.cfg.models.needs), priority=PRIORITY_INTERACTIVE, source="helios")
+        # no worker with the models is up (the PC is off): the power manager wakes it; say so instead of hanging
+        waking = not await able(argus.cfg.models.needs)
         tid = await argus.store.write(lambda c: (ari_mod.add_turn(c, conv, "ari", None, job_id=job_id),
-                                                 ari_state(c, "thinking", text, job_id))[0])
+                                                 ari_state(c, "thinking", WAKING if waking else text, job_id))[0])
         return {"conv": conv, "turn": tid, "job_id": job_id, "reply": None}
 
     @app.get("/ari-memory", dependencies=guarded)
@@ -1217,7 +1221,13 @@ def create_app(argus: Argus) -> FastAPI:
                 voice.use(path, float(v.get("speed") or 1.0))
 
     async def gpu_online() -> bool:
-        return any(w["state"] == "online" and "gpu" in w["capabilities"] for w in await argus.registry.workers())
+        return await able(["gpu"])
+
+    async def able(needs: list[str]) -> bool:
+        """An online worker offers all of `needs` (nothing needed: always)."""
+        want = set(needs)
+        return not want or any(w["state"] == "online" and want <= set(w["capabilities"])
+                               for w in await argus.registry.workers())
 
     @app.get("/ari-voice", dependencies=guarded)
     async def ari_voice(request: Request) -> dict:

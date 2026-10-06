@@ -104,3 +104,17 @@ def check(ctx: Context):
     except OSError:
         pass
     return seen
+
+
+@workflow("ari", "health")
+def ari_health(ctx: Context):
+    """The PC's part of Ari's health check (Argus on the laptop asks for it): Ollama, SearXNG, the voice and Whisper
+    as this PC sees them, with this PC's own argus.yaml. Nothing here changes anything."""
+    from .. import health
+    from ..config import Config, ConfigError, load_config
+
+    try:
+        cfg = load_config()
+    except ConfigError:
+        cfg = Config()
+    return {"checks": health.pc_part(cfg, list(ctx.input.get("tools") or []))}

@@ -46,7 +46,7 @@ never updates the system: that stays your `pacman -Syu`. Running it again is saf
 
 In the Tailscale admin console (DNS page) HTTPS certificates must be on, or `tailscale serve` has nothing to serve.
 
-Then edit `/opt/argus/argus.yaml` (`sudo -u argus nano /opt/argus/argus.yaml`):
+Then edit `/opt/argus/argus.yaml` (`sudo -H -u argus nano /opt/argus/argus.yaml`):
 
 | Setting | What |
 | --- | --- |
@@ -54,7 +54,7 @@ Then edit `/opt/argus/argus.yaml` (`sudo -u argus nano /opt/argus/argus.yaml`):
 | `approvals.public_url` | the laptop's Tailscale https address (`tailscale status` shows the name) |
 | `backup.copy_to` | a folder on the PC for the nightly backup copy |
 
-and `/opt/argus/.env` (`sudo -u argus nano /opt/argus/.env`): copy `ARGUS_ADMIN_PASSWORD`, `TRACKER_API_KEY` and
+and `/opt/argus/.env` (`sudo -H -u argus nano /opt/argus/.env`): copy `ARGUS_ADMIN_PASSWORD`, `TRACKER_API_KEY` and
 `LIFEHUB_API_KEY` from the PC's `G:\Projects\argus\.env`; leave the new `ARGUS_WORKER_TOKEN`.
 `sudo systemctl restart argusd`, and open Helios at the laptop's Tailscale address.
 
@@ -108,13 +108,13 @@ looks): the laptop answers and takes the token, Argus on the PC is stopped, Olla
 off, and the wired card's address for `power.pc_mac`:
 
 ```powershell
-.\scripts\pc-worker.ps1 check http://<laptop's Tailscale name>:8600
+.\scripts\pc-worker.ps1 check https://<laptop's Tailscale name>
 ```
 
 Fix any `[!!]` line, then, in PowerShell as Administrator:
 
 ```powershell
-.\scripts\pc-worker.ps1 install http://<laptop's Tailscale name>:8600
+.\scripts\pc-worker.ps1 install https://<laptop's Tailscale name>
 ```
 
 The worker and Ollama now start when the PC boots, before anyone logs in. When you log in, a second supervisor
@@ -134,12 +134,26 @@ them; `remove` undoes it. Don't run `dev.ps1 up` on the PC any more (that starts
   it shuts down. It only does this to a PC Argus woke itself, never while you use the keyboard or mouse.
 - Next morning: Helios > Logs shows `backup made` at 02:30, and the copy is in `backup.copy_to` on the PC.
 
+## What runs where
+
+- **The laptop:** Argus itself (Helios, Ari's chat and memory, schedules, backups), plugins that only call web
+  services (`runs_on: any`), and Piper for Ari's voice in Helios and on the phone.
+- **The PC's worker:** everything that needs a model. `models.needs: [gpu]` in the laptop's `argus.yaml` sends
+  Ari's replies, Ask and guidance there. While the PC is off, Ari says "Waking the PC, about a minute" and the
+  laptop wakes it. Plugins for your files and apps run there too (downloads organizer, screenshots, ...).
+- **The PC, logged in:** "Hey Ari", the island and the PC tools. The listener makes Ari's voice on the PC itself
+  (the expressive voice on its GPU, else Piper there), so speech never goes round through the laptop.
+- **A plugin whose address is `127.0.0.1`** runs where that service is: `plugins.runs_on: {web: desktop}` for
+  SearXNG on the PC, `{tracker: laptop}` once Tracker runs on the laptop. `/opt/argus/.venv/bin/python -m argus
+  --check` lists the ones that need it.
+- **Ollama** must answer on the PC: `.\scripts\pc-worker.ps1 status` says whether it does.
+
 ## Updating
 
-The repo is private, so give the laptop's `argus` user read access once (the first install copied the code from `~/argus-src`): `sudo -u argus ssh-keygen -t ed25519`,
+The repo is private, so give the laptop's `argus` user read access once (the first install copied the code from `~/argus-src`): `sudo -H -u argus ssh-keygen -t ed25519`,
 add `/home/argus/.ssh/id_ed25519.pub` as a read-only deploy key on GitHub, and
-`sudo -u argus git -C /opt/argus remote set-url origin git@github.com:SasankaRW/argus.git`.
+`sudo -H -u argus git -C /opt/argus remote set-url origin git@github.com:SasankaRW/argus.git`.
 
-On the laptop: `sudo -u argus /opt/argus/deploy/linux/argus-update.sh` backs up, pulls main, installs, checks and
+On the laptop: `sudo -H -u argus /opt/argus/deploy/linux/argus-update.sh` backs up, pulls main, installs, checks and
 restarts, and goes back to the previous version if the new one doesn't come up. On the PC the supervisor restarts
 the worker by itself after `git pull`.

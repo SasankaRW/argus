@@ -47,6 +47,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.check:
         argus.store.close()
         print(f"OK: config valid, database at schema v{argus.store.schema_version}, argus {__version__}")
+        from .plugins import discover, placement_warnings
+
+        for w in placement_warnings(cfg, discover(cfg)[0]):
+            print(f"warning: {w}")
         return 0
 
     import uvicorn  # imported late so --check stays fast

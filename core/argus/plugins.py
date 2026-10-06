@@ -325,10 +325,33 @@ def discover(cfg: Config) -> tuple[list[Plugin], dict[str, str]]:
                 errors[str(folder)] = "plugin.py is missing"
                 continue
             seen.add(m.id)
+            where = cfg.plugins.runs_on.get(m.id)
+            if where and m.runs_on != "phone":  # argus.yaml says where this plugin's jobs run
+                m = m.model_copy(update={"runs_on": where})
             conf = {k: f.default for k, f in m.config.items()}
             conf.update(cfg.plugins.config.get(m.id, {}))
             plugins.append(Plugin(manifest=m, path=folder, live=m.id in cfg.plugins.live, config=conf))
     return plugins, errors
+
+
+def placement_warnings(cfg: Config, plugins: list[Plugin]) -> list[str]:
+    """Settings that only work while everything runs on one machine (argusd --check on the laptop says so)."""
+    if cfg.instance.host != "laptop":
+        return []
+    out = []
+    if any(t.provider == "ollama" for t in cfg.models.tiers.values()) and not cfg.models.needs:
+        out.append("models.needs is empty: Ari's replies may run on the laptop, which has no Ollama. "
+                   "Set models: {needs: [gpu]} so the PC does them (and is woken for them).")
+    for p in plugins:
+        if not p.live or p.manifest.runs_on != "any":
+            continue
+        local = [f"{k}={v}" for k, v in p.config.items()
+                 if isinstance(v, str) and ("127.0.0.1" in v or "localhost" in v)]
+        if local:
+            out.append(f"{p.manifest.id}: {', '.join(local)} means 'this machine', but its jobs can run on the "
+                       f"laptop or the PC. Say where the service is: plugins.runs_on: {{{p.manifest.id}: desktop}} "
+                       "(or laptop).")
+    return out
 
 
 def _short(e: Exception) -> str:

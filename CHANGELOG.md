@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+**Split machines:** with Argus on the laptop, `models.needs: [gpu]` keeps Ari's replies on the PC's worker (the laptop wakes the PC, and Ari says so), `plugins.runs_on` pins a plugin to the machine its service runs on, `argusd --check` warns about both, and the PC's listener makes Ari's voice on the PC.
+
 **Arch laptop install:** `deploy/linux/install-arch.sh` and `tracker-arch.sh` set up Argus and Tracker on an Arch laptop (Tailscale, Docker, firewall, services); `deploy/README.md` walks through the move from the PC.
 
 - The ticket fixer takes before/after screenshots of a UI fix itself (new `screens` setting), attaches only useful files and replaces the previous attempt's, lets a UI fix without screenshots go to review with a note (`require_screenshots`), and has a Continue in terminal button that resumes Claude's session on the fix branch.
