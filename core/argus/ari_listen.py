@@ -340,28 +340,73 @@ class AriClient:
         except urllib.error.HTTPError:
             return None
 
+    def picked_voice(self) -> dict:
+        """The voice you picked in Helios: {"current", "speed"}."""
+        return json.loads(self._req("GET", "/ari-voice/voices", None, timeout=10))
 
-def local_voice(cfg: Any) -> Callable[[str], bytes | None] | None:
+
+def local_voice(cfg: Any, picked: Callable[[], dict] | None = None) -> Callable[[str], bytes | None] | None:
     """Ari's voice made here, where you hear it: the expressive voice server on this PC (its GPU), else Piper here.
     Otherwise every sentence goes to argusd and back, and after the move argusd is on the laptop, which has
-    neither the GPU nor the voice server. None when this PC has no voice set up (argusd's voice is used)."""
-    from .voice import Expressive, Voice
+    neither the GPU nor the voice server. None when this PC has no voice set up (argusd's voice is used).
+
+    `picked()`: the voice you picked in Helios ({"current", "speed"}, from argusd). It is followed here too (looked
+    at once a minute): Piper uses it, and the expressive voice's clip is made again from it (unless ari.voice_clip
+    names your own clip)."""
+    from .voice import CLIP_TEXT, Expressive, Voice, download
 
     a = cfg.ari
     piper = Voice(a.voice, cfg.base_dir)
+    voices = piper.path.parent if piper.path is not None else cfg.db_path.parent / "voices"
     expr = None
+    clip: Path | None = None
     if a.voice_engine == "expressive":
         if a.voice_clip:
             clip = Path(a.voice_clip).expanduser()
             clip = clip if clip.is_absolute() else cfg.base_dir / clip
         else:  # the clip argusd made from the Piper voice when it ran here
-            clip = (piper.path.parent if piper.path is not None else cfg.db_path.parent / "voices") / "ari-clip.wav"
+            clip = voices / "ari-clip.wav"
         expr = Expressive(a.expressive_url, clip, piper)
         threading.Thread(target=expr.warm, daemon=True, name="voice-warm").start()
-    if expr is None and not piper.configured:
+    if expr is None and not piper.configured and picked is None:
         return None
+    own_clip = bool(a.voice_clip)
+    seen = {"at": 0.0}
+    source = voices / "ari-clip.json"  # which Piper voice the clip was made from
+
+    def follow() -> None:
+        if picked is None or time.monotonic() - seen["at"] < 60:
+            return
+        seen["at"] = time.monotonic()
+        threading.Thread(target=apply, daemon=True, name="voice-follow").start()  # speech never waits for it
+
+    def apply() -> None:
+        try:
+            want = picked()
+            name, speed = want.get("current"), float(want.get("speed") or 1.0)
+            if not name:
+                return
+            path = voices / f"{name}.onnx"
+            if not path.exists():
+                path = download(name, voices)
+            piper.use(path, speed)
+            if expr is None or own_clip or clip is None:
+                return
+            try:
+                made_from = json.loads(source.read_text()).get("voice")
+            except (OSError, ValueError):
+                made_from = None
+            if made_from is None and clip.exists():  # an older clip: keep it, remember what it is now
+                source.write_text(json.dumps({"voice": name}))
+            elif made_from != name:
+                clip.write_bytes(piper.say(CLIP_TEXT))
+                source.write_text(json.dumps({"voice": name}))
+                log.info("voice clip made from the picked voice", extra={"voice": name})
+        except Exception as e:  # noqa: BLE001 - argusd away, no piper here, download failed: keep what we have
+            log.info("could not follow the picked voice", extra={"error": str(e)[:200]})
 
     def say(text: str) -> bytes | None:
+        follow()
         if expr is not None:
             wav = expr.say(text)
             if wav:
@@ -373,6 +418,7 @@ def local_voice(cfg: Any) -> Callable[[str], bytes | None] | None:
                 log.info("no local voice", extra={"error": str(e)[:200]})
         return None
 
+    follow()  # the picked voice from the start
     return say
 
 
@@ -712,7 +758,8 @@ def main(argv: list[str] | None = None) -> int:
     except (ImportError, OSError) as e:
         print(f"ari-listen needs its extras: pip install -e .[listen]  ({e})", file=sys.stderr)
         return 2
-    client = AriClient(args.url, token, cfg.db_path.parent / "ari-listen.conv", local=local_voice(cfg))
+    client = AriClient(args.url, token, cfg.db_path.parent / "ari-listen.conv")
+    client.local = local_voice(cfg, client.picked_voice)
 
     quiet_until = [0.0]  # just after Ari stops talking, the room's echo is dropped
     talking = {"until": 0.0, "text": "", "n": 0}  # while Ari speaks: only "stop" / "Hey Ari" are listened for
