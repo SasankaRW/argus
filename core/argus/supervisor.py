@@ -179,7 +179,8 @@ def plan(args: argparse.Namespace) -> list[tuple[str, list[str]]]:
     if desk and expressive_on():  # Ari's expressive voice (Chatterbox, in its own Python environment)
         a = load_ari()
         out.append(("ari-voice", [f"exe:{a.expressive_python}", "core/argus/voice_server.py", "--model",
-                                  a.expressive_model, "--port", str(port_of(a.expressive_url)), "--warm"]))
+                                  a.expressive_model, "--port", str(port_of(a.expressive_url)), "--warm",
+                                  *(["--host", "0.0.0.0"] if a.expressive_share else [])]))  # noqa: S104
     if desk and ari_on("popup"):  # Ari's island at the top of the screen
         out.append(("ari-popup", ["-m", "argus.ari_popup"]))
     if not args.no_worker and not args.desk_only:

@@ -100,7 +100,7 @@ def test_ari_personality_and_name_are_set_in_helios(tmp_path, monkeypatch):
         cl = client(srv.url)
         rows = {s["key"]: s for s in cl.get("/argus-settings")["settings"]}
         p = rows["ari.personality"]
-        assert p["type"] == "longtext" and "witty friend" in p["placeholder"] and p["value"] == ""
+        assert p["type"] == "longtext" and "witty companion" in p["placeholder"] and p["value"] == ""
         assert rows["ari.call_me"]["type"] == "text"
         cl.call("PUT", "/argus-settings", {"ari.call_me": "Sas", "ari.personality": "A calm butler."})
         assert a.cfg.ari.call_me == "Sas" and a.cfg.ari.personality == "A calm butler."  # the next reply uses it

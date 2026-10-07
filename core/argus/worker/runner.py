@@ -186,8 +186,12 @@ class Worker:
 
     # -------------------------------------------------------------- lifecycle
 
+    REGISTER_SECONDS = 300.0  # ask argusd for its settings again (models, plugins, paths): a change there arrives
+    _registered = 0.0
+
     def register(self) -> None:
         info = self.client.register(self.id, self.host, self.capabilities, __version__)
+        self._registered = time.monotonic()
         self.heartbeat_seconds = float(info.get("heartbeat_seconds", self.heartbeat_seconds))
         self.models_cfg = info.get("models") or {}
         if not self._fixed_providers:
@@ -245,6 +249,12 @@ class Worker:
     def run_once(self, wait: float | None = None) -> bool:
         """Claim and run at most one job. Returns True if a job was run."""
         self.check_claude()
+        if self._registered and time.monotonic() - self._registered > self.REGISTER_SECONDS:
+            try:  # argusd's argus.yaml may have changed (new models, plugins switched on) without us restarting
+                self.register()
+            except (Unreachable, ApiError) as e:
+                log.warning("could not refresh the settings", extra={"error": str(e)})
+                self._registered = time.monotonic()
         try:
             job = self.client.claim(self.id, self.capabilities, self.registry.plugins,
                                     self.claim_wait if wait is None else wait, self.min_priority)

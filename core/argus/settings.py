@@ -40,7 +40,7 @@ FIELDS: list[tuple[str, str, str]] = [
     ("ari.whisper_model", "Ari", "Whisper model for what you say (small.en, or your trained one: "
                                  "data/models/whisper-mine)"),
     ("ari.call_me", "Ari", "What Ari calls you (empty: no name)"),
-    ("ari.personality", "Ari", "Ari's personality, in a few sentences (empty: the witty friend shown)"),
+    ("ari.personality", "Ari", "Ari's personality, in a few sentences (empty: the witty companion shown)"),
 ]
 # Settings that are a paragraph, not a word: a big box, with what "empty" means shown greyed out
 LONG = {"ari.personality"}

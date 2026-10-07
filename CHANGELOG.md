@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+**Expressive voice everywhere again:** Argus on the laptop uses the PC's expressive voice for Helios and the phone (`ari.expressive_share`, Tailscale and the worker token only); the PC worker picks up the laptop's settings every 5 minutes; Ari no longer calls you "friend".
+
 **Ari's voice on the PC follows Helios:** the listener uses the voice you pick (Piper, and the expressive voice's clip); `pc-worker.ps1 restart` also ends the processes a stopped task leaves behind.
 
 **Split machines:** with Argus on the laptop, `models.needs: [gpu]` keeps Ari's replies on the PC's worker (the laptop wakes the PC, and Ari says so), `plugins.runs_on` pins a plugin to the machine its service runs on, `argusd --check` warns about both, and the PC's listener makes Ari's voice on the PC.

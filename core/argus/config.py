@@ -277,7 +277,7 @@ class ShareConfig(_Strict):
 
 
 class AriConfig(_Strict):
-    # Who Ari is, in a few sentences (empty: the witty friend, worker/think.py PERSONA). Used in every reply.
+    # Who Ari is, in a few sentences (empty: the witty companion, worker/think.py PERSONA). Used in every reply.
     personality: str = ""
     call_me: str = ""  # what Ari calls you now and then (e.g. "Sas"); empty: no name
     keep_warm: bool = True  # keep the first local model loaded in Ollama while the listener runs (fast replies)
@@ -294,6 +294,9 @@ class AriConfig(_Strict):
     expressive_url: str = "http://127.0.0.1:8611"
     expressive_python: str = ".venv-voice/Scripts/python.exe"  # the environment Chatterbox is installed in
     expressive_model: Literal["turbo", "standard"] = "turbo"
+    # On the PC: the expressive voice also answers over Tailscale (the worker token required), so Argus on the
+    # laptop uses it for Helios and the phone (its expressive_url: http://<pc>.<tailnet>.ts.net:8611).
+    expressive_share: bool = False
     voice_clip: str = ""  # 5-15 s of the voice Ari should sound like (empty: a clip made from the Piper voice)
     # How Ari hears you: "browser" (the browser's speech recognition) or "whisper" (Whisper on the PC: private and
     # better with accents; the browser is used while the PC is off).

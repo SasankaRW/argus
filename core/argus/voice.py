@@ -134,9 +134,17 @@ class Expressive:
     """The expressive voice server (voice_server.py) as argusd sees it: a WAV for a text, or None when it can't
     (not running, still loading, failed), and argusd then uses Piper."""
 
-    def __init__(self, url: str, clip: Path | None, piper: Voice, timeout: float = 30):
+    def __init__(self, url: str, clip: Path | None, piper: Voice, timeout: float = 30, token: str | None = None):
         self.url, self.clip, self.piper, self.timeout = url.rstrip("/"), clip, piper, timeout
+        self.headers = {"Content-Type": "application/json", **({"Authorization": f"Bearer {token}"} if token else {})}
         self._down_until = 0.0
+
+    @property
+    def remote(self) -> bool:
+        """On another machine (the PC's, seen from the laptop), not this one."""
+        import urllib.parse
+
+        return (urllib.parse.urlsplit(self.url).hostname or "") not in ("127.0.0.1", "localhost", "::1")
 
     def ensure_clip(self) -> Path | None:
         """The voice to sound like: ari.voice_clip, else made once from the Piper voice (so Ari keeps its voice)."""
@@ -162,8 +170,7 @@ class Expressive:
         body = json.dumps({"text": "Hi.", "clip": str(clip.resolve()) if clip else ""}).encode()
         for i in range(tries):
             try:
-                req = urllib.request.Request(self.url + "/say", data=body, method="POST",
-                                             headers={"Content-Type": "application/json"})
+                req = urllib.request.Request(self.url + "/say", data=body, method="POST", headers=self.headers)
                 with urllib.request.urlopen(req, timeout=120) as r:  # noqa: S310 - our own local service
                     r.read()
                 log.info("expressive voice warmed up")
@@ -183,8 +190,7 @@ class Expressive:
             return None
         clip = self.ensure_clip()
         body = json.dumps({"text": text, "clip": str(clip.resolve()) if clip else ""}).encode()
-        req = urllib.request.Request(self.url + "/say", data=body, method="POST",
-                                     headers={"Content-Type": "application/json"})
+        req = urllib.request.Request(self.url + "/say", data=body, method="POST", headers=self.headers)
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as r:  # noqa: S310 - our own local service
                 return r.read()

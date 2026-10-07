@@ -154,3 +154,59 @@ def test_the_pc_voice_follows_the_voice_picked_in_helios(tmp_path, monkeypatch):
     time.sleep(0.05)
     assert json.loads((voices / "ari-clip.json").read_text())["voice"] == "en_US-amy-medium"
     assert used[-1] == "en_US-amy-medium"
+
+
+def test_ari_never_calls_you_friend():
+    from argus.worker.think import CHAT, PERSONA, no_helpdesk
+
+    assert no_helpdesk("Stay dry, friend.") == "Stay dry."
+    assert no_helpdesk("Hey buddy, it's 7 pm.") == "Hey, it's 7 pm."
+    assert no_helpdesk("My friend Kasun called.") == "My friend Kasun called."  # a friend you talk about stays
+    assert no_helpdesk("You're a good friend.") == "You're a good friend."
+    assert "never call them \"friend\"" in PERSONA and "and friend" not in CHAT
+
+
+def test_the_worker_picks_up_new_settings_without_a_restart(tmp_path, monkeypatch):
+    with FakeOllama({"qwen2.5-coder:7b": []}) as ol, Server(make(tmp_path).open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop", "gpu"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        first = w._registered
+        w.run_once(wait=0)
+        assert w._registered == first  # not every time
+        monkeypatch.setattr(Worker, "REGISTER_SECONDS", 0.0)
+        w.run_once(wait=0)
+        assert w._registered > first  # argusd's settings (models, plugins) asked for again
+
+
+def test_the_pcs_expressive_voice_is_shared_with_the_laptop_safely(tmp_path, monkeypatch):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("voice_server", ROOT / "core/argus/voice_server.py")
+    vs = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(vs)
+    assert vs.allowed("127.0.0.1", None, "t")  # this PC: as before
+    assert vs.allowed("100.98.211.7", "Bearer t", "t")  # the laptop, with the token
+    assert not vs.allowed("100.98.211.7", None, "t") and not vs.allowed("100.98.211.7", "Bearer x", "t")
+    assert not vs.allowed("100.98.211.7", "Bearer ", None)  # no token set: only this PC
+    (tmp_path / ".env").write_text("ARGUS_WORKER_TOKEN=abc\n")
+    monkeypatch.delenv("ARGUS_WORKER_TOKEN", raising=False)
+    assert vs.worker_token(tmp_path / ".env") == "abc"
+    monkeypatch.chdir(tmp_path)
+    assert vs.their_clip("/opt/argus/data/voices/ari-clip.wav") is None  # the laptop's path, no clip here
+    (tmp_path / "data" / "voices").mkdir(parents=True)
+    (tmp_path / "data" / "voices" / "ari-clip.wav").write_bytes(b"RIFF")
+    assert vs.their_clip("/opt/argus/data/voices/ari-clip.wav").endswith("ari-clip.wav")  # this PC's own
+
+
+def test_helios_voice_doesnt_wait_for_a_pc_that_is_off(tmp_path):
+    import time
+
+    import httpx
+
+    srv_args = "  chain: [T1]\n  needs: [gpu]\nari:\n  voice_engine: expressive\n" \
+               "  expressive_url: http://10.255.255.1:8611\n"
+    with Server(make(tmp_path, srv_args).open()) as srv:
+        t0 = time.monotonic()
+        r = httpx.post(srv.url + "/ari-voice/say", json={"text": "hello"}, timeout=20)
+        assert r.status_code == 409 and time.monotonic() - t0 < 3  # Piper here (none set), not a 30 s wait

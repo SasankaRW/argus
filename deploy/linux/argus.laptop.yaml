@@ -46,5 +46,6 @@ plugins:
     tracker: {url: "http://127.0.0.1:8282"}
 
 ari:
-  voice_engine: piper      # the expressive voice lives on the PC: its listener makes it there (its own argus.yaml)
+  voice_engine: piper      # or expressive, with the PC's voice (ari.expressive_share: true in the PC's argus.yaml):
+  # expressive_url: http://<pc>.<tailnet>.ts.net:8611   # Helios and the phone then hear it; Piper while the PC is off
   voice: data/voices/en_US-lessac-medium.onnx   # Piper here, for Helios and the phone (pip install -e ".[voice]")
