@@ -1274,7 +1274,8 @@ def create_app(argus: Argus) -> FastAPI:
             clip = Path(a.voice_clip).expanduser() if a.voice_clip else voices_dir / "ari-clip.wav"
             if not clip.is_absolute():
                 clip = argus.cfg.base_dir / clip
-            _expr.update(key=key, client=Expressive(a.expressive_url, clip, voice))
+            tok = argus.cfg.secrets.worker_token  # the PC's voice asks for it from another machine
+            _expr.update(key=key, client=Expressive(a.expressive_url, clip, voice, token=tok))
         return _expr["client"]
 
     @app.post("/ari-voice/say", dependencies=guarded)
@@ -1283,7 +1284,8 @@ def create_app(argus: Argus) -> FastAPI:
         await use_picked_voice()
         try:
             wav = None
-            if argus.cfg.ari.voice_engine == "expressive":
+            # the expressive voice on the PC (Argus on the laptop): only while the PC is up, else Piper here at once
+            if argus.cfg.ari.voice_engine == "expressive" and (not expressive().remote or await gpu_online()):
                 wav = await asyncio.to_thread(expressive().say, body.text)
             if wav is None:
                 wav = await asyncio.to_thread(voice.say, body.text)

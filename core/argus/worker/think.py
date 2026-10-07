@@ -443,10 +443,11 @@ TASKY = re.compile(r"\b(?:open|close|find|search|show|list|play|pause|set|turn|s
                    r"run|start|stop|add|delete|move|copy|weather|screen|file|folder|note|status|issue|backup|"
                    r"download|shut|restart|volume|timer)\b", re.I)
 
-PERSONA = """Ari's personality: a witty friend who happens to live in their PC. Casual, quick and funny: you joke
+PERSONA = """Ari's personality: a witty companion who happens to live in their PC. Casual, quick and funny: you joke
 about the situation, tease them lightly, and you have opinions (favourite things, mild hot takes) instead of being
 neutral about everything. Humour is welcome; slang is not: talk in clear, natural English, never "bro", "dude",
-"mate", "machan" or similar. You're on their side: happy when things go well, sympathetic when they don't.
+"mate", "machan" or similar, and never call them "friend", "buddy" or "pal" (their name, if you know it, or
+nothing). You're on their side: happy when things go well, sympathetic when they don't.
 Confident, never grovelling: no "I apologise for the inconvenience", no "How can I assist you?", no "Let me know if
 you need anything else". When you get something wrong, own it in a few words with a bit of humour and move on. Keep
 it short; the wit is in word choice, not in long jokes. Even when doing tasks, add a tiny human touch ("Done,
@@ -458,9 +459,16 @@ HELPDESK = re.compile(r"[^.!?]*\b(?:how (?:can|may) i (?:assist|help) you(?: (?:
                       r"i apologi[sz]e for (?:the|any) (?:inconvenience|confusion)|as an ai\b)[^.!?]*[.!?]?", re.I)
 
 
+# "Stay dry, friend." / "Hey buddy, ..." -> "Stay dry." / "Hey, ...": Ari uses your name (ari.call_me) or nothing
+_PETS = r"(?:my\s+)?(?:friend|buddy|pal|mate|bro|dude)"
+PET = re.compile(rf",\s*{_PETS}\b(?=\s*[.!?,]|\s*$)|(?:(?<=\bhey)|(?<=\bhi)|(?<=\boh))\s+{_PETS}\b(?=\s*[,.!?])",
+                 re.I)
+
+
 def no_helpdesk(text: str) -> str:
-    """Help-desk filler taken out ("How can I assist you?"); Ari talks like a friend. The rest kept as it was."""
-    t = re.sub(r"\s{2,}", " ", HELPDESK.sub(" ", text)).strip()
+    """Help-desk filler and pet names taken out ("How can I assist you?", "..., friend."). The rest kept as it
+    was."""
+    t = re.sub(r"\s{2,}", " ", HELPDESK.sub(" ", PET.sub("", text))).strip()
     return t if len(t) >= 2 else text
 
 
@@ -470,7 +478,7 @@ def persona(inp: dict) -> str:
     return who + (f"\nTheir name is {name}: use it now and then, not every time." if name else "")
 
 
-CHAT = """You are Ari, the user's personal assistant and friend, living on their own computer (home system "Argus").
+CHAT = """You are Ari, the user's personal assistant, living on their own computer (home system "Argus").
 Right now it's just casual talk: this is where your personality shines. Be a good companion, curious about them.
 Talk like a person, not a help desk: never say "as an AI", never "I can't complete that request", no offers of
 "anything else I can help with". Short and natural (it is read aloud): 1-3 sentences, no lists, no markdown, no
@@ -589,7 +597,7 @@ How to decide:
   asks you to remember something, use the remember tool; to forget something, recall_memory then forget_memory.
 - The user's own things (their files, notes, documents, projects, what Argus did, their schedules, their phone,
   their PC): use a tool first; never make up the user's data. If the tools find nothing, say so.
-- Casual talk (greetings, jokes, how are you, banter, their day): just talk back like a friend: warm, a bit
+- Casual talk (greetings, jokes, how are you, banter, their day): just talk back like a person: warm, a bit
   playful, curious. Never "I can't complete that request" for small talk.
 - Only look at the screen or the clipboard when the user asks about them; never for a general question.
 - Doing things on the PC (open an app, a file or a site, volume, music, windows): use the tool. Several things
@@ -634,7 +642,7 @@ How to decide:
   in plain words.
 Answer with the JSON only."""
 
-WEB = """You are Ari, the user's personal assistant and friend (casual, a bit witty, never a help desk).
+WEB = """You are Ari, the user's personal assistant (casual, a bit witty, never a help desk).
 Answer the user's question using web search when it needs current information. Your answer is read aloud:
 2-4 short sentences, no lists, no markdown, no links (mention the source by name if it matters). If something the
 user's own files said is included, prefer it for their own matters. Answer with only the reply text."""

@@ -47,6 +47,13 @@ switch ($Command) {
         Register-ScheduledTask -TaskName $DesktopTask -Action $DAct -Trigger $Logon -Principal $DPrincipal -Settings $Settings -Force | Out-Null
         Write-Host "[ok] '$DesktopTask' starts when you log in (Ari's PC tools, Hey Ari, the island)"
 
+        # Ari's expressive voice for Argus on the laptop (ari.expressive_share): port 8611, Tailscale devices only
+        if (-not (Get-NetFirewallRule -DisplayName "Argus voice (Tailscale)" -ErrorAction SilentlyContinue)) {
+            New-NetFirewallRule -DisplayName "Argus voice (Tailscale)" -Direction Inbound -Protocol TCP -LocalPort 8611 `
+                -RemoteAddress 100.64.0.0/10 -Action Allow | Out-Null
+        }
+        Write-Host "[ok] the voice port (8611) is open to your Tailscale devices only (the worker token is needed too)"
+
         # start them now too (not only at the next boot / logon): without Ollama running, Ari has no local models
         foreach ($T in @($OllamaTask, $Task, $DesktopTask)) {
             if (Get-ScheduledTask -TaskName $T -ErrorAction SilentlyContinue) { Start-ScheduledTask -TaskName $T }

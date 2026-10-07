@@ -10,6 +10,9 @@ POST /say {"text": "[cheerful] Oh nice! [laugh] ...", "clip": "data/voices/ari-c
   sounds. "clip" (optional, 5+ seconds) is the voice to sound like; without it, Chatterbox's own voice.
 GET /health -> {"ok": true, "model": "turbo", "device": "cuda"}
 
+With --host 0.0.0.0 (ari.expressive_share, for Argus on the laptop) a request from another machine needs the
+worker token (ARGUS_WORKER_TOKEN, from .env) as "Authorization: Bearer <token>"; this PC itself needs none.
+
 Every clip it makes carries Resemble's inaudible watermark (Perth), as Chatterbox always adds one.
 """
 
@@ -120,7 +123,43 @@ def to_wav(a, rate: int) -> bytes:
     return buf.getvalue()
 
 
-def handler(engine) -> type[BaseHTTPRequestHandler]:
+DEFAULT_CLIP = Path("data") / "voices" / "ari-clip.wav"  # this PC's clip, when the asker's isn't here
+
+
+def worker_token(env_file: Path = Path(".env")) -> str | None:
+    """ARGUS_WORKER_TOKEN from the environment or .env (this Python has no argus.config: plain parsing)."""
+    import os
+
+    tok = os.environ.get("ARGUS_WORKER_TOKEN")
+    if tok:
+        return tok
+    try:
+        for line in env_file.read_text(encoding="utf-8-sig").splitlines():
+            k, _, v = line.partition("=")
+            if k.strip() == "ARGUS_WORKER_TOKEN" and v.strip():
+                return v.strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return None
+
+
+def allowed(client_ip: str, authorization: str | None, token: str | None) -> bool:
+    """This PC always; another machine only with the worker token (and never when no token is set)."""
+    import hmac
+
+    if client_ip in ("127.0.0.1", "::1", "::ffff:127.0.0.1"):
+        return True
+    return bool(token) and hmac.compare_digest((authorization or "").encode(), f"Bearer {token}".encode())
+
+
+def their_clip(clip: str | None) -> str | None:
+    """The clip asked for if it is on this PC, else this PC's own (the laptop sends a path of its own)."""
+    if clip and Path(clip).is_file():
+        return clip
+    return str(DEFAULT_CLIP.resolve()) if DEFAULT_CLIP.is_file() else None
+
+
+def handler(engine, token: str | None = None) -> type[BaseHTTPRequestHandler]:
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a):  # quiet; the log line is in Engine.say
             pass
@@ -142,11 +181,15 @@ def handler(engine) -> type[BaseHTTPRequestHandler]:
         def do_POST(self):  # noqa: N802
             if self.path != "/say":
                 return self._send(404, b'{"error": "not found"}')
+            if not allowed(self.client_address[0], self.headers.get("Authorization"), token):
+                n = int(self.headers.get("Content-Length") or 0)
+                self.rfile.read(min(n, 20000))
+                return self._send(401, b'{"error": "the worker token is needed from another machine"}')
             try:
                 n = int(self.headers.get("Content-Length") or 0)
                 body = json.loads(self.rfile.read(min(n, 20000)) or b"{}")
                 text = str(body.get("text") or "")[:1000]
-                wav = engine.say(text, str(body.get("clip") or "") or None)
+                wav = engine.say(text, their_clip(str(body.get("clip") or "") or None))
             except ValueError as e:
                 return self._send(422, json.dumps({"error": str(e)}).encode())
             except Exception as e:  # noqa: BLE001 - argusd falls back to Piper
@@ -170,7 +213,10 @@ def main(argv: list[str] | None = None) -> int:
     engine = Engine(a.model, a.device)
     if a.warm:
         threading.Thread(target=engine.load, daemon=True).start()
-    srv = ThreadingHTTPServer((a.host, a.port), handler(engine))
+    token = worker_token()
+    if a.host not in ("127.0.0.1", "localhost") and not token:
+        log.warning("no ARGUS_WORKER_TOKEN: only this PC can use the voice")
+    srv = ThreadingHTTPServer((a.host, a.port), handler(engine, token))
     log.info("ari voice listening", extra={"at": f"http://{a.host}:{a.port}"})
     try:
         srv.serve_forever()
