@@ -369,6 +369,57 @@ REMEMBER = re.compile(r"^\s*(?:please\s+)?(?:remember|note|keep in mind|don'?t f
                       re.I)
 
 
+# How you want Ari to talk: "call me Sas", "keep it shorter", "don't joke when I'm working". Kept after your yes,
+# as a memory starting with STYLE, and given to Ari with every message (not only when the words match).
+PREFERENCE = re.compile(
+    r"^\W*(?:(?:hey ari|ari|please|and|also)[,\s]+)*(?:from now on[,\s]+)?(?P<pref>"
+    r"call me\s+(?!(?:at|in|on|later|back|when|tomorrow|tonight|after|before|now|again|if|up)\b)\w[\w'-]{0,19}"
+    r"(?:\s\w[\w'-]{0,19})?|(?:don'?t call me|stop calling me)\s+\S.{0,40}|"
+    r"(?:be|keep (?:it|things|your (?:answers|replies))|make (?:it|your (?:answers|replies)))\s+"
+    r"(?:a bit |much |more |less )?(?:short(?:er)?|brief(?:er)?|concise|formal|casual|serious|funn(?:y|ier)|"
+    r"polite)\b.{0,60}|"
+    r"(?:don'?t|do not|stop|no more|never)\s+(?:joke|joking|jokes|making jokes|swear|swearing|use emoji|"
+    r"say \S.{0,30}|talk so much|ramble|rambling)\b.{0,60}|"
+    r"(?:talk|speak) (?:less|more|slower|faster|more slowly|more quietly)\b.{0,40})\W*$", re.I)
+STYLE = "How to talk to them: "
+
+
+def preference_of(text: str) -> str | None:
+    """"don't joke when I'm working" -> that, as a style memory ("How to talk to them: ..."), or None."""
+    m = PREFERENCE.match(text.strip())
+    if not m:
+        return None
+    pref = re.sub(r"\s+", " ", m.group("pref")).strip().rstrip(".!")
+    return STYLE + pref[0].lower() + pref[1:]
+
+
+def preferences(conn: sqlite3.Connection) -> list[str]:
+    """How you asked Ari to talk (newest last): given to Ari with every message."""
+    return [r["fact"][len(STYLE):] for r in conn.execute(
+        "SELECT fact FROM ari_memory WHERE fact LIKE ? ORDER BY updated_at", (STYLE + "%",)).fetchall()][-12:]
+
+
+def search_memory(conn: sqlite3.Connection, query: str, now: float, days: int = 365,
+                  k: int = 8) -> dict[str, list[dict[str, Any]]]:
+    """"Search my memory": what you asked Ari to remember, and what was said in past conversations, with dates."""
+    words = [w for w in re.findall(r"\w+", query.lower()) if len(w) > 2 and w not in _STOP][:8]
+    facts = recall(conn, query, k)
+    said: list[dict[str, Any]] = []
+    if words:
+        where = " AND ".join("lower(text) LIKE ?" for _ in words[:4])
+        rows = conn.execute(f"SELECT conv, role, text, created_at FROM ari_turns WHERE text IS NOT NULL AND"
+                            f" created_at >= ? AND {where} ORDER BY id DESC LIMIT ?",
+                            (now - days * 86400, *[f"%{w}%" for w in words[:4]], k)).fetchall()
+        if not rows and len(words) > 1:  # not all of them: any
+            where = " OR ".join("lower(text) LIKE ?" for _ in words)
+            rows = conn.execute(f"SELECT conv, role, text, created_at FROM ari_turns WHERE text IS NOT NULL AND"
+                                f" created_at >= ? AND ({where}) ORDER BY id DESC LIMIT ?",
+                                (now - days * 86400, *[f"%{w}%" for w in words], k)).fetchall()
+        said = [{"when": time.strftime("%Y-%m-%d %H:%M", time.localtime(r["created_at"])),
+                 "who": "you" if r["role"] == "you" else "Ari", "said": r["text"][:300]} for r in rows]
+    return {"remembered": facts, "said_before": said}
+
+
 def remember(conn: sqlite3.Connection, fact: str) -> int:
     fact = re.sub(r"\s+", " ", fact).strip().rstrip(".")[:500]
     now = time.time()

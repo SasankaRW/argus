@@ -8,6 +8,9 @@ from what the model knows) or "web" (needs the internet). Several are allowed: "
 gates as a real message run first (small talk, the direct paths like "volume 30"), then one model step, as Ari's
 first decision. The result is printed and kept in data/ari-eval/ (one file per run), so a change can be compared
 with the run before it.
+
+Ari's own picks you marked Correct in Helios (GET /guidance/ari-cases) are added as cases too (`--no-learned`
+leaves them out), so what Ari learned stays tested.
 """
 
 from __future__ import annotations
@@ -76,7 +79,7 @@ def load_cases(path: Path | None) -> list[tuple[str, str]]:
 def first_step(text: str, tools: list[dict], decide: Any, now: str = "", info: dict | None = None) -> tuple[str, float]:
     """What Ari would do first with `text`: ("chat" | a tool name | "reply" | "web", seconds the model took).
     `info` gets how many tools were offered and what the model reported (prompt/output tokens, load and prompt time)."""
-    from .worker.think import PHONE_VOLUME, chatty, offered, quick_math, straight_to
+    from .worker.think import PHONE_VOLUME, chatty, offered, quick_math, situation, straight_to
 
     if quick_math(text) or (PHONE_VOLUME.search(text) and "phone_volume" not in {t["name"] for t in tools}):
         return "reply", 0.0
@@ -88,7 +91,7 @@ def first_step(text: str, tools: list[dict], decide: Any, now: str = "", info: d
         return direct[0], 0.0
     t0 = time.perf_counter()
     step = decide({"message": text, "conversation_so_far": [], "you_remember": [], "now": now,
-                   "tools": list(have.values())})
+                   "situation": situation(text, None), "tools": list(have.values())})
     took = time.perf_counter() - t0
     if info is not None:
         m = step.get("_meta") or {}
@@ -153,6 +156,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--url", default=os.environ.get("ARGUS_URL", "http://127.0.0.1:8600"))
     ap.add_argument("--cases", type=Path, default=None, help="a YAML list of {say, expect}")
     ap.add_argument("--model", default=None, help="the Ollama model (default: the first tier's)")
+    ap.add_argument("--no-learned", action="store_true", help="leave out the picks you marked Correct in Helios")
     a = ap.parse_args(argv)
     cfg = load_config()
     tier = cfg.models.tiers.get(cfg.models.chain[0]) if cfg.models.chain else None
@@ -163,16 +167,26 @@ def main(argv: list[str] | None = None) -> int:
     import urllib.request
 
     token = os.environ.get("ARGUS_WORKER_TOKEN") or parse_env_file(Path(".env")).get("ARGUS_WORKER_TOKEN")
-    req = urllib.request.Request(a.url.rstrip("/") + "/tools",
-                                 headers={"Authorization": f"Bearer {token}"} if token else {})
-    try:
+    def get(path: str) -> Any:
+        req = urllib.request.Request(a.url.rstrip("/") + path,
+                                     headers={"Authorization": f"Bearer {token}"} if token else {})
         with urllib.request.urlopen(req, timeout=10) as r:  # noqa: S310 - our own Argus
-            tools = json.loads(r.read())
+            return json.loads(r.read())
+
+    try:
+        tools = get("/tools")
     except OSError as e:
         print(f"Argus isn't answering at {a.url} ({e}): start it first (dev.ps1 up).", file=sys.stderr)
         return 2
-    print(f"{len(tools)} tools, model {model}\n")
-    out = run(load_cases(a.cases), tools, ollama_decider(cfg.ollama.url, model, cfg.ollama.num_ctx))
+    cases = load_cases(a.cases)
+    if not a.no_learned:
+        try:
+            have = {say for say, _ in cases}
+            cases = cases + [(c["say"], c["expect"]) for c in get("/guidance/ari-cases") if c["say"] not in have]
+        except (OSError, ValueError, KeyError):
+            pass  # an older Argus: just the built-in cases
+    print(f"{len(tools)} tools, {len(cases)} cases, model {model}\n")
+    out = run(cases, tools, ollama_decider(cfg.ollama.url, model, cfg.ollama.num_ctx))
     out["model"] = model
     keep = cfg.db_path.parent / "ari-eval"
     keep.mkdir(parents=True, exist_ok=True)

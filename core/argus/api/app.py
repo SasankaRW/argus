@@ -829,6 +829,11 @@ def create_app(argus: Argus) -> FastAPI:
         """Review now: Claude proposes lessons for playbooks with new mistakes; you approve them."""
         return await argus.guidance_review()
 
+    @app.get("/guidance/ari-cases", dependencies=guarded)
+    async def ari_cases() -> list[dict]:
+        """Ari's picks you marked Correct, as cases for `python -m argus.ari_eval` (it adds them to its own)."""
+        return await argus.store.read(guidance.ari_cases)
+
     @app.post("/guidance/followups", dependencies=guarded)
     async def guidance_followups() -> dict:
         """Look now whether you moved back, renamed again or moved elsewhere what jobs did (runs every
@@ -1044,6 +1049,8 @@ def create_app(argus: Argus) -> FastAPI:
         for k in ("mic", "loudest"):
             if body and body.get(k) is not None:
                 listener[k] = body[k]
+        if body and "busy" in body:  # in a call or a game (None: neither): Ari keeps it to one quiet line
+            listener["busy"] = body.get("busy")
         return {"ok": True}
 
     @app.get("/ari/vocabulary", dependencies=guarded)
@@ -1126,6 +1133,11 @@ def create_app(argus: Argus) -> FastAPI:
             said = await argus.weather_say(*wx)
             if said:
                 return await reply(said)
+        pref = ari_mod.preference_of(text)
+        if pref:  # "keep it shorter", "call me Sas": how to talk to you, kept after your yes
+            said = pref[len(ari_mod.STYLE):]
+            return await reply(f"Sure: {said}. Want me to keep that from now on?", None,
+                               {"kind": "remember", "fact": pref})
         actions = ask_mod.catalog(argus.plugin_host)
         m = ari_mod.REMEMBER.match(text)
         if m and not ari_mod.parse_when(text, time.time()):  # "remember that ..." (not "remind me at ...")
@@ -1157,9 +1169,11 @@ def create_app(argus: Argus) -> FastAPI:
             return await reply(hit["reply"], act)
         hist = await argus.store.read(lambda c: ari_mod.history(c, conv))
         known = await argus.store.read(lambda c: ari_mod.recall(c, text))
+        prefs = await argus.store.read(ari_mod.preferences)
         job_id, _ = await argus.jobs.enqueue(
             "ari", "think", {"text": text, "history": hist[:-1], "now": time.strftime("%A %d %B %Y, %H:%M"),
-                             "you_remember": known,
+                             "you_remember": known, "their_preferences": prefs,
+                             "busy": listener.get("busy") if time.time() - listener["seen"] < 75 else None,
                              "personality": argus.cfg.ari.personality, "call_me": argus.cfg.ari.call_me,
                              "tools": [t.brief() for t in tools.all().values() if t.for_ari]},
             needs=list(argus.cfg.models.needs), priority=PRIORITY_INTERACTIVE, source="helios",
@@ -1200,6 +1214,13 @@ def create_app(argus: Argus) -> FastAPI:
     tools.builtin["recall_memory"] = Tool("recall_memory", "Look up what the user asked you to remember earlier.",
                                           {"query": {"type": "string", "description": "words to look for"}},
                                           ["query"], fn=_recall)
+    async def _search_memory(x: dict) -> dict:
+        return await argus.store.read(lambda c: ari_mod.search_memory(c, str(x["query"]), time.time()))
+
+    tools.builtin["search_my_memory"] = Tool(
+        "search_my_memory", "Search what the user asked you to remember AND what was said in past conversations "
+        "with Ari (\"what did I ask you about the router last week?\", \"what was that film I mentioned?\").",
+        {"query": {"type": "string", "description": "words to look for"}}, ["query"], fn=_search_memory)
     tools.builtin["forget_memory"] = Tool("forget_memory", "Forget one remembered fact (its id from recall_memory).",
                                           {"id": {"type": "integer", "description": "the memory's id"}}, ["id"],
                                           fn=_forget)
@@ -1820,6 +1841,9 @@ def create_app(argus: Argus) -> FastAPI:
                     if argus.cfg.guidance.examples:
                         out["plugin_info"]["examples"] = await argus.store.read(
                             lambda c, pid=job.plugin: guidance.examples(c, pid))
+                elif job.plugin == "ari" and job.workflow == "think":  # Ari's tool picking learns too
+                    out["guidance"] = {"lessons": await argus.store.read(
+                        lambda c: guidance.active_lessons(c, "ari"))}
                 return out
             if time.monotonic() >= deadline:
                 return Response(status_code=204)

@@ -317,6 +317,19 @@ def playbook_input(conn: sqlite3.Connection, key: str) -> dict[str, Any] | None:
             "lessons": current[0] if current else "", "evals": [sample_json(r) for r in eval_samples(conn, key)]}
 
 
+def ari_cases(conn: sqlite3.Connection, limit: int = 60) -> list[dict[str, str]]:
+    """Ari's first picks you marked Correct, as test cases for `python -m argus.ari_eval` ({say, expect})."""
+    out = []
+    for r in conn.execute("SELECT input, output, correction FROM samples WHERE plugin = 'ari' AND verdict = 'correct'"
+                          " ORDER BY id DESC LIMIT ?", (limit,)):
+        inp, got = _p(r["input"]), _p(r["correction"]) or _p(r["output"])
+        say = inp.get("message") if isinstance(inp, dict) else None
+        if not say or not isinstance(got, dict):
+            continue
+        out.append({"say": str(say), "expect": str(got.get("tool") or ("web" if got.get("need_web") else "reply"))})
+    return out
+
+
 def record_run(conn: sqlite3.Connection, now: float, key: str, run: dict[str, Any], why: str,
                job_id: str | None) -> int:
     cur = conn.execute("INSERT INTO eval_runs (playbook, passed, total, failed, tier, why, job_id, created_at)"

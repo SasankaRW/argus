@@ -524,7 +524,23 @@ def hush_from(evs: list[dict]) -> None:
             log.info("listening" if not paused() else "listening paused")
 
 
-MIC: dict = {"mic": None, "loudest": None}  # the microphone in use and its loudest level in the last minute
+MIC: dict = {"mic": None, "loudest": None, "busy": None}  # the mic in use, its loudest level in the last minute,
+# and whether you're in a call or a game (then Ari answers in text on the island, not aloud)
+_BUSY_AT = [0.0]
+
+
+def check_busy(client: AriClient, every: float = 10.0, look: Callable[[], str | None] | None = None) -> None:
+    """In a call or a game? Looked at every `every` seconds; Argus hears at once when it changes."""
+    if time.monotonic() - _BUSY_AT[0] < every:
+        return
+    _BUSY_AT[0] = time.monotonic()
+    from . import busy
+
+    now = (look or busy.now)()
+    if now != MIC["busy"]:
+        MIC["busy"] = now
+        log.info("busy" if now else "not busy", extra={"with": now})
+        client.here()
 VOCAB: dict = {"prompt": "", "heard_as": {}}  # filled from Argus (GET /ari/vocabulary), refreshed every 10 min
 
 
@@ -636,7 +652,8 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device) -> i
     talk = vl.Talk(turns=vl.Turns(finished=finished), transcribe=cmd_t, transcribe_wake=wake_t, wake_rest=wake_rest,
                    ask=ask, player=player, report=client.state, chime=lambda: player.cue(vl.chime_samples(), RATE),
                    idle_s=float(cfg.ari.talk_idle_s), on_false_barge=gate.fooled,
-                   live_words=wake_t if cfg.ari.live_words else None, show=client.state, ask_async=True)
+                   live_words=wake_t if cfg.ari.live_words else None, show=client.state, ask_async=True,
+                   quiet=lambda: MIC["busy"] is not None)
     spoke_up = [0.0]
     voc_at = [time.monotonic()]
 
@@ -678,6 +695,7 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device) -> i
                     client.vocabulary()
                     voc_at[0] = time.monotonic()
                 last = time.monotonic()
+            check_busy(client)
             player.poll()
             talk.tick()
             busy = player.busy or talk.in_conversation or talk.turns.talking
@@ -917,6 +935,10 @@ def main(argv: list[str] | None = None) -> int:
     out_lock = threading.Lock()
 
     def speak(text: str) -> float:
+        check_busy(client)
+        if MIC["busy"]:  # in a call or a game: shown on the island, not said
+            client.state("done", text)
+            return 0.0
         wav = client.voice(text)
         if not wav:
             print(f"Ari: {text}", flush=True)
@@ -988,6 +1010,7 @@ def main(argv: list[str] | None = None) -> int:
         you're at the PC, within ari.speak_hours, at most one every 10 minutes. Tells Argus this listener runs."""
         seq, last = -1, 0.0
         while True:
+            check_busy(client)
             if time.monotonic() - last > 30:
                 client.here()
                 last = time.monotonic()
