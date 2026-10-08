@@ -1,6 +1,6 @@
 """Change management: turn a change package into a branch with one clear, tested commit.
 
-    python scripts/change.py apply PACKAGE.tgz [--no-tests]   (or: .\\scripts\\dev.ps1 apply PACKAGE.tgz)
+    python scripts/change.py apply PACKAGE.tgz [--no-tests | --all-tests]   (or: .\\scripts\\dev.ps1 apply PACKAGE.tgz)
     python scripts/change.py check-title "feat(ari): ..."     is this a good commit / PR title?
 
 A change package is a .tgz of changed files plus `.change/change.json`:
@@ -12,7 +12,8 @@ A change package is a .tgz of changed files plus `.change/change.json`:
 `apply` refuses a dirty tree, a branch name that exists or was used by any pull request before (GitHub deletes
 merged branches, and a reused name lands on the old PR), and a title that doesn't follow the convention. Then:
 fresh main -> new branch -> files -> deletions -> changelog line under "Unreleased" -> Helios rebuilt if its
-source changed -> lint + tests -> one commit with the title and body. The body is also kept for `dev.ps1 pr`.
+source changed -> lint + the tests for the changed files (`affected_tests`; the full suite runs in CI, or here with
+--all-tests or ARGUS_ALL_TESTS=1) -> one commit with the title and body. The body is also kept for `dev.ps1 pr`.
 See CONTRIBUTING.md.
 """
 
@@ -20,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -153,6 +155,55 @@ def safe_members(tar: tarfile.TarFile) -> list[tarfile.TarInfo]:
     return out
 
 
+# A change to these runs every test (shared test helpers, packaging, the database schema)
+EVERYTHING = re.compile(r"^(?:pyproject\.toml|tests/(?:conftest|fakes|test_worker|_tiny_whisper)\.py|"
+                        r"core/argus/db/|core/argus/__init__\.py)")
+
+
+# The hub modules every running Argus goes through: a change there runs the tests that start one
+WIDE = re.compile(r"^core/argus/(?:api/|jobs/|context\.py|config\.py|worker/(?:runner|workflows|client)\.py)")
+
+
+def _imports(text: str, dotted: str) -> bool:
+    """Does this test file use module `argus.x.y` (any import form, or a monkeypatch by name)?"""
+    parent, _, stem = dotted.rpartition(".")
+    if re.search(rf"\b{re.escape(dotted)}\b", text):
+        return True
+    for m in re.finditer(rf"from {re.escape(parent)} import (\([^)]*\)|[^\n]*)", text):
+        if re.search(rf"\b{re.escape(stem)}\b", m.group(1)):
+            return True
+    return False
+
+
+def affected_tests(changed: list[str], root: Path = ROOT) -> list[str] | None:
+    """The test files for these changed paths (repo-relative, forward slashes); None: run them all. A test file
+    counts when it changed, uses a changed module, or names a changed plugin or script; Helios changes run the
+    Helios tests. Indirect effects are left to CI's full run."""
+    tests = {p.name: p.read_text(encoding="utf-8", errors="replace")
+             for p in sorted((root / "tests").glob("test_*.py"))}
+    picked: set[str] = set()
+    for rel in changed:
+        if EVERYTHING.match(rel):
+            return None
+        path = Path(rel)
+        if rel.startswith("tests/") and path.name in tests:
+            picked.add(path.name)
+        elif rel.startswith("core/argus/") and path.suffix == ".py":
+            mod = ".".join(path.with_suffix("").parts[1:])  # core/argus/worker/review.py -> argus.worker.review
+            if mod.endswith(".__init__"):
+                mod = mod[:-9]
+            picked |= {n for n, t in tests.items() if _imports(t, mod) or n == f"test_{path.stem}.py"
+                       or (WIDE.match(rel) and ("Server(" in t or "Argus(" in t or "Worker(" in t))}
+        elif rel.startswith("plugins/") and len(path.parts) > 2:
+            name = path.parts[1]
+            picked |= {n for n, t in tests.items() if name in t or n == f"test_{name.replace('-', '_')}.py"}
+        elif rel.startswith(("helios/", "core/argus/helios_dist/")):
+            picked |= {n for n in tests if "helios" in n}
+        elif rel.startswith(("scripts/", "deploy/")):
+            picked |= {n for n, t in tests.items() if path.name in t or path.stem in n}
+    return sorted(picked)
+
+
 def rebuild_helios() -> None:
     npm = shutil.which("npm")
     if not npm:
@@ -163,7 +214,7 @@ def rebuild_helios() -> None:
     run(npm, "run", "build", cwd=web)
 
 
-def apply(package: Path, tests: bool = True) -> str:
+def apply(package: Path, tests: bool = True, all_tests: bool = False) -> str:
     if not package.is_file():
         raise ChangeError(f"no such package: {package}")
     if git("status", "--porcelain"):
@@ -194,11 +245,19 @@ def apply(package: Path, tests: bool = True) -> str:
         print("Helios source changed: rebuilding")
         rebuild_helios()
     if tests:
-        print("lint + tests (a few minutes; progress below)", flush=True)
         run(sys.executable, "-m", "ruff", "check", "core", "tests", "scripts")
-        p = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"], cwd=ROOT)
-        if p.returncode != 0:
-            raise ChangeError(f"tests failed (above), nothing committed; you are on {meta['branch']}")
+        status = run("git", "status", "--porcelain", "-uall").stdout  # not git(): it strips the first line's space
+        paths = [ln[3:].strip().strip('"').split(" -> ")[-1] for ln in status.splitlines() if ln.strip()]
+        which = None if all_tests or os.environ.get("ARGUS_ALL_TESTS") else affected_tests(paths)
+        if which == []:
+            print("lint ok; no tests cover these files (CI runs them all)", flush=True)
+        else:
+            print("lint ok; " + ("all tests" if which is None else f"the tests for these files: {' '.join(which)}")
+                  + " (CI runs them all)", flush=True)
+            p = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
+                                *[f"tests/{n}" for n in which or []]], cwd=ROOT)
+            if p.returncode != 0:
+                raise ChangeError(f"tests failed (above), nothing committed; you are on {meta['branch']}")
     git("add", "-A")
     msg = ROOT / ".git" / "argus-change" / f"{meta['branch'].replace('/', '__')}.md"
     msg.parent.mkdir(parents=True, exist_ok=True)
@@ -217,12 +276,13 @@ def main(argv: list[str] | None = None) -> int:
     a = sub.add_parser("apply")
     a.add_argument("package", type=Path)
     a.add_argument("--no-tests", action="store_true")
+    a.add_argument("--all-tests", action="store_true", help="the full suite, not only the changed files' tests")
     t = sub.add_parser("check-title")
     t.add_argument("title")
     args = ap.parse_args(argv)
     try:
         if args.cmd == "apply":
-            apply(args.package, tests=not args.no_tests)
+            apply(args.package, tests=not args.no_tests, all_tests=args.all_tests)
         else:
             problem = title_problem(args.title)
             if problem:

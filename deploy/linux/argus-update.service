@@ -1,0 +1,13 @@
+[Unit]
+Description=Argus: update to the newest main (with rollback)
+After=network-online.target argusd.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=argus
+Group=argus
+WorkingDirectory=/opt/argus
+ExecStart=/usr/bin/bash /opt/argus/deploy/linux/argus-update.sh
+# no NoNewPrivileges: the script restarts the services through the one sudo rule the installer added
+TimeoutStartSec=15min

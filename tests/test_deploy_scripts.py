@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 LINUX = Path(__file__).resolve().parents[1] / "deploy" / "linux"
-SCRIPTS = ["install.sh", "install-arch.sh", "tracker-arch.sh", "argus-update.sh"]
+SCRIPTS = ["install.sh", "install-arch.sh", "tracker-arch.sh", "argus-update.sh", "auto-update.sh"]
 
 
 @pytest.mark.skipif(sys.platform == "win32" or shutil.which("bash") is None,
@@ -32,3 +32,15 @@ def test_arch_install_uses_pacman_and_stays_lean():
 def test_tracker_script_binds_to_localhost_only():
     text = (LINUX / "tracker-arch.sh").read_text()
     assert "PORT=127.0.0.1:8282" in text and "--https=8443" in text
+
+
+def test_the_laptop_updates_itself_and_rolls_back():
+    timer = (LINUX / "argus-update.timer").read_text()
+    unit = (LINUX / "argus-update.service").read_text()
+    assert "OnUnitActiveSec=5min" in timer and "WantedBy=timers.target" in timer
+    assert "User=argus" in unit and "ExecStart=/usr/bin/bash /opt/argus/deploy/linux/argus-update.sh" in unit
+    assert "NoNewPrivileges=true" not in unit  # it restarts the services through the installer's one sudo rule
+    upd = (LINUX / "argus-update.sh").read_text()
+    assert "trap rollback ERR" in upd and 'exit 0   # nothing merged' in upd
+    setup = (LINUX / "auto-update.sh").read_text()
+    assert "deploy-key add" in setup and "enable --now argus-update.timer" in setup and "sudo -u argus" not in setup

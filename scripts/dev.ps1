@@ -475,8 +475,9 @@ switch ($Command) {
             & $PSCommandPath merge
         }
         Write-Host ""
-        Write-Host "Shipped $($Pkgs.Count) package(s). The PC's worker restarts on the new code by itself;" -ForegroundColor Green
-        Write-Host "for Ari's listener and island now: .\scripts\pc-worker.ps1 restart"
+        Write-Host "Shipped $($Pkgs.Count) package(s). The PC's worker restarts on the new code by itself, and the laptop" -ForegroundColor Green
+        Write-Host "updates itself within ~5 minutes (once auto-update.sh is set up there)."
+        Write-Host "For Ari's listener and island now: .\scripts\pc-worker.ps1 restart"
     }
     "rerun" {
         Need-Gh

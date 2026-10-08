@@ -154,10 +154,15 @@ them; `remove` undoes it. Don't run `dev.ps1 up` on the PC any more (that starts
 
 ## Updating
 
-The repo is private, so give the laptop's `argus` user read access once (the first install copied the code from `~/argus-src`): `sudo -H -u argus ssh-keygen -t ed25519`,
-add `/home/argus/.ssh/id_ed25519.pub` as a read-only deploy key on GitHub, and
-`sudo -H -u argus git -C /opt/argus remote set-url origin git@github.com:SasankaRW/argus.git`.
+**By itself (once):** `bash /opt/argus/deploy/linux/auto-update.sh` on the laptop. It gives the `argus` user a
+read-only deploy key (the repo is private; with `gh` signed in the key is added for you, otherwise it prints the key
+and the GitHub page to paste it on) and starts a timer. Every 5 minutes it runs `argus-update.sh`, which does nothing
+unless main moved. Otherwise it backs up the database, pulls main, installs, checks and restarts, and goes back to the
+previous version if the new one doesn't come up. So after `.\scripts\dev.ps1 merge` (or `ship`) the laptop is on
+the new code within about 5 minutes. Each run: `journalctl -u argus-update -n 30`. Off:
+`bash /opt/argus/deploy/linux/auto-update.sh off`.
 
-On the laptop: `sudo -H -u argus /opt/argus/deploy/linux/argus-update.sh` backs up, pulls main, installs, checks and
-restarts, and goes back to the previous version if the new one doesn't come up. On the PC the supervisor restarts
-the worker by itself after `git pull`.
+**By hand:** `sudo -H -u argus bash /opt/argus/deploy/linux/argus-update.sh` does one update the same way.
+
+On the PC the supervisor restarts the worker by itself after `git pull` (`ship` pulls main at the end); Ari's
+listener and the island: `.\scripts\pc-worker.ps1 restart`.
