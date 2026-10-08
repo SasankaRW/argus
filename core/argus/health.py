@@ -141,11 +141,20 @@ def hearing(cfg: Config) -> Check:
     return row("hearing", "ok", f"Whisper can use the GPU ({gpus})")
 
 
-def listener(cfg: Config, seen: float, now: float) -> Check | None:
+QUIET_MIC = 0.008  # the loudest sound in a minute below this: the mic is muted, too quiet, or the wrong one
+
+
+def listener(cfg: Config, seen: float, now: float, info: dict | None = None) -> Check | None:
     if not cfg.ari.listen:
         return None
     if now - seen < 90:
-        return row("listener", "ok", "\"Hey Ari\" is listening on the PC")
+        info = info or {}
+        mic, loudest = info.get("mic"), info.get("loudest")
+        if loudest is not None and float(loudest) < QUIET_MIC:
+            return row("listener", "warn", f"the mic{f' ({mic})' if mic else ''} hears almost nothing "
+                       f"(loudest {float(loudest):.3f} in the last minute)",
+                       "raise its input volume in Windows Sound settings, or make your real mic the default")
+        return row("listener", "ok", "\"Hey Ari\" is listening on the PC" + (f" ({mic})" if mic else ""))
     return row("listener", "warn", "no word from the PC's listener in the last minutes",
                "dev.ps1 up (logs\\ari-listen.out, logs\\ari.log)")
 
@@ -207,12 +216,12 @@ PC_OFF = row("the PC", "ok", "off: Ollama, web search, the voice and Whisper are
 
 def run(cfg: Config, *, tools: list[dict], listener_seen: float = 0.0, gpu_workers: int | None = None,
         get: Callable = fetch, decide: Callable | None = None, now: float | None = None,
-        pc: list[Check] | None = None) -> dict:
+        pc: list[Check] | None = None, listener_info: dict | None = None) -> dict:
     """Every check, in order. {"at", "ok" (nothing bad), "problems" (bad or warn), "checks"}. `pc`: the PC's
     part, already checked on the PC (Argus on the laptop); None: check it here."""
     now = time.time() if now is None else now
     checks = list(pc) if pc is not None else pc_part(cfg, tools, get, decide)
-    if (c := listener(cfg, listener_seen, now)) is not None:
+    if (c := listener(cfg, listener_seen, now, listener_info)) is not None:
         checks.append(c)
     if gpu_workers is not None:
         checks.append(row("worker", "ok" if gpu_workers else "warn",

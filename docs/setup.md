@@ -186,6 +186,26 @@ or no. A small Whisper model (`ari.listen_wake_model`, tiny.en) listens for the 
 uses `ari.whisper_model`. Pick another microphone with `python -m argus.ari_listen --device <n>` (`python -m
 sounddevice` lists them).
 
+**Fewer false starts.** "Hey Ari" only counts at the start of what you say, so a video or someone mentioning
+"Ari" mid-sentence doesn't wake it. Ari also listens to what the PC itself plays (`ari.playback_guard`, on by
+default, needs `pip install -e .[listen]` for the `soundcard` package), so videos, music and its own voice coming
+back through the mic are ignored. While the PC is playing something, only a clear "Hey Ari" or "OK Ari" wakes it.
+The health check warns when the mic hears almost nothing (muted, too quiet, or the wrong default mic).
+
+**A wake-word model (optional, the most reliable).** Make a "Hey Ari" model once with openWakeWord's automatic
+training notebook (it generates thousands of "Hey Ari" clips with Piper voices; about an hour on a free GPU): set
+the target phrase to `hey ari`, download `hey_ari.onnx` into `data/models/`, then:
+
+```powershell
+pip install -e .[wake]
+```
+
+```yaml
+ari:
+  wake_model: data/models/hey_ari.onnx   # Whisper then only writes down what follows "Hey Ari"
+  wake_threshold: 0.5                    # higher: fewer false starts, lower: wakes more easily
+```
+
 Whisper uses the GPU when CUDA 12 and cuDNN 9 are found, else the CPU (fine for short commands). While the PC is
 off, the browser hears you. Other voices: https://rhasspy.github.io/piper-samples/
 

@@ -305,6 +305,13 @@ class AriConfig(_Strict):
     # "Hey Ari" on the PC's microphone, no browser (python -m argus.ari_listen; `dev.ps1 up` starts it when on).
     listen: bool = False
     listen_wake_model: str = "tiny.en"  # listens for the wake phrase (small and fast; the command uses whisper_model)
+    # A wake-word model for "Hey Ari" (openWakeWord .onnx, e.g. data/models/hey_ari.onnx; pip install -e .[wake]).
+    # Empty: Whisper listens for "Hey Ari" at the start of what it hears.
+    wake_model: str = ""
+    wake_threshold: float = Field(0.5, gt=0, le=1)
+    # Ignore the PC's own sound (videos, music, Ari) coming back through the mic: it listens to the speakers too
+    # (WASAPI loopback, pip install -e .[listen]); while the PC plays, only a clear "Hey Ari" wakes Ari.
+    playback_guard: bool = True
     live_words: bool = True  # the island shows the words as you say them (the small model hears you every second)
     follow_up: bool = True  # after Ari answers, keep listening a few seconds: carry on without "Hey Ari"
     # Talk like a conversation: after "Hey Ari" just talk back and forth, talk over Ari to interrupt, "thanks Ari"
