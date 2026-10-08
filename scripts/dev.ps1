@@ -25,7 +25,9 @@
 #   .\scripts\dev.ps1 branch feat/name  start work on a new branch from an up-to-date main
 #   .\scripts\dev.ps1 pr                push the branch and open a pull request (title + description from the commit)
 #   .\scripts\dev.ps1 merge             wait for CI, then squash-merge the pull request and return to main
-#   .\scripts\dev.ps1 ship a.tgz b.tgz  apply, pr and merge each package in turn (stops at the first problem)
+#   .\scripts\dev.ps1 merge local       CI can't run on GitHub (minutes, billing): the same checks here, then merge
+#   .\scripts\dev.ps1 ship a.tgz b.tgz  apply, pr and merge each package in turn (stops at the first problem;
+#                                       $env:ARGUS_MERGE_LOCAL=1 first to merge with local checks instead of CI)
 #   .\scripts\dev.ps1 rerun             re-run CI's failed jobs once (a flaky test unrelated to the change)
 #   .\scripts\dev.ps1 sync              bring main up to date with GitHub
 #   .\scripts\dev.ps1 release minor     release: tests, version bump, changelog, tag, push, GitHub release
@@ -181,6 +183,15 @@ function Current-Branch { (git rev-parse --abbrev-ref HEAD).Trim() }
 switch ($Command) {
     "up" {
         Need-Venv
+        # After the move to the laptop the PC only runs the worker and Ari's ears, voice and island (pc-worker.ps1).
+        # A full Argus here as well means two Aris: two voices, double wake-ups, an island talking to the wrong one.
+        if (Get-ScheduledTask -TaskName "Argus PC worker" -ErrorAction SilentlyContinue) {
+            Write-Host "This PC is Argus's worker now; Argus itself runs on the laptop." -ForegroundColor Yellow
+            Write-Host "Restarting the PC side instead (pc-worker.ps1 restart). To run everything here again:"
+            Write-Host "  .\scripts\pc-worker.ps1 remove, then .\scripts\dev.ps1 up"
+            & (Join-Path $PSScriptRoot "pc-worker.ps1") restart
+            return
+        }
         $Rec = Load-Up
         $Ver = (Get-Content (Join-Path $Root "VERSION") -Raw).Trim()
         Write-Host ""
@@ -432,6 +443,24 @@ switch ($Command) {
         if ((git rev-parse HEAD).Trim() -ne (git rev-parse "origin/$B").Trim()) {
             throw "This branch has commits GitHub has not seen. Run .\scripts\dev.ps1 pr first, then merge."
         }
+        $Local = ($Arg -eq "local") -or ($env:ARGUS_MERGE_LOCAL -eq "1")
+        if ($Local) {
+            # GitHub can't run CI (minutes or billing): the same checks here, then an admin merge.
+            Need-Venv
+            Write-Host "CI here instead of GitHub: lint, every test, the Helios build ..." -ForegroundColor Yellow
+            & $Py -m ruff check core tests scripts
+            if ($LASTEXITCODE -ne 0) { throw "Lint failed: not merged" }
+            & $Py -m pytest -q -p no:cacheprovider
+            if ($LASTEXITCODE -ne 0) { throw "Tests failed: not merged" }
+            if (Get-Command npm -ErrorAction SilentlyContinue) {
+                Push-Location (Join-Path $Root "helios")
+                try { npm run typecheck; if ($LASTEXITCODE -ne 0) { throw "Helios typecheck failed: not merged" } }
+                finally { Pop-Location }
+            }
+            $MergeFlags = @("--admin")
+        }
+        else {
+        $MergeFlags = @()
         Write-Host "Waiting for CI on $B ..."
         # Right after "pr" GitHub may not have registered the checks yet; wait for them to appear.
         for ($i = 0; $i -lt 12; $i++) {
@@ -448,13 +477,15 @@ switch ($Command) {
             Write-Host "  - caused by this change: fix it, commit, .\scripts\dev.ps1 pr, then merge again"
             Write-Host "  - a test this change doesn't touch, failing on one runner only: .\scripts\dev.ps1 rerun (once)"
             Write-Host "  - the same test fails twice: it is real, fix it"
+            Write-Host "  - jobs not started (GitHub billing or minutes): .\scripts\dev.ps1 merge local"
             throw "Not merged"
+        }
         }
         # One commit on main: the PR title (#number) and its description.
         $Info = gh pr view $B --json number,title,body | ConvertFrom-Json
         $BodyFile = Join-Path $env:TEMP "argus-merge-body.md"
         [IO.File]::WriteAllText($BodyFile, [string]$Info.body)
-        gh pr merge $B --squash --delete-branch --subject "$($Info.title) (#$($Info.number))" --body-file $BodyFile
+        gh pr merge $B --squash --delete-branch --subject "$($Info.title) (#$($Info.number))" --body-file $BodyFile @MergeFlags
         if ($LASTEXITCODE -ne 0) { throw "Merge failed" }
         GitOk switch main
         GitOk pull --ff-only --quiet

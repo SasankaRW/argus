@@ -17,6 +17,7 @@ releases; it hands over a change package and you run the steps below.
 .\scripts\dev.ps1 pr                                        # push, open the PR (title + description from the commit)
 .\scripts\dev.ps1 merge                                     # wait for CI, squash-merge, back on an updated main
 .\scripts\dev.ps1 ship a.tgz b.tgz                          # all three for each package, in order; stops at a problem
+.\scripts\dev.ps1 merge local                               # GitHub can't run CI (minutes, billing): checks here
 .\scripts\dev.ps1 release minor                             # at a milestone only
 ```
 
@@ -75,8 +76,8 @@ title, because on squash-merge the title becomes the commit on `main`.
 
 ## When CI fails
 
-CI runs ruff and the tests on Windows and Linux (Python 3.11 to 3.13), the Helios build check and the PR
-title check. `ci-ok` is the one required check.
+CI runs ruff and the tests on Windows and Linux (Python 3.12; 3.11 to 3.13 for releases and by hand), the Helios
+build check and the PR title check. `ci-ok` is the one required check.
 
 | What failed | Do this |
 |---|---|
@@ -85,6 +86,7 @@ title check. `ci-ok` is the one required check.
 | `title` | `gh pr edit --title "type(scope): …"`, then re-run the checks |
 | A test unrelated to the change, on one runner only | `dev.ps1 rerun` **once** (flaky test) |
 | The same test fails again | Treat it as real: fix the test or the code in a `fix(test): …` change |
+| Jobs not started ("payments have failed or your spending limit…") | GitHub has no Actions minutes left: `dev.ps1 merge local` runs lint, every test and the Helios typecheck here, then merges (as admin). For `ship`: `$env:ARGUS_MERGE_LOCAL = 1` first |
 
 ## Change packages (how Claude delivers)
 
