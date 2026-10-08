@@ -312,6 +312,10 @@ class AriConfig(_Strict):
     # Ignore the PC's own sound (videos, music, Ari) coming back through the mic: it listens to the speakers too
     # (WASAPI loopback, pip install -e .[listen]); while the PC plays, only a clear "Hey Ari" wakes Ari.
     playback_guard: bool = True
+    # In a call (a calling app has the mic: Teams, Zoom, Discord, WhatsApp, ... or one named in call_apps) or a
+    # fullscreen game, Ari answers on the island instead of out loud. false: always out loud.
+    quiet_in_calls: bool = True
+    call_apps: list[str] = Field(default_factory=list)
     live_words: bool = True  # the island shows the words as you say them (the small model hears you every second)
     follow_up: bool = True  # after Ari answers, keep listening a few seconds: carry on without "Hey Ari"
     # Talk like a conversation: after "Hey Ari" just talk back and forth, talk over Ari to interrupt, "thanks Ari"

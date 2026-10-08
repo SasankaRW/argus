@@ -22,6 +22,9 @@ from argus.config import Config
     ("the Argus team won", None),
     ("a lorry went past", None),
     ("Harry, come here", None),                              # a bare mishearing doesn't count
+    ("Hey, Addie.", ""), ("Hey, Adi, what's the time", "what's the time"),  # how tiny Whisper writes it
+    ("Hello, hey, Ari.", ""), ("Hey Yaddie, open Spotify", "open Spotify"),
+    ("Hey, can you hear me?", None), ("Hey, Alex.", None),
 ])
 def test_the_wake_phrase_only_counts_at_the_start(said, rest):
     assert al.wake_rest(said, strict=False) == rest
@@ -31,6 +34,8 @@ def test_while_the_pc_plays_sound_only_a_clear_hey_ari_counts():
     assert al.wake_rest("Ari, open Spotify", strict=True) is None
     assert al.wake_rest("OK Harry, what's running", strict=True) is None
     assert al.wake_rest("Hey Ari, open Spotify", strict=True) == "open Spotify"
+    assert al.wake_rest("Hey, Adi, open Spotify", strict=True) == "open Spotify"  # close enough, even then
+    assert al.wake_rest("Hey Harry, open Spotify", strict=True) is None
 
 
 def test_whispers_made_up_words_are_dropped():

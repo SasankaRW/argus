@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+**Fix:** Ari no longer stays silent because some app holds the mic (only calling apps count; `ari.quiet_in_calls`, `ari.call_apps`); "Hey Adi/Addie" (Whisper's mishearings) wake Ari again; a voice hiccup is retried instead of switching to the second voice.
+
 **Fix:** `dev.ps1 up` on the PC worker restarts the PC side instead of starting a second Argus (two voices, missed wake words); `dev.ps1 merge local` when GitHub can't run CI; CI runs 2 jobs per PR instead of 6.
 
 **Change flow P6:** the laptop updates itself within ~5 minutes of a merge (`deploy/linux/auto-update.sh`, with rollback on any failed step); `apply` runs only the tests for the changed files (CI still runs everything; `ARGUS_ALL_TESTS=1` for all).

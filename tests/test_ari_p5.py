@@ -4,6 +4,7 @@ to talk after your yes, searches its memory and past chats, and its own tool pic
 from __future__ import annotations
 
 import time
+from types import SimpleNamespace
 
 from argus import ari as ari_mod
 from argus import ari_listen
@@ -23,11 +24,25 @@ def test_a_call_or_a_game_is_noticed():
     assert busy_mod.classify(["MSTeams_8wekyb3d8bbwe"], None) == "call"
     assert busy_mod.classify(["C:#Program Files#Zoom#bin#Zoom.exe"], None) == "call"
     assert busy_mod.classify(["C:#Users#sas#argus#.venv#Scripts#python.exe"], None) is None  # Ari's own ears
+    # apps that hold the mic all day are not calls (that kept Ari quiet all day)
+    for always_on in ("C:#Program Files#Google#Chrome#Application#chrome.exe", "NVIDIA Broadcast", "obs64.exe"):
+        assert busy_mod.classify([always_on], None) is None, always_on
+    assert busy_mod.classify(["C:#Apps#MyCaller.exe"], None, ["mycaller"]) == "call"  # ari.call_apps
+    assert busy_mod.detail(["Discord.exe"], None) == ("call", "discord")
     full = {"fullscreen": True}
     assert busy_mod.classify([], {**full, "exe": r"C:\Program Files\Google\Chrome\Application\chrome.exe"}) is None
     assert busy_mod.classify([], {**full, "exe": r"D:\SteamLibrary\steamapps\common\Hades\Hades.exe"}) == "game"
     assert busy_mod.classify([], {**full, "exe": r"C:\Games\Valorant\VALORANT.exe"}) == "game"
     assert busy_mod.classify([], {"fullscreen": False, "exe": r"C:\Games\x.exe"}) is None
+
+
+def test_quiet_in_calls_can_be_turned_off(monkeypatch):
+    told: list = []
+    monkeypatch.setitem(ari_listen.MIC, "busy", "call")
+    ari_listen._BUSY_AT[0] = 0.0
+    cfg = SimpleNamespace(ari=SimpleNamespace(quiet_in_calls=False, call_apps=[]))
+    ari_listen.check_busy(SimpleNamespace(here=lambda: told.append(1)), every=0, look=lambda: "call", cfg=cfg)
+    assert ari_listen.MIC["busy"] is None and told == [1]
 
 
 def test_the_listener_tells_argus_at_once_when_you_join_a_call(monkeypatch):
@@ -177,3 +192,24 @@ def _approve_lesson(tmp_path, key: str, text: str) -> None:
     lid = guidance.propose(c, time.time(), key, text, {}, None)
     guidance.decide(c, lid, True, time.time())
     c.close()
+
+
+def test_a_voice_hiccup_is_retried_not_swapped_for_a_second_voice(monkeypatch, tmp_path):
+    import io
+    import urllib.request
+
+    from argus.voice import Expressive
+
+    calls = []
+
+    def urlopen(req, timeout=None):
+        calls.append(timeout)
+        if len(calls) == 2:  # the second sentence times out once
+            raise TimeoutError("timed out")
+        return io.BytesIO(b"WAV")
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    e = Expressive("http://127.0.0.1:9", None, SimpleNamespace())
+    assert e.say("one.") == b"WAV" and e.recent()
+    assert e.say("two.") is None and e.say("two.") is None  # down for a minute after a failure ...
+    assert e.say("two.", timeout=90, force=True) == b"WAV" and calls[-1] == 90  # ... unless retried on purpose
