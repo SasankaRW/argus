@@ -1,8 +1,10 @@
 """Are you in a call or a game? (the PC's listener asks every few seconds; Ari then answers in text, not aloud)
 
-- **A call:** another app is using the microphone right now. Windows keeps this per app under
+- **A call:** a calling app is using the microphone right now (Teams, Zoom, Discord, WhatsApp, Skype, Slack, Webex,
+  Telegram, Signal, or names in `ari.call_apps`). Windows keeps this per app under
   HKCU\\...\\CapabilityAccessManager\\ConsentStore\\microphone: an entry with a start time and no stop time is in use.
-  Argus's own listener (Python) doesn't count.
+  Other apps holding the mic (a browser with Helios open, NVIDIA Broadcast, a recorder, Argus's own listener) don't
+  count: they are always on and would keep Ari quiet all day.
 - **A game:** the window in front fills its whole screen and isn't a browser, a video player or Explorer (a
   fullscreen video is not a game), or its program lives in a games folder (Steam, Epic, Riot, ...).
 
@@ -14,7 +16,8 @@ from __future__ import annotations
 import os
 import sys
 
-NOT_CALLS = ("python", "pythonw", "argus", "soundrecorder", "voicerecorder")
+CALL_APPS = ("teams", "msteams", "zoom", "discord", "whatsapp", "skype", "slack", "webex", "telegram", "signal",
+             "viber", "ringcentral", "gotomeeting", "bluejeans")
 NOT_GAMES = ("chrome", "msedge", "firefox", "brave", "opera", "vlc", "mpc-hc", "mpc-be", "potplayer", "spotify",
              "explorer", "applicationframehost", "searchhost", "shellexperiencehost", "powerpnt", "code",
              "windowsterminal", "mpv", "netflix", "lockapp")
@@ -28,20 +31,27 @@ def _short(name: str) -> str:
     return base.removesuffix(".exe").split("_")[0]
 
 
-def classify(mic_apps: list[str], front: dict | None) -> str | None:
+def classify(mic_apps: list[str], front: dict | None, call_apps: tuple[str, ...] | list[str] = ()) -> str | None:
     """"call", "game" or None, from the apps using the mic and the window in front ({exe, fullscreen})."""
-    for app in mic_apps:  # Teams, Zoom, Discord, a browser with Meet: any other app on the mic
+    return detail(mic_apps, front, call_apps)[0]
+
+
+def detail(mic_apps: list[str], front: dict | None,
+           call_apps: tuple[str, ...] | list[str] = ()) -> tuple[str | None, str]:
+    """(kind, the app that made it so): ("call", "zoom"), ("game", "hades"), (None, "")."""
+    known = tuple(CALL_APPS) + tuple(a.lower() for a in call_apps)
+    for app in mic_apps:
         s = _short(app)
-        if s and not any(n in s for n in NOT_CALLS):
-            return "call"
+        if s and any(k in s for k in known):
+            return "call", s
     if front and front.get("fullscreen"):
         exe = str(front.get("exe") or "").lower()
         name = _short(exe)
         if any(d in exe for d in GAME_DIRS):
-            return "game"
+            return "game", name
         if name and not any(n == name or name.startswith(n) for n in NOT_GAMES):
-            return "game"
-    return None
+            return "game", name
+    return None, ""
 
 
 def mic_apps() -> list[str]:  # pragma: no cover - Windows registry
@@ -116,11 +126,11 @@ def front_window() -> dict | None:  # pragma: no cover - Windows only
     return {"exe": exe, "fullscreen": bool(full)}
 
 
-def now() -> str | None:
-    """In a call, a game, or neither (None). Never raises."""
+def now(call_apps: tuple[str, ...] | list[str] = ()) -> tuple[str | None, str]:
+    """(in a call / a game / neither, which app). Never raises."""
     if os.environ.get("ARGUS_BUSY"):  # for trying it out: ARGUS_BUSY=call
-        return os.environ["ARGUS_BUSY"]
+        return os.environ["ARGUS_BUSY"], "ARGUS_BUSY"
     try:
-        return classify(mic_apps(), front_window())
+        return detail(mic_apps(), front_window(), call_apps)
     except Exception:  # noqa: BLE001
-        return None
+        return None, ""

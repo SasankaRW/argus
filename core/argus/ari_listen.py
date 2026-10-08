@@ -76,12 +76,16 @@ class Segmenter:
 
 
 STRONG = "ari|arie|arri|aree|ary|aari|argus"
-WEAK = "harry|hari|hurry|siri|sorry|audi|ori|aria|ali|ally|arty|artie|lorry"  # what "Ari" is misheard as
-_LEAD = r"^(?:(?:uh|um|erm|so|oh|yeah|and|well|okay)[\s,.]+){0,2}"  # "um, hey Ari": a filler or two first
+# How Whisper (tiny) writes "Ari" after "hey": close enough to count even while the PC plays sound (from your logs:
+# "Hey, Adi", "Hey, Addie", "Hey Yaddie")
+CLOSE = "adi|addie|addy|ady|aidy|aidi|yaddie|yadi|airy|arri|ahri|aree|aries|ari's"
+WEAK = "harry|hari|hurry|siri|sorry|audi|ori|aria|ali|ally|arty|artie|lorry|eddie|edie"  # further off: not strict
+_LEAD = r"^(?:(?:uh|um|erm|so|oh|yeah|and|well|okay|hello|hi|hey)[\s,.]+){0,2}"  # "um, hello, hey Ari": fillers
 # The wake phrase only at the START of what was heard: "Hey Ari …", "OK Harry …" (a mishearing), or "Ari, …". A
 # name in the middle ("I was talking to Harry", a video saying "Argus") is not for Ari. That was most false starts.
-WAKE_ANY = re.compile(rf"{_LEAD}(?:(?:hey|hi|hay|ok|okay)[\s,.]*(?:{STRONG}|{WEAK})|(?:{STRONG}))\b[\s,.!?]*", re.I)
-WAKE_STRICT = re.compile(rf"{_LEAD}(?:hey|hi|hay|ok|okay)[\s,.]*(?:{STRONG})\b[\s,.!?]*", re.I)
+WAKE_ANY = re.compile(rf"{_LEAD}(?:(?:hey|hi|hay|ok|okay)[\s,.]*(?:{STRONG}|{CLOSE}|{WEAK})|(?:{STRONG}))\b[\s,.!?]*",
+                      re.I)
+WAKE_STRICT = re.compile(rf"{_LEAD}(?:hey|hi|hay|ok|okay)[\s,.]*(?:{STRONG}|{CLOSE})\b[\s,.!?]*", re.I)
 STRICT = {"on": False}  # the PC is playing sound (a video, music): only a clear "Hey Ari" counts (PlaybackGuard)
 
 
@@ -429,6 +433,10 @@ def local_voice(cfg: Any, picked: Callable[[], dict] | None = None,
             wav = expr.say(text)
             if wav:
                 return wav
+            if expr.recent():  # it was speaking a moment ago: one more, slower try rather than a second voice
+                wav = expr.say(text, timeout=90, force=True)
+                if wav:
+                    return wav
         if piper.configured:
             try:
                 return piper.say(text)
@@ -529,17 +537,23 @@ MIC: dict = {"mic": None, "loudest": None, "busy": None}  # the mic in use, its 
 _BUSY_AT = [0.0]
 
 
-def check_busy(client: AriClient, every: float = 10.0, look: Callable[[], str | None] | None = None) -> None:
-    """In a call or a game? Looked at every `every` seconds; Argus hears at once when it changes."""
+def check_busy(client: AriClient, every: float = 10.0, look: Callable[[], Any] | None = None, cfg: Any = None) -> None:
+    """In a call or a game? Looked at every `every` seconds; Argus hears at once when it changes. Off with
+    ari.quiet_in_calls: false."""
     if time.monotonic() - _BUSY_AT[0] < every:
         return
     _BUSY_AT[0] = time.monotonic()
     from . import busy
 
-    now = (look or busy.now)()
+    a = getattr(cfg, "ari", None)
+    if a is not None and not getattr(a, "quiet_in_calls", True):
+        got: Any = (None, "")
+    else:
+        got = (look or (lambda: busy.now(tuple(getattr(a, "call_apps", ()) or ()))))()
+    now, app = got if isinstance(got, tuple) else (got, "")
     if now != MIC["busy"]:
         MIC["busy"] = now
-        log.info("busy" if now else "not busy", extra={"with": now})
+        log.info("busy" if now else "not busy", extra={"with": now, "app": app})
         client.here()
 VOCAB: dict = {"prompt": "", "heard_as": {}}  # filled from Argus (GET /ari/vocabulary), refreshed every 10 min
 
@@ -695,7 +709,7 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device) -> i
                     client.vocabulary()
                     voc_at[0] = time.monotonic()
                 last = time.monotonic()
-            check_busy(client)
+            check_busy(client, cfg=cfg)
             player.poll()
             talk.tick()
             busy = player.busy or talk.in_conversation or talk.turns.talking
@@ -935,7 +949,7 @@ def main(argv: list[str] | None = None) -> int:
     out_lock = threading.Lock()
 
     def speak(text: str) -> float:
-        check_busy(client)
+        check_busy(client, cfg=cfg)
         if MIC["busy"]:  # in a call or a game: shown on the island, not said
             client.state("done", text)
             return 0.0
@@ -1010,7 +1024,7 @@ def main(argv: list[str] | None = None) -> int:
         you're at the PC, within ari.speak_hours, at most one every 10 minutes. Tells Argus this listener runs."""
         seq, last = -1, 0.0
         while True:
-            check_busy(client)
+            check_busy(client, cfg=cfg)
             if time.monotonic() - last > 30:
                 client.here()
                 last = time.monotonic()

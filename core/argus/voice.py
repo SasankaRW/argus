@@ -138,6 +138,12 @@ class Expressive:
         self.url, self.clip, self.piper, self.timeout = url.rstrip("/"), clip, piper, timeout
         self.headers = {"Content-Type": "application/json", **({"Authorization": f"Bearer {token}"} if token else {})}
         self._down_until = 0.0
+        self.ok_at = 0.0  # when it last made a sentence (a hiccup right after that is retried, not swapped)
+
+    def recent(self, seconds: float = 120) -> bool:
+        import time
+
+        return time.time() - self.ok_at < seconds
 
     @property
     def remote(self) -> bool:
@@ -174,6 +180,7 @@ class Expressive:
                 with urllib.request.urlopen(req, timeout=120) as r:  # noqa: S310 - our own local service
                     r.read()
                 log.info("expressive voice warmed up")
+                self.ok_at = time.time()
                 return True
             except Exception as e:  # noqa: BLE001 - not up yet
                 if i == tries - 1:
@@ -181,19 +188,22 @@ class Expressive:
                 time.sleep(wait)
         return False
 
-    def say(self, text: str) -> bytes | None:
+    def say(self, text: str, timeout: float | None = None, force: bool = False) -> bytes | None:
         import json
         import time
         import urllib.request
 
-        if time.time() < self._down_until:
+        if time.time() < self._down_until and not force:
             return None
         clip = self.ensure_clip()
         body = json.dumps({"text": text, "clip": str(clip.resolve()) if clip else ""}).encode()
         req = urllib.request.Request(self.url + "/say", data=body, method="POST", headers=self.headers)
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as r:  # noqa: S310 - our own local service
-                return r.read()
+            with urllib.request.urlopen(req, timeout=timeout or self.timeout) as r:  # noqa: S310 - our own service
+                wav = r.read()
+            self.ok_at = time.time()
+            self._down_until = 0.0
+            return wav
         except Exception as e:  # noqa: BLE001 - down or failed: Piper for the next 60 s, then try again
             self._down_until = time.time() + 60
             log.warning("expressive voice unavailable, using Piper", extra={"error": str(e)[:200]})
