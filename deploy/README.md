@@ -137,16 +137,17 @@ them; `remove` undoes it. Don't run `dev.ps1 up` on the PC any more (that starts
 ## What runs where
 
 - **The laptop:** Argus itself (Helios, Ari's chat and memory, schedules, backups), plugins that only call web
-  services (`runs_on: any`), and Piper for Ari's voice in Helios and on the phone.
+  services (`runs_on: any`). It makes no voice of its own.
 - **The PC's worker:** everything that needs a model. `models.needs: [gpu]` in the laptop's `argus.yaml` sends
   Ari's replies, Ask and guidance there. While the PC is off, Ari says "Waking the PC, about a minute" and the
   laptop wakes it. Plugins for your files and apps run there too (downloads organizer, screenshots, ...).
 - **The PC, logged in:** "Hey Ari", the island and the PC tools. The listener makes Ari's voice on the PC itself
-  (the expressive voice on its GPU, else Piper there), so speech never goes round through the laptop.
-- **Ari's expressive voice in Helios and on the phone** comes from the PC too: `ari.expressive_share: true` in the
+  (its one voice, on the GPU), so speech never goes round through the laptop.
+- **Ari's voice in Helios and on the phone** comes from the PC too: `ari.expressive_share: true` in the
   PC's `argus.yaml` (the voice answers over Tailscale, with the worker token; `pc-worker.ps1 install` opens port
-  8611 to Tailscale devices only), and on the laptop `ari.voice_engine: expressive` with
-  `expressive_url: http://<pc>.<tailnet>.ts.net:8611`. While the PC is off, Helios gets Piper from the laptop.
+  8611 to Tailscale devices only), and on the laptop
+  `ari.expressive_url: http://<pc>.<tailnet>.ts.net:8611`. While the PC is off, Ari shows its answers as text: there is
+  no second voice.
 - **A plugin whose address is `127.0.0.1`** runs where that service is: `plugins.runs_on: {web: desktop}` for
   SearXNG on the PC, `{tracker: laptop}` once Tracker runs on the laptop. `/opt/argus/.venv/bin/python -m argus
   --check` lists the ones that need it.

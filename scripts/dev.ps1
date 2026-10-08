@@ -43,7 +43,7 @@ Set-Location $Root
 $Py = Join-Path $Root ".venv\Scripts\python.exe"
 
 $Stamp = Join-Path $Root ".venv\argus-deps.hash"
-# Everything the PC runs: plugins' helpers, Ari's voice (Piper), hearing and "Hey Ari" (Whisper), the Ari popup (Qt)
+# Everything the PC runs: plugins' helpers, Ari's voice (Chatterbox), hearing and "Hey Ari" (Whisper), the Ari popup (Qt)
 $Extras = "dev,plugins,voice,listen,popup"
 $UpFile = Join-Path $Root ".venv\argus-up.json"
 $ArgusUrl = "http://127.0.0.1:8600"

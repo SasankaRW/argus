@@ -46,6 +46,5 @@ plugins:
     tracker: {url: "http://127.0.0.1:8282"}
 
 ari:
-  voice_engine: piper      # or expressive, with the PC's voice (ari.expressive_share: true in the PC's argus.yaml):
-  # expressive_url: http://<pc>.<tailnet>.ts.net:8611   # Helios and the phone then hear it; Piper while the PC is off
-  voice: data/voices/en_US-lessac-medium.onnx   # Piper here, for Helios and the phone (pip install -e ".[voice]")
+  # Ari's one voice lives on the PC (ari.expressive_share: true in the PC's argus.yaml); Helios and the phone use it
+  expressive_url: http://sas-pc.tail65c634.ts.net:8611   # while the PC is off, Ari shows text instead of speaking

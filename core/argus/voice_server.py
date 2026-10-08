@@ -1,7 +1,7 @@
 """Ari's expressive voice: Chatterbox (Resemble AI, MIT) on the PC's GPU, as a tiny local web service.
 
 It runs in its own Python environment (Chatterbox pins its own PyTorch, NumPy and Transformers), so argusd talks to
-it over HTTP. The supervisor starts it when ari.voice_engine is "expressive" (docs/setup.md has the setup):
+it over HTTP. The supervisor starts it where its Python environment exists (docs/setup.md has the setup):
 
     .venv-voice\\Scripts\\python core\\argus\\voice_server.py        (listens on 127.0.0.1:8611)
 
@@ -192,7 +192,7 @@ def handler(engine, token: str | None = None) -> type[BaseHTTPRequestHandler]:
                 wav = engine.say(text, their_clip(str(body.get("clip") or "") or None))
             except ValueError as e:
                 return self._send(422, json.dumps({"error": str(e)}).encode())
-            except Exception as e:  # noqa: BLE001 - argusd falls back to Piper
+            except Exception as e:  # noqa: BLE001 - the asker shows text instead
                 log.exception("say failed")
                 return self._send(500, json.dumps({"error": str(e)[:300]}).encode())
             self._send(200, wav, "audio/wav")

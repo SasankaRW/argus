@@ -39,7 +39,7 @@ claude:
   plugin_calls_per_day: 10 # each plugin's share unless its plugin.yaml sets claude_calls_per_day (0 = never)
 
 ari:
-  voice: ""                # a Piper voice (.onnx) for Ari's natural voice; empty: the browser's voice
+  # expressive_url: http://127.0.0.1:8611   # Ari's one voice (Chatterbox on the PC's GPU; docs/setup.md)
   hearing: browser         # browser | whisper (Whisper on the PC's GPU; the browser while the PC is off)
   whisper_model: small.en
 

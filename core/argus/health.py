@@ -105,12 +105,10 @@ def searxng(cfg: Config, get: Callable = fetch) -> Check:
 
 
 def voice(cfg: Config, get: Callable = fetch) -> Check:
-    if cfg.ari.voice_engine != "expressive":
-        return row("voice", "ok", "Piper (the expressive voice is off)")
     try:
         code, h = get(cfg.ari.expressive_url.rstrip("/") + "/health")
     except OSError:
-        return row("voice", "bad", "the expressive voice isn't running (Piper is used)",
+        return row("voice", "bad", "Ari's voice isn't running (Ari shows text, no speech)",
                    "dev.ps1 up starts ari-voice; see logs\\ari-voice-crash.log")
     if not isinstance(h, dict) or code != 200:
         return row("voice", "bad", f"answered {code}", "see logs\\ari-voice-crash.log")

@@ -9,8 +9,9 @@ How it hears:
    tiny.en) and checked for the wake phrase ("Hey Ari", "OK Ari", ...). Nothing leaves the PC.
 3. After the wake phrase: what you said in the same breath is the command; otherwise a chime, then the next thing
    you say (written down with `ari.whisper_model`).
-4. The command goes to Ari (POST /ari, the same conversation as Helios); the answer is spoken with the Piper voice
-   (`ari.voice`) or, without one, printed. When Ari asks "Shall I?", you can answer without the wake phrase.
+4. The command goes to Ari (POST /ari, the same conversation as Helios); the answer is spoken with Ari's one voice
+   (the expressive voice on this PC) or, if it can't speak, printed. When Ari asks "Shall I?", you can answer
+   without the wake phrase.
 """
 
 from __future__ import annotations
@@ -257,7 +258,7 @@ class AriClient:
     def __init__(self, url: str, token: str | None, conv_file: Path,
                  local: Callable[[str], bytes | None] | None = None):
         self.url, self.token, self.conv_file = url.rstrip("/"), token, conv_file
-        self.local = local  # Ari's voice made on this PC (local_voice); argusd's is the fallback
+        self.local = local  # Ari's voice made on this PC (local_voice)
         try:
             self.conv = conv_file.read_text().strip() or None
             self.used = conv_file.stat().st_mtime  # when we last talked (touched on every message)
@@ -346,115 +347,35 @@ class AriClient:
             pass
 
     def voice(self, text: str) -> bytes | None:
-        if self.local is not None:
-            wav = self.local(text)
-            if wav:
-                return wav
+        """Ari's voice for a text, or None (then it is shown, not spoken)."""
+        if self.local is not None:  # made here, on the PC's GPU: asking argusd would reach the same voice
+            return self.local(text)
         try:
             return self._req("POST", "/ari-voice/say", {"text": text}, timeout=60)
         except urllib.error.HTTPError:
             return None
 
-    def picked_voice(self) -> dict:
-        """The voice you picked in Helios: {"current", "speed"}."""
-        return json.loads(self._req("GET", "/ari-voice/voices", None, timeout=10))
 
-
-def local_voice(cfg: Any, picked: Callable[[], dict] | None = None,
-                run: Callable[[Callable[[], None]], None] | None = None) -> Callable[[str], bytes | None] | None:
-    """Ari's voice made here, where you hear it: the expressive voice server on this PC (its GPU), else Piper here.
-    Otherwise every sentence goes to argusd and back, and after the move argusd is on the laptop, which has
-    neither the GPU nor the voice server. None when this PC has no voice set up (argusd's voice is used).
-
-    `picked()`: the voice you picked in Helios ({"current", "speed"}, from argusd). It is followed here too (looked
-    at once a minute): Piper uses it, and the expressive voice's clip is made again from it (unless ari.voice_clip
-    names your own clip)."""
-    from .voice import CLIP_TEXT, Expressive, Voice, download
+def local_voice(cfg: Any) -> Callable[[str], bytes | None]:
+    """Ari's voice made here, where you hear it: the expressive voice server on this PC's GPU. Otherwise every
+    sentence goes to argusd and back, and after the move argusd is on the laptop, which has neither the GPU nor
+    the voice server. If the voice can't speak, the answer is None and the words are shown instead."""
+    from .voice import Expressive
 
     a = cfg.ari
-    piper = Voice(a.voice, cfg.base_dir)
-    voices = piper.path.parent if piper.path is not None else cfg.db_path.parent / "voices"
-    expr = None
-    clip: Path | None = None
-    if a.voice_engine == "expressive":
-        if a.voice_clip:
-            clip = Path(a.voice_clip).expanduser()
-            clip = clip if clip.is_absolute() else cfg.base_dir / clip
-        else:  # the clip argusd made from the Piper voice when it ran here
-            clip = voices / "ari-clip.wav"
-        expr = Expressive(a.expressive_url, clip, piper)
-        threading.Thread(target=expr.warm, daemon=True, name="voice-warm").start()
-    if expr is None and not piper.configured and picked is None:
-        return None
-    own_clip = bool(a.voice_clip)
-    seen = {"at": 0.0, "voice": None}
-    version = [0]  # goes up when the voice changes (the fillers are made again)
-    source = voices / "ari-clip.json"  # which Piper voice the clip was made from
-
-    def follow() -> None:
-        if picked is None or time.monotonic() - seen["at"] < 60:
-            return
-        seen["at"] = time.monotonic()
-        start = run or (lambda f: threading.Thread(target=f, daemon=True, name="voice-follow").start())
-        start(apply)  # in the background: speech never waits for it
-
-    def apply() -> None:
-        try:
-            want = picked()
-            name, speed = want.get("current"), float(want.get("speed") or 1.0)
-            if not name:
-                return
-            path = voices / f"{name}.onnx"
-            if not path.exists():
-                path = download(name, voices)
-            piper.use(path, speed)
-            if seen["voice"] not in (None, name):
-                version[0] += 1
-            seen["voice"] = name
-            if expr is None or own_clip or clip is None:
-                return
-            try:
-                made_from = json.loads(source.read_text()).get("voice")
-            except (OSError, ValueError):
-                made_from = None
-            if made_from is None and clip.exists():  # an older clip: keep it, remember what it is now
-                source.write_text(json.dumps({"voice": name}))
-            elif made_from != name:
-                clip.write_bytes(piper.say(CLIP_TEXT))
-                source.write_text(json.dumps({"voice": name}))
-                version[0] += 1
-                log.info("voice clip made from the picked voice", extra={"voice": name})
-        except Exception as e:  # noqa: BLE001 - argusd away, no piper here, download failed: keep what we have
-            log.info("could not follow the picked voice", extra={"error": str(e)[:200]})
+    clip = Path(a.voice_clip or cfg.db_path.parent / "voices" / "ari-clip.wav").expanduser()
+    clip = clip if clip.is_absolute() else cfg.base_dir / clip
+    expr = Expressive(a.expressive_url, clip)
+    threading.Thread(target=expr.warm, daemon=True, name="voice-warm").start()
 
     def say(text: str) -> bytes | None:
-        follow()
-        if expr is not None:
-            wav = expr.say(text)
-            if wav:
-                return wav
-            if expr.recent():  # it was speaking a moment ago: one more, slower try rather than a second voice
-                wav = expr.say(text, timeout=90, force=True)
-                if wav:
-                    return wav
-        if piper.configured:
-            try:
-                return piper.say(text)
-            except Exception as e:  # noqa: BLE001 - piper-tts or the voice file missing here: argusd's voice
-                log.info("no local voice", extra={"error": str(e)[:200]})
+        wav = expr.say(text)
+        if wav:
+            return wav
+        if expr.recent():  # it was speaking a moment ago: one more, slower try rather than giving up
+            return expr.say(text, timeout=90, force=True)
         return None
 
-    def same_voice(text: str) -> bytes | None:
-        """Only Ari's main voice: the expressive one when it is set up (None while it is still loading), so the
-        fillers never come out in a second voice."""
-        if expr is None:
-            return say(text)
-        follow()
-        return expr.say(text)
-
-    say.same_voice = same_voice  # type: ignore[attr-defined]
-    say.version = lambda: version[0]  # type: ignore[attr-defined]
-    follow()  # the picked voice from the start
     return say
 
 
@@ -530,6 +451,19 @@ def hush_from(evs: list[dict]) -> None:
             d = e.get("data") or {}
             EARS["until"] = 0.0 if d.get("listening", True) else float(d.get("until") or 1e13)
             log.info("listening" if not paused() else "listening paused")
+
+
+def ask_text(d: dict) -> str:
+    """What Ari says when a task of its needs you ("Ari is stuck", "Ari needs something to go on", a yes / no)."""
+    lines = [str(x) for x in d.get("summary") or []]
+    title = str(d.get("title") or "")
+    if title.startswith("Ari is stuck"):
+        return "I'm stuck on that one. Have a look at the island and give me a hint?"
+    if title.startswith("Ari needs") and len(lines) > 1:
+        return f"Quick question: {lines[1].rstrip('?')}? It's on the island."
+    if title.startswith("Ari wants to "):  # "Ari wants to press "Buy now"" -> "Can I press "Buy now"?"
+        return f"Can I {title[len('Ari wants to '):]}? Yes or no on the island."
+    return f"{title}. Okay to go ahead? It's on the island."
 
 
 MIC: dict = {"mic": None, "loudest": None, "busy": None}  # the mic in use, its loudest level in the last minute,
@@ -626,14 +560,13 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device) -> i
         return vl.wav_samples(wav)
 
     def synth_quiet(text: str):
-        same = getattr(client.local, "same_voice", None)
-        wav = same(text) if same is not None else client.voice(text)  # fillers: Ari's main voice only
+        wav = client.voice(text)  # fillers: Ari's one voice
         return vl.wav_samples(wav) if wav else None
 
     player = vl.Player(synth, open_stream, report=client.state)
     gate = vl.EchoGate()
 
-    fillers = vl.Fillers(synth_quiet, version=getattr(client.local, "version", None))
+    fillers = vl.Fillers(synth_quiet)
 
     def wait_sound(chat: bool) -> None:
         """An answer taking a while: a short "hmm, let me check" (then the soft pulse), or just the pulse (small talk
@@ -677,7 +610,7 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device) -> i
         seq = -1
         while True:
             t0 = time.monotonic()
-            evs, seq = client.wakes(seq, "ari.wake,ari.notice,ari.listening,ari.stop", wait=20)
+            evs, seq = client.wakes(seq, "ari.wake,ari.notice,ari.listening,ari.stop,ari.ask", wait=20)
             hush_from(evs)
             if any(e.get("kind") == "ari.stop" for e in evs):
                 log.info("stop button")
@@ -687,6 +620,9 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device) -> i
             if any(e.get("kind") == "ari.wake" for e in evs):
                 log.info("talk button")
                 talk.wake()
+            asks = [e for e in evs if e.get("kind") == "ari.ask"]
+            if asks and not paused() and not MIC["busy"]:  # Ari's task needs you: said once, the box is on the island
+                player.add(vl.sentences(ask_text(asks[-1].get("data") or {})))
             notes = [e for e in evs if e.get("kind") == "ari.notice"]
             if notes and cfg.ari.speak_up and not paused() and speak_hours_ok(cfg.ari.speak_hours, time.localtime()) \
                     and idle_seconds() < 300 and time.monotonic() - spoke_up[0] > 600 and not player.busy \
@@ -942,7 +878,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ari-listen needs its extras: pip install -e .[listen]  ({e})", file=sys.stderr)
         return 2
     client = AriClient(args.url, token, cfg.db_path.parent / "ari-listen.conv")
-    client.local = local_voice(cfg, client.picked_voice)
+    client.local = local_voice(cfg)
 
     quiet_until = [0.0]  # just after Ari stops talking, the room's echo is dropped
     talking = {"until": 0.0, "text": "", "n": 0}  # while Ari speaks: only "stop" / "Hey Ari" are listened for
@@ -1029,7 +965,7 @@ def main(argv: list[str] | None = None) -> int:
                 client.here()
                 last = time.monotonic()
             t0 = time.monotonic()
-            evs, seq = client.wakes(seq, "ari.wake,ari.notice,ari.listening,ari.stop", wait=20)  # a long poll
+            evs, seq = client.wakes(seq, "ari.wake,ari.notice,ari.listening,ari.stop,ari.ask", wait=20)  # a long poll
             hush_from(evs)
             if any(e.get("kind") == "ari.stop" for e in evs):
                 log.info("stop button")
@@ -1039,6 +975,9 @@ def main(argv: list[str] | None = None) -> int:
                 log.info("talk button")
                 listener.wake()
                 quiet_until[0] = time.monotonic() + 0.2
+            asks = [e for e in evs if e.get("kind") == "ari.ask"]
+            if asks and not paused():
+                speak(ask_text(asks[-1].get("data") or {}))
             notes = [e for e in evs if e.get("kind") == "ari.notice"]
             if notes and cfg.ari.speak_up and not paused() and speak_hours_ok(cfg.ari.speak_hours, time.localtime()) \
                     and idle_seconds() < 300 and time.monotonic() - spoke_up[0] > 600 and not talking["until"]:

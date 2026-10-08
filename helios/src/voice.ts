@@ -1,7 +1,7 @@
 // Ari's ears and voice in the browser.
-// Hearing: the browser's speech recognition (Chrome, Edge). Voice: Argus's natural voice (Piper on the PC) when it
-// is set up and the PC is on, else the browser's own voice. "Hey Ari": a continuous listener that hands over what
-// follows the wake phrase.
+// Hearing: the browser's speech recognition (Chrome, Edge). Voice: Ari's one voice, made by Argus (the voice on
+// the PC). When it can't speak (the PC is off, it is loading) the words stay on screen and nothing else speaks.
+// "Hey Ari": a continuous listener that hands over what follows the wake phrase.
 
 import { getToken } from "./api";
 import { ariNow, ariReport, ariSet, ariTell, setServerLook } from "./ariState";
@@ -10,7 +10,6 @@ import { plain } from "./spoken";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const W = window as any;
 export const Speech: any = W.SpeechRecognition || W.webkitSpeechRecognition; // eslint-disable-line @typescript-eslint/no-explicit-any
-export const canSpeak = typeof window !== "undefined" && "speechSynthesis" in window;
 
 // "Hey Ari" as speech recognizers write it: Ari alone in its own spellings, or after hey/hi/ok also the words it
 // is often misheard as (Harry, Siri, Audi, ...). Anywhere in what was heard; what follows is the command.
@@ -33,27 +32,8 @@ export function setPref(key: string, v: boolean) {
   window.dispatchEvent(new CustomEvent("ari-pref", { detail: { key, v } }));
 }
 
-function browserVoice(): SpeechSynthesisVoice | null {
-  const vs = window.speechSynthesis.getVoices().filter((v) => v.lang.startsWith("en"));
-  // the nicer voices first (Chrome's Google voices, Edge's "Natural" ones)
-  return vs.find((v) => /natural|neural/i.test(v.name)) ?? vs.find((v) => /google (uk|us) english/i.test(v.name)) ?? vs[0] ?? null;
-}
-
-async function speakBrowser(text: string): Promise<void> {
-  if (!canSpeak) return;
-  await new Promise<void>((res) => {
-    const u = new SpeechSynthesisUtterance(text);
-    const v = browserVoice();
-    if (v) u.voice = v;
-    u.rate = 1.02;
-    u.onend = () => res(); u.onerror = () => res();
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(u);
-  });
-}
-
-// Piper through Argus (POST /ari/say -> audio). Falls back to the browser voice when it isn't available.
-async function speakPiper(text: string): Promise<boolean> {
+// Ari's voice through Argus (POST /ari-voice/say -> audio). False when it can't speak right now.
+async function speakAri(text: string): Promise<boolean> {
   try {
     const t = getToken();
     const r = await fetch("/ari-voice/say", { method: "POST", headers: { "Content-Type": "application/json", ...(t ? { Authorization: `Bearer ${t}` } : {}) },
@@ -75,18 +55,17 @@ export async function speak(text: string): Promise<void> {
   speaking++;
   ariTell("speaking", clean);
   try {
-    if (status.voice && pref("piper", true) && await speakPiper(voiced)) return;
-    await speakBrowser(clean);
+    if (status.voice) await speakAri(voiced);
   } finally {
     speaking--;
     if (!speaking && ariNow().phase === "speaking") { ariSet("done", clean); ariReport("idle"); }
   }
 }
 
-export function stopSpeaking() { if (canSpeak) window.speechSynthesis.cancel(); for (const a of playing) a.pause(); }
+export function stopSpeaking() { for (const a of playing) a.pause(); }
 const playing = new Set<HTMLAudioElement>();
 
-// What Argus offers (GET /ari-voice): Piper for speaking, Whisper on the PC for hearing.
+// What Argus offers (GET /ari-voice): Ari's voice for speaking (while it can), Whisper on the PC for hearing.
 export type VoiceStatus = { voice: boolean; hearing: "browser" | "whisper"; whisper_ready: boolean; popup_here?: boolean; pill?: string };
 let status: VoiceStatus = { voice: false, hearing: "browser", whisper_ready: false };
 export function setVoiceStatus(s: VoiceStatus) { status = s; setServerLook(s.pill); window.dispatchEvent(new CustomEvent("ari-status")); }

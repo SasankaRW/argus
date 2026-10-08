@@ -8,10 +8,10 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 
 class ConfigError(Exception):
@@ -277,6 +277,14 @@ class ShareConfig(_Strict):
 
 
 class AriConfig(_Strict):
+    @model_validator(mode="before")
+    @classmethod
+    def _old_voice_settings(cls, values: Any) -> Any:
+        """`voice` (a Piper file) and `voice_engine` are gone: one voice. Old argus.yaml files still load."""
+        if isinstance(values, dict):
+            values = {k: v for k, v in values.items() if k not in ("voice", "voice_engine")}
+        return values
+
     # Who Ari is, in a few sentences (empty: the witty companion, worker/think.py PERSONA). Used in every reply.
     personality: str = ""
     call_me: str = ""  # what Ari calls you now and then (e.g. "Sas"); empty: no name
@@ -284,20 +292,16 @@ class AriConfig(_Strict):
     # ...but not while you're away: after this many minutes with no keyboard, mouse or question, the model is let go
     # (GPU memory and power); it is loaded again the moment you're back. 0: always warm.
     rest_after_min: int = Field(30, ge=0, le=1440)
-    # Ari's natural voice: a Piper voice file (.onnx, with its .onnx.json next to it) on the machine running argusd.
-    # Empty: the browser's own voice.
-    # Get one: python -m piper.download_voices en_US-lessac-medium --data-dir data/voices
-    voice: str = ""
-    # "expressive": Chatterbox on the PC's GPU (moods, real laughs and sighs; its own Python environment, see
-    # docs/setup.md), with the Piper voice above as the fallback. "piper": Piper only.
-    voice_engine: Literal["piper", "expressive"] = "piper"
+    # Ari's voice: one voice, Chatterbox on the PC's GPU (moods, real laughs and sighs; its own Python environment,
+    # see docs/setup.md). If it can't speak, Ari shows the words and stays silent; there is no second voice.
     expressive_url: str = "http://127.0.0.1:8611"
     expressive_python: str = ".venv-voice/Scripts/python.exe"  # the environment Chatterbox is installed in
     expressive_model: Literal["turbo", "standard"] = "turbo"
     # On the PC: the expressive voice also answers over Tailscale (the worker token required), so Argus on the
     # laptop uses it for Helios and the phone (its expressive_url: http://<pc>.<tailnet>.ts.net:8611).
     expressive_share: bool = False
-    voice_clip: str = ""  # 5-15 s of the voice Ari should sound like (empty: a clip made from the Piper voice)
+    # 5-15 s of the voice Ari should sound like (empty: data/voices/ari-clip.wav on the PC, else Chatterbox's own)
+    voice_clip: str = ""
     # How Ari hears you: "browser" (the browser's speech recognition) or "whisper" (Whisper on the PC: private and
     # better with accents; the browser is used while the PC is off).
     hearing: Literal["browser", "whisper"] = "browser"

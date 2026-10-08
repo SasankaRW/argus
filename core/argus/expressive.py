@@ -1,8 +1,8 @@
 """Ari's spoken style: a mood for each reply and a few sounds people make ([laugh], [sigh], ...).
 
-The model writes a reply like "[cheerful] Oh nice, you finally fixed it! [laugh] What was it?". The expressive
-voice (voice_server.py, Chatterbox) hears the mood as how lively to sound and the sounds as real laughs and sighs;
-Piper and the screen get the words alone. Only plain standard-library code here: the voice server imports it from
+The model writes a reply like "[cheerful] Oh nice, you finally fixed it! [laugh] What was it?". Ari's voice
+(voice_server.py, Chatterbox) hears the mood as how lively to sound and the sounds as real laughs and sighs; the
+screen gets the words alone. Only plain standard-library code here: the voice server imports it from
 its own environment.
 """
 
@@ -23,10 +23,6 @@ STYLE = {
     "sympathetic": (0.4, 0.3, 0.7),
     "serious": (0.35, 0.55, 0.7),
 }
-# Piper can't do moods; a touch of speed is all it gets
-PIPER_SPEED = {"excited": 1.08, "cheerful": 1.04, "playful": 1.04, "calm": 0.95, "sympathetic": 0.93,
-               "serious": 0.97}
-
 # Moods a model makes up ("[curious]", "[warm]") are not in the list: each maps to the nearest one, and any other
 # tag is dropped. Left alone it was read out loud ("curious ...") and shown on the island.
 ALIASES = {
@@ -74,7 +70,7 @@ def mood_of(text: str) -> tuple[str, str]:
 
 
 def plain(text: str) -> str:
-    """The words alone (for the screen, Piper, the popup): no mood, no [laugh]."""
+    """The words alone (for the screen, the popup): no mood, no [laugh]."""
     t = _TAG.sub(" ", _BAD.sub(" ", normalise(text)))
     t = re.sub(r"\s+([.,!?])", r"\1", re.sub(r"\s{2,}", " ", t)).strip()
     return t

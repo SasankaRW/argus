@@ -9,7 +9,7 @@ from argus.config import Config
 def cfg(**ari):
     return Config.model_validate({
         "models": {"tiers": {"T1": {"provider": "ollama", "model": "qwen3:latest"}}, "chain": ["T1"]},
-        "ari": {"voice_engine": "expressive", **ari}, "plugins": {"live": ["web"]}})
+        "ari": {**ari}, "plugins": {"live": ["web"]}})
 
 
 def fake(routes):
@@ -64,10 +64,9 @@ def test_ollama_down_or_a_model_not_pulled():
     assert any(c["level"] == "bad" and "ollama pull qwen3:latest" in c["fix"] for c in r)
 
 
-def test_a_voice_still_loading_and_piper():
+def test_a_voice_still_loading():
     loading = {"8611/health": (200, {"ok": True, "model": "turbo", "device": None, "loaded": False})}
     assert health.voice(cfg(), fake(loading))["level"] == "warn"
-    assert health.voice(Config.model_validate({}), fake({}))["level"] == "ok"
 
 
 def test_searxng_refusing_json_is_named():

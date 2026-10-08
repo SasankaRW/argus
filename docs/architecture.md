@@ -354,7 +354,8 @@ helios:  {node: {label: Downloads, group: files}, rules: {file: rules.yaml}}
 **Plugins today:**
 
 - **Files:** downloads-organizer, screenshot-renamer, duplicate-finder, knowledge (your files, indexed for Ari).
-- **PC control (each a separate plugin):** pc-apps, pc-media, pc-windows, pc-system, pc-keys.
+- **PC control (each a separate plugin):** pc-apps, pc-media, pc-windows, pc-system, pc-keys, and **workstation**
+  (Ari's Workstation: Ari's own virtual desktop where it opens what it works on, and hands windows to you).
 
 </details>
 
@@ -454,7 +455,8 @@ data). General knowledge is answered by the local model when it's sure.
 **Voice:**
 
 - **Hearing:** the browser's speech recognition, or Whisper on the PC (private).
-- **Speaking:** Piper (natural voice) or the browser.
+- **Speaking:** one voice: Chatterbox on the PC's GPU (`voice_server.py`). If it can't speak, Ari shows the words
+  and stays silent; there is no second voice.
 - **`ari_listen.py`:** "Hey Ari" on the PC mic with no browser. Tiny Whisper listens for the wake phrase;
   nothing leaves the PC.
 
