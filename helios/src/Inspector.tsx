@@ -386,7 +386,10 @@ const whereTo = (c: { from: string | null; to: string | null }) => {
 };
 
 type Sample = { id: number; tier: string | null; escalated: boolean; verdict: "correct" | "wrong" | null;
-  input: unknown; output: unknown; correction: unknown };
+  input: unknown; output: unknown; correction: unknown;
+  lessons?: { id: number; count: number; approved_at: number | null; text: string } };
+
+const day = (t: number | null | undefined) => (t ? new Date(t * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short" }) : "");
 
 // The model answers this job got, each with Correct / Wrong: correct ones become tests, wrong ones teach the
 // nightly review (Helios > Plugins > the plugin > Learning).
@@ -408,6 +411,7 @@ function ModelAnswers({ id, tick }: { id: string; tick: number }) {
         <div key={s.id} className="sample">
           <div className="sample-h">
             <span className="mono muted">{s.tier ?? "?"}{s.escalated ? " · after a rejected answer" : ""}</span>
+            {s.lessons && <span className="pill" title={s.lessons.text}>lessons used: {s.lessons.count}{s.lessons.approved_at ? ` (approved ${day(s.lessons.approved_at)})` : ""}</span>}
             <span className="grow" />
             {s.verdict ? (
               <>

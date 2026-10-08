@@ -341,6 +341,9 @@ class GuidanceConfig(_Strict):
     at: str = Field("03:30", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")  # the nightly review (needs Claude)
     keep_samples: int = Field(200, ge=10, le=5000)  # model answers kept per playbook (marked ones always stay)
     max_per_review: int = Field(12, ge=1, le=50)  # mistakes shown to Claude per playbook
+    # Lesson sets tried per playbook: each one after the first fixes what the best so far still gets wrong on the
+    # tests (the GEPA idea); the best scoring set is offered. More: better lessons, more Claude calls.
+    candidates: int = Field(3, ge=1, le=6)
 
 
 class AriHealthConfig(_Strict):

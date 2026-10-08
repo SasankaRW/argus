@@ -958,6 +958,13 @@ main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .evalruns { display: flex; flex-direction: row; align-items: flex-end; gap: 4px; height: 40px; }
 .evalruns i { display: block; width: 12px; border-radius: 3px 3px 1px 1px; background: var(--ok); }
 .evalruns i.warn { background: var(--amber); } .evalruns i.bad { background: var(--bad); }
+.trend { margin: 8px 0; }
+.trend-bars { display: flex; align-items: flex-end; gap: 6px; height: 64px; }
+.trend-w { display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 2px; height: 100%; flex: 1 1 0; max-width: 40px; }
+.trend-w.lesson { border-left: 2px solid var(--violet); padding-left: 2px; }
+.trend-w i { display: block; width: 100%; border-radius: 3px 3px 1px 1px; background: var(--ok); }
+.trend-w i.warn { background: var(--amber); } .trend-w i.bad { background: var(--bad); } .trend-w i.none { background: var(--line2); }
+.trend-w span { font-size: 10px; color: var(--tx3); }
 .test-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto; gap: 10px; align-items: center; font-size: 12px; padding: 4px 0; border-top: 1px solid var(--line); }
 .test-in, .test-out { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .try { margin-top: 6px; display: flex; flex-direction: column; gap: 6px; }

@@ -270,7 +270,8 @@ function Learning({ d, reload }: { d: Detail; reload: () => void }) {
             <span className="ok"><b>{p.correct}</b> correct</span><span className="bad"><b>{p.wrong}</b> wrong</span>
             {p.to_review > 0 && <span className="warn"><b>{p.to_review}</b> to review</span>}
           </div>
-          <Tests pkey={p.key} tests={p.correct} />
+          <Trend pkey={p.key} />
+          <Tests pkey={p.key} tests={p.correct} lessons={p.lessons.some((l) => l.state === "active")} />
           {p.lessons.map((l) => (
             <div key={l.id} className={`lesson ${l.state}`}>
               <div className="lesson-h">
@@ -299,7 +300,7 @@ type TestSample = { id: number; input: unknown; output: unknown; correction: unk
 
 // A playbook's tests: answers you marked Correct (else ones the small model got right), replayed on the first local
 // tier with the lessons in use. "Run tests now" and the pass-rate history.
-function Tests({ pkey, tests }: { pkey: string; tests: number }) {
+function Tests({ pkey, tests, lessons }: { pkey: string; tests: number; lessons: boolean }) {
   const [d, setD] = useState<{ tests: TestSample[]; runs: EvalRun[] } | null>(null);
   const [job, setJob] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -316,16 +317,18 @@ function Tests({ pkey, tests }: { pkey: string; tests: number }) {
     }, 2000);
     return () => clearInterval(t);
   }, [job]); // eslint-disable-line react-hooks/exhaustive-deps
-  const run = async () => {
+  const run = async (compare = false) => {
     setNote(null);
-    const r = await api<{ job_id: string | null; note?: string; tests?: number }>(`/guidance/${encodeURIComponent(pkey)}/evals`, { method: "POST" }).catch((e) => ({ job_id: null, note: String(e) }));
+    const r = await api<{ job_id: string | null; note?: string; tests?: number }>(`/guidance/${encodeURIComponent(pkey)}/evals${compare ? "?compare=true" : ""}`, { method: "POST" }).catch((e) => ({ job_id: null, note: String(e) }));
     if (r.job_id) setJob(r.job_id); else setNote(r.note ?? "could not start");
   };
   const remove = async (t: TestSample) => {
     await api(`/samples/${t.id}/verdict`, { method: "POST", body: JSON.stringify({ verdict: null }) }).catch(() => {});
     load();
   };
-  const last = d?.runs[d.runs.length - 1];
+  const runs = (d?.runs ?? []).filter((r) => r.why !== "without lessons");
+  const last = runs[runs.length - 1];
+  const bare = d?.runs.find((r) => r.why === "without lessons" && last && r.job_id === last.job_id);
   const pct = (r: EvalRun) => (r.total ? Math.round((r.passed / r.total) * 100) : 0);
   return (
     <div className="tests">
@@ -334,13 +337,15 @@ function Tests({ pkey, tests }: { pkey: string; tests: number }) {
         {last ? <span className={`mono ${pct(last) >= 90 ? "ok" : pct(last) >= 60 ? "warn" : "bad"}`}>{last.passed}/{last.total} passed</span>
           : <span className="muted">{tests ? "not run yet" : "none yet: mark answers Correct on the plugin's runs"}</span>}
         {last && <span className="muted mono">{last.tier ?? ""} · {last.why === "review" ? "nightly review" : "run by you"} · {new Date(last.at * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short" })}</span>}
+        {bare && <span className="mono muted" title="the same tests with no lessons">without lessons: {bare.passed}/{bare.total}</span>}
         <span className="grow" />
         {d && d.tests.length > 0 && <button type="button" className="btn" onClick={() => setOpen(!open)}>{open ? "hide" : "show"} {d.tests.length} tests</button>}
-        <button type="button" className="primary" disabled={!!job || !d?.tests.length} onClick={run}>{job ? "running…" : "run tests now"}</button>
+        {lessons && <button type="button" className="btn" disabled={!!job || !d?.tests.length} onClick={() => run(true)} title="run the tests with and without the lessons in use">with / without lessons</button>}
+        <button type="button" className="primary" disabled={!!job || !d?.tests.length} onClick={() => run()}>{job ? "running…" : "run tests now"}</button>
       </div>
-      {d && d.runs.length > 1 && (
+      {runs.length > 1 && (
         <div className="evalruns" aria-label="pass rate of the last runs">
-          {d.runs.map((r) => <i key={r.id} title={`${r.passed}/${r.total} · ${new Date(r.at * 1000).toLocaleString()}`}
+          {runs.map((r) => <i key={r.id} title={`${r.passed}/${r.total} · ${new Date(r.at * 1000).toLocaleString()}`}
             className={pct(r) >= 90 ? "ok" : pct(r) >= 60 ? "warn" : "bad"} style={{ height: `${Math.max(6, pct(r))}%` }} />)}
         </div>
       )}
@@ -353,6 +358,37 @@ function Tests({ pkey, tests }: { pkey: string; tests: number }) {
           {t.verdict === "correct" ? <button type="button" className="linkbtn" onClick={() => remove(t)}>remove</button> : <span className="muted">auto</span>}
         </div>
       ))}
+    </div>
+  );
+}
+
+type Week = { from: number; answers: number; first_right: number; escalated: number; wrong: number; with_lessons: number; rate: number | null };
+
+// Is it learning? Per week, how often the first (small) model's answer stood, and when lessons were approved
+// (a line before that week's bar).
+function Trend({ pkey }: { pkey: string }) {
+  const [t, setT] = useState<{ weeks: Week[]; lessons: { id: number; at: number }[] } | null>(null);
+  useEffect(() => { api<{ weeks: Week[]; lessons: { id: number; at: number }[] }>(`/guidance/${encodeURIComponent(pkey)}/trend?weeks=8`).then(setT).catch(() => setT(null)); }, [pkey]);
+  if (!t || t.weeks.every((w) => w.answers === 0)) return null;
+  const wk = 7 * 86400;
+  const label = (x: number) => new Date(x * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  return (
+    <div className="trend">
+      <div className="tests-h"><span className="sect-i"># first model right, per week</span>
+        <span className="muted">a line marks approved lessons</span></div>
+      <div className="trend-bars">
+        {t.weeks.map((w) => {
+          const pct = w.rate == null ? 0 : Math.round(w.rate * 100);
+          const lesson = t.lessons.some((l) => l.at >= w.from && l.at < w.from + wk);
+          return (
+            <div key={w.from} className={`trend-w${lesson ? " lesson" : ""}`}
+              title={`week of ${label(w.from)}: ${w.answers} answers, ${w.first_right} right first time, ${w.escalated} escalated, ${w.wrong} marked wrong${w.with_lessons ? `, ${w.with_lessons} with lessons` : ""}`}>
+              <i className={w.rate == null ? "none" : pct >= 90 ? "ok" : pct >= 60 ? "warn" : "bad"} style={{ height: `${w.rate == null ? 3 : Math.max(6, pct)}%` }} />
+              <span className="mono">{w.rate == null ? "–" : `${pct}%`}</span>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

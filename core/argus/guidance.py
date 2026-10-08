@@ -31,9 +31,11 @@ def add_sample(conn: sqlite3.Connection, now: float, *, job_id: str, plugin: str
     conn.execute("INSERT INTO playbooks (key, plugin, name, text, schema, first_seen, last_seen) VALUES (?,?,?,?,?,?,?)"
                  " ON CONFLICT(key) DO UPDATE SET last_seen = excluded.last_seen",
                  (key, plugin, name, playbook, json.dumps(schema) if schema else None, now, now))
-    cur = conn.execute("INSERT INTO samples (job_id, plugin, playbook, input, output, tier, escalated, created_at)"
-                       " VALUES (?,?,?,?,?,?,?,?)",
-                       (job_id, plugin, key, _j(input), _j(output), tier, int(escalated), now))
+    lessons = conn.execute("SELECT id FROM lessons WHERE playbook = ? AND state = 'active'", (key,)).fetchone()
+    cur = conn.execute("INSERT INTO samples (job_id, plugin, playbook, input, output, tier, escalated, created_at,"
+                       " lessons_id) VALUES (?,?,?,?,?,?,?,?,?)",
+                       (job_id, plugin, key, _j(input), _j(output), tier, int(escalated), now,
+                        lessons[0] if lessons else None))
     # keep the newest `keep` without a verdict; marked ones are the eval set and stay
     conn.execute("DELETE FROM samples WHERE playbook = ? AND verdict IS NULL AND id NOT IN (SELECT id FROM samples"
                  " WHERE playbook = ? AND verdict IS NULL ORDER BY id DESC LIMIT ?)", (key, key, keep))
@@ -53,10 +55,40 @@ def _p(s: str | None) -> Any:
         return s
 
 
-def sample_json(r: sqlite3.Row) -> dict[str, Any]:
-    return {"id": r["id"], "job_id": r["job_id"], "plugin": r["plugin"], "playbook": r["playbook"],
-            "input": _p(r["input"]), "output": _p(r["output"]), "tier": r["tier"], "escalated": bool(r["escalated"]),
-            "verdict": r["verdict"], "correction": _p(r["correction"]), "created_at": r["created_at"]}
+def sample_json(r: sqlite3.Row, conn: sqlite3.Connection | None = None) -> dict[str, Any]:
+    """One kept answer. With `conn`: also the lessons that were in force when it was given ("lessons used")."""
+    out = {"id": r["id"], "job_id": r["job_id"], "plugin": r["plugin"], "playbook": r["playbook"],
+           "input": _p(r["input"]), "output": _p(r["output"]), "tier": r["tier"], "escalated": bool(r["escalated"]),
+           "verdict": r["verdict"], "correction": _p(r["correction"]), "created_at": r["created_at"]}
+    lid = r["lessons_id"] if "lessons_id" in r.keys() else None
+    if conn is not None and lid:
+        lr = conn.execute("SELECT id, text, decided_at FROM lessons WHERE id = ?", (lid,)).fetchone()
+        if lr is not None:
+            out["lessons"] = {"id": lr["id"], "count": sum(1 for ln in lr["text"].splitlines() if ln.strip()),
+                              "approved_at": lr["decided_at"], "text": lr["text"]}
+    return out
+
+
+def trend(conn: sqlite3.Connection, key: str, now: float, weeks: int = 8) -> dict[str, Any]:
+    """Is it learning? Per week: answers, how many the first model got right (not escalated, not marked wrong),
+    escalations, answers marked wrong; and when lessons were approved (to see before / after)."""
+    start = now - weeks * 7 * 86400
+    rows = conn.execute("SELECT created_at, escalated, verdict, lessons_id FROM samples WHERE playbook = ? AND"
+                        " created_at >= ? ORDER BY created_at", (key, start)).fetchall()
+    out = []
+    for w in range(weeks):
+        a, b = start + w * 7 * 86400, start + (w + 1) * 7 * 86400
+        week = [r for r in rows if a <= r["created_at"] < b]
+        ok = sum(1 for r in week if not r["escalated"] and r["verdict"] != "wrong")
+        out.append({"from": a, "answers": len(week), "first_right": ok,
+                    "escalated": sum(1 for r in week if r["escalated"]),
+                    "wrong": sum(1 for r in week if r["verdict"] == "wrong"),
+                    "with_lessons": sum(1 for r in week if r["lessons_id"]),
+                    "rate": round(ok / len(week), 3) if week else None})
+    approved = [{"id": r["id"], "at": r["decided_at"], "state": r["state"]} for r in conn.execute(
+        "SELECT id, decided_at, state FROM lessons WHERE playbook = ? AND decided_at IS NOT NULL AND"
+        " state IN ('active', 'replaced') AND decided_at >= ? ORDER BY decided_at", (key, start))]
+    return {"weeks": out, "lessons": approved}
 
 
 def set_verdict(conn: sqlite3.Connection, sample_id: int, verdict: str | None, correction: Any = None) -> bool:
@@ -84,8 +116,8 @@ def overview(conn: sqlite3.Connection, plugin: str | None = None) -> list[dict[s
         lessons = [{"id": r["id"], "text": r["text"], "state": r["state"], "evals": _p(r["evals"]),
                     "created_at": r["created_at"]} for r in conn.execute(
             "SELECT * FROM lessons WHERE playbook = ? AND state IN ('active', 'proposed') ORDER BY id", (p["key"],))]
-        run = conn.execute("SELECT passed, total, created_at FROM eval_runs WHERE playbook = ? ORDER BY id DESC"
-                           " LIMIT 1", (p["key"],)).fetchone()
+        run = conn.execute("SELECT passed, total, created_at FROM eval_runs WHERE playbook = ?"
+                           " AND why != 'without lessons' ORDER BY id DESC LIMIT 1", (p["key"],)).fetchone()
         out.append({"key": p["key"], "plugin": p["plugin"], "name": p["name"], "samples": c[0] or 0,
                     "escalated": c[1] or 0, "correct": c[2] or 0, "wrong": c[3] or 0, "to_review": c[4] or 0,
                     "lessons": lessons, "last_seen": p["last_seen"],
