@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+**Change flow P6:** the laptop updates itself within ~5 minutes of a merge (`deploy/linux/auto-update.sh`, with rollback on any failed step); `apply` runs only the tests for the changed files (CI still runs everything; `ARGUS_ALL_TESTS=1` for all).
+
 **Ari P5, adapts:** style by situation (small talk, task, bad news, busy); answers shown instead of spoken while you're in a call or a game; "keep it shorter" / "call me …" kept after your yes; `search_my_memory` tool over facts and past chats; Ari's tool picks join the learning loop and `ari_eval`.
 
 **Learning P4, every task learns:** Undo, Wrong, files you move back or rename again, and "no, I meant" to Ari count as wrong answers without a click; changes left alone for a day count as a yes; confirmed answers become worked examples for similar inputs (experience memory, misleading ones dropped); `ctx.llm(subject=)`.

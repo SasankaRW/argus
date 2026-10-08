@@ -76,6 +76,12 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now argusd argus-worker
 echo "argus ALL=(root) NOPASSWD: /usr/bin/systemctl restart argusd argus-worker" | sudo tee /etc/sudoers.d/argus-update >/dev/null
 sudo chmod 440 /etc/sudoers.d/argus-update
+if [ -f /etc/systemd/system/argus-update.timer ]; then  # set up before: keep its units current
+  sudo cp "$DIR/deploy/linux/argus-update.service" "$DIR/deploy/linux/argus-update.timer" /etc/systemd/system/
+  sudo systemctl daemon-reload
+else
+  echo "To update by itself after every merge: bash $DIR/deploy/linux/auto-update.sh (once)"
+fi
 
 say "firewall: only Tailscale and SSH"
 sudo ufw default deny incoming >/dev/null

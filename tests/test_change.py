@@ -124,3 +124,15 @@ def test_the_commit_msg_hook(repo):
                             capture_output=True, text=True)
     assert claude.returncode != 0 and "attribution" in claude.stderr
     git(repo, "commit", "-qm", "fix(core): a thing\n\nWhy it was wrong.")
+
+
+def test_apply_runs_the_tests_for_the_changed_files():
+    a = change.affected_tests
+    assert a(["core/argus/guidance.py"]) == ["test_ari_p5.py", "test_guidance.py", "test_learning_p4.py"]
+    assert "test_downloads_organizer.py" in a(["plugins/downloads-organizer/plugin.py"])
+    assert a(["docs/architecture.md", "README.md"]) == []
+    assert a(["helios/src/Inspector.tsx"]) == ["test_helios_pages.py"]
+    assert "test_deploy_scripts.py" in a(["deploy/linux/argus-update.sh"])
+    assert a(["tests/test_ari_p5.py"]) == ["test_ari_p5.py"]
+    assert a(["tests/fakes.py"]) is None and a(["core/argus/db/migrations/0099_x.sql"]) is None  # all of them
+    assert len(a(["core/argus/api/app.py"])) > 30  # a hub: every test that starts Argus

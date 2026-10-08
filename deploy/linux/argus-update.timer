@@ -1,0 +1,11 @@
+[Unit]
+Description=Argus: look for a merged change every 5 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

@@ -21,7 +21,12 @@ releases; it hands over a change package and you run the steps below.
 ```
 
 `apply` stops without committing if the tree is dirty, the branch name was used before, the metadata is
-wrong or the tests fail. Fix the cause (or ask Claude for a new package) and run it again.
+wrong or the tests fail. Fix the cause (or ask Claude for a new package) and run it again. It runs lint and only
+the tests for the changed files (a change to shared test helpers or the database runs them all); CI runs the full
+suite. `$env:ARGUS_ALL_TESTS = 1` makes `apply` run everything too.
+
+After a merge the laptop updates itself within about 5 minutes (set up once with `deploy/linux/auto-update.sh`,
+see deploy/README.md); `ship` pulls main on the PC, whose supervisor restarts the worker.
 
 ## Branch names
 
