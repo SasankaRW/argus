@@ -4,18 +4,27 @@ on:
     branches: [main]
     tags: ["v*"]
   pull_request:
+  workflow_dispatch:  # the full matrix by hand (Actions > ci > Run workflow)
+# A newer push to the same pull request stops the run still going: minutes aren't spent on an old commit
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   test:
     strategy:
       matrix:
+        # Pull requests and main: one Linux and one Windows job (Windows minutes count double). Releases and a
+        # run by hand: every Python version Argus supports.
         os: [ubuntu-latest, windows-latest]
-        python: ["3.11", "3.12", "3.13"]
+        python: ${{ fromJSON((startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch') && '["3.11", "3.12", "3.13"]' || '["3.12"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - run: python -m pip install -e ".[dev]"
       - run: python -m ruff check core tests scripts
       - run: python -m pytest -q
@@ -29,6 +38,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: helios/package-lock.json
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build

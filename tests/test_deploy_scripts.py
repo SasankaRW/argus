@@ -44,3 +44,14 @@ def test_the_laptop_updates_itself_and_rolls_back():
     assert "trap rollback ERR" in upd and 'exit 0   # nothing merged' in upd
     setup = (LINUX / "auto-update.sh").read_text()
     assert "deploy-key add" in setup and "enable --now argus-update.timer" in setup and "sudo -u argus" not in setup
+
+
+def test_the_pc_never_runs_a_second_argus_and_ci_stays_small():
+    root = LINUX.parents[1]
+    dev = (root / "scripts" / "dev.ps1").read_text(encoding="utf-8")
+    assert 'Get-ScheduledTask -TaskName "Argus PC worker"' in dev and "pc-worker.ps1\") restart" in dev
+    assert '$env:ARGUS_MERGE_LOCAL -eq "1"' in dev and "--admin" in dev
+    import yaml
+
+    ci = yaml.safe_load((root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
+    assert "'[\"3.12\"]'" in ci["jobs"]["test"]["strategy"]["matrix"]["python"]  # PRs: one Python per OS

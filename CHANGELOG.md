@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+**Fix:** `dev.ps1 up` on the PC worker restarts the PC side instead of starting a second Argus (two voices, missed wake words); `dev.ps1 merge local` when GitHub can't run CI; CI runs 2 jobs per PR instead of 6.
+
 **Change flow P6:** the laptop updates itself within ~5 minutes of a merge (`deploy/linux/auto-update.sh`, with rollback on any failed step); `apply` runs only the tests for the changed files (CI still runs everything; `ARGUS_ALL_TESTS=1` for all).
 
 **Ari P5, adapts:** style by situation (small talk, task, bad news, busy); answers shown instead of spoken while you're in a call or a game; "keep it shorter" / "call me …" kept after your yes; `search_my_memory` tool over facts and past chats; Ari's tool picks join the learning loop and `ari_eval`.
