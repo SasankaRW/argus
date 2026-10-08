@@ -313,6 +313,8 @@ class Worker:
         info = job.get("plugin_info")
         if info and info["id"] in self.plugins:  # argusd's settings now (dry-run or live, config)
             self.plugins[info["id"]] = LoadedPlugin(info)
+        if job.get("guidance"):  # a built-in's own lessons (Ari's tool picking)
+            ctx._lessons = dict(job["guidance"].get("lessons") or {})
         if job["plugin"] == "ari":  # built in: the recording to transcribe
             ctx.shared = lambda name: self.client.get_bytes(f"/ari/audio/{urllib.parse.quote(name, safe='')}")
         if job["plugin"] == "backup":  # built in: fetch backups from argusd

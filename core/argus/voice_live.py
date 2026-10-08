@@ -416,6 +416,7 @@ class Talk:
     show: Callable[[str, str], None] | None = None  # (phase, text): the island's words
     live_every_s: float = 1.0
     run: Callable[[Callable[[], None]], None] = lambda f: threading.Thread(target=f, daemon=True).start()
+    quiet: Callable[[], bool] = lambda: False  # in a call or a game: answers are shown on the island, not spoken
     _live_at: float = 0.0
     _live_busy: bool = False
     _live_text: str = ""
@@ -551,8 +552,8 @@ class Talk:
     def _call(self, seq: int, command: str, streamed: dict) -> dict:
         def partial(text: str, mood: str) -> None:  # a reply still being written: its finished sentences now
             with self._lock:
-                if seq != self._ask_seq or self._held:
-                    return  # not the newest question (or older answers wait): this one is said in one go
+                if seq != self._ask_seq or self._held or self.quiet():
+                    return  # not the newest question (or older answers wait, or quiet): this one in one go
                 if not text.startswith(streamed["text"]):
                     return
                 new = text[len(streamed["text"]):].strip()
@@ -592,6 +593,12 @@ class Talk:
             self._keep_talking(pending=bool(ans.get("pending")))
 
     def _speak(self, command: str, reply: str, streamed: dict, late: bool) -> None:
+        if self.quiet():  # in a call or a game: shown, not said
+            if self.show is not None:
+                self.show("done", f"About {about(command)}: {reply}" if late else reply)
+            else:
+                self.report("done")
+            return
         if late:  # after something newer: say what it was about first
             self.player.add(tagged(phrases(f"Oh, and about {about(command)}: {reply}")))
             return

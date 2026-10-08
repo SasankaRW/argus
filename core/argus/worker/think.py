@@ -477,7 +477,34 @@ def no_helpdesk(text: str) -> str:
 def persona(inp: dict) -> str:
     who = str(inp.get("personality") or "").strip() or PERSONA
     name = str(inp.get("call_me") or "").strip()
-    return who + (f"\nTheir name is {name}: use it now and then, not every time." if name else "")
+    out = who + (f"\nTheir name is {name}: use it now and then, not every time." if name else "")
+    prefs = [str(p).strip() for p in inp.get("their_preferences") or [] if str(p).strip()]
+    if prefs:  # what they asked for wins over the personality above
+        out += "\nHow they asked you to talk (always follow this, it wins over the above):\n" + "\n".join(
+            f"- {p}" for p in prefs)
+    return out
+
+
+# How to sound, by situation (P5): set per message and per step, given to the model as "situation"
+STYLE = """How to sound depends on "situation":
+- small_talk: loose and playful, a joke or a light opinion is welcome.
+- task: a short confirmation of what you did or found, at most one light touch.
+- bad_news (something failed, is down, overdue or lost): calm and plain, say what happened and what can be done;
+  no jokes, no sounds like [laugh], mood calm or serious.
+- busy (they're in a call or a game; your answer is shown, not spoken): one short line, no jokes, no sounds."""
+
+BAD = re.compile(r"\b(?:fail(?:ed|ing|s)?|error|down|offline|overdue|missed|broken|crash(?:ed)?|lost|denied|"
+                 r"not (?:running|responding|answering|found)|unreachable|expired|late)\b", re.I)
+
+
+def situation(text: str, busy: Any, done: list[dict] | None = None) -> str:
+    """small_talk, task, bad_news or busy: how Ari should sound for this message (and what its tools found)."""
+    if busy:
+        return "busy"
+    for d in done or []:
+        if "error" in d or BAD.search(json.dumps(d.get("result"), default=str)[:2000]):
+            return "bad_news"
+    return "small_talk" if chatty(text) else "task"
 
 
 CHAT = """You are Ari, the user's personal assistant, living on their own computer (home system "Argus").
@@ -495,7 +522,9 @@ theirs: tired -> calm or sympathetic, good news -> excited).
 When the feeling changes partway, put the new mood as a tag where it changes, like a person's tone shifting
 ("Oh nice, you fixed it! [sympathetic] Shame it took all night though."): at most two changes, at a sentence or
 comma, never word by word.
-Answer as JSON {"mood": "...", "reply": "...", "remember": ""}."""
+Answer as JSON {"mood": "...", "reply": "...", "remember": ""}.
+
+""" + STYLE
 
 
 FAILED = re.compile(r"\b(?:couldn'?t|can'?t|cannot|failed|isn'?t (?:answering|working|available|running)|"
@@ -642,7 +671,9 @@ How to decide:
   [serious] But the laptop server is down." At most two changes, never word by word.
 - Reply naturally about what happened ("Opened Spotify and turned it down."). If a tool failed, say what went wrong
   in plain words.
-Answer with the JSON only."""
+Answer with the JSON only.
+
+""" + STYLE
 
 WEB = """You are Ari, the user's personal assistant (casual, a bit witty, never a help desk).
 Answer the user's question using web search when it needs current information. Your answer is read aloud:
@@ -673,6 +704,11 @@ def _clip(v: Any, n: int = 1500) -> Any:
     return v if len(s) <= n else s[:n] + "…"
 
 
+# Ari's first pick of each message is a sample of the "ari" playbook: the same learning loop as plugins (your
+# "no, I meant …" or Wrong marks it; the nightly review writes lessons; python -m argus.ari_eval replays them).
+LEARN = {"owner": "ari", "playbook": PLAYBOOK, "fields": ["tool", "args", "need_web"]}
+
+
 @workflow("ari", "think")
 def think(ctx: Context):
     text = str(ctx.input.get("text") or "").strip()
@@ -682,6 +718,7 @@ def think(ctx: Context):
     base = {"message": text, "conversation_so_far": (ctx.input.get("history") or [])[-8:],
             "you_remember": ctx.input.get("you_remember") or [],
             "now": ctx.input.get("now") or time.strftime("%A %d %B %Y, %H:%M"),
+            "situation": situation(text, ctx.input.get("busy")),
             "tools": list(tools.values())}
     done: list[dict[str, Any]] = []
     who = persona(ctx.input)
@@ -749,7 +786,7 @@ def think(ctx: Context):
 
     if chatty(text):  # small talk: one friendly answer, no tools, on the warm first model (no swap)
         def chat() -> dict:
-            said = {k: base[k] for k in ("message", "conversation_so_far", "you_remember", "now")}
+            said = {k: base[k] for k in ("message", "conversation_so_far", "you_remember", "now", "situation")}
             sent = {"n": 0}
 
             def partial(raw: str) -> None:  # finished sentences go out as they arrive: Ari starts talking sooner
@@ -815,6 +852,7 @@ def think(ctx: Context):
     for i in range(MAX_STEPS):
         def decide(i=i) -> dict:
             task = {**base, "results_so_far": done} if done else dict(base)
+            task["situation"] = situation(text, ctx.input.get("busy"), done)
             if i == MAX_STEPS - 1:
                 task["last_step"] = True
             sent = {"n": 0, "blocked": False}
@@ -837,7 +875,9 @@ def think(ctx: Context):
 
             s = ctx.llm(PLAYBOOK + "\n\n" + who, json.dumps(task, ensure_ascii=False), schema=Step, check=check,
                         on_text=partial, tiers=model_order(text, ctx.local_tiers()) or None,
-                        claude_last=not private())
+                        claude_last=not private(),
+                        # the first pick is kept for the guidance loop: your "no, I meant" teaches it
+                        learn_as=LEARN if i == 0 and not private() else None)
             return {**s.model_dump(), "tier": ctx.last_answer.tier}
 
         try:

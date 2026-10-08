@@ -268,7 +268,8 @@ class Context:
 
     def llm(self, playbook: str, input: Any, *, schema: Any = None, check: Any = None,
             tiers: list[str] | None = None, attempts: int | None = None, images: list[bytes] | None = None,
-            claude_last: bool = True, on_text: Any = None, temperature: float = 0.0, subject: Any = None) -> Any:
+            claude_last: bool = True, on_text: Any = None, temperature: float = 0.0, subject: Any = None,
+            learn_as: dict[str, Any] | None = None) -> Any:
         """Ask the models, cheapest tier first, escalating when the answer fails the schema or the check.
 
         Returns the answer (a `schema` instance, or text without a schema). Call it inside `ctx.step`, so a
@@ -283,6 +284,9 @@ class Context:
         `subject`: what the answer is about (a file path, or a list of them). Then your fixes to that file (Undo,
         Wrong, moving it back, renaming it again) count as a verdict on this answer without a click. The 2-3 most
         similar answers you confirmed before are added as worked examples (experience memory).
+
+        `learn_as` (built-in workflows like Ari's): {"owner", "playbook", "fields"} files the answer as a sample of
+        that playbook (only `fields` of the answer kept), so it gets lessons like a plugin's.
         """
         if self._router is None:
             raise RuntimeError("this worker has no model configuration (is it connected to argusd?)")
@@ -293,8 +297,8 @@ class Context:
                 raise PermissionDenied(f"{self.job.get('plugin')} may not use these models "
                                        "(permissions.models in plugin.yaml)")
         pics = [base64.b64encode(b).decode() for b in images] if images else None
-        original = playbook
-        key = self._playbook_key(original)
+        original = learn_as["playbook"] if learn_as else playbook
+        key = self._playbook_key(original, learn_as["owner"] if learn_as else None)
         if key and self._lessons.get(key):  # approved lessons from the nightly review
             playbook = f"{playbook}\n\nLessons from earlier mistakes (follow them):\n{self._lessons[key]}"
         picked = similar(self._examples.get(key) or [], input) if key else []
@@ -313,24 +317,28 @@ class Context:
                                      {"from_tier": tried[-1], "to_tier": claude, "reason": "local models failed"})
             ans = self._ask_claude(playbook, input, schema, check, pics, _advice(e), e)
         about = "\n".join(str(x) for x in subject) if isinstance(subject, (list, tuple)) else subject
-        self._sample(original, schema, input, ans, about, [e["id"] for e in picked if "id" in e])
+        self._sample(original, schema, input, ans, about, [e["id"] for e in picked if "id" in e],
+                     learn_as.get("fields") if learn_as else None, key)
         return self._took(ans)
 
-    def _playbook_key(self, playbook: str) -> str | None:
-        if self.plugin is None:
+    def _playbook_key(self, playbook: str, owner: str | None = None) -> str | None:
+        owner = owner or (self.plugin.id if self.plugin is not None else None)
+        if owner is None:
             return None
         import hashlib
 
-        return f"{self.plugin.id}:{hashlib.sha1(playbook.encode()).hexdigest()[:12]}"
+        return f"{owner}:{hashlib.sha1(playbook.encode()).hexdigest()[:12]}"
 
     def _sample(self, playbook: str, schema: Any, input: Any, ans: Any, subject: str | None = None,
-                used: list[int] | None = None) -> None:
+                used: list[int] | None = None, fields: list[str] | None = None, key: str | None = None) -> None:
         """Keep this answer for the guidance loop (your verdicts, the nightly review). Best effort."""
-        if self.plugin is None or not hasattr(self._reporter, "sample"):
+        if key is None or not hasattr(self._reporter, "sample"):
             return
         try:
             js = schema if isinstance(schema, dict) else schema.model_json_schema() if schema is not None else None
             value = ans.value.model_dump() if hasattr(ans.value, "model_dump") else ans.value
+            if fields and isinstance(value, dict):  # only what decides (Ari: the tool, not the words)
+                value = {k: value.get(k) for k in fields if k in value}
             escalated = any(("rejected" in t or "error" in t) for t in ans.trail)
             body = {"playbook": playbook, "schema": js, "input": input, "output": value, "tier": ans.tier,
                     "escalated": escalated}
