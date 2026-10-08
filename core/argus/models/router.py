@@ -106,7 +106,7 @@ class Router:
 
     def ask(self, playbook: str, input: Any, *, schema: type[BaseModel] | None = None, check: Check | None = None,
             chain: list[str] | None = None, attempts: int | None = None, images: list[str] | None = None,
-            advice: str | None = None, web: bool = False, on_text: Any = None) -> Answer:
+            advice: str | None = None, web: bool = False, on_text: Any = None, temperature: float = 0.0) -> Answer:
         """`on_text(text_so_far)`: the first try of the first tier streams its answer there (Ollama only), so the
         start of a reply can be used before it is done; later tries don't (their text would contradict it).
         `images`: base64-encoded pictures for a vision model (sent with the first message).
@@ -155,6 +155,8 @@ class Router:
                     if on_text is not None and tier == tiers[0] and attempt == 1 \
                             and getattr(provider, "kind", "") == "ollama":
                         extra["on_text"] = on_text
+                    if temperature and getattr(provider, "kind", "") == "ollama":
+                        extra["temperature"] = temperature
                     reply = provider.chat(system, messages, json_schema, **extra)
                 except ModelError as e:
                     ms = (self.clock() - t0) * 1000

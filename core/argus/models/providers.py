@@ -91,15 +91,16 @@ class OllamaProvider:
         self.keep_alive = keep_alive
 
     def chat(self, system: str, messages: list[dict[str, Any]], schema: dict | None = None, *,
-             on_text: Any = None) -> Reply:
+             on_text: Any = None, temperature: float = 0.0) -> Reply:
         """`on_text(text_so_far)`: called as the answer arrives (Ollama streams it), so a reply can be spoken
-        before it is finished."""
+        before it is finished. `temperature`: 0 for picking tools and filling JSON (the same input, the same
+        answer); higher for talk, so Ari doesn't say the same thing the same way every time."""
         body: dict[str, Any] = {
             "model": self.model,
             "messages": [{"role": "system", "content": system}, *messages],
             "stream": on_text is not None,
             "keep_alive": self.keep_alive,
-            "options": {"temperature": 0},
+            "options": {"temperature": max(0.0, min(1.5, float(temperature)))},
         }
         body["options"]["num_ctx"] = context_for(system, messages, schema, self.num_ctx)
         if re.search(r"qwen3(?!-coder)|deepseek-r1", self.model, re.I):

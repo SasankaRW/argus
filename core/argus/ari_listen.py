@@ -261,6 +261,7 @@ class AriClient:
             return r.read()
 
     NEW_CHAT_S = 30 * 60
+    WAIT_S = 300.0  # how long an answer is waited for (the PC may have to wake its model first)
 
     def say(self, text: str, on_partial: Callable[[str, str], None] | None = None) -> dict:
         """Ask Ari. `on_partial(text_so_far, mood)`: the finished sentences of a reply still being written (small
@@ -283,8 +284,9 @@ class AriClient:
                 pass
         if r.get("reply") is None and r.get("job_id"):  # a model answers: wait for the turn to fill in
             job, seen, start = r["job_id"], 0, time.monotonic()
+            turn_id = r.get("turn")
             n = 0
-            while time.monotonic() - start < 60:
+            while time.monotonic() - start < self.WAIT_S:  # asked in the background: it may take a while
                 time.sleep(0.15)
                 n += 1
                 if STOPPED_AT[0] > started:  # the island's Stop button: drop this answer
@@ -302,10 +304,11 @@ class AriClient:
                 if n % 2 and on_partial is not None:
                     continue  # the turn itself every 0.3 s
                 turns = json.loads(self._req("GET", f"/ari/{self.conv}"))["turns"]
-                last = turns[-1] if turns else {}
-                if last.get("text"):
-                    return {"reply": last["text"], "pending": last.get("pending")}
-            return {"reply": "That's taking a while; the answer will be in Helios."}
+                # this question's own turn (by id, else by job): never an older answer that happens to be last
+                mine = next((t for t in turns if (turn_id and t.get("id") == turn_id) or t.get("job_id") == job), None)
+                if mine is not None and mine.get("text"):
+                    return {"reply": mine["text"], "pending": mine.get("pending")}
+            return {"reply": "I couldn't get an answer to that one. It's in Helios if it turns up."}
         return r
 
     def ears(self) -> None:
@@ -372,7 +375,8 @@ def local_voice(cfg: Any, picked: Callable[[], dict] | None = None,
     if expr is None and not piper.configured and picked is None:
         return None
     own_clip = bool(a.voice_clip)
-    seen = {"at": 0.0}
+    seen = {"at": 0.0, "voice": None}
+    version = [0]  # goes up when the voice changes (the fillers are made again)
     source = voices / "ari-clip.json"  # which Piper voice the clip was made from
 
     def follow() -> None:
@@ -392,6 +396,9 @@ def local_voice(cfg: Any, picked: Callable[[], dict] | None = None,
             if not path.exists():
                 path = download(name, voices)
             piper.use(path, speed)
+            if seen["voice"] not in (None, name):
+                version[0] += 1
+            seen["voice"] = name
             if expr is None or own_clip or clip is None:
                 return
             try:
@@ -403,6 +410,7 @@ def local_voice(cfg: Any, picked: Callable[[], dict] | None = None,
             elif made_from != name:
                 clip.write_bytes(piper.say(CLIP_TEXT))
                 source.write_text(json.dumps({"voice": name}))
+                version[0] += 1
                 log.info("voice clip made from the picked voice", extra={"voice": name})
         except Exception as e:  # noqa: BLE001 - argusd away, no piper here, download failed: keep what we have
             log.info("could not follow the picked voice", extra={"error": str(e)[:200]})
@@ -420,6 +428,16 @@ def local_voice(cfg: Any, picked: Callable[[], dict] | None = None,
                 log.info("no local voice", extra={"error": str(e)[:200]})
         return None
 
+    def same_voice(text: str) -> bytes | None:
+        """Only Ari's main voice: the expressive one when it is set up (None while it is still loading), so the
+        fillers never come out in a second voice."""
+        if expr is None:
+            return say(text)
+        follow()
+        return expr.say(text)
+
+    say.same_voice = same_voice  # type: ignore[attr-defined]
+    say.version = lambda: version[0]  # type: ignore[attr-defined]
     follow()  # the picked voice from the start
     return say
 
@@ -556,13 +574,14 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device) -> i
         return vl.wav_samples(wav)
 
     def synth_quiet(text: str):
-        wav = client.voice(text)
+        same = getattr(client.local, "same_voice", None)
+        wav = same(text) if same is not None else client.voice(text)  # fillers: Ari's main voice only
         return vl.wav_samples(wav) if wav else None
 
     player = vl.Player(synth, open_stream, report=client.state)
     gate = vl.EchoGate()
 
-    fillers = vl.Fillers(synth_quiet)
+    fillers = vl.Fillers(synth_quiet, version=getattr(client.local, "version", None))
 
     def wait_sound(chat: bool) -> None:
         """An answer taking a while: a short "hmm, let me check" (then the soft pulse), or just the pulse (small talk
@@ -595,7 +614,7 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device) -> i
     talk = vl.Talk(turns=vl.Turns(finished=finished), transcribe=cmd_t, transcribe_wake=wake_t, wake_rest=wake_rest,
                    ask=ask, player=player, report=client.state, chime=lambda: player.cue(vl.chime_samples(), RATE),
                    idle_s=float(cfg.ari.talk_idle_s), on_false_barge=gate.fooled,
-                   live_words=wake_t if cfg.ari.live_words else None, show=client.state)
+                   live_words=wake_t if cfg.ari.live_words else None, show=client.state, ask_async=True)
     spoke_up = [0.0]
     voc_at = [time.monotonic()]
 
@@ -611,6 +630,7 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device) -> i
                 log.info("stop button")
                 STOPPED_AT[0] = time.monotonic()
                 player.stop()  # quiet at once; an answer still being written is dropped by say()
+                talk.drop_pending()
             if any(e.get("kind") == "ari.wake" for e in evs):
                 log.info("talk button")
                 talk.wake()

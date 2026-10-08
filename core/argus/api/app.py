@@ -982,6 +982,32 @@ def create_app(argus: Argus) -> FastAPI:
                                                        data=now))
         return now
 
+    @app.post("/ari/power", dependencies=guarded)
+    async def ari_power(body: AriListening) -> dict:
+        """Ari off: no listening anywhere, quiet at once, answers on their way dropped (the island, Helios, or
+        "Ari, turn off"). On: back to normal. Stays off until turned back on (or for `minutes`)."""
+        return await set_power(body.on, body.minutes)
+
+    async def set_power(on: bool, minutes: float | None = None) -> dict:
+        hush["until"] = 0.0 if on else (time.time() + minutes * 60 if minutes else 1e13)
+        now = listening_now()
+
+        def fn(c):
+            dropped = []
+            if not on:
+                for (jid,) in c.execute("SELECT id FROM jobs WHERE plugin = 'ari' AND workflow = 'think'"
+                                        " AND state IN ('queued', 'retry', 'leased', 'running')").fetchall():
+                    with contextlib.suppress(Exception):  # finished meanwhile
+                        argus.jobs.cancel_in(c, jid, "Ari was turned off")
+                        dropped.append(jid)
+                insert_event(c, time.time(), "ari.stop", src="helios", dst="ari", data={"job": "", "off": True})
+            insert_event(c, time.time(), "ari.listening", src="helios", dst="ari", data=now)
+            ari_state(c, "idle" if on else "off", "" if on else "Ari is off", by="argus")
+            return dropped
+
+        dropped = await argus.store.write(fn)
+        return {**now, "on": on, "dropped": len(dropped)}
+
     @app.post("/ari/listener", dependencies=guarded)
     async def ari_listener_here() -> dict:
         """The PC's "Hey Ari" listener says it is running (every 30 s)."""
@@ -1037,6 +1063,12 @@ def create_app(argus: Argus) -> FastAPI:
         conv = body.conv or new_id().lower()
         body.text = vocab.fix(body.text, argus.cfg.ari.heard_as)  # "open what's up" -> "open WhatsApp"
         text = ari_mod.WAKE.sub("", body.text).strip() or body.text.strip()
+        if ari_mod.TURN_OFF.match(text):  # "Ari, turn off": off until the island's or Helios's Start
+            reply = "Okay, I'm off. Turn me back on from the island or Helios."
+            await argus.store.write(lambda c: (ari_mod.add_turn(c, conv, "you", body.text),
+                                               ari_mod.add_turn(c, conv, "ari", reply)))
+            await set_power(False)
+            return {"conv": conv, "reply": reply}
         q = await argus.store.read(lambda c: ari_mod.open_question(c, conv))
         if q and not await argus.store.read(lambda c: ari_mod.open_question(c, conv, max_age=600)):
             await argus.store.write(lambda c: ari_mod.close_question(c, q["turn"]))  # asked too long ago: lapsed
@@ -1096,7 +1128,8 @@ def create_app(argus: Argus) -> FastAPI:
                              "you_remember": known,
                              "personality": argus.cfg.ari.personality, "call_me": argus.cfg.ari.call_me,
                              "tools": [t.brief() for t in tools.all().values() if t.for_ari]},
-            needs=list(argus.cfg.models.needs), priority=PRIORITY_INTERACTIVE, source="helios")
+            needs=list(argus.cfg.models.needs), priority=PRIORITY_INTERACTIVE, source="helios",
+            max_attempts=1)  # a reply that failed is said to have failed; trying again minutes later helps no one
         # no worker with the models is up (the PC is off): the power manager wakes it; say so instead of hanging
         waking = not await able(argus.cfg.models.needs)
         tid = await argus.store.write(lambda c: (ari_mod.add_turn(c, conv, "ari", None, job_id=job_id),

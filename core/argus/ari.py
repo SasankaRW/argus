@@ -30,6 +30,8 @@ YES = re.compile(r"^\s*(yes|yeah|yep|yup|sure|ok|okay|do it|go ahead|please do|c
                  re.I)
 NO = re.compile(r"^\s*(no|nope|nah|cancel|don'?t|do not|never ?mind|stop|forget it)\b", re.I)
 WAKE = re.compile(r"^\s*(hey|hi|ok|okay)?[\s,]*(ari|arie|harry|artie|argus)\b[\s,.!?]*", re.I)
+TURN_OFF = re.compile(r"^\s*(?:please\s+)?(?:turn (?:yourself )?off|switch (?:yourself )?off|go to sleep|"
+                      r"stop listening(?: to me)?|power (?:down|off))\b[\s.!]*$", re.I)
 DAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
 PARTS = {"morning": 8, "afternoon": 14, "evening": 19, "night": 22, "tonight": 20}
 TIME = r"(?:(?P<h>\d{1,2})(?:[:.](?P<m>\d{2}))?\s*(?P<ap>a\.?\s?m\.?|p\.?\s?m\.?)?|(?P<word>noon|midday|midnight))"

@@ -129,14 +129,26 @@ class AriState:
     text: str = ""
     since: float = 0.0
     think_job: str | None = None
+    off: bool = False  # Ari turned off (or paused): not listening anywhere until turned back on
 
     def apply(self, events: list[dict], now: float) -> bool:
         """Feed events (oldest first). True when what shows changed."""
         changed = False
         for e in events:
             data = e.get("data") or {}
+            if e["kind"] == "ari.listening":
+                off = not data.get("listening", True)
+                if off != self.off:
+                    self.off, changed = off, True
+                if off:
+                    self.phase, self.text, self.since = "idle", "", now
+                continue
             if e["kind"] == "ari.state":
                 phase = str(data.get("phase") or "idle")
+                if phase == "off":  # the island shows "off" itself (see draw): fold back
+                    self.off, self.phase, self.text, self.since = True, "idle", "", now
+                    changed = True
+                    continue
                 if phase == "thinking":
                     self.think_job = e.get("job_id")
                 text = str(data.get("text") or "")
@@ -540,9 +552,13 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             self.buttons = []
             if mode == "idle":
                 if self.hover and self.spring.h > 16:
-                    qp.setPen(QColor("#5d6670"))
+                    qp.setPen(QColor("#ef6a6a" if self.ari.off else "#5d6670"))
                     qp.setFont(F_LABEL)
-                    qp.drawText(body, Qt.AlignmentFlag.AlignCenter, "a r i")
+                    qp.drawText(body, Qt.AlignmentFlag.AlignCenter, "a r i · off" if self.ari.off else "a r i")
+                elif self.ari.off:  # a small red dot on the lip: Ari is off
+                    qp.setPen(Qt.PenStyle.NoPen)
+                    qp.setBrush(QColor("#ef6a6a"))
+                    qp.drawEllipse(QPointF(body.center().x(), body.center().y()), 2.2, 2.2)
             elif mode in ("active", "done") and self.spring.h > 24:
                 self.draw_active(qp, body, tone, mode)
             elif mode == "details":
@@ -656,6 +672,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             # header: the time and date on the left; Talk (a round mic key) and "···" (Helios) on the right
             talk = QRectF(x1 - 30, y, 30, 30)
             more = QRectF(talk.x() - 36, y, 30, 30)
+            power = QRectF(more.x() - 36, y, 30, 30)
             if "clock" in on:
                 now = time.localtime()
                 qp.setFont(F_CLOCK)
@@ -665,12 +682,13 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 qp.drawText(QRectF(x0, y, tw + 4, 30), Qt.AlignmentFlag.AlignVCenter, tstr)
                 qp.setFont(F_SMALL)
                 qp.setPen(QColor("#6f7680"))
-                qp.drawText(QRectF(x0 + tw + 9, y + 1, more.x() - x0 - tw - 12, 30), Qt.AlignmentFlag.AlignVCenter,
+                qp.drawText(QRectF(x0 + tw + 9, y + 1, power.x() - x0 - tw - 12, 30), Qt.AlignmentFlag.AlignVCenter,
                             time.strftime("%a %d %b", now))
             else:
                 qp.setFont(F_TEXT)
                 qp.setPen(QColor("#e4e6e8"))
                 qp.drawText(QRectF(x0, y, 120, 30), Qt.AlignmentFlag.AlignVCenter, "Ari")
+            self.round_key(qp, power, "power", "start" if self.ari.off else "power")
             self.round_key(qp, more, "helios:#ari", "more")
             self.round_key(qp, talk, "talk", "mic")
             y += 42
@@ -870,6 +888,13 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 arc.cubicTo(c.x() - 5.5, c.y() + 5.5, c.x() + 5.5, c.y() + 5.5, c.x() + 5.5, c.y() - 0.5)
                 qp.drawPath(arc)
                 qp.drawLine(QPointF(c.x(), c.y() + 4), QPointF(c.x(), c.y() + 7))
+            elif icon in ("power", "start"):  # power: turn Ari off; start (green): turn it back on
+                col = QColor("#34d399" if icon == "start" else ("#f87171" if hot else "#8b929b"))
+                pen = QPen(col, 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+                qp.setPen(pen)
+                qp.setBrush(Qt.BrushStyle.NoBrush)
+                qp.drawArc(QRectF(c.x() - 6, c.y() - 5.5, 12, 12), 120 * 16, 300 * 16)
+                qp.drawLine(QPointF(c.x(), c.y() - 7), QPointF(c.x(), c.y() - 1))
             else:
                 qp.setPen(Qt.PenStyle.NoPen)
                 qp.setBrush(QColor("#d4d7dc" if hot else "#8b929b"))
@@ -918,7 +943,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             if key is None:
                 (self.close_details if self.details else self.open_details)()
                 return
-            if key == "talk":
+            if key == "power":
+                self.toggle_power()
+            elif key == "talk":
                 self.talk()
             elif key.startswith(("helios:", "show:")):
                 target = open_target(args.url, key)
@@ -939,6 +966,19 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                     api.call("POST", "/ari/stop", {"job": job or ""})
                 except Exception:  # noqa: BLE001 - Argus out of reach: say so
                     bus.flash.emit("Stop didn't reach Argus")
+            threading.Thread(target=go, daemon=True).start()
+
+        def toggle_power(self) -> None:
+            """Ari off (no listening, quiet, answers on their way dropped) or back on."""
+            on = self.ari.off
+            self.ari.off = not on
+            self.kick()
+
+            def go() -> None:
+                try:
+                    api.call("POST", "/ari/power", {"on": on})
+                except Exception:  # noqa: BLE001 - Argus out of reach: say so
+                    bus.flash.emit("Couldn't reach Argus")
             threading.Thread(target=go, daemon=True).start()
 
         def talk(self) -> None:
@@ -1021,7 +1061,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                     last_ping = time.monotonic()
                 if seq < 0:
                     seq = int(api.call("GET", "/events?kinds=ari.state&limit=1&newest=true").get("seq") or 0)
-                r = api.call("GET", f"/events?kinds=ari.state,step.running&after={seq}&limit=200&wait=20",
+                    ears = api.call("GET", "/ari/listening")  # off already? (the red dot from the start)
+                    bus.events.emit([{"kind": "ari.listening", "data": ears}])
+                r = api.call("GET", f"/events?kinds=ari.state,ari.listening,step.running&after={seq}&limit=200&wait=20",
                              timeout=30)
                 evs = r.get("events") or []
                 if evs:

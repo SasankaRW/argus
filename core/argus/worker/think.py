@@ -443,6 +443,8 @@ TASKY = re.compile(r"\b(?:open|close|find|search|show|list|play|pause|set|turn|s
                    r"run|start|stop|add|delete|move|copy|weather|screen|file|folder|note|status|issue|backup|"
                    r"download|shut|restart|volume|timer)\b", re.I)
 
+CHAT_TEMPERATURE = 0.75  # small talk: varied, not the same words for the same question (tools stay at 0)
+
 PERSONA = """Ari's personality: a witty companion who happens to live in their PC. Casual, quick and funny: you joke
 about the situation, tease them lightly, and you have opinions (favourite things, mild hot takes) instead of being
 neutral about everything. Humour is welcome; slang is not: talk in clear, natural English, never "bro", "dude",
@@ -758,7 +760,7 @@ def think(ctx: Context):
                     ctx.progress("plugin.ari.partial", {"text": done, "mood": mood or "neutral"})
 
             s = ctx.llm(CHAT + "\n\n" + who, json.dumps(said, ensure_ascii=False), on_text=partial,
-                        schema=Chat, check=lambda s, _i: chat_ok(s),
+                        schema=Chat, check=lambda s, _i: chat_ok(s), temperature=CHAT_TEMPERATURE,
                         tiers=ctx.local_tiers() or None, claude_last=not private())
             return {**s.model_dump(), "tier": ctx.last_answer.tier}
 

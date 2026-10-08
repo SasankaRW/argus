@@ -215,7 +215,7 @@ class Context:
 
     def llm(self, playbook: str, input: Any, *, schema: Any = None, check: Any = None,
             tiers: list[str] | None = None, attempts: int | None = None, images: list[bytes] | None = None,
-            claude_last: bool = True, on_text: Any = None) -> Any:
+            claude_last: bool = True, on_text: Any = None, temperature: float = 0.0) -> Any:
         """Ask the models, cheapest tier first, escalating when the answer fails the schema or the check.
 
         Returns the answer (a `schema` instance, or text without a schema). Call it inside `ctx.step`, so a
@@ -242,7 +242,8 @@ class Context:
             playbook = f"{playbook}\n\nLessons from earlier mistakes (follow them):\n{self._lessons[key]}"
         try:
             ans = self._router.ask(playbook, input, schema=schema, check=check, chain=tiers, attempts=attempts,
-                                   images=pics, **({"on_text": on_text} if on_text is not None else {}))
+                                   images=pics, **({"on_text": on_text} if on_text is not None else {}),
+                                   **({"temperature": temperature} if temperature else {}))
         except EscalationExhausted as e:
             claude = self._claude_tier()
             tried = tiers or list(self._router.chain)

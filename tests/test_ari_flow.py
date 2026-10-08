@@ -55,8 +55,10 @@ def make(tmp_path: Path) -> Argus:
     (pdir / "plugin.py").write_text(PY)
     (tmp_path / "argus.yaml").write_text(
         "logging:\n  file: null\njobs:\n  watchdog_interval_seconds: 0.1\n"
+        "ollama:\n  url: http://127.0.0.1:9\n"  # never the real Ollama of the PC running the tests
         "models:\n  tiers:\n    T1: {provider: ollama, model: 'qwen2.5-coder:7b'}\n  chain: [T1]\n"
-        f"plugins:\n  dirs: ['{(tmp_path / 'plugins').as_posix()}']\n  live: [screen]\n", encoding="utf-8")
+        f"plugins:\n  dirs: ['{(tmp_path / 'plugins').as_posix()}']\n  live: [screen]\n"
+        "  config:\n    web: {searx_url: 'http://127.0.0.1:9'}\n", encoding="utf-8")
     return Argus(load_config(tmp_path / "argus.yaml"))
 
 

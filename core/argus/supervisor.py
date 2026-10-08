@@ -22,6 +22,7 @@ import sys
 import time
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 from .config import parse_env_file
 from .logs import setup_logging
@@ -149,6 +150,54 @@ class Child:
         self.start()
 
 
+class OllamaKeeper:
+    """The PC's supervisor keeps Ollama answering: Ari's local models live there, and without it every reply
+    falls back to Claude (slow). Started with `ollama serve` only after two missed checks, at most every 5 min,
+    and only for an Ollama on this machine."""
+
+    def __init__(self, url: str, start: Any = None, up: Any = None, clock: Any = time.monotonic):
+        self.url, self.clock = url.rstrip("/"), clock
+        self.start = start or self._start
+        self.up = up or self._up
+        self.misses, self.started_at = 0, -1e9
+
+    def local(self) -> bool:
+        import urllib.parse
+
+        return (urllib.parse.urlsplit(self.url).hostname or "") in ("127.0.0.1", "localhost", "::1")
+
+    def _up(self) -> bool:
+        try:
+            with urllib.request.urlopen(self.url + "/api/tags", timeout=3) as r:  # noqa: S310 - our own Ollama
+                return r.status == 200
+        except Exception:  # noqa: BLE001 - not answering
+            return False
+
+    def _start(self) -> bool:
+        import shutil
+
+        exe = shutil.which("ollama")
+        if not exe:
+            log.warning("Ollama isn't answering and isn't installed here (winget install Ollama.Ollama)")
+            return False
+        out = open(ROOT / "logs" / "ollama.out", "ab")  # noqa: SIM115 - handed to the child
+        flags = (subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS) if WIN else 0  # type: ignore[attr-defined]
+        subprocess.Popen([exe, "serve"], stdout=out, stderr=subprocess.STDOUT, creationflags=flags)  # noqa: S603
+        return True
+
+    def check(self) -> None:
+        if not self.local():
+            return
+        if self.up():
+            self.misses = 0
+            return
+        self.misses += 1
+        if self.misses >= 2 and self.clock() - self.started_at > 300:
+            self.started_at = self.clock()
+            if self.start():
+                log.warning("Ollama wasn't answering: started it", extra={"url": self.url})
+
+
 def busy(url: str, token: str | None) -> bool:
     """True while a job is running (so a restart waits). Unknown counts as not busy."""
     req = urllib.request.Request(url + "/queue")
@@ -214,6 +263,14 @@ def main(argv: list[str] | None = None) -> int:
         time.sleep(2)  # argusd first
     changed_at: float | None = None
     last_look = time.monotonic()
+    keeper = None
+    if not args.desk_only and not args.no_worker:  # the PC with the GPU worker: Ollama must be up
+        try:
+            from .config import load_config
+
+            keeper = OllamaKeeper(os.environ.get("ARGUS_OLLAMA_URL") or load_config(ROOT / "argus.yaml").ollama.url)
+        except Exception as e:  # noqa: BLE001 - no config here: nothing to keep
+            log.info("not watching Ollama", extra={"error": str(e)[:120]})
     try:
         while True:
             for c in children:
@@ -224,6 +281,8 @@ def main(argv: list[str] | None = None) -> int:
                     c.next_start = time.monotonic() + 60
             if time.monotonic() - last_look >= args.interval:
                 last_look = time.monotonic()
+                if keeper is not None:
+                    keeper.check()
                 now_commit = head()
                 if now_commit and commit and now_commit != commit:
                     changed_at = changed_at or time.monotonic()

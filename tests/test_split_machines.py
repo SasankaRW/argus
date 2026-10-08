@@ -100,7 +100,10 @@ def test_the_listener_speaks_with_this_pcs_voice_first(tmp_path):
 def test_ari_health_checks_the_pcs_services_on_the_pc(tmp_path, monkeypatch):
     import threading
 
-    monkeypatch.setenv("ARGUS_CONFIG", str(tmp_path / "missing.yaml"))  # the PC's own argus.yaml (none here)
+    pc_yaml = tmp_path / "pc.yaml"  # the PC's own argus.yaml: never the real Ollama / SearXNG of this PC
+    pc_yaml.write_text("logging:\n  file: null\nollama:\n  url: http://127.0.0.1:9\n"
+                       "plugins:\n  config:\n    web: {searx_url: 'http://127.0.0.1:9'}\n", encoding="utf-8")
+    monkeypatch.setenv("ARGUS_CONFIG", str(pc_yaml))
     with FakeOllama({"qwen2.5-coder:7b": []}) as ol, \
             Server(make(tmp_path, "  chain: [T1]\n  needs: [gpu]\n").open()) as srv:
         cl = client(srv.url)
