@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+**Added:** a live terminal console for the laptop (`argus-console`): logo with an eye that follows Ari, status, Ari's conversation, events and logs in one window, opened at Hyprland login by `deploy/linux/console-setup.sh`.
+
 **Changed:** Ari has one voice, the expressive one. Piper, the voice picker and the browser-voice fallback are removed; when the voice can't speak, Ari shows text. Old `ari.voice` / `ari.voice_engine` settings are ignored.
 
 **Fix:** Ari no longer stays silent because some app holds the mic (only calling apps count; `ari.quiet_in_calls`, `ari.call_apps`); "Hey Adi/Addie" (Whisper's mishearings) wake Ari again; a voice hiccup is retried instead of switching to the second voice.

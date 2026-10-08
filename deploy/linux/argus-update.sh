@@ -15,7 +15,7 @@ echo "updating ${before:0:8} -> ${after:0:8}: $(git log -1 --format=%s "$after")
 rollback() {
   echo "update failed: rolling back to ${before:0:8}"
   git reset --quiet --hard "$before"
-  .venv/bin/pip install --quiet -e ".[plugins]" || true
+  .venv/bin/pip install --quiet -e ".[plugins,console]" || true
   sudo /usr/bin/systemctl restart argusd argus-worker
   exit 1
 }
@@ -25,7 +25,7 @@ curl -fsS -X POST -H "Authorization: Bearer ${ARGUS_WORKER_TOKEN:-$(grep -E '^AR
 git checkout --quiet main
 git reset --quiet --hard "$after"
 trap rollback ERR
-.venv/bin/pip install --quiet -e ".[plugins]"
+.venv/bin/pip install --quiet -e ".[plugins,console]"
 .venv/bin/python -m argus --check
 sudo /usr/bin/systemctl restart argusd argus-worker
 for i in $(seq 1 30); do curl -fsS "$url/health" >/dev/null 2>&1 && { echo "updated: ${before:0:8} -> ${after:0:8}"; exit 0; }; sleep 1; done

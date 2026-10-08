@@ -153,6 +153,20 @@ them; `remove` undoes it. Don't run `dev.ps1 up` on the PC any more (that starts
   --check` lists the ones that need it.
 - **Ollama** must answer on the PC: `.\scripts\pc-worker.ps1 status` says whether it does.
 
+## The console (a live terminal on the laptop's screen)
+
+`bash /opt/argus/deploy/linux/console-setup.sh` once, on the laptop (it installs tmux and kitty, copies the worker
+token for reading argusd, and adds one line to `~/.config/hypr/hyprland.conf`). From then on Hyprland opens one
+terminal on workspace 9 at login, without taking your focus (`SUPER+9` to look). It is split in four:
+
+| top left | top right |
+| --- | --- |
+| the Argus logo with an eye that follows Ari (looks around, wide open when listening, quick while thinking, pulses while speaking, closed when Ari is off), then Ari, the PC, jobs, approvals, models, this box's CPU, memory and temperature, and the next schedule | Ari's conversation as it happens |
+| **bottom left:** everything Argus does, as it happens | **bottom right:** argusd's and the worker's logs, coloured |
+
+It only reads. Open it by hand with `argus-console`; leave it running with `Ctrl+b` then `d`;
+`console-setup.sh off` stops it opening at login. If argusd is restarting the panes say so and carry on.
+
 ## Updating
 
 **By itself (once):** `bash /opt/argus/deploy/linux/auto-update.sh` on the laptop. It gives the `argus` user a
