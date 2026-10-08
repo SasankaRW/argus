@@ -24,6 +24,8 @@ dev = ["pytest>=8", "pytest-timeout>=2.3", "httpx>=0.27", "ruff>=0.5", "numpy>=1
 plugins = ["send2trash>=1.8", "pillow>=10", "pytesseract>=0.3", "pypdf>=4", "numpy>=1.24", "psutil>=5.9",
            "pyvda>=0.5; sys_platform == 'win32'", "playwright>=1.45; sys_platform == 'win32'",
            "uiautomation>=2.0.20; sys_platform == 'win32'"]
+# the terminal console on the laptop (python -m argus.console; deploy/linux/console-setup.sh)
+console = ["rich>=13", "psutil>=5.9"]
 # Ari: hearing (Whisper, on the PC's worker). Her voice (Chatterbox) has its own environment: docs/setup.md
 # on Windows also CUDA 12's cuBLAS and cuDNN 9, so Whisper runs on the GPU (worker/hear.py cuda_dlls finds them)
 hearing = ["faster-whisper>=1.0", "nvidia-cublas-cu12; sys_platform == 'win32'",

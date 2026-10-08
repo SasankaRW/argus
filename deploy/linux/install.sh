@@ -24,7 +24,7 @@ sudo chown -R argus:argus "$DIR"
 say "python environment"
 sudo -u argus python3 -m venv "$DIR/.venv"
 sudo -u argus "$DIR/.venv/bin/pip" install --quiet --upgrade pip
-sudo -u argus "$DIR/.venv/bin/pip" install --quiet -e "$DIR[plugins]"
+sudo -u argus "$DIR/.venv/bin/pip" install --quiet -e "$DIR[plugins,console]"
 
 say "settings"
 if [ ! -f "$DIR/argus.yaml" ]; then

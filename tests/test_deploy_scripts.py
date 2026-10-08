@@ -7,7 +7,8 @@ from pathlib import Path
 import pytest
 
 LINUX = Path(__file__).resolve().parents[1] / "deploy" / "linux"
-SCRIPTS = ["install.sh", "install-arch.sh", "tracker-arch.sh", "argus-update.sh", "auto-update.sh"]
+SCRIPTS = ["install.sh", "install-arch.sh", "tracker-arch.sh", "argus-update.sh", "auto-update.sh",
+           "console-setup.sh"]
 
 
 @pytest.mark.skipif(sys.platform == "win32" or shutil.which("bash") is None,
@@ -55,3 +56,21 @@ def test_the_pc_never_runs_a_second_argus_and_ci_stays_small():
 
     ci = yaml.safe_load((root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
     assert "'[\"3.12\"]'" in ci["jobs"]["test"]["strategy"]["matrix"]["python"]  # PRs: one Python per OS
+
+
+def test_the_console_opens_at_login_in_hyprland_and_can_be_turned_off(tmp_path):
+    text = (LINUX / "console-setup.sh").read_text()
+    assert "exec-once = [workspace" in text and "kitty" in text and "tmux" in text and "pacman -S --needed" in text
+    assert "[console]" in text and "apt-get" not in text and "sudo -u argus" not in text
+
+    if sys.platform == "win32" or shutil.which("bash") is None:
+        return
+    hypr = tmp_path / "hypr"
+    hypr.mkdir()
+    conf = hypr / "hyprland.conf"
+    conf.write_text("monitor=,preferred,auto,1\n# argus console (console-setup.sh; remove with: off)\n"
+                    "exec-once = [workspace 9 silent] /home/x/.local/bin/argus-console\nbind = SUPER, Q, killactive\n")
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "XDG_CONFIG_HOME": str(tmp_path)}
+    r = subprocess.run(["bash", str(LINUX / "console-setup.sh"), "off"], env=env, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert conf.read_text() == "monitor=,preferred,auto,1\nbind = SUPER, Q, killactive\n"  # only its own two lines
