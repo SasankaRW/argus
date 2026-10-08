@@ -115,6 +115,11 @@ export async function resumeEars() {
   const r = await api<{ listening: boolean; until: number | null }>("/ari/listening", { method: "POST", body: JSON.stringify({ on: true }) });
   setEars(r.listening, r.until);
 }
+// Ari off / on: no listening anywhere, quiet at once, answers on their way dropped (the island's power key too)
+export async function powerAri(on: boolean) {
+  const r = await api<{ listening: boolean; until: number | null }>("/ari/power", { method: "POST", body: JSON.stringify({ on }) });
+  setEars(r.listening, r.until);
+}
 export function loadEars() {
   api<{ listening: boolean; until: number | null }>("/ari/listening").then((r) => setEars(r.listening, r.until)).catch(() => {});
 }

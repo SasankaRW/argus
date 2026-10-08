@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, getToken } from "./api";
 import type { Selection } from "./MapView";
-import { pauseEars, resumeEars, useAri, useEars } from "./ariState";
+import { powerAri, useAri, useEars } from "./ariState";
 import { canSpeak, listen, pref, setPref, speak, Speech, stopSpeaking, voiceStatus, VoiceStatus } from "./voice";
 import { plain } from "./spoken";
 
@@ -298,10 +298,10 @@ export function EarsButton() {
   const go = async (f: () => Promise<void>) => { setBusy(true); try { await f(); } catch { /* offline */ } finally { setBusy(false); } };
   const left = ears.paused && Number.isFinite(ears.until) ? Math.max(1, Math.round((ears.until - Date.now()) / 60000)) : null;
   return ears.paused
-    ? <button type="button" className="btn ears off" disabled={busy} onClick={() => go(resumeEars)} title="Ari is not listening anywhere">
-        not listening{left ? ` · ${left} min` : ""} · resume</button>
-    : <button type="button" className="btn ears" disabled={busy} onClick={() => go(() => pauseEars(null))} title="Stop Ari listening (the PC's microphone and Helios) until you turn it back on">
-        pause listening</button>;
+    ? <button type="button" className="btn ears off" disabled={busy} onClick={() => go(() => powerAri(true))} title="Ari is off: not listening anywhere">
+        Ari is off{left ? ` · ${left} min` : ""} · turn on</button>
+    : <button type="button" className="btn ears" disabled={busy} onClick={() => go(() => powerAri(false))} title="Turn Ari off: stops listening (the PC's microphone and Helios), stops talking and drops answers on their way, until you turn it back on">
+        turn Ari off</button>;
 }
 
 // Ari's settings (voice), your schedules and what Ari remembers: on the chat list page.

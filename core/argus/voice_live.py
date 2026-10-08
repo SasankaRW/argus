@@ -366,6 +366,34 @@ def after_spoken(final: str, spoken: str) -> str | None:
     return text[i:].strip()
 
 
+_SMALL = {"the", "a", "an", "and", "or", "to", "of", "is", "it", "my", "me", "you", "what", "what's", "how", "can",
+          "could", "please", "for", "in", "on", "at", "about", "ari", "hey", "tell", "do", "does"}
+
+
+def _words(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9']+", text.lower()) if w not in _SMALL and len(w) > 2}
+
+
+def replaced(question: str, newer: list[str]) -> bool:
+    """A newer question is about the same thing ("weather tomorrow" -> "and the weather on Sunday"): the old
+    answer is no longer wanted."""
+    old = _words(question)
+    return bool(old) and any(len(old & _words(n)) / len(old) >= 0.5 for n in newer)
+
+
+def about(question: str) -> str:
+    """What an earlier question was about, short, for "Oh, and about …"."""
+    q = re.sub(r"^(?:(?:hey|ok|okay)\s+)?ari[,\s]*", "", question.strip(), flags=re.I)
+    while True:  # "can you please tell me the weather" -> "the weather"
+        q2 = re.sub(r"^(?:(?:can|could|would) you|please|tell me|show me|let me know)[,\s]+", "", q, flags=re.I)
+        if q2 == q:
+            break
+        q = q2
+    q = re.sub(r"[,\s]+please$", "", q.rstrip(" ?.!"), flags=re.I)
+    words = q.split()
+    return " ".join(words[:7]) + ("…" if len(words) > 7 else "") if words else "what you asked"
+
+
 @dataclass
 class Talk:
     """The conversation: wake phrase, back and forth without it, barge-in, ending. Uses `Turns` for the audio, and
@@ -394,6 +422,14 @@ class Talk:
     _gen: int = 0
     _following: bool = False  # "following" was reported for this answer (the island's follow-up ring)
     paused_for_barge: bool = False
+    # Ask in the background (the PC's listener): you can keep talking while Ari works, and answers that come late
+    # are put in order (see _answered). False: ask and wait, as before.
+    ask_async: bool = False
+    slow_after_s: float = 15.0  # no answer yet after this long: "Still on it." (once)
+    _ask_seq: int = 0
+    _open: dict = field(default_factory=dict)  # seq -> {"q", "at", "slow"}: questions still being answered
+    _held: list = field(default_factory=list)  # (seq, question, answer): older answers waiting for a newer one
+    _spoken_seq: int = 0  # the newest question whose answer was spoken
     _lock: Any = field(default_factory=threading.RLock)
 
     @property
@@ -500,34 +536,93 @@ class Talk:
         else:
             self.report("thinking")
         log.info("heard", extra={"text": command})
+        self._ask_seq += 1
+        seq = self._ask_seq
+        self._last_q = command
+        self._open[seq] = {"q": command, "at": self.clock(), "slow": False}
         streamed = {"text": "", "mood": "neutral"}
+        if self.ask_async:
+            self.run(lambda: self._answered(seq, command, self._call(seq, command, streamed), streamed))
+            self._keep_talking(pending=True)
+            return command
+        self._answered(seq, command, self._call(seq, command, streamed), streamed)
+        return command
 
+    def _call(self, seq: int, command: str, streamed: dict) -> dict:
         def partial(text: str, mood: str) -> None:  # a reply still being written: its finished sentences now
-            if not text.startswith(streamed["text"]):
-                return
-            new = text[len(streamed["text"]):].strip()
-            if not new:
-                return
-            ps = phrases(new, mood if not streamed["text"] else streamed["mood"])  # tags in the text win
-            streamed["text"] = text
-            if ps:
-                streamed["mood"] = ps[-1][0]
-            self.player.add(tagged(ps))
+            with self._lock:
+                if seq != self._ask_seq or self._held:
+                    return  # not the newest question (or older answers wait): this one is said in one go
+                if not text.startswith(streamed["text"]):
+                    return
+                new = text[len(streamed["text"]):].strip()
+                if not new:
+                    return
+                ps = phrases(new, mood if not streamed["text"] else streamed["mood"])  # tags in the text win
+                streamed["text"] = text
+                if ps:
+                    streamed["mood"] = ps[-1][0]
+                self.player.add(tagged(ps))
 
         try:
-            ans = self.ask(command, partial) if _takes_partial(self.ask) else self.ask(command)
+            return self.ask(command, partial) if _takes_partial(self.ask) else self.ask(command)
         except Exception as e:  # noqa: BLE001 - argusd down: say so, keep listening
             log.warning("could not reach Ari", extra={"error": str(e)[:200]})
-            ans = {"reply": "Sorry, I can't reach Argus right now."}
-        reply = (ans.get("reply") or "").strip()
+            return {"reply": "Sorry, I can't reach Argus right now."}
+
+    def _answered(self, seq: int, command: str, ans: dict, streamed: dict) -> None:
+        """An answer is back. Newest question first: an older answer that arrives while a newer question is still
+        being answered waits, then follows with "Oh, and about …". One the newer question replaced is dropped."""
+        with self._lock:
+            if seq not in self._open:
+                return  # dropped (Stop)
+            self._open.pop(seq, None)
+            reply = (ans.get("reply") or "").strip()
+            if reply and any(s > seq for s in self._open):
+                self._held.append((seq, command, ans))
+                return
+            if reply:
+                late = seq < self._spoken_seq
+                if late and replaced(command, self._newer_questions(seq)):
+                    log.info("late answer dropped: a newer question replaced it", extra={"q": command[:60]})
+                else:
+                    self._speak(command, reply, streamed, late)
+                    self._spoken_seq = max(self._spoken_seq, seq)
+            self._flush()
+            self._keep_talking(pending=bool(ans.get("pending")))
+
+    def _speak(self, command: str, reply: str, streamed: dict, late: bool) -> None:
+        if late:  # after something newer: say what it was about first
+            self.player.add(tagged(phrases(f"Oh, and about {about(command)}: {reply}")))
+            return
         rest = after_spoken(reply, streamed["text"]) if streamed["text"] else None
         if rest is not None:  # most of it is said already: the rest follows on
             self.player.add(tagged(phrases(rest, streamed["mood"])))
-        elif reply:
+        else:
             # "[excited] We won! [sympathetic] Shame about the rain.": each sentence carries the mood it is said in
             self.player.say(tagged(phrases(reply)))
-        self._keep_talking(pending=bool(ans.get("pending")))
-        return command
+
+    def _flush(self) -> None:
+        """Older answers that waited, oldest first, once nothing newer is still open."""
+        for item in sorted(self._held):
+            seq, command, ans = item
+            if any(s > seq for s in self._open):
+                continue
+            self._held.remove(item)
+            if replaced(command, self._newer_questions(seq)):
+                log.info("late answer dropped: a newer question replaced it", extra={"q": command[:60]})
+                continue
+            self._speak(command, (ans.get("reply") or "").strip(), {"text": ""}, late=True)
+
+    def _newer_questions(self, seq: int) -> list[str]:
+        return [o["q"] for s, o in self._open.items() if s > seq] + [q for s, q, _ in self._held if s > seq] + \
+            ([self._last_q] if getattr(self, "_last_q", None) and seq < self._spoken_seq else [])
+
+    def drop_pending(self) -> None:
+        """Stop: answers still on their way are not said."""
+        with self._lock:
+            self._open.clear()
+            self._held.clear()
 
     def _keep_talking(self, pending: bool = False) -> None:
         if self.live or pending:
@@ -536,6 +631,12 @@ class Talk:
     def tick(self) -> None:
         """Call often: the quiet clock only runs once Ari has finished talking; at the end, back to waiting."""
         now = self.clock()
+        with self._lock:
+            newest = self._open.get(self._ask_seq)
+            if self.ask_async and newest and not newest["slow"] and now - newest["at"] > self.slow_after_s \
+                    and not self.player.busy:
+                newest["slow"] = True
+                self.player.say(["Still on it."])
         if self.player.busy or self.turns.talking:
             if self.in_talk_until:
                 self.in_talk_until = max(self.in_talk_until, now + self.idle_s)
@@ -828,11 +929,18 @@ class Fillers:
     """A few short fillers, made once in the background with Ari's voice, so one plays at once when an answer takes a
     moment (better than silence or a tone). `synth(text)` -> (samples, rate) or None."""
 
-    def __init__(self, synth, texts: list[str] | None = None, rng: random.Random | None = None):
+    def __init__(self, synth, texts: list[str] | None = None, rng: random.Random | None = None,
+                 version: Any = None):
         self.ready: list[tuple] = []
         self.rng = rng or random.Random()
         self._last = -1
-        threading.Thread(target=self._make, args=(synth, texts or FILLERS), daemon=True, name="fillers").start()
+        self.synth, self.texts = synth, texts or FILLERS
+        self.version = version  # () -> int: the voice changed when it does (the fillers are made again)
+        self._made_for = version() if version else 0
+        self._start()
+
+    def _start(self) -> None:
+        threading.Thread(target=self._make, args=(self.synth, self.texts), daemon=True, name="fillers").start()
 
     def _make(self, synth, texts, tries: int = 10, wait: float = 30) -> None:
         for _ in range(tries):  # Argus may still be starting
@@ -848,6 +956,11 @@ class Fillers:
             time.sleep(wait)
 
     def pick(self):
+        if self.version is not None and self.version() != self._made_for:  # a new voice: new fillers
+            self._made_for = self.version()
+            self.ready = []
+            self._start()
+            return None
         if not self.ready:
             return None
         i = self.rng.randrange(len(self.ready))
