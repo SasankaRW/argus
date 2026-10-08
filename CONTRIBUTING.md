@@ -16,6 +16,7 @@ releases; it hands over a change package and you run the steps below.
 
 .\scripts\dev.ps1 pr                                        # push, open the PR (title + description from the commit)
 .\scripts\dev.ps1 merge                                     # wait for CI, squash-merge, back on an updated main
+.\scripts\dev.ps1 ship a.tgz b.tgz                          # all three for each package, in order; stops at a problem
 .\scripts\dev.ps1 release minor                             # at a milestone only
 ```
 

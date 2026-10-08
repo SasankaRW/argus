@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+**`dev.ps1 ship`:** apply, pr and merge one or more change packages in order, stopping at the first problem.
+
 **Expressive voice everywhere again:** Argus on the laptop uses the PC's expressive voice for Helios and the phone (`ari.expressive_share`, Tailscale and the worker token only); the PC worker picks up the laptop's settings every 5 minutes; Ari no longer calls you "friend".
 
 **Ari's voice on the PC follows Helios:** the listener uses the voice you pick (Piper, and the expressive voice's clip); `pc-worker.ps1 restart` also ends the processes a stopped task leaves behind.

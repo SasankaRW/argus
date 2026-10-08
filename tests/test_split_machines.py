@@ -143,13 +143,14 @@ def test_the_pc_voice_follows_the_voice_picked_in_helios(tmp_path, monkeypatch):
                                          "  voice: data/voices/en_GB-cori-high.onnx\n", encoding="utf-8")
     cfg = load_config(tmp_path / "argus.yaml")
 
-    say = ari_listen.local_voice(cfg, lambda: {"current": "en_GB-cori-high", "speed": 1.1})
+    now = lambda f: f()  # noqa: E731 - follow the picked voice at once (no thread), so the test is exact
+    say = ari_listen.local_voice(cfg, lambda: {"current": "en_GB-cori-high", "speed": 1.1}, run=now)
     assert say("hello") == b"GPU"  # the expressive voice on this PC
     wait_for(lambda: (voices / "ari-clip.json").exists())
     assert (voices / "ari-clip.wav").read_bytes() == b"OLD"  # your existing clip is kept
     assert json.loads((voices / "ari-clip.json").read_text())["voice"] == "en_GB-cori-high"
 
-    ari_listen.local_voice(cfg, lambda: {"current": "en_US-amy-medium", "speed": 1.0})  # you picked another
+    ari_listen.local_voice(cfg, lambda: {"current": "en_US-amy-medium", "speed": 1.0}, run=now)  # another one
     wait_for(lambda: (voices / "ari-clip.wav").read_bytes() == b"NEWCLIP")
     time.sleep(0.05)
     assert json.loads((voices / "ari-clip.json").read_text())["voice"] == "en_US-amy-medium"
@@ -171,12 +172,14 @@ def test_the_worker_picks_up_new_settings_without_a_restart(tmp_path, monkeypatc
         cl = client(srv.url)
         w = Worker(cl, "pc", capabilities=["desktop", "gpu"], ollama_url=ol.url, watch_folders=False)
         w.register()
-        first = w._registered
+        calls = []
+        real = w.register
+        monkeypatch.setattr(w, "register", lambda: (calls.append(1), real()))
         w.run_once(wait=0)
-        assert w._registered == first  # not every time
-        monkeypatch.setattr(Worker, "REGISTER_SECONDS", 0.0)
+        assert calls == []  # not every time
+        monkeypatch.setattr(Worker, "REGISTER_SECONDS", -1.0)  # (counted, not timed: Windows' clock is coarse)
         w.run_once(wait=0)
-        assert w._registered > first  # argusd's settings (models, plugins) asked for again
+        assert calls == [1]  # argusd's settings (models, plugins) asked for again
 
 
 def test_the_pcs_expressive_voice_is_shared_with_the_laptop_safely(tmp_path, monkeypatch):

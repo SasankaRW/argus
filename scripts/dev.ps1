@@ -25,12 +25,14 @@
 #   .\scripts\dev.ps1 branch feat/name  start work on a new branch from an up-to-date main
 #   .\scripts\dev.ps1 pr                push the branch and open a pull request (title + description from the commit)
 #   .\scripts\dev.ps1 merge             wait for CI, then squash-merge the pull request and return to main
+#   .\scripts\dev.ps1 ship a.tgz b.tgz  apply, pr and merge each package in turn (stops at the first problem)
 #   .\scripts\dev.ps1 rerun             re-run CI's failed jobs once (a flaky test unrelated to the change)
 #   .\scripts\dev.ps1 sync              bring main up to date with GitHub
 #   .\scripts\dev.ps1 release minor     release: tests, version bump, changelog, tag, push, GitHub release
 param(
     [Parameter(Position = 0)][string]$Command = "help",
-    [Parameter(Position = 1)][string]$Arg = ""
+    [Parameter(Position = 1)][string]$Arg = "",
+    [Parameter(ValueFromRemainingArguments = $true)][string[]]$More = @()
 )
 
 $ErrorActionPreference = "Stop"
@@ -458,6 +460,24 @@ switch ($Command) {
         GitOk pull --ff-only --quiet
         Write-Host "Merged into main. (Releases happen at milestones: .\scripts\dev.ps1 release minor)"
     }
+    "ship" {
+        # The whole flow for change packages, one after another: apply -> pr -> merge (CI must be green).
+        $Pkgs = @($Arg) + @($More) | Where-Object { $_ }
+        if (-not $Pkgs) { throw "Name the package(s), e.g. .\scripts\dev.ps1 ship G:\Projects\argus-ari-p1.tgz G:\Projects\argus-ari-p2.tgz" }
+        foreach ($P in $Pkgs) { if (-not (Test-Path $P)) { throw "No such package: $P" } }
+        $N = 0
+        foreach ($P in $Pkgs) {
+            $N++
+            Write-Host ""
+            Write-Host "== $N/$($Pkgs.Count): $P" -ForegroundColor Cyan
+            & $PSCommandPath apply $P
+            & $PSCommandPath pr
+            & $PSCommandPath merge
+        }
+        Write-Host ""
+        Write-Host "Shipped $($Pkgs.Count) package(s). The PC's worker restarts on the new code by itself;" -ForegroundColor Green
+        Write-Host "for Ari's listener and island now: .\scripts\pc-worker.ps1 restart"
+    }
     "rerun" {
         Need-Gh
         $B = Current-Branch
@@ -482,6 +502,6 @@ switch ($Command) {
         if ($LASTEXITCODE -ne 0) { throw "Release stopped" }
     }
     default {
-        Get-Content $PSCommandPath | Select-Object -Skip 1 -First 28 | ForEach-Object { $_.TrimStart("#") }
+        Get-Content $PSCommandPath | Select-Object -Skip 1 -First 29 | ForEach-Object { $_.TrimStart("#") }
     }
 }
