@@ -4,6 +4,7 @@ listener makes Ari's voice itself."""
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import yaml
@@ -35,7 +36,7 @@ config:
 def test_the_laptop_template_sends_model_work_to_the_pc():
     cfg = Config.model_validate(yaml.safe_load((ROOT / "deploy/linux/argus.laptop.yaml").read_text()))
     assert cfg.models.needs == ["gpu"]
-    assert cfg.plugins.runs_on["web"] == "desktop" and cfg.ari.voice_engine == "piper"
+    assert cfg.plugins.runs_on["web"] == "desktop" and "ts.net:8611" in cfg.ari.expressive_url
     assert Config().models.needs == []  # one machine (the PC): any worker, as before
 
 
@@ -89,12 +90,12 @@ def test_the_listener_speaks_with_this_pcs_voice_first(tmp_path):
     c = ari_listen.AriClient("http://127.0.0.1:9", None, tmp_path / "conv", local=lambda t: calls.append(t) or b"WAV")
     assert c.voice("hello") == b"WAV" and calls == ["hello"]  # never asked argusd (port 9: nothing there)
 
-    (tmp_path / "argus.yaml").write_text("logging:\n  file: null\n", encoding="utf-8")
-    assert ari_listen.local_voice(load_config(tmp_path / "argus.yaml")) is None  # no voice here: argusd's
-    (tmp_path / "argus.yaml").write_text("logging:\n  file: null\nari:\n  voice: data/voices/none.onnx\n",
+    # no voice server running: nothing is spoken (and nothing else speaks); the words are printed by the listener
+    (tmp_path / "argus.yaml").write_text("logging:\n  file: null\nari:\n  expressive_url: http://127.0.0.1:9\n",
                                          encoding="utf-8")
     say = ari_listen.local_voice(load_config(tmp_path / "argus.yaml"))
-    assert say is not None and say("hi") is None  # Piper set but its file missing: falls back to argusd
+    assert say("hi") is None
+    assert ari_listen.AriClient("http://127.0.0.1:9", None, tmp_path / "conv", local=say).voice("hi") is None
 
 
 def test_ari_health_checks_the_pcs_services_on_the_pc(tmp_path, monkeypatch):
@@ -125,39 +126,24 @@ def test_ari_health_checks_the_pcs_services_on_the_pc(tmp_path, monkeypatch):
         assert cl.get("/jobs?plugin=ari")[0]["needs"] == ["gpu"]
 
 
-def test_the_pc_voice_follows_the_voice_picked_in_helios(tmp_path, monkeypatch):
-    import json
-    import time
-
+def test_a_hiccup_is_retried_not_swapped_for_a_second_voice(tmp_path, monkeypatch):
     from argus import voice as voice_mod
 
-    voices = tmp_path / "data" / "voices"
-    voices.mkdir(parents=True)
-    for name in ("en_GB-cori-high", "en_US-amy-medium"):
-        (voices / f"{name}.onnx").write_bytes(b"x")
-        (voices / f"{name}.onnx.json").write_text("{}")
-    (voices / "ari-clip.wav").write_bytes(b"OLD")
-    used: list[str] = []
-    monkeypatch.setattr(voice_mod.Voice, "use", lambda self, path, speed=None: used.append(path.stem))
-    monkeypatch.setattr(voice_mod.Voice, "say", lambda self, text: b"NEWCLIP")
+    tried: list[tuple[float | None, bool]] = []
     monkeypatch.setattr(voice_mod.Expressive, "warm", lambda self: True)
-    monkeypatch.setattr(voice_mod.Expressive, "say", lambda self, text: b"GPU")
-    (tmp_path / "argus.yaml").write_text("logging:\n  file: null\nari:\n  voice_engine: expressive\n"
-                                         "  voice: data/voices/en_GB-cori-high.onnx\n", encoding="utf-8")
-    cfg = load_config(tmp_path / "argus.yaml")
 
-    now = lambda f: f()  # noqa: E731 - follow the picked voice at once (no thread), so the test is exact
-    say = ari_listen.local_voice(cfg, lambda: {"current": "en_GB-cori-high", "speed": 1.1}, run=now)
-    assert say("hello") == b"GPU"  # the expressive voice on this PC
-    wait_for(lambda: (voices / "ari-clip.json").exists())
-    assert (voices / "ari-clip.wav").read_bytes() == b"OLD"  # your existing clip is kept
-    assert json.loads((voices / "ari-clip.json").read_text())["voice"] == "en_GB-cori-high"
+    def flaky(self, text, timeout=None, force=False):
+        tried.append((timeout, force))
+        if len(tried) == 2:  # the second sentence times out once
+            return None
+        self.ok_at = time.time()
+        return b"GPU"
 
-    ari_listen.local_voice(cfg, lambda: {"current": "en_US-amy-medium", "speed": 1.0}, run=now)  # another one
-    wait_for(lambda: (voices / "ari-clip.wav").read_bytes() == b"NEWCLIP")
-    time.sleep(0.05)
-    assert json.loads((voices / "ari-clip.json").read_text())["voice"] == "en_US-amy-medium"
-    assert used[-1] == "en_US-amy-medium"
+    monkeypatch.setattr(voice_mod.Expressive, "say", flaky)
+    (tmp_path / "argus.yaml").write_text("logging:\n  file: null\n", encoding="utf-8")
+    say = ari_listen.local_voice(load_config(tmp_path / "argus.yaml"))
+    assert say("one") == b"GPU"
+    assert say("two") == b"GPU" and tried[-1] == (90, True)  # tried again, slower, on purpose
 
 
 def test_ari_never_calls_you_friend():
@@ -210,9 +196,9 @@ def test_helios_voice_doesnt_wait_for_a_pc_that_is_off(tmp_path):
 
     import httpx
 
-    srv_args = "  chain: [T1]\n  needs: [gpu]\nari:\n  voice_engine: expressive\n" \
+    srv_args = "  chain: [T1]\n  needs: [gpu]\nari:\n" \
                "  expressive_url: http://10.255.255.1:8611\n"
     with Server(make(tmp_path, srv_args).open()) as srv:
         t0 = time.monotonic()
         r = httpx.post(srv.url + "/ari-voice/say", json={"text": "hello"}, timeout=20)
-        assert r.status_code == 409 and time.monotonic() - t0 < 3  # Piper here (none set), not a 30 s wait
+        assert r.status_code == 409 and time.monotonic() - t0 < 3  # text at once, not a 30 s wait

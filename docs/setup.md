@@ -155,16 +155,14 @@ Helios > **Ari** (and **Talk to Ari** on the phone): talk to Argus by typing or 
 - **"Hey Ari"**: tick it and, while Helios is open (on the PC, for example), say "Hey Ari, …". After Ari asks
   "Shall I?", just say yes or no. The browser listens for the wake phrase (Chrome or Edge; allow the microphone).
 
-*Optional:* a natural voice and private hearing.
+*Optional:* private hearing (Ari's voice is set up under *Ari's voice* further down).
 
 ```powershell
-pip install -e .[voice,hearing]                   # Piper (voice) and faster-whisper (hearing)
-python -m piper.download_voices en_US-lessac-medium --data-dir data\voices
+pip install -e .[hearing]                         # faster-whisper
 ```
 
 ```yaml
 ari:
-  voice: data/voices/en_US-lessac-medium.onnx     # Ari speaks with Piper instead of the browser's voice
   hearing: whisper                                # the mic button records; Whisper on the PC writes it down
   whisper_model: small.en
 ```
@@ -172,13 +170,12 @@ ari:
 **"Hey Ari" on the PC without a browser** (your microphone, nothing leaves the PC):
 
 ```powershell
-pip install -e .[listen,voice]
+pip install -e .[listen]
 ```
 
 ```yaml
 ari:
   listen: true            # dev.ps1 up starts it (logs\ari.log); or run: python -m argus.ari_listen
-  voice: data/voices/en_US-lessac-medium.onnx   # so Ari answers out loud (else the answer is only in Helios)
 ```
 
 Say "Hey Ari, what's running?" or "Hey Ari" (a chime), then what you want. When Ari asks "Shall I?", just say yes
@@ -193,7 +190,7 @@ back through the mic are ignored. While the PC is playing something, only a clea
 The health check warns when the mic hears almost nothing (muted, too quiet, or the wrong default mic).
 
 **A wake-word model (optional, the most reliable).** Make a "Hey Ari" model once with openWakeWord's automatic
-training notebook (it generates thousands of "Hey Ari" clips with Piper voices; about an hour on a free GPU): set
+training notebook (it generates thousands of synthetic "Hey Ari" clips; about an hour on a free GPU): set
 the target phrase to `hey ari`, download `hey_ari.onnx` into `data/models/`, then:
 
 ```powershell
@@ -207,7 +204,7 @@ ari:
 ```
 
 Whisper uses the GPU when CUDA 12 and cuDNN 9 are found, else the CPU (fine for short commands). While the PC is
-off, the browser hears you. Other voices: https://rhasspy.github.io/piper-samples/
+off, the browser hears you.
 
 **Ari's popup over the whole screen** (like Siri: a glowing pill at the top of the screen while Ari listens,
 thinks, works or talks, over any app; tap it to open Ari in Helios):
@@ -258,6 +255,36 @@ daily cap.
 - **PC apps** (`pc-apps`): "open Spotify", "open my CV in Documents", "open youtube.com", "close Chrome" (asks first).
 - **PC media** (`pc-media`): "volume 30", "turn it down", "mute", "next song", "pause".
 - **PC windows** (`pc-windows`): "switch to VS Code", "show the desktop", "lock the PC", "take a screenshot".
+- **Ari's Workstation** (`workstation`): Ari's own Windows virtual desktop, made and named on first use. "Google
+  cheap flights" opens the results there (in Ari's own browser profile, not yours); "open Calculator on your
+  workstation"; "move that window to me" brings Ari's window to the desktop you're on; "take this" moves yours to
+  Ari's. Win+Ctrl+Right to look. Never touches the windows in its `never_touch` setting (DirectFN, password
+  managers). Needs `pyvda` and `playwright` (in `.[plugins]`; Playwright uses your installed Chrome or Edge).
+  - **Tasks on websites** ("find the opening hours on the Keells site", "fill the contact form on example.com"):
+    Ari's browser, driven inside the page (never your mouse or keyboard), one step at a time by the local model. It
+    asks before sending, buying, deleting or posting; asks you for details it doesn't know; hands you the window for
+    passwords and card numbers. What worked is kept as a recipe and replayed next time.
+  - **"Play <song> on Spotify":** Spotify's web player in Ari's browser. Sign in once in that window when Ari hands
+    it to you.
+  - **Tasks in desktop apps** ("in Calculator, work out …"): the app on the Workstation, its buttons and fields
+    used by name through UI Automation (no mouse, no focus). A control with no UI Automation action is clicked
+    with window messages. An app that lists almost no controls is looked at: its picture, with a numbered box on
+    each control it knows, goes to the vision tier (V1, local only; never saved, never to Claude), which picks a
+    box, or a point when there's no box.
+  - **When Ari needs you** (a detail, a choice, a yes for Buy, a hint when stuck): it says so out loud and shows
+    a box under the island with a text field, the choices as buttons, or Yes / No (also in Helios and on the
+    phone). The task waits on that step and carries on when you answer. Stuck twice on the same step, it shows
+    you its picture of the window and asks for a hint; the hint is kept for that app or site, and the picture is
+    deleted when the task ends.
+  - **The real mouse** is the last resort, for apps that ignore Ari's own clicks: Ari switches to its
+    workstation, clicks once and comes back. It does this on its own only after you haven't touched the PC for 5
+    seconds; otherwise it asks first.
+  - **Which vision model?** `python -m argus.vision_test <folder>` compares models on your own screenshots
+    (`cases.yaml`: picture, goal, the right box). For UI-TARS-1.5-7B add `@thousand` to its name. Put the winner in
+    `models.tiers.V1`.
+  - **"Fill this form":** the window you're looking at (a web page or an app). Ari only types into fields and picks
+    options, asks for what it doesn't know (tick "remember" for details like your email), and never presses Submit
+    or Send: you check it and press it. Passwords, card, passport and account numbers are yours to type.
 - **PC keyboard** (`pc-keys`): "type 'see you at 6' ", "press ctrl+s" in the window in front (always asks
   first; never types passwords).
 - **PC status** (`pc-system`): "how's the PC doing?", "what's using my GPU?", "how much space is left on G?",
@@ -300,7 +327,7 @@ daily cap.
     personality: "A calm, dry-witted butler who is quietly amused by everything."
     call_me: Sas
   ```
-- **Ari's expressive voice** (`ari.voice_engine: expressive`): Chatterbox-Turbo (Resemble AI, MIT) on the GPU
+- **Ari's voice** (the only one): Chatterbox-Turbo (Resemble AI, MIT) on the GPU
   laughs, sighs and changes its tone with the mood of each reply ("[cheerful] Oh nice! [laugh]"; on screen you
   only see the words). It lives in its own Python environment, since it pins its own PyTorch:
 
@@ -310,13 +337,12 @@ daily cap.
   .venv-voice\Scripts\pip install --force-reinstall torch torchaudio --index-url https://download.pytorch.org/whl/cu128
   ```
 
-  ```yaml
-  ari:
-    voice_engine: expressive    # the supervisor starts it (logs\ari-voice.out); Piper stays the fallback
-  ```
+  The supervisor starts it when `.venv-voice` exists (logs\ari-voice.out). On the laptop, point `ari.expressive_url`
+  at the PC. If the voice can't speak (the PC is off, it is still loading), Ari shows the words and stays
+  silent; nothing else speaks. Old `ari.voice` / `ari.voice_engine` settings are ignored.
 
-  It sounds like your Piper voice (a 10 s clip is made from it once: `data/voices/ari-clip.wav`), or like any
-  clip you set as `ari.voice_clip`. `expressive_model: standard` is slower but has stronger moods. Every clip
+  It sounds like `data/voices/ari-clip.wav` on the PC (a 5-15 s recording; an existing one is kept), or like any
+  clip you set as `ari.voice_clip`; without a clip it uses Chatterbox's own voice. `expressive_model: standard` is slower but has stronger moods. Every clip
   Chatterbox makes carries Resemble's inaudible watermark. While an answer takes a moment, Ari says a short
   "hmm, let me check" instead of staying silent.
 - **Train Ari on your voice** (Helios > Ari > *train on my voice*): read sentences aloud (about 300, 20 minutes;

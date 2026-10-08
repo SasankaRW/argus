@@ -72,10 +72,10 @@ def load_ari():
 
 
 def expressive_on() -> bool:
-    """ari.voice_engine: expressive, and its Python environment exists."""
+    """Ari's voice: its Python environment exists."""
     try:
         a = load_ari()
-        return a.voice_engine == "expressive" and (ROOT / a.expressive_python).exists()
+        return (ROOT / a.expressive_python).exists()
     except Exception:
         return False
 

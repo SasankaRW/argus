@@ -45,7 +45,7 @@ def test_the_desk_worker_has_its_own_id_and_only_the_session(monkeypatch):
 def test_the_expressive_voice_runs_in_its_own_python(monkeypatch):
     from argus.config import AriConfig
 
-    monkeypatch.setattr(supervisor, "load_ari", lambda: AriConfig(voice_engine="expressive"))
+    monkeypatch.setattr(supervisor, "load_ari", lambda: AriConfig())
     assert names(monkeypatch, voice=True) == ["argusd", "ari-listen", "ari-voice", "ari-popup", "worker"]
     args = argparse.Namespace(no_worker=False, no_session=False, no_argusd=False, desk_only=False)
     monkeypatch.setattr(supervisor, "expressive_on", lambda: True)

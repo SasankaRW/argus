@@ -88,7 +88,7 @@ from ..presence import describe_phone
 from ..shares import ShareError, ShareStore, kinds_of
 from ..tools import Tool, ToolError, Tools
 from ..triggers import BadSignature, TriggerError, UnknownTrigger
-from ..voice import CATALOG, Expressive, Voice, VoiceUnavailable, download, installed
+from ..voice import Expressive
 from ..voice_samples import Samples
 from ..worker import think as think_mod
 from . import approval_page, mcp
@@ -231,11 +231,6 @@ class AriSpeak(BaseModel):
     text: str = Field(min_length=1, max_length=1000)
 
 
-class AriVoicePick(BaseModel):
-    voice: str = Field(min_length=3, max_length=80)
-    speed: float = Field(1.0, ge=0.6, le=1.6)
-
-
 class ToolCall(BaseModel):
     worker: str
     key: str = Field(min_length=1, max_length=200)
@@ -372,8 +367,8 @@ def create_app(argus: Argus) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await argus.start()
-        if argus.cfg.ari.voice_engine == "expressive":  # the voice's first sentence shouldn't pay for its start-up
-            threading.Thread(target=lambda: expressive().warm(), daemon=True, name="voice-warm").start()
+        # the voice's first sentence shouldn't pay for its start-up
+        threading.Thread(target=lambda: expressive().warm(), daemon=True, name="voice-warm").start()
         try:
             yield
         finally:
@@ -880,6 +875,15 @@ def create_app(argus: Argus) -> FastAPI:
         return await argus.store.write(lambda c: guidance.record_followups(c, time.time(), list(x.get("results")
                                                                                                or [])))
 
+    async def _drop_pictures(x: dict) -> dict:
+        from .. import approvals as approvals_mod
+
+        jid = str(x.get("job") or "")
+        return {"dropped": await argus.store.write(lambda c: approvals_mod.drop_pictures(c, jid)) if jid else 0}
+
+    tools.builtin["forget_task_pictures"] = Tool(
+        "forget_task_pictures", "(Ari's Workstation) the task's screenshots are deleted when it ends",
+        {"job": {"type": "string"}}, ["job"], fn=_drop_pictures, for_ari=False, for_mcp=False)
     tools.builtin["record_followups"] = Tool(
         "record_followups", "(guidance loop) what you did with files a job moved or renamed",
         {"results": {"type": "array"}}, ["results"], fn=_followed, for_ari=False, for_mcp=False)
@@ -1290,23 +1294,7 @@ def create_app(argus: Argus) -> FastAPI:
 
     # Ari's voice and ears ----------------------------------------------------
 
-    voice = Voice(argus.cfg.ari.voice, argus.cfg.base_dir)
     audio_dir = argus.cfg.db_path.parent / "ari"
-    voices_dir = voice.path.parent if voice.path is not None else argus.cfg.db_path.parent / "voices"
-    picked = {"loaded": False}
-
-    async def use_picked_voice() -> None:
-        """The voice you picked in Helios (kept in the settings table) wins over ari.voice in argus.yaml."""
-        if picked["loaded"]:
-            return
-        picked["loaded"] = True
-        sql = "SELECT value FROM settings WHERE key = 'ari_voice'"
-        row = await argus.store.read(lambda c: c.execute(sql).fetchone())
-        if row:
-            v = json.loads(row[0])
-            path = voices_dir / f"{v.get('voice')}.onnx"
-            if path.exists():
-                voice.use(path, float(v.get("speed") or 1.0))
 
     async def gpu_online() -> bool:
         return await able(["gpu"])
@@ -1319,66 +1307,36 @@ def create_app(argus: Argus) -> FastAPI:
 
     @app.get("/ari-voice", dependencies=guarded)
     async def ari_voice(request: Request) -> dict:
-        """What Helios can use: Piper here, Whisper on the PC (only while a GPU worker is online)."""
+        """What Helios can use: Ari's voice (here, or on the PC while a GPU worker is online), Whisper on the PC."""
         host = request.client.host if request.client else "?"
-        return {"voice": voice.configured, "hearing": argus.cfg.ari.hearing,
+        spoken = not expressive().remote or await gpu_online()
+        return {"voice": spoken, "hearing": argus.cfg.ari.hearing,
                 "whisper_ready": argus.cfg.ari.hearing == "whisper" and await gpu_online(),
                 "popup_here": time.time() - overlays.get(host, 0) < 75, "pill": argus.cfg.ari.pill}
-
-    @app.get("/ari-voice/voices", dependencies=guarded)
-    async def ari_voices() -> dict:
-        """Voices you can pick (Piper, English), which are on this machine, and the one in use."""
-        await use_picked_voice()
-        have = set(installed(voices_dir))
-        known = [{"id": v, "label": label, "installed": v in have} for v, label in CATALOG]
-        known += [{"id": v, "label": v, "installed": True} for v in sorted(have - {k for k, _ in CATALOG})]
-        return {"current": voice.name, "speed": voice.speed, "voices": known}
-
-    @app.put("/ari-voice/voice", dependencies=guarded)
-    async def ari_pick_voice(body: AriVoicePick) -> dict:
-        """Pick Ari's voice (downloaded the first time, ~60 MB) and speed; every screen and "Hey Ari" use it."""
-        path = voices_dir / f"{body.voice}.onnx"
-        if not path.exists():
-            try:
-                path = await asyncio.to_thread(download, body.voice, voices_dir)
-            except VoiceUnavailable as e:
-                raise HTTPException(status_code=409, detail=str(e)) from None
-        voice.use(path, body.speed)
-        picked["loaded"] = True
-        value = json.dumps({"voice": body.voice, "speed": voice.speed})
-        await argus.store.write(lambda c: c.execute(
-            "INSERT INTO settings (key, value, created_at, updated_at) VALUES ('ari_voice', ?, ?, ?)"
-            " ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
-            (value, time.time(), time.time())))
-        return await ari_voices()
 
     _expr: dict = {}
 
     def expressive():
-        """The expressive voice client, made again when its settings change."""
+        """Ari's voice client, made again when its settings change."""
         a = argus.cfg.ari
         key = (a.expressive_url, a.voice_clip)
         if _expr.get("key") != key:
-            clip = Path(a.voice_clip).expanduser() if a.voice_clip else voices_dir / "ari-clip.wav"
+            clip = Path(a.voice_clip or argus.cfg.db_path.parent / "voices" / "ari-clip.wav").expanduser()
             if not clip.is_absolute():
                 clip = argus.cfg.base_dir / clip
             tok = argus.cfg.secrets.worker_token  # the PC's voice asks for it from another machine
-            _expr.update(key=key, client=Expressive(a.expressive_url, clip, voice, token=tok))
+            _expr.update(key=key, client=Expressive(a.expressive_url, clip, token=tok))
         return _expr["client"]
 
     @app.post("/ari-voice/say", dependencies=guarded)
     async def ari_say_audio(body: AriSpeak) -> Response:
-        """Ari's natural voice: WAV audio of the text (Piper). 409 when none is set up: use the browser's voice."""
-        await use_picked_voice()
-        try:
-            wav = None
-            # the expressive voice on the PC (Argus on the laptop): only while the PC is up, else Piper here at once
-            if argus.cfg.ari.voice_engine == "expressive" and (not expressive().remote or await gpu_online()):
-                wav = await asyncio.to_thread(expressive().say, body.text)
-            if wav is None:
-                wav = await asyncio.to_thread(voice.say, body.text)
-        except VoiceUnavailable as e:
-            raise HTTPException(status_code=409, detail=str(e)) from None
+        """Ari's voice: WAV audio of the text. 409 while it can't speak (the PC is off, the voice is loading):
+        the words are shown and nothing else speaks."""
+        if expressive().remote and not await gpu_online():
+            raise HTTPException(status_code=409, detail="Ari's voice is on the PC, which is off")
+        wav = await asyncio.to_thread(expressive().say, body.text)
+        if wav is None:
+            raise HTTPException(status_code=409, detail="Ari's voice isn't ready")
         return Response(wav, media_type="audio/wav", headers={"Cache-Control": "no-store"})
 
     @app.post("/ari-voice/hear", dependencies=guarded)

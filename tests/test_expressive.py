@@ -1,5 +1,5 @@
-"""Ari's spoken style: moods and sounds in replies, the expressive voice server (Chatterbox stand-in), the fallback to
-Piper, fillers while Ari works."""
+"""Ari's spoken style: moods and sounds in replies, Ari's one voice (a Chatterbox stand-in server), silence
+rather than a second voice, fillers while Ari works."""
 
 from __future__ import annotations
 
@@ -40,33 +40,27 @@ class FakeEngine:
         return vs.to_wav(np.zeros(2400, np.float32), 24000)
 
 
-def test_the_voice_server_and_argus_falling_back_to_piper(tmp_path):
+def test_the_voice_server_and_a_server_that_is_gone(tmp_path, monkeypatch):
+    monkeypatch.setattr(vs, "DEFAULT_CLIP", tmp_path / "none.wav")  # not this machine's own clip
     eng = FakeEngine()
     srv = ThreadingHTTPServer(("127.0.0.1", 0), vs.handler(eng))
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     url = f"http://127.0.0.1:{srv.server_address[1]}"
     try:
         assert json.loads(urllib.request.urlopen(url + "/health").read())["ok"] is True
-
-        class Piper:
-            calls = 0
-
-            def say(self, text):
-                Piper.calls += 1
-                return vs.to_wav(np.zeros(100, np.float32), 22050)
-
         clip = tmp_path / "voices" / "ari-clip.wav"
-        e = Expressive(url, clip, Piper())
-        wav = e.say("[cheerful] Oh nice! [laugh]")
+        e = Expressive(url, clip)
+        wav = e.say("[cheerful] Oh nice! [laugh]")  # no clip file yet: the server's own voice
         with wave.open(io.BytesIO(wav)) as w:
             assert w.getframerate() == 24000
-        assert eng.said[0] == ("[cheerful] Oh nice! [laugh]", str(clip.resolve()))
-        assert clip.exists() and Piper.calls == 1  # the voice to sound like: made once from the Piper voice
+        assert eng.said[0] == ("[cheerful] Oh nice! [laugh]", None) and not clip.exists()  # nothing is made for it
+        clip.parent.mkdir()
+        clip.write_bytes(b"RIFF")
         e.say("Again.")
-        assert Piper.calls == 1
+        assert eng.said[1] == ("Again.", str(clip.resolve()))  # your clip, once it is there
     finally:
         srv.shutdown()
-    assert Expressive(url, None, Piper()).say("Hello") is None  # server gone: None, argusd uses Piper
+    assert Expressive(url, None).say("Hello") is None  # server gone: None, and the words are shown
 
 
 def test_mood_to_chatterbox_settings():
@@ -219,16 +213,12 @@ def test_warming_up_the_voice_says_one_word_and_waits_for_the_server(tmp_path):
     srv = ThreadingHTTPServer(("127.0.0.1", 0), vs.handler(eng))
     threading.Thread(target=srv.serve_forever, daemon=True).start()
 
-    class Piper:
-        def say(self, text):
-            return vs.to_wav(np.zeros(100, np.float32), 22050)
-
     try:
-        e = Expressive(f"http://127.0.0.1:{srv.server_address[1]}", tmp_path / "clip.wav", Piper())
+        e = Expressive(f"http://127.0.0.1:{srv.server_address[1]}", tmp_path / "clip.wav")
         assert e.warm(tries=2, wait=0.01) is True and eng.said[0][0] == "Hi."
     finally:
         srv.shutdown()
-    assert Expressive("http://127.0.0.1:9", None, Piper()).warm(tries=2, wait=0.01) is False
+    assert Expressive("http://127.0.0.1:9", None).warm(tries=2, wait=0.01) is False
 
 
 def test_the_model_is_loaded_once_even_when_two_ask_at_the_same_time():
