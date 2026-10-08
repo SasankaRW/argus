@@ -344,6 +344,10 @@ class GuidanceConfig(_Strict):
     # Lesson sets tried per playbook: each one after the first fixes what the best so far still gets wrong on the
     # tests (the GEPA idea); the best scoring set is offered. More: better lessons, more Claude calls.
     candidates: int = Field(3, ge=1, le=6)
+    # Every few hours a worker looks whether you moved back, renamed again or moved elsewhere what a job did
+    # (your fix counts as a wrong answer); a change left alone for a day counts as a yes. 0: off.
+    followup_hours: float = Field(6, ge=0, le=48)
+    examples: bool = True  # experience memory: the most similar confirmed answers go with the prompt
 
 
 class AriHealthConfig(_Strict):

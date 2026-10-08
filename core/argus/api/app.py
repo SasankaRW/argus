@@ -251,6 +251,8 @@ class SampleIn(BaseModel):
     output: Any = None
     tier: str | None = None
     escalated: bool = False
+    subject: str | None = Field(None, max_length=2000)  # what it was about (file names): links your fixes to it
+    used: list[int] | None = None  # the examples it was shown (experience memory)
 
 
 class Replay(BaseModel):
@@ -578,12 +580,17 @@ def create_app(argus: Argus) -> FastAPI:
                 raise HTTPException(status_code=409, detail="this change can't be corrected (dry-run, already undone, "
                                                             "or the plugin has no Wrong button)")
             p = argus.plugin_host.plugins[job.plugin]
+            c_from = str(c["from"] or "")
             wf = p.manifest.helios.wrong.workflow  # type: ignore[union-attr]
             job_id2, created = await argus.jobs.enqueue(
                 job.plugin, wf, {"from": c["to"], "orig": c["from"], "value": body.value, "fix_of": event_id,
                                  "job": job_id},
                 needs=p.manifest.job_needs(), priority=PRIORITY_INTERACTIVE, dedupe_key=f"fix:{event_id}",
                 source="helios")
+            if created:  # the answer behind this change was wrong, and you said what's right
+                await argus.store.write(lambda c: guidance.implicit(
+                    c, job_id, c_from, "wrong", f"should have been: {body.value}" if body.value else None,
+                    "wrong button"))
             return {"id": job_id2, "created": created}
 
     # -------------------------------------------------------------- Ask Argus
@@ -750,7 +757,7 @@ def create_app(argus: Argus) -> FastAPI:
         sid = await argus.store.write(lambda c: guidance.add_sample(
             c, time.time(), job_id=job_id, plugin=job.plugin, playbook=body.playbook, schema=body.schema_,
             input=body.input, output=body.output, tier=body.tier, escalated=body.escalated,
-            keep=argus.cfg.guidance.keep_samples))
+            keep=argus.cfg.guidance.keep_samples, subject=body.subject, used=body.used))
         return {"id": sid}
 
     @app.get("/jobs/{job_id}/samples", dependencies=guarded)
@@ -822,6 +829,12 @@ def create_app(argus: Argus) -> FastAPI:
         """Review now: Claude proposes lessons for playbooks with new mistakes; you approve them."""
         return await argus.guidance_review()
 
+    @app.post("/guidance/followups", dependencies=guarded)
+    async def guidance_followups() -> dict:
+        """Look now whether you moved back, renamed again or moved elsewhere what jobs did (runs every
+        `guidance.followup_hours` anyway)."""
+        return {"jobs": await argus.guidance_followups()}
+
     @app.post("/lessons/{lesson_id}/decide", dependencies=guarded)
     async def lesson_decide(lesson_id: int, body: LessonDecide) -> dict:
         r = await argus.store.write(lambda c: guidance.decide(c, lesson_id, body.approve, time.time()))
@@ -858,6 +871,13 @@ def create_app(argus: Argus) -> FastAPI:
         "record_evals", "(guidance loop) keep the result of a test run",
         {"key": {"type": "string"}, "run": {"type": "object"}, "why": {"type": "string"}, "job_id": {"type": "string"}},
         ["key", "run"], fn=_record, for_ari=False, for_mcp=False)
+    async def _followed(x: dict) -> dict:
+        return await argus.store.write(lambda c: guidance.record_followups(c, time.time(), list(x.get("results")
+                                                                                               or [])))
+
+    tools.builtin["record_followups"] = Tool(
+        "record_followups", "(guidance loop) what you did with files a job moved or renamed",
+        {"results": {"type": "array"}}, ["results"], fn=_followed, for_ari=False, for_mcp=False)
     tools.builtin["decide_lessons"] = Tool(
         "decide_lessons", "(guidance loop) your answer to proposed lessons",
         {"lesson": {"type": "integer"}, "approve": {"type": "boolean"}}, ["lesson", "approve"], fn=_decide,
@@ -1085,6 +1105,8 @@ def create_app(argus: Argus) -> FastAPI:
         if q and not await argus.store.read(lambda c: ari_mod.open_question(c, conv, max_age=600)):
             await argus.store.write(lambda c: ari_mod.close_question(c, q["turn"]))  # asked too long ago: lapsed
             q = None
+        if not q and ari_mod.CORRECTION.match(text):  # "no, I meant ...": the last answer's model call was wrong
+            await argus.store.write(lambda c: ari_mod.mark_corrected(c, conv, text, time.time()))
         await argus.store.write(lambda c: ari_mod.add_turn(c, conv, "you", body.text.strip()))
         if q and (ari_mod.YES.match(text) or ari_mod.NO.match(text)):
             return await _answer(conv, q, bool(ari_mod.YES.match(text)))
@@ -1648,6 +1670,10 @@ def create_app(argus: Argus) -> FastAPI:
                 job.plugin, "undo", {"from": c["to"], "to": c["from"], "undo_of": event_id, "job": job_id},
                 needs=p.manifest.job_needs(), priority=PRIORITY_INTERACTIVE, dedupe_key=f"undo:{event_id}",
                 source="helios")
+            if created:  # you didn't want that: the answer behind it counts as wrong
+                c_from = str(c["from"] or "")
+                await argus.store.write(lambda conn: guidance.implicit(conn, job_id, c_from, "wrong", "you undid it",
+                                                                       "undo"))
             return {"id": job_id2, "created": created}
 
     @app.get("/jobs/{job_id}/events", dependencies=guarded)
@@ -1791,6 +1817,9 @@ def create_app(argus: Argus) -> FastAPI:
                     out["plugin_info"] = p.info()
                     out["plugin_info"]["lessons"] = await argus.store.read(
                         lambda c, pid=job.plugin: guidance.active_lessons(c, pid))
+                    if argus.cfg.guidance.examples:
+                        out["plugin_info"]["examples"] = await argus.store.read(
+                            lambda c, pid=job.plugin: guidance.examples(c, pid))
                 return out
             if time.monotonic() >= deadline:
                 return Response(status_code=204)

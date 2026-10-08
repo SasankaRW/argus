@@ -9,12 +9,18 @@
    the mistakes and the right answers, and writes a few short lessons. The eval set is replayed on the local tier
    with and without them; you get the lessons and the before/after scores to approve (Helios and the phone).
 4. Approved lessons are appended to that playbook for that plugin from then on ("Lessons from earlier mistakes").
+5. Your fixes count without a click (`implicit`): an Undo or Wrong on a job's change, a file you moved back, renamed
+   again or moved elsewhere (a worker looks every few hours: `followups`), "no, I meant ..." to Ari.
+6. Experience memory (`examples`): answers you confirmed, fixed, or left alone for a day are worked examples; the
+   worker gives the model the 2-3 most similar to the input. Examples that keep leading to mistakes are dropped
+   (`harm`); only verified answers are added (research: storing everything makes agents worse).
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
 import time
 from typing import Any
@@ -24,8 +30,15 @@ def playbook_key(plugin: str, text: str) -> str:
     return f"{plugin}:{hashlib.sha1(text.encode()).hexdigest()[:12]}"
 
 
+EXAMPLES_KEPT = 100   # confirmed answers kept per playbook as worked examples (newest win)
+EXAMPLES_SENT = 60    # sent to the worker with each job (it picks the most similar few)
+HARM_LIMIT = 2        # examples that led to this many wrong answers are dropped (yours: one more)
+KEEP_AFTER = 86400    # a change left alone this long counts as a yes
+
+
 def add_sample(conn: sqlite3.Connection, now: float, *, job_id: str, plugin: str, playbook: str,
-               schema: Any, input: Any, output: Any, tier: str | None, escalated: bool, keep: int) -> int:
+               schema: Any, input: Any, output: Any, tier: str | None, escalated: bool, keep: int,
+               subject: str | None = None, used: list[int] | None = None) -> int:
     key = playbook_key(plugin, playbook)
     name = next((ln.strip() for ln in playbook.strip().splitlines() if ln.strip()), "")[:120]
     conn.execute("INSERT INTO playbooks (key, plugin, name, text, schema, first_seen, last_seen) VALUES (?,?,?,?,?,?,?)"
@@ -33,12 +46,18 @@ def add_sample(conn: sqlite3.Connection, now: float, *, job_id: str, plugin: str
                  (key, plugin, name, playbook, json.dumps(schema) if schema else None, now, now))
     lessons = conn.execute("SELECT id FROM lessons WHERE playbook = ? AND state = 'active'", (key,)).fetchone()
     cur = conn.execute("INSERT INTO samples (job_id, plugin, playbook, input, output, tier, escalated, created_at,"
-                       " lessons_id) VALUES (?,?,?,?,?,?,?,?,?)",
+                       " lessons_id, subject, used) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                        (job_id, plugin, key, _j(input), _j(output), tier, int(escalated), now,
-                        lessons[0] if lessons else None))
-    # keep the newest `keep` without a verdict; marked ones are the eval set and stay
-    conn.execute("DELETE FROM samples WHERE playbook = ? AND verdict IS NULL AND id NOT IN (SELECT id FROM samples"
-                 " WHERE playbook = ? AND verdict IS NULL ORDER BY id DESC LIMIT ?)", (key, key, keep))
+                        lessons[0] if lessons else None, (subject or "")[:2000] or None,
+                        json.dumps([int(u) for u in used]) if used else None))
+    # keep the newest `keep` without a verdict; marked ones are the eval set and stay; confirmed ones (left alone
+    # for a day) are the worked examples, the newest EXAMPLES_KEPT of them
+    conn.execute("DELETE FROM samples WHERE playbook = ? AND verdict IS NULL AND kept_at IS NULL AND id NOT IN"
+                 " (SELECT id FROM samples WHERE playbook = ? AND verdict IS NULL AND kept_at IS NULL"
+                 " ORDER BY id DESC LIMIT ?)", (key, key, keep))
+    conn.execute("DELETE FROM samples WHERE playbook = ? AND verdict IS NULL AND kept_at IS NOT NULL AND id NOT IN"
+                 " (SELECT id FROM samples WHERE playbook = ? AND verdict IS NULL AND kept_at IS NOT NULL"
+                 " ORDER BY id DESC LIMIT ?)", (key, key, EXAMPLES_KEPT))
     return int(cur.lastrowid or 0)
 
 
@@ -60,7 +79,13 @@ def sample_json(r: sqlite3.Row, conn: sqlite3.Connection | None = None) -> dict[
     out = {"id": r["id"], "job_id": r["job_id"], "plugin": r["plugin"], "playbook": r["playbook"],
            "input": _p(r["input"]), "output": _p(r["output"]), "tier": r["tier"], "escalated": bool(r["escalated"]),
            "verdict": r["verdict"], "correction": _p(r["correction"]), "created_at": r["created_at"]}
-    lid = r["lessons_id"] if "lessons_id" in r.keys() else None
+    keys = r.keys()
+    for k in ("subject", "feedback", "kept_at"):
+        if k in keys and r[k] is not None:
+            out[k] = r[k]
+    if "used" in keys and r["used"]:
+        out["examples_used"] = _p(r["used"])
+    lid = r["lessons_id"] if "lessons_id" in keys else None
     if conn is not None and lid:
         lr = conn.execute("SELECT id, text, decided_at FROM lessons WHERE id = ?", (lid,)).fetchone()
         if lr is not None:
@@ -91,9 +116,110 @@ def trend(conn: sqlite3.Connection, key: str, now: float, weeks: int = 8) -> dic
     return {"weeks": out, "lessons": approved}
 
 
-def set_verdict(conn: sqlite3.Connection, sample_id: int, verdict: str | None, correction: Any = None) -> bool:
-    return conn.execute("UPDATE samples SET verdict = ?, correction = ? WHERE id = ?",
-                        (verdict, _j(correction) if correction not in (None, "") else None, sample_id)).rowcount > 0
+def set_verdict(conn: sqlite3.Connection, sample_id: int, verdict: str | None, correction: Any = None,
+                feedback: str = "you") -> bool:
+    old = conn.execute("SELECT verdict, used FROM samples WHERE id = ?", (sample_id,)).fetchone()
+    if old is None:
+        return False
+    conn.execute("UPDATE samples SET verdict = ?, correction = ?, feedback = ?,"
+                 " reviewed_at = CASE WHEN ? = 'wrong' THEN NULL ELSE reviewed_at END WHERE id = ?",
+                 (verdict, _j(correction) if correction not in (None, "") else None, feedback if verdict else None,
+                  verdict, sample_id))
+    if verdict == "wrong" and old["verdict"] != "wrong" and old["used"]:  # the examples it was shown misled it
+        ids = [int(i) for i in _p(old["used"]) or []]
+        if ids:
+            conn.execute(f"UPDATE samples SET harm = harm + 1 WHERE id IN ({','.join('?' * len(ids))})", ids)
+    return True
+
+
+def _names(subject: str | None) -> set[str]:
+    return {os.path.basename(x.strip()).lower() for x in (subject or "").splitlines() if x.strip()}
+
+
+def implicit(conn: sqlite3.Connection, job_id: str, subject: str | None, verdict: str, correction: Any,
+             feedback: str) -> list[int]:
+    """Your fix counts as a verdict without a click: an undo, the Wrong button, a file you moved back or renamed
+    again, "no, I meant ..." to Ari. Marks that job's answer about `subject` (a file name; None: all its answers).
+    Never overrides a verdict you gave yourself. Returns the sample ids marked."""
+    rows = conn.execute("SELECT id, subject, verdict, feedback FROM samples WHERE job_id = ?", (job_id,)).fetchall()
+    want = _names(subject)
+    hit = [r for r in rows if not want or want & _names(r["subject"])]
+    if not hit and want and len(rows) == 1 and not rows[0]["subject"]:
+        hit = list(rows)  # one answer, about nothing named: it was this one
+    out = []
+    for r in hit:
+        if r["verdict"] and r["feedback"] in (None, "you"):
+            continue  # yours stands
+        set_verdict(conn, r["id"], verdict, correction, feedback)
+        conn.execute("UPDATE samples SET kept_at = NULL WHERE id = ?", (r["id"],))
+        out.append(r["id"])
+    return out
+
+
+def examples(conn: sqlite3.Connection, plugin: str) -> dict[str, list[dict[str, Any]]]:
+    """Experience memory, sent to workers with each job: per playbook, the answers you confirmed (Correct, or a
+    fix that says what it should have been) and ones left alone for a day. Ones that kept misleading are left out."""
+    out: dict[str, list[dict[str, Any]]] = {}
+    for r in conn.execute(
+            "SELECT s.id, s.playbook, s.input, s.output, s.verdict, s.correction FROM samples s"
+            " JOIN playbooks p ON p.key = s.playbook WHERE p.plugin = ? AND ("
+            " (s.verdict = 'correct' AND s.harm < ?) OR (s.verdict = 'wrong' AND s.correction IS NOT NULL AND"
+            " s.harm < ?) OR (s.verdict IS NULL AND s.kept_at IS NOT NULL AND s.harm < ?))"
+            " ORDER BY s.id DESC", (plugin, HARM_LIMIT + 1, HARM_LIMIT + 1, HARM_LIMIT)).fetchall():
+        lst = out.setdefault(r["playbook"], [])
+        if len(lst) >= EXAMPLES_SENT or len(r["input"]) > 3000:
+            continue
+        fixed = r["verdict"] == "wrong" or (r["verdict"] == "correct" and r["correction"])
+        lst.append({"id": r["id"], "input": _p(r["input"]),
+                    "answer": _p(r["correction"]) if fixed else _p(r["output"]), "fixed": bool(fixed)})
+    return out
+
+
+def followups(conn: sqlite3.Connection, now: float, days: float = 3) -> dict[str, list[dict[str, Any]]]:
+    """Moves made by jobs whose answers are still open (no verdict, not kept yet): per plugin, for a worker to look
+    whether you moved the file back, renamed it again, moved it elsewhere, or left it."""
+    since = now - days * 86400
+    out: dict[str, list[dict[str, Any]]] = {}
+    jobs = conn.execute("SELECT DISTINCT s.job_id, s.plugin FROM samples s WHERE s.created_at >= ? AND"
+                        " s.verdict IS NULL AND s.kept_at IS NULL AND s.subject IS NOT NULL", (since,)).fetchall()
+    for j in jobs:
+        undone = {r[0] for r in conn.execute(  # Undo / Wrong pressed: that already said it
+            "SELECT dedupe_key FROM jobs WHERE dedupe_key IN (SELECT 'undo:' || id FROM events WHERE job_id = ?"
+            " UNION SELECT 'fix:' || id FROM events WHERE job_id = ?)", (j["job_id"], j["job_id"]))}
+        for e in conn.execute("SELECT id, data, at FROM events WHERE job_id = ? AND kind = 'file.moved'",
+                              (j["job_id"],)):
+            d = _p(e["data"]) or {}
+            if d.get("dry_run") or f"undo:{e['id']}" in undone or f"fix:{e['id']}" in undone:
+                continue
+            out.setdefault(j["plugin"], []).append({"job_id": j["job_id"], "event_id": e["id"], "from": d.get("from"),
+                                                    "to": d.get("to"), "size": d.get("size"),
+                                                    "mtime": d.get("mtime"), "age": now - e["at"]})
+    return out
+
+
+FOLLOWUP_WORDS = {"moved back": "you moved it back to where it was", "renamed": "you renamed it to {name}",
+                  "moved": "you moved it to {folder}"}
+
+
+def record_followups(conn: sqlite3.Connection, now: float, results: list[dict[str, Any]]) -> dict[str, int]:
+    """Apply what the worker saw: a fix of yours is a wrong answer (with what you did); a change left alone for a
+    day is a yes (the answer becomes a worked example)."""
+    counts = {"wrong": 0, "kept": 0}
+    for x in results:
+        job, status = str(x.get("job_id") or ""), str(x.get("status") or "")
+        subject = str(x.get("from") or "")
+        if status in FOLLOWUP_WORDS:
+            at = str(x.get("now_at") or "")
+            words = FOLLOWUP_WORDS[status].format(name=os.path.basename(at), folder=os.path.dirname(at))
+            counts["wrong"] += len(implicit(conn, job, subject, "wrong", words, status))
+        elif status == "there" and float(x.get("age") or 0) >= KEEP_AFTER:
+            want = _names(subject)
+            for r in conn.execute("SELECT id, subject FROM samples WHERE job_id = ? AND verdict IS NULL AND"
+                                  " kept_at IS NULL", (job,)).fetchall():
+                if not want or want & _names(r["subject"]):
+                    conn.execute("UPDATE samples SET kept_at = ? WHERE id = ?", (now, r["id"]))
+                    counts["kept"] += 1
+    return counts
 
 
 def active_lessons(conn: sqlite3.Connection, plugin: str) -> dict[str, str]:

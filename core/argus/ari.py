@@ -28,6 +28,9 @@ from .ids import new_id
 
 YES = re.compile(r"^\s*(yes|yeah|yep|yup|sure|ok|okay|do it|go ahead|please do|confirm|correct|right|sounds good)\b",
                  re.I)
+# "no, I meant ...", "that's wrong", "not that one": the last answer missed (its model calls count as wrong)
+CORRECTION = re.compile(r"^\s*(no+[,.!]?\s+(i meant|i said|not|it'?s|that'?s|the|i wanted)\b|nope\b|not that\b|"
+                        r"wrong\b|that'?s (wrong|not (it|right|what i (meant|asked)))|i meant\b|i said\b)", re.I)
 NO = re.compile(r"^\s*(no|nope|nah|cancel|don'?t|do not|never ?mind|stop|forget it)\b", re.I)
 WAKE = re.compile(r"^\s*(hey|hi|ok|okay)?[\s,]*(ari|arie|harry|artie|argus)\b[\s,.!?]*", re.I)
 TURN_OFF = re.compile(r"^\s*(?:please\s+)?(?:turn (?:yourself )?off|switch (?:yourself )?off|go to sleep|"
@@ -253,6 +256,18 @@ def add_turn(conn: sqlite3.Connection, conv: str, role: str, text: str | None, *
                        " VALUES (?,?,?,?,?,?,?)",
                        (conv, role, text, action, json.dumps(pending) if pending else None, job_id, time.time()))
     return int(cur.lastrowid or 0)
+
+
+def mark_corrected(conn: sqlite3.Connection, conv: str, text: str, now: float, within: float = 300) -> list[int]:
+    """You corrected Ari's last answer: the model answers of the job behind it (if any, in the last 5 minutes)
+    count as wrong, with what you said (the guidance loop learns from them)."""
+    from . import guidance
+
+    r = conn.execute("SELECT job_id, created_at FROM ari_turns WHERE conv = ? AND role = 'ari' ORDER BY id DESC"
+                     " LIMIT 1", (conv,)).fetchone()
+    if r is None or not r["job_id"] or now - r["created_at"] > within:
+        return []
+    return guidance.implicit(conn, r["job_id"], None, "wrong", f"the user said: {text.strip()[:300]}", "ari")
 
 
 def turns(conn: sqlite3.Connection, conv: str, limit: int = 200) -> list[dict[str, Any]]:

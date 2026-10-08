@@ -204,10 +204,10 @@ class Placement(BaseModel):
 LEARNED_MAX = 50  # corrections kept as examples (newest win)
 
 
-def playbook(learned: dict[str, str] | None = None) -> str:
-    """The instructions, with rules.yaml's examples plus the corrections you made with the Wrong button."""
-    mine = {f: c for f, c in (learned or {}).items() if c in CATEGORIES}  # a category since removed: left out
-    examples = {**(RULES.get("examples") or {}), **mine}
+def playbook() -> str:
+    """The instructions with rules.yaml's examples. Your Wrong-button fixes go with each file instead (the most
+    similar ones), so the playbook stays the same and its lessons and tests keep applying."""
+    examples = dict(RULES.get("examples") or {})
     return ("Sort a download into exactly one category.\n\nCATEGORIES (choose one, spelled exactly):\n"
             + "\n".join(f"- {k}: {v}" for k, v in CATEGORIES.items())
             + "\n\nRULES:\n" + "\n".join(f"- {g}" for g in RULES.get("guidance") or [])
@@ -216,6 +216,15 @@ def playbook(learned: dict[str, str] | None = None) -> str:
 
 
 PLAYBOOK = playbook()
+
+
+def your_fixes(learned: dict[str, str] | None, names: list[str], k: int = 5) -> dict[str, str]:
+    """The Wrong-button fixes whose names share the most words with these files (a category since removed: left
+    out)."""
+    from argus.worker.workflows import similar
+
+    mine = [{"input": f, "answer": c} for f, c in (learned or {}).items() if c in CATEGORIES]
+    return {e["input"]: e["answer"] for e in similar(mine, " ".join(names), k=k, floor=0.1)}
 
 
 def classify(ctx: Context, names: list[str], ext: str, preview: str) -> tuple[str | None, str, str | None]:
@@ -231,8 +240,11 @@ def classify(ctx: Context, names: list[str], ext: str, preview: str) -> tuple[st
         task["note"] = f"these {len(names)} files belong together and must all go to the SAME category"
     if preview:
         task["content_preview"] = preview
+    fixes = your_fixes(getattr(ctx, "learned", None), names)
+    if fixes:
+        task["you_sorted_similar_files_yourself"] = fixes
     try:
-        p = ctx.llm(playbook(getattr(ctx, "learned", None)), task, schema=Placement, check=check)
+        p = ctx.llm(playbook(), task, schema=Placement, check=check, subject=names)
         return normalise(p.category), (p.reason or "model")[:120], ctx.last_answer.tier
     except EscalationExhausted as e:
         cat = by_extension(ext)
