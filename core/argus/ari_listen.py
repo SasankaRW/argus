@@ -345,7 +345,8 @@ class AriClient:
         return json.loads(self._req("GET", "/ari-voice/voices", None, timeout=10))
 
 
-def local_voice(cfg: Any, picked: Callable[[], dict] | None = None) -> Callable[[str], bytes | None] | None:
+def local_voice(cfg: Any, picked: Callable[[], dict] | None = None,
+                run: Callable[[Callable[[], None]], None] | None = None) -> Callable[[str], bytes | None] | None:
     """Ari's voice made here, where you hear it: the expressive voice server on this PC (its GPU), else Piper here.
     Otherwise every sentence goes to argusd and back, and after the move argusd is on the laptop, which has
     neither the GPU nor the voice server. None when this PC has no voice set up (argusd's voice is used).
@@ -378,7 +379,8 @@ def local_voice(cfg: Any, picked: Callable[[], dict] | None = None) -> Callable[
         if picked is None or time.monotonic() - seen["at"] < 60:
             return
         seen["at"] = time.monotonic()
-        threading.Thread(target=apply, daemon=True, name="voice-follow").start()  # speech never waits for it
+        start = run or (lambda f: threading.Thread(target=f, daemon=True, name="voice-follow").start())
+        start(apply)  # in the background: speech never waits for it
 
     def apply() -> None:
         try:
