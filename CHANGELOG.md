@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+**Ari P2, hearing:** "Hey Ari" counts only at the start; Whisper's made-up words are dropped; the PC's own sound (videos, music, Ari) is ignored (`ari.playback_guard`); optional wake-word model (`ari.wake_model`, openWakeWord); Ari listens from the start while the bigger Whisper loads; a quiet mic is flagged in the health check.
+
 **Ari P1:** late answers come after newer ones ("Oh, and about …"), fillers in Ari's own voice, livelier small talk, failed replies fail fast, Ollama kept up on the PC, and an off / on switch (island, Helios, "Ari, turn off").
 
 **`dev.ps1 ship`:** apply, pr and merge one or more change packages in order, stopping at the first problem.

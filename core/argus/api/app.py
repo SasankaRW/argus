@@ -933,6 +933,7 @@ def create_app(argus: Argus) -> FastAPI:
 
     listener = {"seen": 0.0}
     argus.listener_seen = lambda: listener["seen"]
+    argus.listener_info = lambda: {k: listener.get(k) for k in ("mic", "loudest")}
     argus.health_tools = lambda: [{**t.brief(), "plugin": t.plugin, "risky": t.risky}
                                   for t in tools.all().values() if t.for_ari]
 
@@ -1009,9 +1010,12 @@ def create_app(argus: Argus) -> FastAPI:
         return {**now, "on": on, "dropped": len(dropped)}
 
     @app.post("/ari/listener", dependencies=guarded)
-    async def ari_listener_here() -> dict:
-        """The PC's "Hey Ari" listener says it is running (every 30 s)."""
+    async def ari_listener_here(body: dict | None = None) -> dict:
+        """The PC's "Hey Ari" listener says it is running (every 30 s), with its mic and how loud it heard."""
         listener["seen"] = time.time()
+        for k in ("mic", "loudest"):
+            if body and body.get(k) is not None:
+                listener[k] = body[k]
         return {"ok": True}
 
     @app.get("/ari/vocabulary", dependencies=guarded)

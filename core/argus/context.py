@@ -77,6 +77,7 @@ class Argus:
         self.health_sent: str | None = None
         self.health_tools: Callable[[], list[dict]] = lambda: []  # Ari's tools (set by the API)
         self.listener_seen: Callable[[], float] = lambda: 0.0  # when the PC's listener last said it runs
+        self.listener_info: Callable[[], dict] = lambda: {}  # its mic and loudest level (the health check)
         self._next_touch = 0.0
         self.resumed: dict | None = None  # set at start when the last run ended abruptly
         self.started_at: float | None = None
@@ -204,7 +205,8 @@ class Argus:
         gpu = sum(1 for w in workers if w["state"] == "online" and "gpu" in w["capabilities"])
         pc = await self._health_on_pc(workers) if self.cfg.models.needs else None
         result = await asyncio.to_thread(health.run, self.cfg, tools=self.health_tools(),
-                                         listener_seen=self.listener_seen(), gpu_workers=gpu, pc=pc)
+                                         listener_seen=self.listener_seen(), gpu_workers=gpu, pc=pc,
+                                         listener_info=self.listener_info())
 
         def fn(conn):
             now = time.time()

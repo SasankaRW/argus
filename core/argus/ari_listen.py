@@ -77,12 +77,19 @@ class Segmenter:
 
 STRONG = "ari|arie|arri|aree|ary|aari|argus"
 WEAK = "harry|hari|hurry|siri|sorry|audi|ori|aria|ali|ally|arty|artie|lorry"  # what "Ari" is misheard as
-WAKE_ANY = re.compile(rf"(?:^|\b)(?:(?:hey|hi|hay|ok|okay|a)[\s,.]*(?:{STRONG}|{WEAK})|(?:{STRONG}))\b[\s,.!?]*", re.I)
+_LEAD = r"^(?:(?:uh|um|erm|so|oh|yeah|and|well|okay)[\s,.]+){0,2}"  # "um, hey Ari": a filler or two first
+# The wake phrase only at the START of what was heard: "Hey Ari …", "OK Harry …" (a mishearing), or "Ari, …". A
+# name in the middle ("I was talking to Harry", a video saying "Argus") is not for Ari. That was most false starts.
+WAKE_ANY = re.compile(rf"{_LEAD}(?:(?:hey|hi|hay|ok|okay)[\s,.]*(?:{STRONG}|{WEAK})|(?:{STRONG}))\b[\s,.!?]*", re.I)
+WAKE_STRICT = re.compile(rf"{_LEAD}(?:hey|hi|hay|ok|okay)[\s,.]*(?:{STRONG})\b[\s,.!?]*", re.I)
+STRICT = {"on": False}  # the PC is playing sound (a video, music): only a clear "Hey Ari" counts (PlaybackGuard)
 
 
-def wake_rest(text: str) -> str | None:
-    """What follows the wake phrase, or None when there is no wake phrase."""
-    m = WAKE_ANY.search(text.strip())
+def wake_rest(text: str, strict: bool | None = None) -> str | None:
+    """What follows the wake phrase, or None when there is no wake phrase. `strict` (default: while the PC plays
+    sound): only "Hey/OK Ari", not a bare "Ari" or a mishearing like "Hey Harry"."""
+    strict = STRICT["on"] if strict is None else strict
+    m = (WAKE_STRICT if strict else WAKE_ANY).match(text.strip())
     if not m:
         return None
     return text.strip()[m.end():].strip(" ,.!?")
@@ -222,9 +229,10 @@ class Listener:
 
 class AriClient:
     def here(self) -> None:
-        """Tell Argus this listener runs (so the island's Talk button can use it)."""
+        """Tell Argus this listener runs (so the island's Talk button can use it), with the mic it hears and how
+        loud the loudest sound was in the last minute (the health page warns about a quiet or wrong mic)."""
         try:
-            self._req("POST", "/ari/listener", {}, timeout=5)
+            self._req("POST", "/ari/listener", dict(MIC), timeout=5)
         except Exception:  # argusd restarting
             pass
 
@@ -516,7 +524,21 @@ def hush_from(evs: list[dict]) -> None:
             log.info("listening" if not paused() else "listening paused")
 
 
+MIC: dict = {"mic": None, "loudest": None}  # the microphone in use and its loudest level in the last minute
 VOCAB: dict = {"prompt": "", "heard_as": {}}  # filled from Argus (GET /ari/vocabulary), refreshed every 10 min
+
+
+HALLUCINATIONS = re.compile(r"^(?:thank you(?: (?:so much|very much))?(?: for (?:watching|listening|joining us))?|"
+                            r"thanks for watching|please subscribe|you)[.!]?$", re.I)
+
+
+def made_up(seg: Any) -> bool:
+    """A segment Whisper made up from noise: it thinks there was no speech and isn't sure of the words, or it is one
+    of the phrases it says when it hears nothing ("Thank you for watching")."""
+    nsp = float(getattr(seg, "no_speech_prob", 0.0) or 0.0)
+    lp = float(getattr(seg, "avg_logprob", 0.0) or 0.0)
+    text = str(getattr(seg, "text", "") or "").strip()
+    return (nsp > 0.6 and lp < -0.8) or bool(HALLUCINATIONS.match(text) and (nsp > 0.3 or lp < -0.6))
 
 
 def whisper(name: str) -> Callable[[object], str]:
@@ -532,7 +554,7 @@ def whisper(name: str) -> Callable[[object], str]:
             segs, _ = m.transcribe(audio, language="en", beam_size=1, vad_filter=False,  # type: ignore[attr-defined]
                                    condition_on_previous_text=False, without_timestamps=True,
                                    initial_prompt=p, hotwords=p)
-            text = " ".join(s.text.strip() for s in segs).strip()
+            text = " ".join(s.text.strip() for s in segs if not made_up(s)).strip()
         return vocab.fix(text, VOCAB.get("heard_as") or {})
 
     return run
@@ -663,16 +685,31 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device) -> i
 
     threading.Thread(target=watch, daemon=True, name="ari-watch").start()
     threading.Thread(target=side, daemon=True, name="ari-side").start()
+    guard = vl.PlaybackGuard() if cfg.ari.playback_guard else None
+    if guard is not None:
+        threading.Thread(target=loopback, args=(guard,), daemon=True, name="ari-loopback").start()
+    wake_word = WakeWord.load(cfg, talk)
+    if wake_word is not None:  # the wake-word model decides "Hey Ari"; Whisper only writes down what follows
+        talk.transcribe_wake = lambda audio: ""
+    try:
+        MIC["mic"] = str(sd.query_devices(device, "input").get("name"))
+    except Exception:  # noqa: BLE001 - only for the log and the health page
+        pass
+    log.info("listening", extra={"mic": MIC["mic"], "playback_guard": guard is not None,
+                                 "wake_model": wake_word is not None})
+    client.state("idle", "")  # the island's "starting…" ends: Ari can hear now
     print("Listening for \"Hey Ari\" (Ctrl+C to stop). Then just talk; \"thanks Ari\" ends it.", flush=True)
     loudest, since = 0.0, time.monotonic()
     try:
         for at, frame in mic_blocks(device, vl.FRAME):
             if time.monotonic() - at > 1.0:  # heard while Ari was busy thinking: too old to act on
                 continue
-            loudest = max(loudest, float(np.sqrt(np.mean(np.square(frame)))))
+            rms = float(np.sqrt(np.mean(np.square(frame))))
+            loudest = max(loudest, rms)
             if time.monotonic() - since > 60:
                 skipped = vad.share_skipped() if isinstance(vad, vl.Quiet) else 0.0
                 log.info("microphone level", extra={"loudest": round(loudest, 4), "vad_skipped": round(skipped, 2)})
+                MIC["loudest"] = round(loudest, 4)
                 loudest, since = 0.0, time.monotonic()
             if paused():  # the pause button / voice training: hear nothing, say nothing new
                 if talk.turns.talking or talk.in_conversation:
@@ -682,6 +719,12 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device) -> i
             voice = vad(frame)
             if not gate(frame, player.busy and not talk.paused_for_barge):
                 voice = 0.0
+            if guard is not None:
+                STRICT["on"] = guard.active
+                if guard.explains(rms):  # the PC's own sound coming back (a video, music, Ari): not you
+                    voice = 0.0
+            if wake_word is not None:
+                wake_word.feed(frame)
             try:
                 talk.frame(frame, voice)
             except Exception as e:  # noqa: BLE001 - never stop listening because of one turn
@@ -690,6 +733,92 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device) -> i
     except KeyboardInterrupt:
         pass
     return 0
+
+
+def loopback(guard: Any, every_s: float = 60.0) -> None:
+    """What the speakers play, for the PlaybackGuard (WASAPI loopback through the `soundcard` package). Follows the
+    default speaker (headphones plugged in: a new one). Without the package: no guard, said once in the log."""
+    import numpy as np
+
+    try:
+        import soundcard as sc  # type: ignore[import-not-found]
+    except Exception as e:  # noqa: BLE001 - not installed (pip install -e .[listen]) or no WASAPI
+        log.info("no playback guard (pip install -e .[listen])", extra={"error": str(e)[:120]})
+        return
+    from . import voice_live as vl
+
+    while True:
+        try:
+            spk = sc.default_speaker()
+            rec_dev = sc.get_microphone(id=str(spk.name), include_loopback=True)
+            log.info("playback guard on", extra={"speaker": spk.name})
+            opened = time.monotonic()
+            with rec_dev.recorder(samplerate=RATE, channels=1, blocksize=vl.FRAME) as rec:
+                while True:
+                    data = rec.record(numframes=vl.FRAME)
+                    guard.played(float(np.sqrt(np.mean(np.square(data)))) if len(data) else 0.0)
+                    if time.monotonic() - opened > every_s:
+                        if str(sc.default_speaker().name) != str(spk.name):
+                            break  # another speaker now (headphones): listen to that one
+                        opened = time.monotonic()
+        except Exception as e:  # noqa: BLE001 - the device went away: try again shortly
+            log.info("playback guard paused", extra={"error": str(e)[:120]})
+            time.sleep(5)
+
+
+class WakeWord:
+    """A wake-word model for "Hey Ari" (openWakeWord, ari.wake_model): small, on the CPU, scores the sound itself
+    every 80 ms, so a video saying "Ari" in a sentence or a mishearing doesn't wake Ari. When it fires, Ari listens
+    (like the island's Talk button) and Whisper writes down what you say."""
+
+    CHUNK = 1280  # 80 ms at 16 kHz: what openWakeWord scores at a time
+    COOL_S = 2.0
+
+    def __init__(self, model: Any, threshold: float, on_wake: Callable[[], None], clock: Callable[[], float] =
+                 time.monotonic):
+        import numpy as np
+
+        self.model, self.threshold, self.on_wake, self.clock = model, threshold, on_wake, clock
+        self._buf = np.zeros(0, dtype=np.float32)
+        self._last = -1e9
+
+    @classmethod
+    def load(cls, cfg: Any, talk: Any) -> WakeWord | None:
+        path = str(cfg.ari.wake_model or "").strip()
+        if not path:
+            return None
+        p = Path(path).expanduser()
+        p = p if p.is_absolute() else cfg.base_dir / p
+        if not p.exists():
+            log.warning("wake-word model not found: Whisper listens for \"Hey Ari\"", extra={"path": str(p)})
+            return None
+        try:
+            from openwakeword.model import Model  # type: ignore[import-not-found]
+
+            m = Model(wakeword_models=[str(p)], inference_framework="onnx")
+        except Exception as e:  # noqa: BLE001 - not installed (pip install -e .[wake]) or a bad file
+            log.warning("wake-word model not loaded: Whisper listens for \"Hey Ari\"", extra={"error": str(e)[:160]})
+            return None
+        log.info("wake-word model", extra={"path": str(p), "threshold": cfg.ari.wake_threshold})
+        return cls(m, float(cfg.ari.wake_threshold), talk.wake)
+
+    def feed(self, frame: Any) -> bool:
+        """A mic frame (float32, 16 kHz). True when "Hey Ari" was just heard."""
+        import numpy as np
+
+        self._buf = np.concatenate([self._buf, np.asarray(frame, dtype=np.float32).reshape(-1)])
+        fired = False
+        while len(self._buf) >= self.CHUNK:
+            chunk, self._buf = self._buf[: self.CHUNK], self._buf[self.CHUNK:]
+            scores = self.model.predict((np.clip(chunk, -1, 1) * 32767).astype(np.int16))
+            best = max((float(v) for v in (scores or {}).values()), default=0.0)
+            threshold = self.threshold * (1.3 if STRICT["on"] else 1.0)  # stricter while the PC plays sound
+            if best >= min(threshold, 0.95) and self.clock() - self._last > self.COOL_S:
+                self._last = self.clock()
+                log.info("wake word", extra={"score": round(best, 3)})
+                self.on_wake()
+                fired = True
+        return fired
 
 
 LOCK_PORT = 8619
@@ -826,9 +955,25 @@ def main(argv: list[str] | None = None) -> int:
     keep_warm(cfg)
     log.info("loading Whisper", extra={"wake": cfg.ari.listen_wake_model, "command": cfg.ari.whisper_model,
                                        "expects": VOCAB.get("prompt", "")[:120]})
+    client.state("starting", "Ari is starting…")  # the island says so until Ari can hear
     wake_t = whisper(cfg.ari.listen_wake_model)
     heard_with = str(VOCAB.get("whisper_model") or cfg.ari.whisper_model)  # Helios > Settings (a trained model)
-    cmd_t = whisper(heard_with) if heard_with != cfg.ari.listen_wake_model else wake_t
+    cmd_t = wake_t
+    if heard_with != cfg.ari.listen_wake_model:
+        # the bigger model loads in the background (~40 s): Ari listens at once, with the small one until then
+        big: dict = {"t": None}
+
+        def load_big() -> None:
+            try:
+                big["t"] = whisper(heard_with)
+                log.info("command model ready", extra={"model": heard_with})
+            except Exception as e:  # noqa: BLE001 - keep the small one
+                log.warning("command model not loaded", extra={"model": heard_with, "error": str(e)[:160]})
+
+        threading.Thread(target=load_big, daemon=True, name="whisper-load").start()
+
+        def cmd_t(audio):  # type: ignore[misc]
+            return (big["t"] or wake_t)(audio)
     device = int(args.device) if args.device and args.device.isdigit() else args.device
     if cfg.ari.live:
         return live(cfg, client, wake_t, cmd_t, device)

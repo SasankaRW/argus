@@ -680,6 +680,51 @@ class EchoGate:
         self.ratio = min(self.ratio * 1.25, 6.0)
 
 
+class PlaybackGuard:
+    """The PC's own sound (a video, music, a call, Ari itself) comes back through the mic and sounds like someone
+    talking. This listens to what the speakers play (WASAPI loopback, fed to `played`) and learns how much of it
+    reaches the mic (the coupling, the median mic/speaker ratio while something plays). A mic frame no louder than
+    that echo is the PC's sound, not you, and is ignored. While the PC plays, `active` is true: then only a clear
+    "Hey Ari" wakes Ari (ari_listen.STRICT).
+
+    With headphones nothing comes back: the coupling learns ~0 and everything you say gets through."""
+
+    def __init__(self, margin: float = 2.2, quiet: float = 0.006, window_s: float = 0.4, hold_s: float = 1.5,
+                 clock: Callable[[], float] = time.monotonic):
+        self.margin, self.quiet, self.window_s, self.hold_s, self.clock = margin, quiet, window_s, hold_s, clock
+        self._played: deque = deque()  # (time, rms) of the speakers, the last window_s
+        self._ratios: deque = deque(maxlen=300)  # mic / speakers while something plays (about 10 s)
+        self._loud_at = -1e9
+
+    def played(self, rms: float) -> None:
+        now = self.clock()
+        self._played.append((now, rms))
+        while self._played and now - self._played[0][0] > self.window_s:
+            self._played.popleft()
+        if rms > self.quiet:
+            self._loud_at = now
+
+    @property
+    def active(self) -> bool:
+        return self.clock() - self._loud_at < self.hold_s
+
+    def coupling(self) -> float:
+        if len(self._ratios) < 20:
+            return 0.5  # not learned yet: assume a fair bit comes back (laptop / desk speakers)
+        r = sorted(self._ratios)
+        return r[len(r) // 2]
+
+    def explains(self, mic_rms: float) -> bool:
+        """True: this mic frame is just the PC's own sound coming back (ignore it)."""
+        if not self.active:
+            return False
+        loud = max((r for _, r in self._played), default=0.0)  # the speakers over the last moment (the delay)
+        if loud <= self.quiet:
+            return False
+        self._ratios.append(mic_rms / loud)
+        return mic_rms <= self.margin * self.coupling() * loud
+
+
 # ------------------------------------------------------------------ speaking: sentence by sentence, can pause
 
 
