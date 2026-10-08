@@ -256,7 +256,8 @@ class Argus:
             if not items:
                 return None
             guidance.mark_reviewed(conn, [s["id"] for it in items for s in it["mistakes"]], now)
-            jid, _ = self.jobs.enqueue_in(conn, now, "guidance", "review", {"playbooks": items},
+            jid, _ = self.jobs.enqueue_in(conn, now, "guidance", "review",
+                                          {"playbooks": items, "candidates": self.cfg.guidance.candidates},
                                           needs=self.model_needs(),
                                           priority=PRIORITY_BATCH, model_group="cloud", source="argus",
                                           dedupe_key="guidance:review")
@@ -264,8 +265,9 @@ class Argus:
 
         return await self.store.write(fn) or {"job_id": None, "playbooks": 0, "note": "nothing new to learn from"}
 
-    async def queue_evals(self, key: str) -> dict:
-        """Replay a playbook's eval set now (job guidance.evals on the first local tier)."""
+    async def queue_evals(self, key: str, compare: bool = False) -> dict:
+        """Replay a playbook's eval set now (job guidance.evals on the first local tier); `compare`: with and without
+        the lessons in force."""
         from . import guidance
 
         def fn(conn):
@@ -274,7 +276,8 @@ class Argus:
                 return None
             if not pb["evals"]:
                 return {"job_id": None, "note": "no tests yet: mark some answers Correct first"}
-            jid, _ = self.jobs.enqueue_in(conn, time.time(), "guidance", "evals", {"playbook": pb},
+            jid, _ = self.jobs.enqueue_in(conn, time.time(), "guidance", "evals",
+                                          {"playbook": pb, "compare": bool(compare and pb.get("lessons"))},
                                           needs=self.model_needs(),
                                           priority=PRIORITY_INTERACTIVE, source="helios",
                                           dedupe_key=f"guidance:evals:{key}")

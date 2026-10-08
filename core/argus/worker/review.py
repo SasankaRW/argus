@@ -10,6 +10,10 @@ For each playbook in the job's input:
    that plugin from the next job on. Lessons that pass fewer tests than the playbook does now are not offered at
    all ("didn't help").
 
+Several candidates (the GEPA idea, "reflective prompt evolution"): after the first set of lessons is scored, Claude
+sees the tests it still fails (input, the right answer, what the model said) and writes an improved set; the best
+scoring set is the one offered (`guidance.candidates` sets at most, default 3; a tie goes to the shorter one).
+
 Also here: guidance.evals ("Run tests now" on a playbook's Learning tab) and guidance.replay ("Try with another
 model" on one kept answer).
 """
@@ -34,6 +38,12 @@ Answer with only the lines."""
 
 MAX_EVALS = 20
 
+IMPROVE = """You improve lessons for a small local model (rules appended to its instructions). You get the
+instructions ("playbook"), the current lessons and the tests they still fail: the input, the right answer and what
+the model answered with these lessons. Rewrite the lessons so the model gets these right too, without breaking what
+already works: 1 to 6 short, general rules, one per line starting with "- " (no answers copied from one case).
+Answer with only the lines."""
+
 
 def same(expected: Any, got: Any) -> bool:
     """Does the replayed answer match the kept one? For JSON objects only the kept keys count; text is compared
@@ -55,7 +65,7 @@ def score(ctx: Context, pb: dict[str, Any], lessons: str) -> dict[str, Any]:
     """Replay the eval set on the first local tier. {passed, total, failed: [sample ids]}."""
     tiers = ctx.local_tiers()[:1]
     evals = pb["evals"][:MAX_EVALS]
-    passed, failed = 0, []
+    passed, failed, misses = 0, [], []
     for s in evals:
         expected = s["correction"] if s.get("verdict") == "correct" and s.get("correction") else s["output"]
         inp = s["input"] if isinstance(s["input"], str) else json.dumps(s["input"], ensure_ascii=False)
@@ -68,7 +78,25 @@ def score(ctx: Context, pb: dict[str, Any], lessons: str) -> dict[str, Any]:
             passed += 1
         else:
             failed.append(s["id"])
-    return {"passed": passed, "total": len(evals), "failed": failed[:10], "tier": tiers[0] if tiers else None}
+            if len(misses) < 5:  # what the next candidate learns from
+                misses.append({"input": s["input"], "right_answer": expected,
+                               "model_answered": got.model_dump() if hasattr(got, "model_dump") else got})
+    return {"passed": passed, "total": len(evals), "failed": failed[:10], "misses": misses,
+            "tier": tiers[0] if tiers else None}
+
+
+def lines_of(text: Any) -> str:
+    lines = [ln.strip() for ln in str(text).splitlines() if ln.strip().startswith(("-", "*"))]
+    return "\n".join("- " + ln.lstrip("-* ").strip() for ln in lines[:6])
+
+
+def better(a: dict | None, b: dict | None, la: str, lb: str) -> bool:
+    """Is candidate b better than a? More tests passed; on a tie, fewer lines (shorter instructions)."""
+    if b is None:
+        return False
+    if a is None:
+        return True
+    return b["passed"] > a["passed"] or (b["passed"] == a["passed"] and len(lb.splitlines()) < len(la.splitlines()))
 
 
 @workflow("guidance", "review")
@@ -86,8 +114,7 @@ def review(ctx: Context):
                         for m in pb["mistakes"]]
             text = ctx.claude(REVIEW, json.dumps({"playbook": pb["playbook"], "lessons_in_force": pb["lessons"],
                                                   "mistakes": mistakes}, ensure_ascii=False, default=str))
-            lines = [ln.strip() for ln in str(text).splitlines() if ln.strip().startswith(("-", "*"))]
-            return "\n".join("- " + ln.lstrip("-* ").strip() for ln in lines[:6])
+            return lines_of(text)
 
         try:
             lessons = ctx.step(f"lessons {i + 1}", write)
@@ -99,6 +126,26 @@ def review(ctx: Context):
             continue
         before = ctx.step(f"evals before {i + 1}", score, ctx, pb, pb["lessons"]) if pb["evals"] else None
         after = ctx.step(f"evals after {i + 1}", score, ctx, pb, lessons) if pb["evals"] else None
+        # more candidates: Claude sees what the best set still gets wrong and improves it; the best one is kept
+        tries = max(1, int(ctx.input.get("candidates") or 1))
+        for n in range(2, tries + 1):
+            if not after or not after.get("misses"):
+                break  # nothing left to fix (or no tests)
+
+            def improve(pb=pb, lessons=lessons, after=after) -> str:
+                return lines_of(ctx.claude(IMPROVE, json.dumps(
+                    {"playbook": pb["playbook"], "lessons": lessons, "still_wrong": after["misses"]},
+                    ensure_ascii=False, default=str)))
+
+            try:
+                cand = ctx.step(f"lessons {i + 1}.{n}", improve)
+            except EscalationExhausted:
+                break
+            if not cand:
+                break
+            got = ctx.step(f"evals after {i + 1}.{n}", score, ctx, pb, cand)
+            if better(after, got, lessons, cand):
+                lessons, after = cand, got
         evals = {"before": before, "after": after}
         if before:
             ctx.step(f"record {i + 1}", lambda pb=pb, before=before: ctx.tool(
@@ -136,6 +183,11 @@ def evals(ctx: Context):
     run = ctx.step("tests", score, ctx, pb, pb.get("lessons") or "")
     ctx.step("record", lambda: ctx.tool("record_evals", {"key": pb["key"], "run": run, "why": "manual",
                                                          "job_id": ctx.job_id}))
+    if ctx.input.get("compare") and pb.get("lessons"):  # what the lessons change: the same tests without them
+        bare = ctx.step("tests without lessons", score, ctx, pb, "")
+        ctx.step("record without", lambda: ctx.tool("record_evals", {"key": pb["key"], "run": bare,
+                                                                     "why": "without lessons", "job_id": ctx.job_id}))
+        return {**run, "without_lessons": bare}
     return run
 
 

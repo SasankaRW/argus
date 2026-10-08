@@ -755,8 +755,15 @@ def create_app(argus: Argus) -> FastAPI:
 
     @app.get("/jobs/{job_id}/samples", dependencies=guarded)
     async def job_samples(job_id: str) -> list[dict]:
-        return await argus.store.read(lambda c: [guidance.sample_json(r) for r in c.execute(
+        """A job's model answers, each with the lessons that were in force ("lessons used")."""
+        return await argus.store.read(lambda c: [guidance.sample_json(r, c) for r in c.execute(
             "SELECT * FROM samples WHERE job_id = ? ORDER BY id", (job_id,))])
+
+    @app.get("/guidance/{key}/trend", dependencies=guarded)
+    async def playbook_trend(key: str, weeks: int = Query(8, ge=1, le=52)) -> dict:
+        """Is it learning? Per week how often the first model was right and how often it escalated, and when lessons
+        were approved."""
+        return await argus.store.read(lambda c: guidance.trend(c, key, time.time(), weeks))
 
     @app.get("/guidance", dependencies=guarded)
     async def guidance_overview(plugin: str | None = None) -> list[dict]:
@@ -791,9 +798,10 @@ def create_app(argus: Argus) -> FastAPI:
         return await argus.store.read(fn)
 
     @app.post("/guidance/{key}/evals", dependencies=guarded)
-    async def playbook_evals_run(key: str) -> dict:
-        """Run the tests now (the first local tier, with the lessons in force)."""
-        r = await argus.queue_evals(key)
+    async def playbook_evals_run(key: str, compare: bool = False) -> dict:
+        """Run the tests now (the first local tier, with the lessons in force). `compare`: also without the lessons,
+        so you see what they change."""
+        r = await argus.queue_evals(key, compare=compare)
         if r is None:
             raise HTTPException(status_code=404, detail="no such playbook")
         return r

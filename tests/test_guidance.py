@@ -190,3 +190,82 @@ def test_run_the_tests_now_and_try_another_model(tmp_path):
         with pytest.raises(ApiError) as e:
             cl.post(f"/samples/{s['id']}/replay", {"tier": "T9"})
         assert e.value.status == 422
+
+
+# ---------------------------------------------------------------- P3: proof that learning works
+
+
+def test_a_job_shows_the_lessons_it_used_and_the_trend_shows_before_and_after(tmp_path):
+    replies = {"small": [{"folder": "Invoices"}, {"folder": "Photos"},
+                         {"folder": "Other"},     # tests before the lessons: fail
+                         {"folder": "Photos"},    # with them: pass
+                         {"folder": "Bills"},     # job 3, with the lessons
+                         {"folder": "Photos"},    # compare: with the lessons
+                         {"folder": "Other"}],    # compare: without them
+               "big": [{"folder": "Bills"}]}
+    with FakeOllama(replies) as ol, Server(make(tmp_path).open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        j1 = run_job(cl, w, name="invoice-oct.pdf")
+        assert "lessons" not in cl.get(f"/jobs/{j1['id']}/samples")[0]  # none yet
+        s2 = cl.get(f"/jobs/{run_job(cl, w, name='beach.jpg')['id']}/samples")[0]
+        cl.post(f"/samples/{s2['id']}/verdict", {"verdict": "correct"})
+        r = cl.post("/guidance/review")
+        review = work(cl, w, r["job_id"], until=("waiting", "dead"))
+        assert review["state"] == "waiting", review["error"]
+        a = cl.get("/approvals?state=pending")[0]
+        cl.post(f"/approvals/{a['id']}/decide", {"answer": "approve"})
+        work(cl, w, review["id"])
+
+        j3 = run_job(cl, w, name="bill-nov.pdf")
+        used = cl.get(f"/jobs/{j3['id']}/samples")[0]["lessons"]
+        assert used["count"] == 2 and used["approved_at"] and "invoice or a bill" in used["text"]
+
+        key = s2["playbook"]
+        t = cl.get(f"/guidance/{key}/trend?weeks=2")
+        assert len(t["weeks"]) == 2 and t["weeks"][0]["answers"] == 0
+        now = t["weeks"][-1]
+        assert (now["answers"], now["escalated"], now["first_right"], now["with_lessons"]) == (3, 1, 2, 1)
+        assert now["rate"] == round(2 / 3, 3)
+        assert [x["state"] for x in t["lessons"]] == ["active"]
+
+        q = cl.post(f"/guidance/{key}/evals?compare=true")
+        res = work(cl, w, q["job_id"])["result"]
+        assert res["passed"] == 1 and res["without_lessons"]["passed"] == 0
+        runs = cl.get(f"/guidance/{key}/evals")["runs"]
+        assert [x["why"] for x in runs][-2:] == ["manual", "without lessons"]
+        assert cl.get("/guidance?plugin=sorter")[0]["last_run"]["passed"] == 1  # the run with the lessons
+
+
+def test_a_second_candidate_fixes_what_the_first_got_wrong(tmp_path):
+    replies = {"small": [{"folder": "Invoices"}, {"folder": "Photos"},
+                         {"folder": "Photos"},    # tests now: pass
+                         {"folder": "Other"},     # with the first lessons: fail
+                         {"folder": "Photos"}],   # with the improved ones: pass
+               "big": [{"folder": "Bills"}]}
+    with FakeOllama(replies) as ol, Server(make(tmp_path).open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        run_job(cl, w, name="invoice-oct.pdf")
+        s2 = cl.get(f"/jobs/{run_job(cl, w, name='beach.jpg')['id']}/samples")[0]
+        cl.post(f"/samples/{s2['id']}/verdict", {"verdict": "correct"})
+        r = cl.post("/guidance/review")
+        review = work(cl, w, r["job_id"], until=("succeeded", "waiting", "dead"))
+        assert review["state"] == "waiting", review["error"]
+        asked = (tmp_path / "claude_stdin.txt").read_text(encoding="utf-8")
+        assert "still_wrong" in asked and "Photos" in asked  # Claude saw the test it failed
+        a = cl.get("/approvals?state=pending")[0]
+        assert "Tests: 1/1 now, 1/1 with these." in a["payload"]["summary"]
+
+
+def test_picking_the_better_candidate():
+    from argus.worker.review import better, lines_of
+
+    assert lines_of("Sure:\n- one\n* two\nnot a rule\n-three") == "- one\n- two\n- three"
+    a = {"passed": 2}
+    assert better(None, a, "", "- x") and not better(a, None, "- x", "")
+    assert better(a, {"passed": 3}, "- x", "- x\n- y")
+    assert better(a, {"passed": 2}, "- x\n- y", "- x")  # a tie: the shorter one
+    assert not better(a, {"passed": 2}, "- x", "- x\n- y")
