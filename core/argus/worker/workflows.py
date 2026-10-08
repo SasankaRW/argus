@@ -25,13 +25,65 @@ once per step even if the step is retried.
 from __future__ import annotations
 
 import base64
+import json
 import logging
+import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
 from ..models import EscalationExhausted
 from .client import LeaseLostError
+
+_WORD = re.compile(r"[a-z0-9]{2,}")
+
+
+def _values(v: Any) -> str:
+    """The text of an input, without its keys (they are the same for every input of a playbook)."""
+    if isinstance(v, dict):
+        return " ".join(_values(x) for x in v.values())
+    if isinstance(v, (list, tuple)):
+        return " ".join(_values(x) for x in v)
+    if isinstance(v, str):
+        try:
+            parsed = json.loads(v)
+        except ValueError:
+            return v
+        return _values(parsed) if isinstance(parsed, (dict, list)) else v
+    return "" if v is None else str(v)
+
+
+def _words(v: Any) -> set[str]:
+    return set(_WORD.findall(re.sub(r"([a-z])([A-Z])", r"\1 \2", _values(v)).lower()))
+
+
+def similar(examples: list[dict[str, Any]], input: Any, k: int = 3, floor: float = 0.15) -> list[dict[str, Any]]:
+    """The `k` examples whose input shares the most words with this one (Jaccard, at least `floor`)."""
+    want = _words(input)
+    if not want:
+        return []
+    scored = []
+    for e in examples:
+        got = _words(e.get("input"))
+        if got:
+            sc = len(want & got) / len(want | got)
+            if sc >= floor:
+                scored.append((sc, e))
+    scored.sort(key=lambda x: -x[0])
+    return [e for _, e in scored[:k]]
+
+
+def worked_examples(picked: list[dict[str, Any]]) -> str:
+    """The examples block appended to a playbook (experience memory)."""
+    def show(v: Any) -> str:
+        return v if isinstance(v, str) else json.dumps(v, ensure_ascii=False, default=str)
+
+    out = ["Worked examples (similar inputs with the right answers; follow the pattern, not the exact words):"]
+    for e in picked:
+        out.append(f"Input: {show(e.get('input'))}")
+        out.append(("What the user did to fix the answer: " if e.get("fixed") and isinstance(e.get("answer"), str)
+                    else "Right answer: ") + show(e.get("answer")))
+    return "\n".join(out)
 
 
 def _data_url(b: bytes) -> str:
@@ -177,6 +229,7 @@ class Context:
         self.shared_backup: Callable[[str], bytes] | None = None  # built-in backup copy only
         self._unsent: list = []  # plugin events waiting to be sent (set by the worker)
         self._lessons: dict[str, str] = {}  # playbook key -> approved lessons (from argusd with the job)
+        self._examples: dict[str, list[dict]] = {}  # playbook key -> confirmed answers (experience memory)
         self._flush_trace: Callable[[], None] = lambda: None
 
     def _check_lease(self) -> None:
@@ -215,7 +268,7 @@ class Context:
 
     def llm(self, playbook: str, input: Any, *, schema: Any = None, check: Any = None,
             tiers: list[str] | None = None, attempts: int | None = None, images: list[bytes] | None = None,
-            claude_last: bool = True, on_text: Any = None, temperature: float = 0.0) -> Any:
+            claude_last: bool = True, on_text: Any = None, temperature: float = 0.0, subject: Any = None) -> Any:
         """Ask the models, cheapest tier first, escalating when the answer fails the schema or the check.
 
         Returns the answer (a `schema` instance, or text without a schema). Call it inside `ctx.step`, so a
@@ -226,6 +279,10 @@ class Context:
         (with the pictures too), within the plugin's daily Claude budget (`permissions.claude_calls_per_day`,
         default `claude.plugin_calls_per_day`). `claude_last=False` skips that (e.g. to try a cheaper route
         first). If it still fails, `EscalationExhausted`: skip the item, or ask you with `ctx.ask_me`.
+
+        `subject`: what the answer is about (a file path, or a list of them). Then your fixes to that file (Undo,
+        Wrong, moving it back, renaming it again) count as a verdict on this answer without a click. The 2-3 most
+        similar answers you confirmed before are added as worked examples (experience memory).
         """
         if self._router is None:
             raise RuntimeError("this worker has no model configuration (is it connected to argusd?)")
@@ -240,6 +297,9 @@ class Context:
         key = self._playbook_key(original)
         if key and self._lessons.get(key):  # approved lessons from the nightly review
             playbook = f"{playbook}\n\nLessons from earlier mistakes (follow them):\n{self._lessons[key]}"
+        picked = similar(self._examples.get(key) or [], input) if key else []
+        if picked:
+            playbook = f"{playbook}\n\n{worked_examples(picked)}"
         try:
             ans = self._router.ask(playbook, input, schema=schema, check=check, chain=tiers, attempts=attempts,
                                    images=pics, **({"on_text": on_text} if on_text is not None else {}),
@@ -252,7 +312,8 @@ class Context:
             self._router.board.event("model.escalated", tried[-1].lower(), claude.lower(),
                                      {"from_tier": tried[-1], "to_tier": claude, "reason": "local models failed"})
             ans = self._ask_claude(playbook, input, schema, check, pics, _advice(e), e)
-        self._sample(original, schema, input, ans)
+        about = "\n".join(str(x) for x in subject) if isinstance(subject, (list, tuple)) else subject
+        self._sample(original, schema, input, ans, about, [e["id"] for e in picked if "id" in e])
         return self._took(ans)
 
     def _playbook_key(self, playbook: str) -> str | None:
@@ -262,7 +323,8 @@ class Context:
 
         return f"{self.plugin.id}:{hashlib.sha1(playbook.encode()).hexdigest()[:12]}"
 
-    def _sample(self, playbook: str, schema: Any, input: Any, ans: Any) -> None:
+    def _sample(self, playbook: str, schema: Any, input: Any, ans: Any, subject: str | None = None,
+                used: list[int] | None = None) -> None:
         """Keep this answer for the guidance loop (your verdicts, the nightly review). Best effort."""
         if self.plugin is None or not hasattr(self._reporter, "sample"):
             return
@@ -270,8 +332,13 @@ class Context:
             js = schema if isinstance(schema, dict) else schema.model_json_schema() if schema is not None else None
             value = ans.value.model_dump() if hasattr(ans.value, "model_dump") else ans.value
             escalated = any(("rejected" in t or "error" in t) for t in ans.trail)
-            self._reporter.sample({"playbook": playbook, "schema": js, "input": input, "output": value,
-                                   "tier": ans.tier, "escalated": escalated})
+            body = {"playbook": playbook, "schema": js, "input": input, "output": value, "tier": ans.tier,
+                    "escalated": escalated}
+            if subject:
+                body["subject"] = str(subject)[:2000]
+            if used:
+                body["used"] = used
+            self._reporter.sample(body)
         except Exception as e:  # never fail a job over its sample
             self.log.debug("sample not kept", extra={"error": str(e)[:200]})
 

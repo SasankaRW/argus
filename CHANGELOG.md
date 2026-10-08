@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+**Learning P4, every task learns:** Undo, Wrong, files you move back or rename again, and "no, I meant" to Ari count as wrong answers without a click; changes left alone for a day count as a yes; confirmed answers become worked examples for similar inputs (experience memory, misleading ones dropped); `ctx.llm(subject=)`.
+
 **Learning P3, proof it works:** each model answer shows the lessons it used; a per-week chart of how often the first model was right with lesson approvals marked; a "with / without lessons" test button; the nightly review tries up to 3 lesson sets and offers the best (`guidance.candidates`).
 
 **Ari P2, hearing:** "Hey Ari" counts only at the start; Whisper's made-up words are dropped; the PC's own sound (videos, music, Ari) is ignored (`ari.playback_guard`); optional wake-word model (`ari.wake_model`, openWakeWord); Ari listens from the start while the bigger Whisper loads; a quiet mic is flagged in the health check.

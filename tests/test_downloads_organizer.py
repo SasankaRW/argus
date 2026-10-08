@@ -185,13 +185,18 @@ def test_wrong_button_fixes_the_file_and_teaches_the_models(tmp_path, monkeypatc
         after = next(c for c in cl.get(f"/jobs/{job['id']}/changes") if c["event_id"] == lec["event_id"])
         assert after["fix"]["value"] == "Private" and not after["can_fix"] and not after["can_undo"]
         assert cl.get(f"/plugins/{dorg.PLUGIN}/state/learned")["value"] == {"lecture_07.pdf": "Private"}
-        # the next decision sees the correction as an example
-        (d / "slides_week3.pdf").write_text("x")
-        os.utime(d / "slides_week3.pdf", (OLD, OLD))
+        # the model answer behind it now counts as wrong, with your fix (no extra click)
+        s = next(x for x in cl.get(f"/jobs/{job['id']}/samples") if "lecture_07.pdf" in (x.get("subject") or ""))
+        assert (s["verdict"], s["feedback"], s["correction"]) == ("wrong", "wrong button",
+                                                                  "should have been: Private")
+        # the next decision about a similar file sees the correction; the playbook stays the same
+        (d / "slides_07.pdf").write_text("x")
+        os.utime(d / "slides_07.pdf", (OLD, OLD))
         cl.post(f"/plugins/{dorg.PLUGIN}/run", {})
         assert w.run_once(wait=2)
-        system = ol.requests[-1]["messages"][0]["content"]
-        assert '"lecture_07.pdf" -> Private' in system
+        msgs = next(r["messages"] for r in reversed(ol.requests) if "slides_07.pdf" in r["messages"][-1]["content"])
+        assert msgs[0]["content"].startswith(dorg.playbook())
+        assert '"lecture_07.pdf": "Private"' in msgs[-1]["content"]
     assert (d / "Private" / "lecture" / "lecture_07.pdf").exists()  # keeps its group folder
 
 

@@ -74,6 +74,7 @@ class Argus:
         self.brief_sent: str | None = None
         self.summary_sent: str | None = None
         self.guidance_sent: str | None = None
+        self._next_followup = time.time() + 300  # not right at start
         self.health_sent: str | None = None
         self.health_tools: Callable[[], list[dict]] = lambda: []  # Ari's tools (set by the API)
         self.listener_seen: Callable[[], float] = lambda: 0.0  # when the PC's listener last said it runs
@@ -187,6 +188,9 @@ class Argus:
             if day:
                 self.guidance_sent = day
                 await self.guidance_review()
+            if self.cfg.guidance.followup_hours and now >= self._next_followup:
+                self._next_followup = now + self.cfg.guidance.followup_hours * 3600
+                await self.guidance_followups()
         if self.cfg.ari_health.enabled:
             day = brief_due(self.cfg.ari_health.at, now, self.health_sent, until_hour=23)
             if day:
@@ -264,6 +268,23 @@ class Argus:
             return {"job_id": jid, "playbooks": len(items)}
 
         return await self.store.write(fn) or {"job_id": None, "playbooks": 0, "note": "nothing new to learn from"}
+
+    async def guidance_followups(self) -> list[str]:
+        """Queue a look at what jobs moved or renamed (one job per plugin, on a worker that runs that plugin)."""
+        from . import guidance
+
+        now = time.time()
+        todo = await self.store.read(lambda c: guidance.followups(c, now))
+        out = []
+        for plugin, items in todo.items():
+            p = self.plugin_host.plugins.get(plugin)
+            if p is None or not items:
+                continue
+            jid, _ = await self.jobs.enqueue("guidance", "followup", {"plugin": plugin, "items": items[:200]},
+                                             needs=p.manifest.job_needs(), priority=PRIORITY_BATCH, source="argus",
+                                             dedupe_key=f"guidance:followup:{plugin}")
+            out.append(jid)
+        return out
 
     async def queue_evals(self, key: str, compare: bool = False) -> dict:
         """Replay a playbook's eval set now (job guidance.evals on the first local tier); `compare`: with and without

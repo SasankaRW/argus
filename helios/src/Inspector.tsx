@@ -387,7 +387,12 @@ const whereTo = (c: { from: string | null; to: string | null }) => {
 
 type Sample = { id: number; tier: string | null; escalated: boolean; verdict: "correct" | "wrong" | null;
   input: unknown; output: unknown; correction: unknown;
-  lessons?: { id: number; count: number; approved_at: number | null; text: string } };
+  lessons?: { id: number; count: number; approved_at: number | null; text: string };
+  feedback?: string; kept_at?: number; examples_used?: number[] };
+
+// How a verdict came without a click (the guidance loop counts your fixes)
+const VIA: Record<string, string> = { undo: "you undid it", "wrong button": "Wrong folder", "moved back": "you moved it back",
+  renamed: "you renamed it", moved: "you moved it", ari: "you corrected Ari" };
 
 const day = (t: number | null | undefined) => (t ? new Date(t * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short" }) : "");
 
@@ -412,21 +417,23 @@ function ModelAnswers({ id, tick }: { id: string; tick: number }) {
           <div className="sample-h">
             <span className="mono muted">{s.tier ?? "?"}{s.escalated ? " · after a rejected answer" : ""}</span>
             {s.lessons && <span className="pill" title={s.lessons.text}>lessons used: {s.lessons.count}{s.lessons.approved_at ? ` (approved ${day(s.lessons.approved_at)})` : ""}</span>}
+            {s.examples_used && s.examples_used.length > 0 && <span className="pill" title="similar answers you confirmed, given as worked examples">examples: {s.examples_used.length}</span>}
             <span className="grow" />
             {s.verdict ? (
               <>
-                <span className={`pill ${s.verdict === "correct" ? "ok" : "bad"}`}>{s.verdict}</span>
+                <span className={`pill ${s.verdict === "correct" ? "ok" : "bad"}`}>{s.verdict}{s.feedback && VIA[s.feedback] ? ` · ${VIA[s.feedback]}` : ""}</span>
                 <button type="button" className="linkbtn" onClick={() => mark(s, null)}>undo</button>
               </>
             ) : (
               <>
+                {s.kept_at && <span className="pill ok" title="left as it was for a day: used as a worked example">kept</span>}
                 <button type="button" className="btn" title="Right: keep it as a test" onClick={() => mark(s, "correct")}>Correct</button>
                 <button type="button" className="btn" title="Wrong: say what it should have been" onClick={() => { setFixing(s.id); setFix(""); }}>Wrong</button>
               </>
             )}
           </div>
           <pre className="code">{pretty(s.output)}</pre>
-          {s.verdict === "wrong" && s.correction != null && <div className="tip">Should have been: {pretty(s.correction)}</div>}
+          {s.verdict === "wrong" && s.correction != null && <div className="tip">{s.feedback && s.feedback !== "you" ? pretty(s.correction) : <>Should have been: {pretty(s.correction)}</>}</div>}
           <TryAnother sample={s} />
           {fixing === s.id && (
             <form className="sample-fix" onSubmit={(e) => { e.preventDefault(); mark(s, "wrong", fix.trim() || undefined); }}>

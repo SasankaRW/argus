@@ -231,11 +231,12 @@ def suggest(ctx: Context, path: str, data: bytes) -> tuple[str | None, str]:
                 task: dict = {"task": "name this screenshot"}
                 if screen.get("focus"):
                     task["text_near_the_middle"] = screen["focus"][:15]  # a hint; may still include background
-                n = ctx.llm(PLAYBOOK, task, schema=Name, check=check, tiers=["V1"], images=[pic], claude_last=False)
+                n = ctx.llm(PLAYBOOK, task, schema=Name, check=check, tiers=["V1"], images=[pic], claude_last=False,
+                            subject=path)
                 return clean(n.words), "vision (V1)"
             if len(text) >= MIN_TEXT:
                 n = ctx.llm(PLAYBOOK, {"lines_most_prominent_first": screen["focus"]}, schema=Name, check=check,
-                            tiers=ctx.local_tiers(), claude_last=False)
+                            tiers=ctx.local_tiers(), claude_last=False, subject=path)
                 return clean(n.words), f"text ({ctx.last_answer.tier})"
         except EscalationExhausted as e:
             why = str(e)

@@ -467,16 +467,22 @@ over the whole PC screen. Both follow the event stream, so a question typed on t
 <details>
 <summary><b>▸ The guidance loop: local models learn from their mistakes</b></summary>
 
-`guidance.py` + `worker/review.py`:
+`guidance.py` + `worker/review.py` + `worker/followup.py`:
 
-1. **Samples.** Every `ctx.llm` answer is kept per playbook: the input, the answer, which tier answered, and
-   whether T1 was rejected.
+1. **Samples.** Every `ctx.llm` answer is kept per playbook: the input, the answer, which tier answered, whether
+   T1 was rejected, the lessons in force, and what it was about (`subject=`, a file).
 2. **Verdicts.** In Helios (a job's "Model answers") you mark answers Correct or Wrong, with the right answer if
-   you like.
-3. **Nightly review.** Claude reads a playbook's mistakes and writes 1–6 short **lessons**.
-4. **Evals.** Your "correct" answers are replayed on T1 with the old lessons and with the new ones. Before and
+   you like. **Your fixes count without a click:** Undo or Wrong on a job's change, a file you moved back,
+   renamed again or moved elsewhere (a worker looks every `guidance.followup_hours`), "no, I meant …" to Ari.
+3. **Experience memory.** Answers you confirmed, fixed, or left alone for a day are worked examples; each call
+   gets the 2–3 most similar. Examples that keep leading to wrong answers are dropped.
+4. **Nightly review.** Claude reads a playbook's mistakes and writes 1–6 short **lessons**. It tries up to
+   `guidance.candidates` sets: each next set fixes the tests the best so far still fails (the GEPA idea).
+5. **Evals.** Your "correct" answers are replayed on T1 with the old lessons and with the new ones. Before and
    after scores go with the proposal.
-5. **You decide.** An approved lesson is appended to that plugin's playbook from the next job on.
+6. **You decide.** An approved lesson is appended to that plugin's playbook from the next job on.
+7. **Proof.** A job's answers show "lessons used"; the Learning tab has a weekly "first model right" chart with
+   lesson approvals marked, and a "with / without lessons" test button.
 
 The effect: T1 gets right what used to need T2 or Claude, so it gets faster and cheaper over time.
 

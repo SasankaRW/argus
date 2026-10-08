@@ -228,7 +228,14 @@ class Files:
             shutil.move(str(s), str(target))
         else:
             self._gone.add(s)
-        self._trace("file.moved", {"from": str(s), "to": str(target), "dry_run": self.dry_run})
+        info: dict = {"from": str(s), "to": str(target), "dry_run": self.dry_run}
+        if not self.dry_run:
+            try:  # so a later look can find the file again if you rename or move it (the guidance loop)
+                st = target.stat()
+                info.update(size=st.st_size, mtime=round(st.st_mtime, 3))
+            except OSError:
+                pass
+        self._trace("file.moved", info)
         return str(target)
 
     def remove_empty_dir(self, path: str | Path) -> bool:
