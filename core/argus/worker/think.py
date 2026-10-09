@@ -5,9 +5,10 @@ for anything the instant rules can't answer).
     you: "what did I write about the laptop server?"  -> search_files("laptop server") -> answer from your files
     you: "who won the match yesterday?"               -> needs the web -> Claude with web search
 
-Local first: the model (T1, then T2) chooses one step at a time: a tool, or the answer. Questions about your own
-things always go through a tool (your files, Argus's data); general knowledge it answers itself when sure. When it
-needs something current or isn't sure, Claude answers with web search (read only), within the daily cap.
+Local first: one model (the first tier, kept warm) chooses one step at a time: a tool, or the answer. Questions
+about your own things always go through a tool (your files, Argus's data); general knowledge it answers itself when
+sure. When it needs something current or isn't sure, Claude answers with web search (read only), within the daily
+cap.
 
 A tool marked "private" (the screen, the clipboard) keeps the chat local: after it, Claude is not asked, and a
 web search gets only the question.
@@ -110,10 +111,6 @@ def worth_keeping(fact: str, known: list[dict]) -> str:
         if words and len(words & kw) / len(words) >= 0.7:
             return ""
     return f
-
-
-HARD = re.compile(r"\b(why|explain|compare|plan|analy[sz]e|summari[sz]e|write|draft|difference|pros and cons|"
-                  r"step by step|how (?:do|does|can|should) i|what if|recommend)\b", re.I)
 
 
 # The screen and the clipboard are slow (a vision model) and private: they are only offered when the message is
@@ -603,14 +600,10 @@ PROMISE = re.compile(r"^\W*(?:(?:ok(?:ay)?|sure|alright)[,.!]?\s*)?(?:i'?ll|i wi
                      r"let me)\b(?!\s+(?:need|remember|keep|know|check with you))", re.I)
 
 
-def model_order(text: str, local: list[str]) -> list[str]:
-    """Quick asks start on the small, fast model; harder ones (explain, compare, plan, several things at once, long
-    messages) start on the bigger one, so they aren't first answered badly and then again."""
-    if len(local) < 2:
-        return local
-    hard = len(text) > 160 or bool(HARD.search(text)) or len(re.findall(r"\b(and then|then|also|after that)\b|;",
-                                                                          text, re.I)) >= 2
-    return local[1:] + local[:1] if hard else local
+def ari_tiers(ctx) -> list[str] | None:
+    """One local model for Ari (the first tier, kept warm on the GPU), then Claude: a second local model would be
+    swapped in next to the voice and Whisper, which made answers slow."""
+    return ctx.local_tiers()[:1] or None
 
 
 PLAYBOOK = """You are Ari, the user's personal assistant on their own computer (home automation system "Argus").
@@ -798,7 +791,7 @@ def think(ctx: Context):
 
             s = ctx.llm(CHAT + "\n\n" + who, json.dumps(said, ensure_ascii=False), on_text=partial,
                         schema=Chat, check=lambda s, _i: chat_ok(s), temperature=CHAT_TEMPERATURE,
-                        tiers=ctx.local_tiers() or None, claude_last=not private())
+                        tiers=ari_tiers(ctx), claude_last=not private())
             return {**s.model_dump(), "tier": ctx.last_answer.tier}
 
         try:
@@ -874,7 +867,7 @@ def think(ctx: Context):
                     ctx.progress("plugin.ari.partial", {"text": part, "mood": mood or "neutral"})
 
             s = ctx.llm(PLAYBOOK + "\n\n" + who, json.dumps(task, ensure_ascii=False), schema=Step, check=check,
-                        on_text=partial, tiers=model_order(text, ctx.local_tiers()) or None,
+                        on_text=partial, tiers=ari_tiers(ctx),
                         claude_last=not private(),
                         # the first pick is kept for the guidance loop: your "no, I meant" teaches it
                         learn_as=LEARN if i == 0 and not private() else None)

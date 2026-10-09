@@ -5,9 +5,14 @@ it over HTTP. The supervisor starts it where its Python environment exists (docs
 
     .venv-voice\\Scripts\\python core\\argus\\voice_server.py        (listens on 127.0.0.1:8611)
 
-POST /say {"text": "[cheerful] Oh nice! [laugh] ...", "clip": "data/voices/ari-clip.wav"} -> WAV
+POST /say {"text": "[cheerful] Oh nice! [laugh] ..."} -> WAV
   The mood sets how lively it sounds, [laugh] / [sigh] / [chuckle] / [gasp] / [groan] / [clear throat] are real
-  sounds. "clip" (optional, 5+ seconds) is the voice to sound like; without it, Chatterbox's own voice.
+  sounds.
+
+One voice: the server owns it. At start it takes the voice to sound like from `--clip` (the supervisor passes
+ari.voice_clip, else data/voices/ari-clip.wav) and every sentence, whoever asks (the listener, Helios, the phone),
+is said in it. Without a clip, Chatterbox's own voice, from the first sentence on. A new clip file is picked up
+on the next sentence. A "clip" sent with a request is ignored.
 GET /health -> {"ok": true, "model": "turbo", "device": "cuda"}
 
 With --host 0.0.0.0 (ari.expressive_share, for Argus on the laptop) a request from another machine needs the
@@ -39,12 +44,12 @@ log = logging.getLogger("argus.voice_server")
 class Engine:
     """Chatterbox, loaded once; one sentence at a time."""
 
-    def __init__(self, model: str = "turbo", device: str | None = None):
-        self.kind, self.device = model, device
+    def __init__(self, model: str = "turbo", device: str | None = None, clip: Path | None = None):
+        self.kind, self.device, self.clip = model, device, clip
         self.m = None
         self.lock = threading.Lock()
         self._loading = threading.Lock()
-        self.clip: str | None = None
+        self._voice_at: float | None = None  # the clip's mtime when its voice was taken (None: Chatterbox's own)
 
     def load(self):
         with self._loading:  # the start-up warm-up and the first sentence both ask: load the model once, not twice
@@ -65,9 +70,24 @@ class Engine:
                 self.m = ChatterboxTTS.from_pretrained(device=dev)
             self.device = dev
             log.info("chatterbox %s loaded on %s", self.kind, dev)
+            self._take_voice()
         return self.m
 
-    def say(self, text: str, clip: str | None = None) -> bytes:
+    def _take_voice(self) -> None:
+        """The voice to sound like, from the clip; again when the clip file changed. Never a different one per
+        request: that is how Ari ended up with two voices."""
+        at = self.clip.stat().st_mtime if self.clip is not None and self.clip.is_file() else None
+        if at is None or at == self._voice_at:  # no clip (Chatterbox's own), or the same one as before
+            return
+        self.m.prepare_conditionals(str(self.clip), exaggeration=STYLE["neutral"][0])  # type: ignore[union-attr]
+        self._voice_at = at
+        log.info("voice taken from %s", self.clip)
+
+    @property
+    def voice(self) -> str:
+        return str(self.clip) if self._voice_at is not None else "chatterbox"
+
+    def say(self, text: str) -> bytes:
         """The whole reply, each phrase in its own mood ("[excited] We won! [sympathetic] Shame about the rain."),
         joined with a short breath between moods."""
         import numpy as np
@@ -78,9 +98,7 @@ class Engine:
             raise ValueError("nothing to say")
         with self.lock:
             m = self.load()
-            if clip and clip != self.clip and Path(clip).is_file():
-                m.prepare_conditionals(clip, exaggeration=STYLE["neutral"][0])  # the voice to sound like (once)
-                self.clip = clip
+            self._take_voice()
             rate = int(m.sr)
             gap = np.zeros(int(0.12 * rate), dtype=np.float32)
             audio = []
@@ -123,7 +141,7 @@ def to_wav(a, rate: int) -> bytes:
     return buf.getvalue()
 
 
-DEFAULT_CLIP = Path("data") / "voices" / "ari-clip.wav"  # this PC's clip, when the asker's isn't here
+DEFAULT_CLIP = Path("data") / "voices" / "ari-clip.wav"  # the voice to sound like, unless --clip names another
 
 
 def worker_token(env_file: Path = Path(".env")) -> str | None:
@@ -152,13 +170,6 @@ def allowed(client_ip: str, authorization: str | None, token: str | None) -> boo
     return bool(token) and hmac.compare_digest((authorization or "").encode(), f"Bearer {token}".encode())
 
 
-def their_clip(clip: str | None) -> str | None:
-    """The clip asked for if it is on this PC, else this PC's own (the laptop sends a path of its own)."""
-    if clip and Path(clip).is_file():
-        return clip
-    return str(DEFAULT_CLIP.resolve()) if DEFAULT_CLIP.is_file() else None
-
-
 def handler(engine, token: str | None = None) -> type[BaseHTTPRequestHandler]:
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a):  # quiet; the log line is in Engine.say
@@ -174,7 +185,7 @@ def handler(engine, token: str | None = None) -> type[BaseHTTPRequestHandler]:
         def do_GET(self):  # noqa: N802
             if self.path == "/health":
                 self._send(200, json.dumps({"ok": True, "model": engine.kind, "device": engine.device,
-                                            "loaded": engine.m is not None}).encode())
+                                            "loaded": engine.m is not None, "voice": engine.voice}).encode())
             else:
                 self._send(404, b'{"error": "not found"}')
 
@@ -189,7 +200,7 @@ def handler(engine, token: str | None = None) -> type[BaseHTTPRequestHandler]:
                 n = int(self.headers.get("Content-Length") or 0)
                 body = json.loads(self.rfile.read(min(n, 20000)) or b"{}")
                 text = str(body.get("text") or "")[:1000]
-                wav = engine.say(text, their_clip(str(body.get("clip") or "") or None))
+                wav = engine.say(text)
             except ValueError as e:
                 return self._send(422, json.dumps({"error": str(e)}).encode())
             except Exception as e:  # noqa: BLE001 - the asker shows text instead
@@ -208,9 +219,10 @@ def main(argv: list[str] | None = None) -> int:
                    help="turbo: fast, real laughs and sighs; standard: slower, stronger moods")
     p.add_argument("--device", default=None)
     p.add_argument("--warm", action="store_true", help="load the model now, not on the first sentence")
+    p.add_argument("--clip", default=str(DEFAULT_CLIP), help="5-15 s of the voice Ari sounds like")
     a = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    engine = Engine(a.model, a.device)
+    engine = Engine(a.model, a.device, Path(a.clip).resolve() if a.clip else None)
     if a.warm:
         threading.Thread(target=engine.load, daemon=True).start()
     token = worker_token()

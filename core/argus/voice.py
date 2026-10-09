@@ -1,14 +1,14 @@
-"""Ari's voice: the expressive voice server (voice_server.py, Chatterbox) as argusd and the listener see it.
+"""Ari's voice: the voice server (voice_server.py, Chatterbox on the PC's GPU) as argusd and the listener see it.
 
-There is one voice. When it can't speak (the PC is off, the server is still loading, it failed) Ari shows the
-words and stays silent; it never switches to a second voice.
+There is one voice, and the server owns it (the clip it sounds like is set there, not per request). When it can't
+speak (the PC is off, the server is still loading, it failed) Ari shows the words and stays silent; it never
+switches to a second voice.
 """
 
 from __future__ import annotations
 
 import logging
 import time
-from pathlib import Path
 
 log = logging.getLogger("argus.voice")
 
@@ -16,8 +16,8 @@ log = logging.getLogger("argus.voice")
 class Expressive:
     """A WAV for a text, or None when the server can't make one (not running, still loading, failed)."""
 
-    def __init__(self, url: str, clip: Path | None = None, timeout: float = 30, token: str | None = None):
-        self.url, self.clip, self.timeout = url.rstrip("/"), clip, timeout
+    def __init__(self, url: str, timeout: float = 30, token: str | None = None):
+        self.url, self.timeout = url.rstrip("/"), timeout
         self.headers = {"Content-Type": "application/json", **({"Authorization": f"Bearer {token}"} if token else {})}
         self._down_until = 0.0
         self.ok_at = 0.0  # when it last made a sentence (a hiccup right after that is retried, not swapped)
@@ -32,18 +32,13 @@ class Expressive:
 
         return (urllib.parse.urlsplit(self.url).hostname or "") not in ("127.0.0.1", "localhost", "::1")
 
-    def ensure_clip(self) -> Path | None:
-        """The voice to sound like: ari.voice_clip when that file exists, else the model's own voice."""
-        return self.clip if self.clip is not None and self.clip.exists() else None
-
     def warm(self, tries: int = 24, wait: float = 5.0) -> bool:
         """Say one short word to the server (waiting for it to come up): its model, the voice to sound like and the
         GPU are ready before the first real sentence, which would otherwise pay for all that."""
         import json
         import urllib.request
 
-        clip = self.ensure_clip()
-        body = json.dumps({"text": "Hi.", "clip": str(clip.resolve()) if clip else ""}).encode()
+        body = json.dumps({"text": "Hi."}).encode()
         for i in range(tries):
             try:
                 req = urllib.request.Request(self.url + "/say", data=body, method="POST", headers=self.headers)
@@ -64,8 +59,7 @@ class Expressive:
 
         if time.time() < self._down_until and not force:
             return None
-        clip = self.ensure_clip()
-        body = json.dumps({"text": text, "clip": str(clip.resolve()) if clip else ""}).encode()
+        body = json.dumps({"text": text}).encode()
         req = urllib.request.Request(self.url + "/say", data=body, method="POST", headers=self.headers)
         try:
             with urllib.request.urlopen(req, timeout=timeout or self.timeout) as r:  # noqa: S310 - our own service

@@ -82,14 +82,14 @@ class Clock:
         return self.t
 
 
-def make(live=True, heard=None):
+def make(heard=None, follow_ok=None):
     heard = heard if heard is not None else []
     asked = []
     clock = Clock()
     p = FakePlayer()
     talk = vl.Talk(turns=vl.Turns(), transcribe=lambda a: heard.pop(0), wake_rest=wake_rest,
                    ask=lambda q: asked.append(q) or {"reply": f"Answer to {q}. More detail here."},
-                   player=p, clock=clock, live=live)
+                   player=p, clock=clock, **({"follow_ok": follow_ok} if follow_ok else {}))
     return talk, p, asked, heard, clock
 
 
@@ -135,13 +135,36 @@ def test_the_conversation_ends_after_a_quiet_while():
     assert asked == ["hi"]
 
 
-def test_classic_mode_needs_the_wake_phrase_again():
-    talk, p, asked, heard, clock = make(live=False, heard=["Hey Ari, hi", "what time is it"])
+def test_after_an_answer_a_video_or_long_talk_is_not_a_question():
+    tv = ["The safety car is out and the field bunches up behind it going into the final sector of the lap"]
+    talk, p, asked, heard, clock = make(heard=["Hey Ari, hi", "and the backups?", *tv],
+                                        follow_ok=lambda text: len(text.split()) <= 12)
     speak(talk)
     p.busy = False
     talk.tick()
     speak(talk)
-    assert asked == ["hi"]
+    assert asked == ["hi", "and the backups"]
+    p.busy = False
+    talk.tick()
+    speak(talk)  # long commentary from the speakers, no "Hey Ari": ignored
+    assert asked == ["hi", "and the backups"]
+
+
+def test_a_yes_after_shall_i_counts_even_while_the_pc_plays_sound():
+    heard = ["Hey Ari, delete the old logs", "yes"]
+    clock, p, asked = Clock(), FakePlayer(), []
+
+    def ask(q):
+        asked.append(q)
+        return {"reply": "Shall I?", "pending": {"kind": "action"}} if len(asked) == 1 else {"reply": "Done."}
+
+    talk = vl.Talk(turns=vl.Turns(), transcribe=lambda a: heard.pop(0), wake_rest=wake_rest, ask=ask, player=p,
+                   clock=clock, follow_ok=lambda text: False)  # the PC is playing a video
+    speak(talk)
+    p.busy = False
+    talk.tick()
+    speak(talk)
+    assert asked == ["delete the old logs", "yes"]
 
 
 def test_talking_over_ari_with_its_own_words_resumes():

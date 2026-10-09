@@ -4,7 +4,10 @@ Whisper hears "Kaancha" as "Kancha" and "WhatsApp" as "what's up" because it has
 cheap fixes that need no training:
 
 1. Vocabulary: the names Ari should expect (Argus's own, `ari.vocabulary`, and the names in what Ari remembers) go to
-   Whisper as its prompt and hotwords, which biases it towards those spellings.
+   Whisper as hotwords when it writes down a request, which biases it towards those spellings. Not as its prompt:
+   on noise Whisper reads a prompt back ("about Do Not, Disturb, PC, Bluetooth") and Ari answered it. What comes
+   back as just that list is thrown away (`echo`). The wake check gets no names at all, so it isn't nudged
+   towards hearing "Ari".
 2. Corrections: `ari.heard_as` maps what Whisper writes to what you meant ("kancha": "Kaancha"), plus a few
    built-in ones that only apply where they make sense ("open what's up" -> "open WhatsApp", but "what's up with
    the server?" stays).
@@ -49,6 +52,28 @@ def words(extra: list[str], facts: list[str], limit: int = 40) -> list[str]:
 def prompt(names: list[str]) -> str:
     """Whisper's initial prompt: a short line naming what it will hear."""
     return ("Talking to Ari about " + ", ".join(names) + ".")[:400] if names else ""
+
+
+def echo(text: str, names: list[str]) -> bool:
+    """True when Whisper only read the names back instead of hearing speech: "about Do Not, Disturb, PC, Zoom",
+    "Argus, Helios, WhatsApp, Snapchat, Snapchat", "Talking to Ari about ...". Real requests use few of them."""
+    t = text.strip().strip(".!?").strip()
+    if not t:
+        return False
+    if re.match(r"^(?:talking to ari\b|about\b)", t, re.I) and "," in t:
+        return True
+    known = {n.lower() for n in names} | {w.lower() for n in names for w in n.split()}
+    parts = [p.strip().lower() for p in re.split(r",", re.sub(r"^(?:talking to ari )?about ", "", t, flags=re.I))]
+    parts = [p for p in parts if p]
+    if len(parts) >= 3 and sum(p in known for p in parts) >= max(3, int(0.6 * len(parts))):
+        return True
+    words = re.findall(r"[\w']+", t.lower())
+    return len(words) >= 4 and sum(w in known for w in words) / len(words) >= 0.75
+
+
+def hotwords(names: list[str]) -> str:
+    """The names as Whisper's hotwords (only for writing down a request)."""
+    return ", ".join(names)[:300]
 
 
 def fix(text: str, heard_as: dict[str, str] | None = None) -> str:

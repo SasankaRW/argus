@@ -205,15 +205,16 @@ def test_after_web_text_doing_anything_asks_first(tmp_path):
         assert shouts == []
 
 
-def test_what_is_worth_remembering_and_which_model_first():
-    from argus.worker.think import model_order, worth_keeping
+def test_what_is_worth_remembering_and_ari_keeps_to_one_local_model():
+    from types import SimpleNamespace
+
+    from argus.worker.think import ari_tiers, worth_keeping
     assert worth_keeping("Prefers tea, no sugar.", []) == "Prefers tea, no sugar"
     assert worth_keeping("my bank pin is 4411", []) == "" and worth_keeping("card 4111111111111111", []) == ""
     assert worth_keeping("prefers tea no sugar", [{"fact": "prefers tea, no sugar"}]) == ""  # known already
     assert worth_keeping("ok", []) == ""
-    assert model_order("what's the time?", ["T1", "T2"]) == ["T1", "T2"]
-    assert model_order("explain how WireGuard differs from IPsec", ["T1", "T2"]) == ["T2", "T1"]
-    assert model_order("x" * 200, ["T1"]) == ["T1"]
+    assert ari_tiers(SimpleNamespace(local_tiers=lambda: ["T1", "T2"])) == ["T1"]  # no swap to a second model
+    assert ari_tiers(SimpleNamespace(local_tiers=lambda: [])) is None
 
 
 def test_ari_offers_to_remember_and_a_yes_keeps_it(tmp_path):

@@ -276,13 +276,17 @@ class ShareConfig(_Strict):
     keep_days: float = Field(7, gt=0, le=365)  # shared files are deleted after this
 
 
+GONE_ARI = ("voice", "voice_engine", "live", "follow_up")
+
+
 class AriConfig(_Strict):
     @model_validator(mode="before")
     @classmethod
-    def _old_voice_settings(cls, values: Any) -> Any:
-        """`voice` (a Piper file) and `voice_engine` are gone: one voice. Old argus.yaml files still load."""
+    def _gone_settings(cls, values: Any) -> Any:
+        """Settings that are gone still load (ignored): `voice` and `voice_engine` (Piper; Ari has one voice now),
+        `live` and `follow_up` (the old one-request-per-"Hey Ari" listener; the conversation is the only mode)."""
         if isinstance(values, dict):
-            values = {k: v for k, v in values.items() if k not in ("voice", "voice_engine")}
+            values = {k: v for k, v in values.items() if k not in GONE_ARI}
         return values
 
     # Who Ari is, in a few sentences (empty: the witty companion, worker/think.py PERSONA). Used in every reply.
@@ -321,20 +325,19 @@ class AriConfig(_Strict):
     quiet_in_calls: bool = True
     call_apps: list[str] = Field(default_factory=list)
     live_words: bool = True  # the island shows the words as you say them (the small model hears you every second)
-    follow_up: bool = True  # after Ari answers, keep listening a few seconds: carry on without "Hey Ari"
-    # Talk like a conversation: after "Hey Ari" just talk back and forth, talk over Ari to interrupt, "thanks Ari"
-    # ends it (also after talk_idle_s of quiet). Knows when you've finished a sentence (Smart Turn, downloaded
-    # once). false: the classic mode (every request starts with "Hey Ari").
-    live: bool = True
-    talk_idle_s: int = Field(20, ge=5, le=300)
+    # After an answer, carry on without "Hey Ari" for this long (not while the PC plays sound, and not with a long
+    # stream of words); talk over Ari to interrupt; "thanks Ari" ends it. Smart Turn (downloaded once) knows when
+    # you've finished a sentence.
+    talk_idle_s: int = Field(10, ge=5, le=300)
     # Names Ari should expect to hear (people, apps, places): Whisper is biased towards these spellings. Names in
     # what Ari remembers are added by themselves.
     vocabulary: list[str] = Field(default_factory=list)
     # What Whisper writes -> what you meant, e.g. {"kancha": "Kaancha"} (whole words, any case)
     heard_as: dict[str, str] = Field(default_factory=dict)
-    # Ari says important things out loud at the PC (an overdue issue, a price drop, a failed backup): only while
-    # you're at the PC, only between these hours, at most one every 10 minutes.
-    speak_up: bool = True
+    # Ari says important phone messages out loud at the PC (an overdue issue, a failed backup, an approval): only
+    # while you're at the PC, between these hours, at most one every 10 minutes. Off: they stay on the island and
+    # the phone, and Ari only speaks when you've spoken to it.
+    speak_up: bool = False
     speak_hours: str = Field("08:00-22:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d$")
     # Ari's popup over the whole screen while Ari listens, thinks or talks (python -m argus.ari_popup; needs
     # pip install -e .[popup]; `dev.ps1 up` starts it when on).

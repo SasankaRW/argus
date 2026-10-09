@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from argus.ari_listen import Listener
 from argus.ari_popup import (
     AriState,
     Spring,
@@ -60,11 +59,6 @@ def test_the_talk_button_wakes_the_pcs_listener(tmp_path, monkeypatch):
         cl.post("/ari/listener")
         assert cl.post("/ari/wake") == {"listener": True}
         assert [e["kind"] for e in cl.get("/events?kinds=ari.wake")["events"]] == ["ari.wake"]
-    told: list[str] = []
-    lis = Listener(transcribe_wake=lambda a: "", transcribe=lambda a: "", say=lambda t: {}, speak=lambda t: None,
-                   report=told.append, clock=lambda: 100.0)
-    lis.wake()
-    assert told == ["listening"] and lis.armed_until > 100.0
 
 
 def test_ari_says_what_it_is_doing(tmp_path, monkeypatch):
@@ -91,20 +85,6 @@ def test_helios_leaves_the_pill_to_the_popup_on_its_pc(tmp_path, monkeypatch):
         assert cl.get("/ari-voice")["popup_here"] is False
         cl.post("/ari/popup")
         assert cl.get("/ari-voice")["popup_here"] is True
-
-
-def test_hey_ari_on_the_pc_reports_listening():
-    told: list[str] = []
-    said = iter(["Hey Ari", "sort my downloads"])
-    lis = Listener(transcribe_wake=lambda a: next(said), transcribe=lambda a: next(said),
-                   say=lambda text: {"reply": "Shall I?", "pending": {"kind": "action"}}, speak=lambda t: None,
-                   report=told.append, clock=lambda: 0.0)
-    import numpy as np
-
-    clip = [np.zeros(480, dtype=np.float32)] * 30
-    lis.clip(clip)  # the wake phrase alone: a chime, then listening
-    lis.clip(clip)  # the command; Ari asks "Shall I?": listening for the answer
-    assert told == ["listening", "listening"]
 
 
 def test_shortcut_icons_follow_what_they_do():
