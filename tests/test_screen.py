@@ -117,7 +117,8 @@ def test_words_are_read_with_ocr_first_and_the_picture_only_when_needed(tmp_path
                    {"grab": shot, "screen_text": lambda img: words}, question="what's the error?")
     assert done["state"] == "succeeded", done["error"]
     assert done["result"]["how"] == "the text on it (T1)"
-    assert [r["model"] for r in ol.requests] == ["qwen2.5-coder:7b"]  # vision never loaded
+    asked = [r["model"] for r in ol.requests if r.get("prompt") != ""]  # not a warm-up ping from another thread
+    assert asked == ["qwen2.5-coder:7b"]  # vision never loaded
     done, ol = run(setup(tmp_path, monkeypatch), replies, monkeypatch, "look",
                    {"grab": shot, "screen_text": lambda img: words}, question="what colour is the theme?")
     assert done["result"]["how"] == "vision (V1)"

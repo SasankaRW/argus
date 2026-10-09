@@ -630,8 +630,9 @@ STOPPED_AT = [0.0]  # when the island's Stop button was last pressed (monotonic)
 LAST_ASKED = [0.0]  # when Ari was last asked something here (monotonic)
 
 
-def keep_warm(cfg, every: float = 240.0, check: float = 15.0,
-              away: Callable[[], float] | None = None) -> threading.Thread | None:
+def keep_warm(cfg, every: float = 240.0, check: float = 15.0, away: Callable[[], float] | None = None,
+              sleep: Callable[[float], None] = time.sleep,
+              post: Callable[[Any], Any] | None = None) -> threading.Thread | None:
     """Ari's first local model stays loaded in Ollama while you're around (ari.keep_warm): loading it on your first
     question costs seconds. A tiny request now and every few minutes, so it is never unloaded. When you've been
     away (no keyboard or mouse, nothing asked) for ari.rest_after_min, it stops, and Ollama lets the model go
@@ -657,14 +658,14 @@ def keep_warm(cfg, every: float = 240.0, check: float = 15.0,
                 try:
                     req = urllib.request.Request(cfg.ollama.url.rstrip("/") + "/api/generate", data=body,
                                                  method="POST", headers={"Content-Type": "application/json"})
-                    urllib.request.urlopen(req, timeout=120).read()  # noqa: S310 - the local Ollama
+                    (post or (lambda r: urllib.request.urlopen(r, timeout=120).read()))(req)  # noqa: S310 - Ollama
                     if resting:
                         log.info("you're back: model loaded again")
                 except Exception as e:  # noqa: BLE001 - Ollama down: try again later
                     log.info("could not warm the model", extra={"error": str(e)[:120]})
                 last = time.monotonic()
             resting = now_resting
-            time.sleep(check)
+            sleep(check)
 
     th = threading.Thread(target=loop, daemon=True, name="keep-warm")
     th.start()

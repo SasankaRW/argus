@@ -39,7 +39,18 @@ def test_the_desk_worker_has_its_own_id_and_only_the_session(monkeypatch):
     args = argparse.Namespace(no_worker=False, no_session=False, no_argusd=False, desk_only=True)
     (name, argv), = supervisor.plan(args)
     assert argv[argv.index("--id") + 1] == "desktop-sas-pc"
-    assert "--cap" in argv and "gpu" not in argv and "desktop" not in argv[argv.index("--cap"):argv.index("--id")]
+    caps = [argv[i + 1] for i, a in enumerate(argv) if a == "--cap"]
+    assert sorted(caps) == ["desktop", "session"]  # the PC tools need both; the GPU stays with the boot worker
+
+
+def test_a_second_supervisor_in_the_same_mode_stops(monkeypatch):
+    held = supervisor.only_one(0)  # port 0: any free port, to show the lock works
+    port = held.getsockname()[1]
+    try:
+        assert supervisor.only_one(port) is None
+    finally:
+        held.close()
+    assert supervisor.LOCK_PORTS["main"] != supervisor.LOCK_PORTS["desk"]
 
 
 def test_the_expressive_voice_runs_in_its_own_python(monkeypatch):

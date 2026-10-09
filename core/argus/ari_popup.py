@@ -17,6 +17,7 @@ ARGUS_URL to the laptop's address.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import math
 import os
@@ -230,6 +231,33 @@ class Api:
             return json.loads(raw) if raw else None
 
 
+def ask_parts(d: dict) -> dict[str, Any]:
+    """An Ari task's question (event ari.ask) as the island shows it: the lines, the choices as buttons, a text box
+    when it wants an answer, a remember box when it may keep it, or Yes / No for a confirmation."""
+    lines = [str(x) for x in d.get("summary") or []]
+    choices: list[str] = []
+    for ln in list(lines):
+        if ln.startswith("Choices: "):
+            choices = [c.strip() for c in ln[len("Choices: "):].split(",") if c.strip()][:6]
+            lines.remove(ln)
+    fields = list(d.get("fields") or [])
+    return {"title": str(d.get("title") or "Ari needs you"), "lines": [ln for ln in lines if ln][:4],
+            "choices": choices, "answer": "answer" in fields, "remember": "remember" in fields,
+            "confirm": "answer" not in fields, "picture": bool(d.get("picture")), "approval": d.get("approval")}
+
+
+def decision(parts: dict, text: str | None, remember: bool = False, yes: bool = True) -> dict:
+    """The body for POST /approvals/{id}/decide from the island."""
+    if parts["confirm"]:
+        return {"answer": "approve" if yes else "reject", "by": "island"}
+    if not yes or not (text or "").strip():
+        return {"answer": "reject", "by": "island"}
+    fields: dict[str, Any] = {"answer": text.strip()}
+    if parts["remember"]:
+        fields["remember"] = bool(remember)
+    return {"answer": "approve", "fields": fields, "by": "island"}
+
+
 @dataclass
 class Info:
     """What the opened island shows (fetched when it opens, and every 15 s while open)."""
@@ -297,7 +325,16 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             QRadialGradient,
             QRegion,
         )
-        from PySide6.QtWidgets import QApplication, QWidget  # type: ignore[import-not-found]
+        from PySide6.QtWidgets import (  # type: ignore[import-not-found]
+            QApplication,
+            QCheckBox,
+            QHBoxLayout,
+            QLabel,
+            QLineEdit,
+            QPushButton,
+            QVBoxLayout,
+            QWidget,
+        )
     except ImportError as e:
         print(f"ari-popup needs its extras: pip install -e .[popup]  ({e})", file=sys.stderr)
         return 2
@@ -308,6 +345,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
         events = Signal(list)
         info = Signal(object)
         flash = Signal(str)
+        ask = Signal(dict)
+        answered = Signal(str)
 
     bus = Bus()
 
@@ -1027,9 +1066,110 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
 
         return bool(ctypes.windll.user32.GetAsyncKeyState(0x01) & 0x8000)
 
+    class AskBox(QWidget):
+        """Ari's task needs you: the question under the island, with a text box, choices, or Yes / No. Answering
+        here is the same as in Helios or on the phone; answered elsewhere, it goes away."""
+
+        STYLE = ("QWidget#ask{background:#0e1012;border:1px solid #2a2f36;border-radius:14px}"
+                 "QLabel{color:#e4e6e8;font-size:13px} QLabel#t{font-weight:600}"
+                 "QLineEdit{background:#16191d;color:#e4e6e8;border:1px solid #2a2f36;border-radius:8px;padding:6px}"
+                 "QPushButton{background:#1c2026;color:#e4e6e8;border:1px solid #2a2f36;border-radius:8px;"
+                 "padding:5px 12px} QPushButton#go{background:#2f6fed;border-color:#2f6fed}"
+                 "QCheckBox{color:#9aa3b5}")
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.setObjectName("ask")
+            self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
+                                | Qt.WindowType.Tool)
+            self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+            self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+            self.setStyleSheet(self.STYLE)
+            self.parts: dict = {}
+            bus.ask.connect(self.show_ask)
+            bus.answered.connect(self.answered)
+
+        def show_ask(self, d: dict) -> None:
+            for c in self.findChildren(QWidget):
+                c.deleteLater()
+            if self.layout() is not None:
+                QWidget().setLayout(self.layout())  # drop the old layout
+            self.parts = p = ask_parts(d)
+            box = QVBoxLayout(self)
+            box.setContentsMargins(14, 12, 14, 12)
+            t = QLabel(p["title"])
+            t.setObjectName("t")
+            box.addWidget(t)
+            for ln in p["lines"]:
+                lab = QLabel(ln)
+                lab.setWordWrap(True)
+                box.addWidget(lab)
+            if p["picture"]:
+                pic = QLabel()
+                box.addWidget(pic)
+                threading.Thread(target=self.load_picture, args=(pic, p["approval"]), daemon=True).start()
+            self.text = self.keep = None
+            if p["choices"]:
+                row = QHBoxLayout()
+                for c in p["choices"]:
+                    b = QPushButton(c)
+                    b.clicked.connect(lambda _=False, c=c: self.send(c))
+                    row.addWidget(b)
+                box.addLayout(row)
+            if p["answer"]:
+                self.text = QLineEdit()
+                self.text.setPlaceholderText("Type your answer")
+                self.text.returnPressed.connect(lambda: self.send(self.text.text()))
+                box.addWidget(self.text)
+            if p["remember"]:
+                self.keep = QCheckBox("Remember this for next time")
+                box.addWidget(self.keep)
+            row = QHBoxLayout()
+            no = QPushButton("No" if p["confirm"] else "Skip")
+            no.clicked.connect(lambda: self.send(None, yes=False))
+            go = QPushButton("Yes" if p["confirm"] else "Send")
+            go.setObjectName("go")
+            go.clicked.connect(lambda: self.send(self.text.text() if self.text is not None else None))
+            row.addStretch(1)
+            row.addWidget(no)
+            row.addWidget(go)
+            box.addLayout(row)
+            self.setFixedWidth(420)
+            self.adjustSize()
+            g = QApplication.primaryScreen().geometry()
+            self.move(g.x() + (g.width() - self.width()) // 2, g.y() + 64)
+            self.show()
+
+        def load_picture(self, label: Any, aid: str | None) -> None:
+            try:
+                img = str(api.call("GET", f"/approvals/{aid}")["payload"].get("image") or "")
+                raw = base64.b64decode(img.split(",", 1)[1]) if "," in img else b""
+            except Exception:  # noqa: BLE001
+                return
+            q = QImage.fromData(raw)
+            if not q.isNull():
+                from PySide6.QtGui import QPixmap  # type: ignore[import-not-found]
+
+                QTimer.singleShot(0, lambda: (label.setPixmap(QPixmap.fromImage(q).scaledToWidth(390)),
+                                              self.adjustSize()))
+
+        def send(self, text: str | None, yes: bool = True) -> None:
+            p = self.parts
+            body = decision(p, text, bool(self.keep and self.keep.isChecked()), yes)
+            if not p["confirm"] and yes and not (text or "").strip():
+                return  # Send with nothing typed: wait for an answer
+            self.hide()
+            threading.Thread(target=lambda: api.call("POST", f"/approvals/{p['approval']}/decide", body),
+                             daemon=True).start()
+
+        def answered(self, aid: str) -> None:
+            if self.parts.get("approval") == aid:
+                self.hide()
+
     app = QApplication(sys.argv[:1])
     app.setQuitOnLastWindowClosed(False)
     island = Island()
+    island.asker = AskBox()  # kept alive with the island
     if args.preview:
         island.ari.phase, island.ari.text = args.phase, args.text
         island.hover = args.hover
@@ -1064,12 +1204,18 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                     seq = int(api.call("GET", "/events?kinds=ari.state&limit=1&newest=true").get("seq") or 0)
                     ears = api.call("GET", "/ari/listening")  # off already? (the red dot from the start)
                     bus.events.emit([{"kind": "ari.listening", "data": ears}])
-                r = api.call("GET", f"/events?kinds=ari.state,ari.listening,step.running&after={seq}&limit=200&wait=20",
-                             timeout=30)
+                r = api.call("GET", "/events?kinds=ari.state,ari.listening,step.running,ari.ask,approval.approved,"
+                             f"approval.rejected,approval.expired&after={seq}&limit=200&wait=20", timeout=30)
                 evs = r.get("events") or []
                 if evs:
                     seq = max(int(e["seq"]) for e in evs)
-                    bus.events.emit(evs)
+                    for e in evs:  # Ari's questions: the box under the island (gone once answered anywhere)
+                        if e.get("kind") == "ari.ask":
+                            bus.ask.emit(e.get("data") or {})
+                        elif str(e.get("kind")).startswith("approval."):
+                            bus.answered.emit(str((e.get("data") or {}).get("approval") or ""))
+                    bus.events.emit([e for e in evs if e.get("kind") in ("ari.state", "ari.listening",
+                                                                         "step.running")])
                 elif time.monotonic() - t0 < 1:  # an older Argus that doesn't wait: don't ask in a tight loop
                     time.sleep(1.2)
             except Exception:  # Argus restarting or out of reach: look again later

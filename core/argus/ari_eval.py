@@ -64,6 +64,9 @@ CASES: list[tuple[str, str]] = [
     ("how was my week", "weekly_review|time_saved"),
     ("is the backup okay", "backup_status"),
     ("what routines do I have", "list_routines"),
+    ("move that window to me", "move_window_to_me"),
+    ("take this", "take_window"),
+    ("google cheap flights to Bangkok", "search_in_browser"),
 ]
 
 

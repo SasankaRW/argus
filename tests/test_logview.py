@@ -53,3 +53,25 @@ def test_logs_api_lists_and_reads(tmp_path):
         assert c.get("/logs/worker").json()["entries"][0]["msg"] == "hello"
         assert c.get("/logs/..%2f.env").status_code == 404
         assert c.get("/logs/nope").status_code == 404
+
+
+def test_a_log_it_cant_read_never_breaks_the_list(tmp_path, monkeypatch):
+    """On the laptop the service can't look into /home: /logs crashed on the Ollama app's log path every time."""
+    from pathlib import Path
+
+    from argus import logview
+
+    (tmp_path / "argus.log").write_text('{"ts": "x", "level": "info", "msg": "hi"}\n')
+    (tmp_path / "worker-crash.log").write_text("")  # an empty crash log is left out
+    monkeypatch.setattr(logview, "WINDOWS", False)
+    assert list(logview.sources(tmp_path)) == ["argus"]  # not looked for off Windows
+    monkeypatch.setattr(logview, "WINDOWS", True)
+    real = Path.is_file
+
+    def is_file(self):
+        if "Ollama" in str(self):
+            raise PermissionError(13, "Permission denied")
+        return real(self)
+
+    monkeypatch.setattr(Path, "is_file", is_file)
+    assert list(logview.sources(tmp_path)) == ["argus"]

@@ -20,6 +20,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+WINDOWS = os.name == "nt"
 NAME = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 KV = re.compile(r'(\w+)=("(?:[^"\\]|\\.)*"|\S+)')
 LEVEL_WORD = re.compile(r"\b(DEBUG|INFO|WARN|WARNING|ERROR|CRITICAL|FATAL|Traceback)\b")
@@ -34,9 +35,13 @@ def sources(log_dir: Path) -> dict[str, Path]:
             # "<name>-crash.log" holds what a process printed before it could log (a traceback): only when not empty
             if NAME.match(p.stem) and not (p.stem.endswith("-crash") and p.stat().st_size == 0):
                 out[p.stem] = p
-    app = Path(os.environ.get("LOCALAPPDATA", "~/AppData/Local")).expanduser() / "Ollama" / "server.log"
-    if "ollama" not in out and app.is_file():
-        out["ollama"] = app
+    if "ollama" not in out and WINDOWS:  # the Ollama app's own log, on Windows only
+        app = Path(os.environ.get("LOCALAPPDATA", "~/AppData/Local")).expanduser() / "Ollama" / "server.log"
+        try:
+            if app.is_file():
+                out["ollama"] = app
+        except OSError:  # not ours to read: the other logs still show
+            pass
     return out
 
 

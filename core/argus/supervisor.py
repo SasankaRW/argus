@@ -210,6 +210,23 @@ def busy(url: str, token: str | None) -> bool:
         return False
 
 
+LOCK_PORTS = {"main": 8617, "desk": 8618}  # one supervisor per mode on a machine
+
+
+def only_one(port: int):
+    """Hold a local port for as long as this supervisor runs; None when another one already holds it."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    if os.name == "nt":
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)  # type: ignore[attr-defined]
+    try:
+        s.bind(("127.0.0.1", port))
+        s.listen(1)
+    except OSError:
+        s.close()
+        return None
+    return s
+
+
 def plan(args: argparse.Namespace) -> list[tuple[str, list[str]]]:
     """Which processes this supervisor keeps running, from its flags and argus.yaml's ari.listen / ari.popup.
 
@@ -217,8 +234,10 @@ def plan(args: argparse.Namespace) -> list[tuple[str, list[str]]]:
     Argus over ARGUS_URL, so they stay on the PC when Argus itself moves to the laptop."""
     if args.desk_only:  # at logon on the PC after the move; the boot-time worker (--no-session) does the GPU work
         host = (socket.gethostname() or "pc").lower()  # as the boot-time worker names itself: worker-<host>
-        out = [("desktop", ["-m", "argus.worker.cli", "--cap", "session", "--id", f"desktop-{host}",
-                            "--log-file", "logs/desktop.log"])]
+        # desktop + session: the PC tools (open apps, volume, windows, keys, the screen, Ari's Workstation) need
+        # both; with "session" alone no worker could take them and Ari waited on them for ever
+        out = [("desktop", ["-m", "argus.worker.cli", "--cap", "desktop", "--cap", "session", "--id",
+                            f"desktop-{host}", "--log-file", "logs/desktop.log"])]
         desk = True
     else:
         out = [] if args.no_argusd else [("argusd", ["-m", "argus"])]
@@ -252,6 +271,10 @@ def main(argv: list[str] | None = None) -> int:
                    help="your logged-in session only (the PC after the move, started at logon): Ari's PC tools, "
                         "\"Hey Ari\" and the island; Argus and the GPU worker run elsewhere")
     args = p.parse_args(argv)
+    lock = only_one(LOCK_PORTS["desk" if args.desk_only else "main"])
+    if lock is None:  # a second start (the task at boot and a manual start, `dev.ps1 up` twice): two workers
+        print("argus-supervisor is already running here in this mode.", file=sys.stderr)
+        return 0
     setup_logging("INFO", ROOT / "logs" / ("supervisor-desk.log" if args.desk_only else "supervisor.log"))
     env = parse_env_file(ROOT / ".env")
     token = os.environ.get("ARGUS_WORKER_TOKEN") or env.get("ARGUS_WORKER_TOKEN")

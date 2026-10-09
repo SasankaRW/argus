@@ -453,8 +453,8 @@ order (`ari.py`, then `worker/think.py`):
 6. **Needs current information** (news, weather) → Claude with web search, read-only, within the daily cap.
 
 **Local first:** questions about your own things always go through a tool (your files via `knowledge`, Argus's
-data). General knowledge is answered by the local model when it's sure. Ari uses one local model (the first tier,
-kept warm), then Claude: no second local model is swapped in next to the voice and Whisper.
+data). General knowledge is answered by the local model when it's sure. Ari tries its local models first (the fast one
+for quick asks, the bigger one first for harder ones), and Claude only after all of them.
 
 **Voice:**
 

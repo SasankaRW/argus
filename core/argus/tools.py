@@ -116,6 +116,19 @@ class Tools:
             needs=p.manifest.job_needs(), priority=PRIORITY_INTERACTIVE, source="ari",
             dedupe_key=f"tool:{key}" if key else None)
 
+    async def nobody_for(self, tool: Tool) -> str | None:
+        """Why no online worker can run this tool's job right now, or None when one can."""
+        p = self.argus.plugin_host.plugins.get(tool.plugin)
+        needs = set(p.manifest.job_needs()) if p is not None else set()
+        if not needs:
+            return None
+        if any(w["state"] == "online" and needs <= set(w["capabilities"]) for w in await self.argus.registry.workers()):
+            return None
+        if "session" in needs:
+            return ("Ari's PC tools aren't running: log in on the PC (the \"Argus desktop\" task starts them), "
+                    "or run .\\scripts\\pc-worker.ps1 restart")
+        return f"no worker is online that can do this (it needs: {', '.join(sorted(needs))})"
+
     # -------------------------------------------------------------- a tool called from inside a job (ctx.tool)
 
     async def call_from_job(self, parent_id: str, worker: str, key: str, name: str, args: dict[str, Any]
@@ -139,6 +152,9 @@ class Tools:
             "SELECT id, state, result, error FROM jobs WHERE dedupe_key = ? ORDER BY created_at DESC LIMIT 1",
             (f"tool:{key}",)).fetchone())
         if child is None:
+            missing = await self.nobody_for(tool)
+            if missing:  # no online worker can take it: say so now, rather than Ari waiting on it for ever
+                return {"state": "failed", "error": missing}
             try:
                 cid, _ = await self.enqueue(tool, args, parent=parent_id, key=key)
             except ToolError as e:

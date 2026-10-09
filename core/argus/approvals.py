@@ -123,6 +123,20 @@ def _decode(r: sqlite3.Row) -> dict[str, Any]:
     return d
 
 
+ASKS_ON_ISLAND = {"workstation"}
+
+
+def drop_pictures(conn: sqlite3.Connection, job_id: str) -> int:
+    """A task's pictures are gone once it ends (they were only there for you to answer): approvals keep the text."""
+    n = 0
+    for r in conn.execute("SELECT id, payload FROM approvals WHERE job_id = ?", (job_id,)).fetchall():
+        p = json.loads(r["payload"])
+        if p.pop("image", None) is not None:
+            conn.execute("UPDATE approvals SET payload = ? WHERE id = ?", (_dumps(p), r["id"]))
+            n += 1
+    return n
+
+
 class Approvals:
     def __init__(self, store: Store, jobs: JobStore, cfg: Config, clock: Callable[[], float] = time.time):
         self.store = store
@@ -237,6 +251,10 @@ class Approvals:
             a = _decode(conn.execute("SELECT * FROM approvals WHERE id = ?", (aid,)).fetchone())
             insert_event(conn, now, "approval.requested", job_id=job_id, step=step, src=job.plugin,
                          dst="approvals", data={"approval": aid, "type": type_, "title": a["title"]})
+            if job.plugin in ASKS_ON_ISLAND:  # Ari working for you asks: said aloud and on the island too
+                insert_event(conn, now, "ari.ask", job_id=job_id, step=step, src=job.plugin, dst="ari",
+                             data={"approval": aid, "title": a["title"], "summary": summary[:6],
+                                   "fields": list(fields), "picture": bool(image)})
             add_message(conn, now, "phone", self._message(a), dedupe_key=f"approval:{aid}", job_id=job_id)
             return a, True
 

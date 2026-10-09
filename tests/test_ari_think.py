@@ -93,6 +93,23 @@ def test_builtin_then_plugin_tool_then_the_answer(tmp_path):
         assert third["results_so_far"][1]["result"]["said"] == "HELLO"
 
 
+def test_a_pc_tool_with_no_session_worker_fails_at_once_instead_of_waiting(tmp_path):
+    """The PC's GPU worker without your session: open-app-like tools can't run there. Ari says why at once."""
+    replies = {"qwen2.5-coder:7b": [{"tool": "shout", "args": {"text": "hello"}},
+                                    {"reply": "I can't reach your PC session right now."}]}
+    with FakeOllama(replies) as ol, Server(make(tmp_path).open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop", "gpu"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        r = cl.post("/ari", {"text": "shout hello"})
+        last = settle(cl, w, r["conv"])
+        assert last["text"] == "I can't reach your PC session right now."
+        assert last["used"] == [{"tool": "shout", "ok": False}]
+        assert cl.get("/jobs?plugin=echo-tool") == []  # no child job left waiting for ever
+        second = json.loads(ol.requests[1]["messages"][1]["content"])
+        assert "Argus desktop" in second["results_so_far"][0]["error"]
+
+
 def test_risky_tool_asks_and_a_made_up_tool_is_refused(tmp_path):
     replies = {"qwen2.5-coder:7b": [{"tool": "format_disk", "args": {}}, {"tool": "wipe", "args": {}}]}
     with FakeOllama(replies) as ol, Server(make(tmp_path).open()) as srv:
@@ -205,16 +222,15 @@ def test_after_web_text_doing_anything_asks_first(tmp_path):
         assert shouts == []
 
 
-def test_what_is_worth_remembering_and_ari_keeps_to_one_local_model():
-    from types import SimpleNamespace
-
-    from argus.worker.think import ari_tiers, worth_keeping
+def test_what_is_worth_remembering_and_which_model_first():
+    from argus.worker.think import model_order, worth_keeping
     assert worth_keeping("Prefers tea, no sugar.", []) == "Prefers tea, no sugar"
     assert worth_keeping("my bank pin is 4411", []) == "" and worth_keeping("card 4111111111111111", []) == ""
     assert worth_keeping("prefers tea no sugar", [{"fact": "prefers tea, no sugar"}]) == ""  # known already
     assert worth_keeping("ok", []) == ""
-    assert ari_tiers(SimpleNamespace(local_tiers=lambda: ["T1", "T2"])) == ["T1"]  # no swap to a second model
-    assert ari_tiers(SimpleNamespace(local_tiers=lambda: [])) is None
+    assert model_order("what's the time?", ["T1", "T2"]) == ["T1", "T2"]
+    assert model_order("explain how WireGuard differs from IPsec", ["T1", "T2"]) == ["T2", "T1"]
+    assert model_order("x" * 200, ["T1"]) == ["T1"]
 
 
 def test_ari_offers_to_remember_and_a_yes_keeps_it(tmp_path):

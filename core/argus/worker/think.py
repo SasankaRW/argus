@@ -5,10 +5,9 @@ for anything the instant rules can't answer).
     you: "what did I write about the laptop server?"  -> search_files("laptop server") -> answer from your files
     you: "who won the match yesterday?"               -> needs the web -> Claude with web search
 
-Local first: one model (the first tier, kept warm) chooses one step at a time: a tool, or the answer. Questions
-about your own things always go through a tool (your files, Argus's data); general knowledge it answers itself when
-sure. When it needs something current or isn't sure, Claude answers with web search (read only), within the daily
-cap.
+Local first: the model (T1, then T2) chooses one step at a time: a tool, or the answer. Questions about your own
+things always go through a tool (your files, Argus's data); general knowledge it answers itself when sure. When it
+needs something current or isn't sure, Claude answers with web search (read only), within the daily cap.
 
 A tool marked "private" (the screen, the clipboard) keeps the chat local: after it, Claude is not asked, and a
 web search gets only the question.
@@ -111,6 +110,10 @@ def worth_keeping(fact: str, known: list[dict]) -> str:
         if words and len(words & kw) / len(words) >= 0.7:
             return ""
     return f
+
+
+HARD = re.compile(r"\b(why|explain|compare|plan|analy[sz]e|summari[sz]e|write|draft|difference|pros and cons|"
+                  r"step by step|how (?:do|does|can|should) i|what if|recommend)\b", re.I)
 
 
 # The screen and the clipboard are slow (a vision model) and private: they are only offered when the message is
@@ -291,7 +294,43 @@ def said_back(name: str, args: dict, result: Any) -> str | None:
         return f"Moved {result['moved'].get('key')} to {str(result['moved'].get('status')).replace('_', ' ')}."
     if name in ("phone_lock", "phone_press", "phone_swipe", "phone_media"):
         return "Done."
+    if name in WORKSTATION_SAYS and isinstance(result, dict):  # Ari's Workstation: done, or what went wrong
+        if not result.get("done"):
+            return spoken(str(result.get("problem") or "That didn't work.")).rstrip(".") + "."
+        return WORKSTATION_SAYS[name].format(q=args.get("query") or "", w=_short_title(result.get("window") or ""),
+                                             p=result.get("playing") or args.get("query") or "it",
+                                             a=spoken(str(result.get("answer") or "Filled it in.")))
     return None
+
+
+WORKSTATION_SAYS = {"search_in_browser": "Searched {q} on my workstation. Want it over here?",
+                    "play_on_spotify": "Playing {p}.",
+                    "browse_on_workstation": "It's open on my workstation.",
+                    "open_on_workstation": "{w} is open on my workstation.",
+                    "move_window_to_me": "Here you go.", "fill_form": "{a}",
+                    "take_window": "Got it, {w} is on my workstation now."}
+
+
+def _short_title(t: str) -> str:
+    """"Spotify Premium - Spotify" -> "Spotify"; a page title -> its app ("… - Google Chrome" -> "Google Chrome")."""
+    parts = [p.strip() for p in re.split(r"\s+[-–—|]\s+", t) if p.strip()]
+    return (parts[-1] if parts else t)[:40] or "It"
+
+
+# Ari's Workstation by voice: "move that window to me", "give me that", "take this", "google cat videos"
+GIVE = re.compile(_PLEASE + r"(?:give (?:me|it to me)(?: (?:that|this|it|the window))?|(?:move|bring|send) "
+                  r"(?:(?:that|this|it|the) )?(?:(?P<name>[\w .'-]{2,30}?) )?(?:window )?(?:back |over )?(?:to me|"
+                  r"here|over here|to my (?:desktop|screen))|bring (?:it|that) (?:back|over))(?:,? please)?\W*$", re.I)
+TAKE = re.compile(_PLEASE + r"(?:take (?:this|that|it)(?: one| window)?|take (?:the )?(?P<name>[\w .'-]{2,30}?) window|"
+                  r"(?:move|send|put) (?:this|that|it|the (?P<name2>[\w .'-]{2,30}?) window) (?:to|on|onto) "
+                  r"(?:your|ari'?s) (?:workstation|desktop))(?:,? please)?\W*$", re.I)
+FILL_FORM = re.compile(_PLEASE + r"(?:fill|complete) (?:in |out )?(?:this|the|that|my) (?:form|application|page)"
+                       r"(?: for me)?(?:,? please)?\W*$", re.I)
+SPOTIFY = re.compile(_PLEASE + r"(?:(?:open spotify and )?(?:play|put on)\s+(?P<q>.+?)\s+(?:on|in|from) spotify|"
+                     r"(?:open spotify and |on spotify,? )(?:play|put on)\s+(?P<q2>.+?))(?:,? please)?\W*$", re.I)
+GOOGLE = re.compile(_PLEASE + r"(?:google|(?:open|do|run) (?:a )?(?:google |web |browser )?search (?:for |on |about )?|"
+                    r"search (?:for )?(?=.+ (?:in|on) (?:the |a )?(?:browser|chrome|google|edge)\W*$))"
+                    r"(?P<q>.+?)(?: (?:in|on) (?:the |a )?(?:browser|chrome|google|edge))?\W*$", re.I)
 
 
 TYPE_NOW = re.compile(_PLEASE + r"type\s+(?P<t>\S.{0,158}?)\W*$", re.I)
@@ -395,6 +434,25 @@ def straight_to(tools: dict[str, dict], text: str) -> tuple[str, dict] | None:
         return "fix_ticket", out
     if "work_summary" in tools and WORK_NOW.match(text):
         return "work_summary", {}
+    gv = GIVE.match(text)
+    if gv and "move_window_to_me" in tools:
+        name = (gv.group("name") or "").strip()
+        return "move_window_to_me", ({"name": name} if name and name.lower() not in ("that", "this", "it", "window")
+                                     else {})
+    tk = TAKE.match(text)
+    if tk and "take_window" in tools:
+        name = (tk.group("name") or tk.group("name2") or "").strip()
+        return "take_window", {"name": name} if name else {}
+    if "fill_form" in tools and FILL_FORM.match(text):
+        return "fill_form", {}
+    sp = SPOTIFY.match(text)
+    if sp and "play_on_spotify" in tools:
+        q = re.sub(r"^(?:some|a bit of|the song|the album|the playlist)\s+", "", (sp.group("q") or sp.group("q2")),
+                   flags=re.I)
+        return "play_on_spotify", {"query": q.strip(" \"'")}
+    gg = GOOGLE.match(text)
+    if gg and "search_in_browser" in tools:
+        return "search_in_browser", {"query": gg.group("q").strip(" \"'")}
     m = OPEN_APP.match(text)
     if m and "open_app" in tools and not NOT_APP.search(m.group("app")):
         return "open_app", {"name": m.group("app").strip()}
@@ -600,10 +658,15 @@ PROMISE = re.compile(r"^\W*(?:(?:ok(?:ay)?|sure|alright)[,.!]?\s*)?(?:i'?ll|i wi
                      r"let me)\b(?!\s+(?:need|remember|keep|know|check with you))", re.I)
 
 
-def ari_tiers(ctx) -> list[str] | None:
-    """One local model for Ari (the first tier, kept warm on the GPU), then Claude: a second local model would be
-    swapped in next to the voice and Whisper, which made answers slow."""
-    return ctx.local_tiers()[:1] or None
+def model_order(text: str, local: list[str]) -> list[str]:
+    """Ari's local models, in the order to try them: quick asks start on the small, fast model; harder ones
+    (explain, compare, plan, several things at once, long messages) start on the bigger one, so they aren't first
+    answered badly and then again. Claude always comes after all of them (claude_last)."""
+    if len(local) < 2:
+        return local
+    hard = len(text) > 160 or bool(HARD.search(text)) or len(re.findall(r"\b(and then|then|also|after that)\b|;",
+                                                                          text, re.I)) >= 2
+    return local[1:] + local[:1] if hard else local
 
 
 PLAYBOOK = """You are Ari, the user's personal assistant on their own computer (home automation system "Argus").
@@ -791,7 +854,7 @@ def think(ctx: Context):
 
             s = ctx.llm(CHAT + "\n\n" + who, json.dumps(said, ensure_ascii=False), on_text=partial,
                         schema=Chat, check=lambda s, _i: chat_ok(s), temperature=CHAT_TEMPERATURE,
-                        tiers=ari_tiers(ctx), claude_last=not private())
+                        tiers=ctx.local_tiers() or None, claude_last=not private())
             return {**s.model_dump(), "tier": ctx.last_answer.tier}
 
         try:
@@ -867,7 +930,7 @@ def think(ctx: Context):
                     ctx.progress("plugin.ari.partial", {"text": part, "mood": mood or "neutral"})
 
             s = ctx.llm(PLAYBOOK + "\n\n" + who, json.dumps(task, ensure_ascii=False), schema=Step, check=check,
-                        on_text=partial, tiers=ari_tiers(ctx),
+                        on_text=partial, tiers=model_order(text, ctx.local_tiers()) or None,
                         claude_last=not private(),
                         # the first pick is kept for the guidance loop: your "no, I meant" teaches it
                         learn_as=LEARN if i == 0 and not private() else None)
