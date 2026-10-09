@@ -537,8 +537,14 @@ def pick_surface(ctx: Context, hwnd: int) -> Any:
     """The ladder for an app: its controls through UI Automation when it lists them (3 or more), else its picture
     with numbered boxes for the vision model (clicks as window messages)."""
     uia = surface_for(ctx, hwnd)
+    sleep = getattr(ctx, "sleep", None) or time.sleep
+    enough = False
     try:
-        enough = len(uia.snapshot()["items"]) >= 3
+        for tries in range(4):  # Chromium apps (Spotify, Discord, Teams, VS Code) build their controls on the first
+            enough = len(uia.snapshot()["items"]) >= 3  # look: the first answer is nearly empty, so look again
+            if enough or tries == 3:
+                break
+            sleep(1.5)
     except Exception:  # noqa: BLE001 - no UI Automation at all
         enough, uia = False, None
     if enough:
@@ -692,7 +698,12 @@ def spotify(ctx: Context):
             goal = (f'Search for "{q}" (click the Search box, type it, press Enter), then play the first song in '
                     "the results (hover it and press its Play button, or double-click it). "
                     "Done when a song is playing.")
-            out = in_app(SimpleCtx(ctx, {"app": "Spotify", "goal": goal}))
+            try:
+                out = in_app(SimpleCtx(ctx, {"app": "Spotify", "goal": goal}))
+            except PermanentError:
+                raise
+            except Exception as e:  # noqa: BLE001 - say what broke, instead of the job being retried blind
+                return {"done": False, "problem": f"I couldn't drive the Spotify app ({type(e).__name__}: {e})"}
             if out.get("done"):
                 return {"done": True, "playing": q, "in": "the Spotify app"}
             return {**out, "done": False,

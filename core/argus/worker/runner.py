@@ -39,6 +39,15 @@ from .workflows import REGISTRY, Context, PermanentError, WaitSignal, WorkflowRe
 log = logging.getLogger("argus.worker")
 
 
+class JobLog(logging.LoggerAdapter):
+    """The job's logger: every line carries the job, plugin and workflow, and keeps the extras it was given. (A plain
+    LoggerAdapter throws the call's `extra` away on Python 3.13, so "job failed" lines had no error in the logs.)"""
+
+    def process(self, msg, kwargs):
+        kwargs["extra"] = {**(self.extra or {}), **(kwargs.get("extra") or {})}
+        return msg, kwargs
+
+
 def network_hosts(network: list[str], config: dict) -> list[str]:
     """permissions.network, with "config:<setting>" replaced by the host in that setting (a URL you set, e.g. where
     your Tracker runs), so a plugin may call exactly the address you gave it and nothing else."""
@@ -285,7 +294,7 @@ class Worker:
     def run_job(self, job: dict[str, Any]) -> str:
         """Run a claimed job. Returns what happened: succeeded, waiting, failed, dead, or lost."""
         job_id = job["id"]
-        jlog = logging.LoggerAdapter(log, {"job": job_id, "plugin": job["plugin"], "workflow": job["workflow"]})
+        jlog = JobLog(log, {"job": job_id, "plugin": job["plugin"], "workflow": job["workflow"]})
         wf = self.registry.get(job["plugin"], job["workflow"])
         try:
             self.client.start(job_id, self.id)
