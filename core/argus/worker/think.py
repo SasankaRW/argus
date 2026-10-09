@@ -294,6 +294,8 @@ def said_back(name: str, args: dict, result: Any) -> str | None:
         return f"Moved {result['moved'].get('key')} to {str(result['moved'].get('status')).replace('_', ' ')}."
     if name in ("phone_lock", "phone_press", "phone_swipe", "phone_media"):
         return "Done."
+    if name in ("check_email", "read_email") and isinstance(result, dict):
+        return mail_said(name, result)
     if name in WORKSTATION_SAYS and isinstance(result, dict):  # Ari's Workstation: done, or what went wrong
         if not result.get("done"):
             return spoken(str(result.get("problem") or "That didn't work.")).rstrip(".") + "."
@@ -311,6 +313,47 @@ WORKSTATION_SAYS = {"search_in_browser": "Searched {q} on my workstation. Want i
                     "take_window": "Got it, {w} is on my workstation now."}
 
 
+def _who(name: str) -> str:
+    """"Kaancha Perera" -> "Kaancha Perera"; "HNB Alerts <alerts@hnb.lk>" -> "HNB Alerts"; an address -> its name."""
+    n = re.sub(r"\s*<[^>]*>", "", name or "").strip().strip('"')
+    if "@" in n:
+        n = n.split("@")[0].replace(".", " ")
+    return n[:40] or "someone"
+
+
+def mail_said(name: str, r: dict) -> str:
+    """What Ari says about your mail: who and what for each new one, or the one you asked for, read out."""
+    if not r.get("done"):
+        return spoken(str(r.get("problem") or "I couldn't get to your email.")).rstrip(".") + "."
+    if name == "check_email":
+        mails = r.get("mails") or []
+        n = int(r.get("count") or len(mails))
+        if not n:
+            return "No new emails. Inbox zero, nice."
+        parts = [f"{_who(m['from'])}, about {m['subject'].rstrip('.')}" for m in mails[:5]]
+        head = "One new email: from " if n == 1 else f"You've got {n} new emails. "
+        if n == 1:
+            return f"{head}{parts[0]}. Want me to read it?"
+        listed = "; ".join(f"{i + 1}, from {p}" for i, p in enumerate(parts))
+        more = f", and {n - 5} more" if n > 5 else ""
+        return f"{head}{listed}{more}. Want me to read one? Say which."
+    text = spoken(str(r.get("text") or ""), 700)
+    lead = f"From {_who(str(r.get('from') or ''))}, {str(r.get('subject') or 'no subject').rstrip('.')}."
+    if not text:
+        return lead + " It's empty, or just pictures."
+    tail = "" if r.get("whole") else " That's only the start: I couldn't open the whole thing."
+    if r.get("whole") and len(str(r.get("text") or "")) > 700:
+        tail = " That's the gist; the rest is on my workstation."
+    return f"{lead} It says: {text}{tail}"
+
+
+def mail_follow_up(name: str, result: Any) -> dict | None:
+    """After the list, a plain "yes" reads the newest one."""
+    if name == "check_email" and isinstance(result, dict) and int(result.get("count") or 0) > 0:
+        return {"kind": "tool", "name": "read_email", "args": {"which": "1"}}
+    return None
+
+
 def _short_title(t: str) -> str:
     """"Spotify Premium - Spotify" -> "Spotify"; a page title -> its app ("… - Google Chrome" -> "Google Chrome")."""
     parts = [p.strip() for p in re.split(r"\s+[-–—|]\s+", t) if p.strip()]
@@ -324,6 +367,58 @@ GIVE = re.compile(_PLEASE + r"(?:give (?:me|it to me)(?: (?:that|this|it|the win
 TAKE = re.compile(_PLEASE + r"(?:take (?:this|that|it)(?: one| window)?|take (?:the )?(?P<name>[\w .'-]{2,30}?) window|"
                   r"(?:move|send|put) (?:this|that|it|the (?P<name2>[\w .'-]{2,30}?) window) (?:to|on|onto) "
                   r"(?:your|ari'?s) (?:workstation|desktop))(?:,? please)?\W*$", re.I)
+# Moving windows between your desktop and Ari's Workstation, said loosely ("take the Chrome window to your
+# workstation", "bring Claude here", "now move it to my desktop", "take this screen"). Where it goes: named by the
+# place ("your / Ari's / the workstation" -> Ari's; "me / here / my or this desktop / screen / workstation" -> yours),
+# else by the verb (take, send, put, push -> Ari's; bring, give, get, pull -> yours). "move" alone says neither.
+_MOVE_VERB = r"(?P<verb>take|move|bring|send|put|give|get|pull|push|shift|drag|throw)"
+_SPOT = r"(?:work\s?station|desktop|screen|side|space|work\s?space)"
+_PLACE_ARI = (r"(?:(?:to|on|onto|into|over to|in)\s+(?:your|ari'?s|ari|the|his|its)\s+(?:own\s+)?" + _SPOT +
+              r"|(?:off|away from)\s+my\s+" + _SPOT + r"|away)")
+_PLACE_YOU = (r"(?:to\s+me|over\s+here|here|back|(?:to|on|onto|into|over to|in)\s+(?:my|this|the main|our)\s+"
+              r"(?:own\s+)?(?:" + _SPOT[3:-1] + r"|work)\b.*)")
+MOVE_WIN = re.compile(_PLEASE + r"(?:(?:now|okay|ok|so|and|then)[,\s]+)*" + _MOVE_VERB +
+                      r"\s+(?:me\s+)?(?P<what>.*?)\s*(?P<place>" + _PLACE_ARI + "|" + _PLACE_YOU +
+                      r")?(?:,?\s*(?:please|now|for me))?\W*$", re.I)
+_TO_ARI_VERBS = {"take", "send", "put", "push", "throw"}
+_TO_YOU_VERBS = {"bring", "give", "get", "pull"}
+_JUST_POINTING = {"", "this", "that", "it", "this one", "that one", "them", "this window", "that window", "the window",
+                  "this screen", "that screen", "the screen", "this app", "that app", "it back", "that back"}
+
+
+def move_window(text: str) -> tuple[str, str] | None:
+    """("take_window" | "move_window_to_me", the window's name or "") for a request to move a window, else None."""
+    m = MOVE_WIN.match(text.strip())
+    if not m:
+        return None
+    verb, place = m.group("verb").lower(), (m.group("place") or "").lower()
+    what = re.sub(r"\s+", " ", m.group("what") or "").strip(" ,.").lower()
+    if place:
+        tool = "take_window" if re.match(_PLACE_ARI, place, re.I) else "move_window_to_me"
+    elif verb in _TO_ARI_VERBS:
+        tool = "take_window"
+    elif verb in _TO_YOU_VERBS:
+        tool = "move_window_to_me"
+    else:
+        return None  # "move the chrome window": to where?
+    if verb in ("give", "get") and not place and what in ("", "it", "that", "this"):
+        return "move_window_to_me", ""
+    if what in _JUST_POINTING:
+        return tool, ""
+    if re.match(r"(?:a|an|some|me|up|out|off|over|care|time|it|us|to|from|in|into)\b", what) or \
+            re.search(r"\b(?:out|off|up|down|over|in)$", what):
+        return None  # "take a note", "take me to …", "bring up my calendar", "get me a coffee"
+    if not place and not re.search(r"\b(?:window|screen|app|tab)$", what) and verb not in ("take", "bring"):
+        return None  # "get the weather", "send the report", "put on some music": not a window without a place
+    name = re.sub(r"^(?:the|this|that|my|your|ari'?s)\s+", "", what)
+    name = re.sub(r"\s+(?:window|screen|app|application|tab|one)$", "", name).strip()
+    words = name.split()
+    if not name or len(words) > 4 or re.search(r"\b(?:file|folder|song|music|volume|photo|picture|money|message)\b",
+                                               name):
+        return None  # not a window ("take a photo", "send money", "give me a song")
+    return tool, name
+
+
 FILL_FORM = re.compile(_PLEASE + r"(?:fill|complete) (?:in |out )?(?:this|the|that|my) (?:form|application|page)"
                        r"(?: for me)?(?:,? please)?\W*$", re.I)
 SPOTIFY = re.compile(_PLEASE + r"(?:(?:open spotify and )?(?:play|put on)\s+(?P<q>.+?)\s+(?:on|in|from) spotify|"
@@ -331,6 +426,46 @@ SPOTIFY = re.compile(_PLEASE + r"(?:(?:open spotify and )?(?:play|put on)\s+(?P<
 GOOGLE = re.compile(_PLEASE + r"(?:google|(?:open|do|run) (?:a )?(?:google |web |browser )?search (?:for |on |about )?|"
                     r"search (?:for )?(?=.+ (?:in|on) (?:the |a )?(?:browser|chrome|google|edge)\W*$))"
                     r"(?P<q>.+?)(?: (?:in|on) (?:the |a )?(?:browser|chrome|google|edge))?\W*$", re.I)
+
+
+# Your Gmail: "check my mails", "any new emails?", "what are my new mails" -> the list; "read the second one",
+# "what does the mail from Kaancha say", "open the email about the invoice" -> that one, read out
+_MAILWORD = r"(?:e-?mails?|g-?mails?|mails?|inbox)"
+_NEW = r"(?:new\s+|latest\s+|unread\s+|recent\s+)?"
+CHECK_MAIL = re.compile(
+    _PLEASE + r"(?:(?:open (?:up )?(?:google )?(?:chrome|the browser|gmail)(?: and| to)?\s+)?"
+    r"(?:check|look at|look through|go through|see|show me|tell me|read)(?: me)?(?: what)?\s+(?:all\s+)?"
+    r"(?:my|the)?\s*" + _NEW + _MAILWORD + r"(?: i (?:got|have))?"
+    r"|(?:do i have|have i got|did i get|got|is there|are there|any)\s+(?:any\s+)?" + _NEW + r"(?:e-?mails?|mails?)"
+    r"|what(?:'s| is| are)\s+(?:in\s+)?(?:my\s+)?" + _NEW + _MAILWORD +
+    r"|(?:open|check)\s+(?:my\s+)?gmail)(?:\s+(?:today|now|please|for me))*\W*$", re.I)
+_ORD = r"(?:first|second|third|fourth|fifth|last|latest|newest|1st|2nd|3rd|4th|5th|\d)"
+READ_MAIL = re.compile(
+    _PLEASE + r"(?:yes,?\s+)?(?:(?:read|open|play)(?: me| out| it out)?|what does|what did|what's in)\s+"
+    r"(?:the\s+|that\s+|my\s+)?(?:(?P<ord>" + _ORD + r")\s+(?:one|e-?mail|mail|message)"
+    r"|(?:e-?mail|mail|message|one)\s+(?P<how>(?:from|by|about)\s+.{2,40}?)"
+    r"|(?:e-?mail|mail|message)\s+(?:number\s+)?(?P<num>\d))(?:\s+(?:says?|said|out))?(?:,? please)?\W*$", re.I)
+MAIL_TASK = re.compile(r"\b(?:e-?mails?|g-?mails?|mails?|inbox)\b", re.I)
+MAIL_WRITE = re.compile(r"\b(?:send|write|reply|answer|delete|forward|compose)\b", re.I)
+
+
+def read_mail_args(text: str) -> dict | None:
+    m = READ_MAIL.match(text.strip())
+    if not m:
+        return None
+    which = (m.group("ord") or m.group("num") or m.group("how") or "").strip()
+    return {"which": which} if which else {}
+
+
+# "open Chrome and check my emails", "open the browser and find …": a task in Ari's browser on its Workstation
+OPEN_BROWSER_TASK = re.compile(_PLEASE + r"(?:open|use|go to|get on)\s+(?:up\s+)?(?:the\s+|a\s+|your\s+)?"
+                               r"(?:google\s+)?(?:chrome|browser|web browser|edge|brave|firefox|internet)"
+                               r"(?:\s+(?:on|in) (?:your|ari'?s|the) (?:work\s?station|desktop))?"
+                               r"\s*(?:,|and(?: then)?|to)\s+(?P<goal>.{3,150}?)(?:,? please)?\W*$", re.I)
+# "open Notepad on your workstation" / "start Spotify on Ari's desktop": the app goes to the Workstation
+OPEN_THERE = re.compile(_PLEASE + r"(?:open|launch|start|run)\s+(?:up\s+)?(?:the\s+)?(?P<app>[a-z][\w+ -]{1,28}?)"
+                        r"(?:\s+app)?\s+(?:on|in|at)\s+(?:your|ari'?s|the)\s+(?:own\s+)?(?:work\s?station|desktop|"
+                        r"computer|screen|side)(?:,? please)?\W*$", re.I)
 
 
 TYPE_NOW = re.compile(_PLEASE + r"type\s+(?P<t>\S.{0,158}?)\W*$", re.I)
@@ -434,6 +569,24 @@ def straight_to(tools: dict[str, dict], text: str) -> tuple[str, dict] | None:
         return "fix_ticket", out
     if "work_summary" in tools and WORK_NOW.match(text):
         return "work_summary", {}
+    if "check_email" in tools and CHECK_MAIL.match(text):
+        return "check_email", {}
+    rm = read_mail_args(text) if "read_email" in tools else None
+    if rm is not None:
+        return "read_email", rm
+    mw = move_window(text) if {"take_window", "move_window_to_me"} <= tools.keys() else None
+    if mw is not None:
+        return mw[0], ({"name": mw[1]} if mw[1] else {})
+    ob = OPEN_BROWSER_TASK.match(text)
+    if ob and "check_email" in tools and MAIL_TASK.search(ob.group("goal")) and not MAIL_WRITE.search(ob.group("goal")):
+        return "check_email", {}
+    if ob and "do_in_browser" in tools:
+        goal = ob.group("goal").strip(" ,.")
+        url = ("https://mail.google.com/" if re.search(r"\b(?:e-?mails?|gmail|inbox|mail)\b", goal, re.I) else "")
+        return "do_in_browser", {"goal": goal, **({"url": url} if url else {})}
+    ow = OPEN_THERE.match(text)
+    if ow and "open_on_workstation" in tools and not NOT_APP.search(ow.group("app")):
+        return "open_on_workstation", {"name": ow.group("app").strip()}
     gv = GIVE.match(text)
     if gv and "move_window_to_me" in tools:
         name = (gv.group("name") or "").strip()
@@ -890,13 +1043,15 @@ def think(ctx: Context):
         if name in ASKS_FIRST_LINE and tools[name].get("asks_first"):  # it changes Tracker or code: after your yes
             return {"reply": ASKS_FIRST_LINE[name](args),
                     "pending": {"kind": "tool", "name": name, "args": args}, "used": []}
-        private_tool = name in ("look_at_screen", "summarise_clipboard", "money_this_month")
+        private_tool = name in ("look_at_screen", "summarise_clipboard", "money_this_month", "check_email",
+                                "read_email")
         got = ctx.step(f"tool 1: {name}", use_direct if private_tool else use_direct_app)
         res = got.get("result")
         if "error" not in got and name not in ("open_app", "look_at_screen", "summarise_clipboard"):
             line = said_back(name, args, res)
             if line:
-                return {"reply": line, "used": [got]}
+                ask = mail_follow_up(name, res)
+                return {"reply": line, "used": [got], **({"pending": ask} if ask else {})}
         if name == "open_app" and "error" not in got:
             app = args["name"].strip()
             return {"reply": f"Opening {app[:1].upper()}{app[1:]}.",

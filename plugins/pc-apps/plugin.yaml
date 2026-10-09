@@ -16,7 +16,9 @@ permissions:
 ari:
   tools:
     - name: open_app
-      description: Open an app on the PC by name (Spotify, Chrome, VS Code, Calculator, Settings, ...).
+      description: "Open an app on the user's own desktop, the one they are looking at (Spotify, Chrome, VS Code,
+        Calculator, Settings, ...). When Ari should do something in a browser or an app itself (check emails, look
+        something up, work in an app), use do_in_browser, do_in_app or open_on_workstation instead."
       workflow: open_app
       input: {name: {type: string, description: the app's name as you'd say it}}
       required: [name]

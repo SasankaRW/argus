@@ -36,8 +36,8 @@ ari:
       input: {url: {type: string, description: "https://... address"}}
       required: [url]
     - name: do_in_browser
-      description: "Do a task on a website in Ari's browser on Ari's Workstation: find something on a site, fill a
-        form, click through pages. Asks before sending, buying, deleting or posting, asks for details it doesn't
+      description: "A task on a website in Ari's browser on Ari's Workstation (\"open Chrome and check my emails\"):
+        find something, fill a form, click through pages. Asks before sending, buying, deleting or posting, asks for details it doesn't
         know, hands the window over for passwords and card numbers."
       workflow: do
       input:
@@ -71,13 +71,25 @@ ari:
       required: [name]
     - name: move_window_to_me
       description: "Bring a window to the desktop the user is on now and put it in front (\"move that window to me\",
-        \"give me that\"). Without a name: the window Ari last worked in."
+        \"give me that\", \"bring Claude here\"). Without a name: the window Ari last worked in."
       workflow: give
       input: {name: {type: string, description: "the app or window title (optional)"}}
     - name: take_window
-      description: "Move a window to Ari's Workstation (\"take this\"). Without a name: the window in front."
+      description: "Move a window from the user's desktop to Ari's Workstation (\"take this\", \"take the Chrome
+        window to your workstation\"). Without a name: the window in front."
       workflow: take
       input: {name: {type: string, description: "the app or window title (optional)"}}
+    - name: check_email
+      description: "The user's new (unread) Gmail emails: who from, the subject, a line of each (\"check my
+        emails\", \"any new mail?\"). Read in Ari's browser, signed in once."
+      workflow: mail_new
+      private: true
+    - name: read_email
+      description: "Read one of the user's emails aloud: which one by number, sender or subject (\"read the second
+        one\", \"what does the mail from Kaancha say\")."
+      workflow: mail_read
+      private: true
+      input: {which: {type: string, description: "1, 2, last, from <name>, or words of the subject (empty: the newest)"}}
     - name: workstation_windows
       description: What is open on Ari's Workstation.
       workflow: status
