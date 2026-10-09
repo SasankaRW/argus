@@ -234,6 +234,5 @@ def test_the_manifest_loads(tmp_path):
     m = host.plugins["workstation"].manifest
     assert {t.name for t in m.ari.tools} == {"search_in_browser", "browse_on_workstation", "open_on_workstation",
                                             "move_window_to_me", "take_window", "workstation_windows",
-                                            "do_in_browser", "play_on_spotify", "do_in_app", "fill_form",
-                                            "check_email", "read_email"}
+                                            "do_in_browser", "play_on_spotify", "do_in_app", "fill_form"}
     assert m.job_needs() == ["desktop", "session"]

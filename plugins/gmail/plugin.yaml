@@ -1,0 +1,34 @@
+id: gmail
+name: Gmail
+version: 1.0.0
+kind: workflow
+argus_api: ">=1.0 <2.0"
+description: Ari reads your Gmail, read-only - who sent your new mail and what about, and one mail read out. You allow it once, in your own Chrome (your Sasanka profile). Your mail never goes to Claude.
+runs_on: desktop
+needs: [session]          # Google's "Allow" page opens in your Chrome, on your desktop
+
+workflows: [new, read]
+
+permissions:
+  files: {read: [], write: [], delete: none}
+  models: []
+  network: [oauth2.googleapis.com, gmail.googleapis.com]
+  secrets: [GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET]   # your Google Cloud OAuth client (Desktop app), in .env
+
+config:
+  chrome_profile: {type: text, default: "Sasanka", label: The Chrome profile you allow it in (its name or email)}
+  how_many: {type: int, default: 10, label: New mails Ari looks at}
+
+ari:
+  tools:
+    - name: check_email
+      description: "The user's new (unread) Gmail emails: how many, who from and what about (\"check my emails\",
+        \"any new mail?\", \"open Chrome and check my emails\")."
+      workflow: new
+      private: true
+    - name: read_email
+      description: "Read one of the user's emails out: which one by number, sender or subject (\"read the second
+        one\", \"what does the mail from Kaancha say\")."
+      workflow: read
+      private: true
+      input: {which: {type: string, description: "1, 2, last, from <name>, or words of the subject (empty: the newest)"}}
