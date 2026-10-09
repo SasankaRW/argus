@@ -127,6 +127,7 @@ def test_allowing_it_once_in_your_chrome(tmp_path):
     g = FakeGoogle()
     opened: list[tuple[str, str]] = []
     c = ctx(tmp_path, google=g)
+    c.after_job_http = g
     c.open_in_chrome = lambda url, profile: opened.append((url, profile))
     gm._PENDING.clear()
     out = gm.new(c)
@@ -145,6 +146,49 @@ def test_allowing_it_once_in_your_chrome(tmp_path):
         time.sleep(0.05)
     assert json.loads((tmp_path / "token.json").read_text())["refresh_token"] == "R1"
     assert gm.new(c)["count"] == 2  # and now it reads
+
+
+def test_the_ok_is_saved_after_the_job_that_asked_has_ended(tmp_path):
+    """Google's answer comes minutes later: ctx.http (tied to the finished job) must not be needed then."""
+    class Ended:
+        def request(self, *a, **k):
+            raise RuntimeError("the job has ended")
+
+    g = FakeGoogle()
+    c = ctx(tmp_path, google=Ended())
+    c.after_job_http = g
+    opened: list[tuple[str, str]] = []
+    c.open_in_chrome = lambda url, profile: opened.append((url, profile))
+    gm._PENDING.clear()
+    gm.new(c)
+    q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(opened[0][0]).query))
+    urllib.request.urlopen(f"{q['redirect_uri']}/?state={q['state']}&code=C0DE").read()
+    for _ in range(100):
+        if (tmp_path / "token.json").exists():
+            break
+        time.sleep(0.05)
+    assert json.loads((tmp_path / "token.json").read_text())["refresh_token"] == "R1"
+
+
+def test_a_failed_exchange_leaves_the_reason(tmp_path):
+    class Refuses:
+        def request(self, *a, **k):
+            return 400, b'{"error": "invalid_grant", "error_description": "bad code"}'
+
+    c = ctx(tmp_path)
+    c.after_job_http = Refuses()
+    opened: list[tuple[str, str]] = []
+    c.open_in_chrome = lambda url, profile: opened.append((url, profile))
+    gm._PENDING.clear()
+    gm.new(c)
+    q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(opened[0][0]).query))
+    urllib.request.urlopen(f"{q['redirect_uri']}/?state={q['state']}&code=BAD").read()
+    for _ in range(100):
+        if (tmp_path / "allow-error.txt").exists():
+            break
+        time.sleep(0.05)
+    assert "bad code" in (tmp_path / "allow-error.txt").read_text()
+    assert not (tmp_path / "token.json").exists()
 
 
 def test_a_wrong_answer_to_the_address_is_ignored(tmp_path):
