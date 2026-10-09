@@ -236,3 +236,47 @@ def test_the_manifest_loads(tmp_path):
                                             "move_window_to_me", "take_window", "workstation_windows",
                                             "do_in_browser", "play_on_spotify", "do_in_app", "fill_form"}
     assert m.job_needs() == ["desktop", "session"]
+
+
+# ---- "play X on Spotify": the Spotify app first (you're signed in there), Ari's browser only without the app
+
+def test_spotify_is_played_in_the_app(monkeypatch):
+    seen = {}
+
+    def fake_in_app(c):
+        seen.update(c.input)
+        return {"done": True, "window": "Spotify Premium"}
+
+    monkeypatch.setattr(ws, "in_app", fake_in_app)
+    c = ctx(FakeDesk([]), {"query": "Famous by Kanye West"})
+    c.find_app = lambda name: {"name": "Spotify", "id": "SpotifyAB.SpotifyMusic_x!Spotify"}
+    out = ws.spotify(c)
+    assert out["done"] and out["in"] == "the Spotify app"
+    assert seen["app"] == "Spotify" and "Famous by Kanye West" in seen["goal"]
+
+
+def test_spotify_in_the_app_that_fails_says_why_and_does_not_open_the_web_player(monkeypatch):
+    monkeypatch.setattr(ws, "in_app", lambda c: {"done": False, "problem": "I couldn't find the Search box"})
+    monkeypatch.setattr(ws, "browser_for", lambda *a, **k: pytest.fail("the web player must not open"))
+    c = ctx(FakeDesk([]), {"query": "Famous"})
+    c.find_app = lambda name: {"name": "Spotify", "id": "x"}
+    out = ws.spotify(c)
+    assert not out["done"] and "Search box" in out["problem"]
+
+
+def test_spotify_without_the_app_uses_the_web_player(monkeypatch):
+    class Stop(Exception):
+        pass
+
+    def web(*a, **k):
+        raise Stop
+
+    monkeypatch.setattr(ws, "browser_for", web)
+    c = ctx(FakeDesk([]), {"query": "Famous"})
+    c.find_app = lambda name: None
+    with pytest.raises(Stop):
+        ws.spotify(c)
+    c2 = ctx(FakeDesk([]), {"query": "Famous"}, spotify="web")  # set to the web player: the app isn't even looked for
+    c2.find_app = lambda name: pytest.fail("not looked for")
+    with pytest.raises(Stop):
+        ws.spotify(c2)

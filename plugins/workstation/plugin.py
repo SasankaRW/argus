@@ -676,7 +676,8 @@ def spotify_first(page: Any) -> dict:  # pragma: no cover - a real page
 
 @workflow(PLUGIN, "spotify")
 def spotify(ctx: Context):
-    """"Play <song> on Spotify": Spotify's web player in Ari's browser (you sign in there once)."""
+    """"Play <song> on Spotify": in the Spotify app on Ari's Workstation (you're signed in there already); with no app
+    installed, Spotify's web player in Ari's browser (you sign in there once)."""
     from argus.worker.browser import run_task
 
     q = str(ctx.input.get("query") or "").strip()
@@ -685,7 +686,18 @@ def spotify(ctx: Context):
     url = f"https://open.spotify.com/search/{urllib.parse.quote(q)}/tracks"
     if ctx.dry_run:
         return {"would_play": q, "dry_run": True}
-    desk = desk_for(ctx)
+    if str(ctx.config.get("spotify") or "app") == "app":  # the app you're already signed in to
+        found = (getattr(ctx, "find_app", None) or start_menu_app)("spotify")
+        if found is not None:
+            goal = (f'Search for "{q}" (click the Search box, type it, press Enter), then play the first song in '
+                    "the results (hover it and press its Play button, or double-click it). "
+                    "Done when a song is playing.")
+            out = in_app(SimpleCtx(ctx, {"app": "Spotify", "goal": goal}))
+            if out.get("done"):
+                return {"done": True, "playing": q, "in": "the Spotify app"}
+            return {**out, "done": False,
+                    "problem": out.get("problem") or f"I couldn't get {q} playing in the Spotify app"}
+    desk = desk_for(ctx)  # no Spotify app (or set to the web player): Spotify's web player in Ari's browser
     b = browser_for(ctx, desk)
     ctx.step("open", b.goto, url)
     got = ctx.step("play", b.run, getattr(ctx, "spotify_first", None) or spotify_first)  # the direct route

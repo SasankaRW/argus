@@ -15,6 +15,7 @@ permissions:
 
 config:
   browser: {type: choice, choices: [chrome, edge], default: chrome, label: Ari's browser}
+  spotify: {type: choice, choices: [app, web], default: app, label: "Play Spotify in the app or on the web (Ari's browser)"}
   search_url: {type: text, default: "https://www.google.com/search?q={q}", label: "Search address ({q} is the search)"}
   never_touch:
     type: list
