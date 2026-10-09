@@ -22,6 +22,12 @@ spec.loader.exec_module(ws)
 NEVER = ["directfn", "1password"]
 
 
+@pytest.fixture(autouse=True)
+def no_real_browser(monkeypatch):
+    """On the PC Playwright is installed: without this, a test would start the real Chrome (and time out)."""
+    monkeypatch.setattr(ws, "have_playwright", lambda: False)
+
+
 class FakeDesk:
     """Two desktops ("you" and Ari's, made on first use), windows on them, and which one has the keyboard."""
 
