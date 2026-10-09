@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import logging
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -79,7 +80,8 @@ class FakeDesk:
 def ctx(desk, inp=None, store=None, **config):
     st = dict(store or {})
     return SimpleNamespace(
-        input=inp or {}, desk=desk, dry_run=False, config={"never_touch": NEVER, "browser": "chrome", **config},
+        input=inp or {}, desk=desk, dry_run=False, log=logging.getLogger("t_workstation"),
+        config={"never_touch": NEVER, "browser": "chrome", **config},
         store=SimpleNamespace(get=lambda k, d=None: st.get(k, d), set=lambda k, v: st.__setitem__(k, v), data=st),
         step=lambda name, fn, *a, **k: fn(*a, **k))
 
