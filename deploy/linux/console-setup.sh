@@ -40,6 +40,8 @@ cat > "$CONF/argus/console-kitty.conf" <<'KITTY'
 font_family JetBrains Mono
 font_size 11.0
 background #0b0f14
+background_opacity 0.82
+dynamic_background_opacity yes
 foreground #e5e7eb
 cursor #5eead4
 cursor_blink_interval 0

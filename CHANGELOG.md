@@ -15,7 +15,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 **Fix, Ari cleanup:** Ari no longer talks unprompted: notices aren't said aloud unless `ari.speak_up: true`; Whisper reading its own name hints back on noise ("about Do Not, Disturb, PC…") is dropped and the "Hey Ari" check gets no hints; after an answer, speech without "Hey Ari" is ignored while the PC plays sound or when it's a long stream of words (10 s window, `ari.talk_idle_s`). One voice for real: the voice server takes it from one clip at start and ignores per-request clips. The old one-request listener (`ari.live: false`, `ari.follow_up`) is removed; old settings still load.
 
-**Added:** a live terminal console for the laptop (`argus-console`): logo with an eye that follows Ari, status, Ari's conversation, events and logs in one window, opened at Hyprland login by `deploy/linux/console-setup.sh`.
+**Added:** a live terminal console for the laptop (`argus-console`): logo with an eye that follows Ari, status, Ari's conversation, events and logs in one window, opened at Hyprland login by `deploy/linux/console-setup.sh`. The console window is see-through (82%; Ctrl+Shift+A then M/L to change it live).
 
 **Changed:** Ari has one voice, the expressive one. Piper, the voice picker and the browser-voice fallback are removed; when the voice can't speak, Ari shows text. Old `ari.voice` / `ari.voice_engine` settings are ignored.
 
