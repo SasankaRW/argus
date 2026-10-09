@@ -294,6 +294,8 @@ def said_back(name: str, args: dict, result: Any) -> str | None:
         return f"Moved {result['moved'].get('key')} to {str(result['moved'].get('status')).replace('_', ' ')}."
     if name in ("phone_lock", "phone_press", "phone_swipe", "phone_media"):
         return "Done."
+    if name in ("check_email", "read_email") and isinstance(result, dict):
+        return mail_said(name, result)
     if name in WORKSTATION_SAYS and isinstance(result, dict):  # Ari's Workstation: done, or what went wrong
         if not result.get("done"):
             return spoken(str(result.get("problem") or "That didn't work.")).rstrip(".") + "."
@@ -309,6 +311,47 @@ WORKSTATION_SAYS = {"search_in_browser": "Searched {q} on my workstation. Want i
                     "open_on_workstation": "{w} is open on my workstation.",
                     "move_window_to_me": "Here you go.", "fill_form": "{a}",
                     "take_window": "Got it, {w} is on my workstation now."}
+
+
+def _who(name: str) -> str:
+    """"Kaancha Perera" -> "Kaancha Perera"; "HNB Alerts <alerts@hnb.lk>" -> "HNB Alerts"; an address -> its name."""
+    n = re.sub(r"\s*<[^>]*>", "", name or "").strip().strip('"')
+    if "@" in n:
+        n = n.split("@")[0].replace(".", " ")
+    return n[:40] or "someone"
+
+
+def mail_said(name: str, r: dict) -> str:
+    """What Ari says about your mail: who and what for each new one, or the one you asked for, read out."""
+    if not r.get("done"):
+        return spoken(str(r.get("problem") or "I couldn't get to your email.")).rstrip(".") + "."
+    if name == "check_email":
+        mails = r.get("mails") or []
+        n = int(r.get("count") or len(mails))
+        if not n:
+            return "No new emails. Inbox zero, nice."
+        parts = [f"{_who(m['from'])}, about {m['subject'].rstrip('.')}" for m in mails[:5]]
+        head = "One new email: from " if n == 1 else f"You've got {n} new emails. "
+        if n == 1:
+            return f"{head}{parts[0]}. Want me to read it?"
+        listed = "; ".join(f"{i + 1}, from {p}" for i, p in enumerate(parts))
+        more = f", and {n - 5} more" if n > 5 else ""
+        return f"{head}{listed}{more}. Want me to read one? Say which."
+    text = spoken(str(r.get("text") or ""), 700)
+    lead = f"From {_who(str(r.get('from') or ''))}, {str(r.get('subject') or 'no subject').rstrip('.')}."
+    if not text:
+        return lead + " It's empty, or just pictures."
+    tail = "" if r.get("whole") else " That's only the start: I couldn't open the whole thing."
+    if r.get("whole") and len(str(r.get("text") or "")) > 700:
+        tail = " That's the gist; the rest is on my workstation."
+    return f"{lead} It says: {text}{tail}"
+
+
+def mail_follow_up(name: str, result: Any) -> dict | None:
+    """After the list, a plain "yes" reads the newest one."""
+    if name == "check_email" and isinstance(result, dict) and int(result.get("count") or 0) > 0:
+        return {"kind": "tool", "name": "read_email", "args": {"which": "1"}}
+    return None
 
 
 def _short_title(t: str) -> str:
@@ -383,6 +426,35 @@ SPOTIFY = re.compile(_PLEASE + r"(?:(?:open spotify and )?(?:play|put on)\s+(?P<
 GOOGLE = re.compile(_PLEASE + r"(?:google|(?:open|do|run) (?:a )?(?:google |web |browser )?search (?:for |on |about )?|"
                     r"search (?:for )?(?=.+ (?:in|on) (?:the |a )?(?:browser|chrome|google|edge)\W*$))"
                     r"(?P<q>.+?)(?: (?:in|on) (?:the |a )?(?:browser|chrome|google|edge))?\W*$", re.I)
+
+
+# Your Gmail: "check my mails", "any new emails?", "what are my new mails" -> the list; "read the second one",
+# "what does the mail from Kaancha say", "open the email about the invoice" -> that one, read out
+_MAILWORD = r"(?:e-?mails?|g-?mails?|mails?|inbox)"
+_NEW = r"(?:new\s+|latest\s+|unread\s+|recent\s+)?"
+CHECK_MAIL = re.compile(
+    _PLEASE + r"(?:(?:open (?:up )?(?:google )?(?:chrome|the browser|gmail)(?: and| to)?\s+)?"
+    r"(?:check|look at|look through|go through|see|show me|tell me|read)(?: me)?(?: what)?\s+(?:all\s+)?"
+    r"(?:my|the)?\s*" + _NEW + _MAILWORD + r"(?: i (?:got|have))?"
+    r"|(?:do i have|have i got|did i get|got|is there|are there|any)\s+(?:any\s+)?" + _NEW + r"(?:e-?mails?|mails?)"
+    r"|what(?:'s| is| are)\s+(?:in\s+)?(?:my\s+)?" + _NEW + _MAILWORD +
+    r"|(?:open|check)\s+(?:my\s+)?gmail)(?:\s+(?:today|now|please|for me))*\W*$", re.I)
+_ORD = r"(?:first|second|third|fourth|fifth|last|latest|newest|1st|2nd|3rd|4th|5th|\d)"
+READ_MAIL = re.compile(
+    _PLEASE + r"(?:yes,?\s+)?(?:(?:read|open|play)(?: me| out| it out)?|what does|what did|what's in)\s+"
+    r"(?:the\s+|that\s+|my\s+)?(?:(?P<ord>" + _ORD + r")\s+(?:one|e-?mail|mail|message)"
+    r"|(?:e-?mail|mail|message|one)\s+(?P<how>(?:from|by|about)\s+.{2,40}?)"
+    r"|(?:e-?mail|mail|message)\s+(?:number\s+)?(?P<num>\d))(?:\s+(?:says?|said|out))?(?:,? please)?\W*$", re.I)
+MAIL_TASK = re.compile(r"\b(?:e-?mails?|g-?mails?|mails?|inbox)\b", re.I)
+MAIL_WRITE = re.compile(r"\b(?:send|write|reply|answer|delete|forward|compose)\b", re.I)
+
+
+def read_mail_args(text: str) -> dict | None:
+    m = READ_MAIL.match(text.strip())
+    if not m:
+        return None
+    which = (m.group("ord") or m.group("num") or m.group("how") or "").strip()
+    return {"which": which} if which else {}
 
 
 # "open Chrome and check my emails", "open the browser and find …": a task in Ari's browser on its Workstation
@@ -497,10 +569,17 @@ def straight_to(tools: dict[str, dict], text: str) -> tuple[str, dict] | None:
         return "fix_ticket", out
     if "work_summary" in tools and WORK_NOW.match(text):
         return "work_summary", {}
+    if "check_email" in tools and CHECK_MAIL.match(text):
+        return "check_email", {}
+    rm = read_mail_args(text) if "read_email" in tools else None
+    if rm is not None:
+        return "read_email", rm
     mw = move_window(text) if {"take_window", "move_window_to_me"} <= tools.keys() else None
     if mw is not None:
         return mw[0], ({"name": mw[1]} if mw[1] else {})
     ob = OPEN_BROWSER_TASK.match(text)
+    if ob and "check_email" in tools and MAIL_TASK.search(ob.group("goal")) and not MAIL_WRITE.search(ob.group("goal")):
+        return "check_email", {}
     if ob and "do_in_browser" in tools:
         goal = ob.group("goal").strip(" ,.")
         url = ("https://mail.google.com/" if re.search(r"\b(?:e-?mails?|gmail|inbox|mail)\b", goal, re.I) else "")
@@ -964,13 +1043,15 @@ def think(ctx: Context):
         if name in ASKS_FIRST_LINE and tools[name].get("asks_first"):  # it changes Tracker or code: after your yes
             return {"reply": ASKS_FIRST_LINE[name](args),
                     "pending": {"kind": "tool", "name": name, "args": args}, "used": []}
-        private_tool = name in ("look_at_screen", "summarise_clipboard", "money_this_month")
+        private_tool = name in ("look_at_screen", "summarise_clipboard", "money_this_month", "check_email",
+                                "read_email")
         got = ctx.step(f"tool 1: {name}", use_direct if private_tool else use_direct_app)
         res = got.get("result")
         if "error" not in got and name not in ("open_app", "look_at_screen", "summarise_clipboard"):
             line = said_back(name, args, res)
             if line:
-                return {"reply": line, "used": [got]}
+                ask = mail_follow_up(name, res)
+                return {"reply": line, "used": [got], **({"pending": ask} if ask else {})}
         if name == "open_app" and "error" not in got:
             app = args["name"].strip()
             return {"reply": f"Opening {app[:1].upper()}{app[1:]}.",

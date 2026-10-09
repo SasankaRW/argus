@@ -264,6 +264,10 @@ daily cap.
     Ari's browser, driven inside the page (never your mouse or keyboard), one step at a time by the local model. It
     asks before sending, buying, deleting or posting; asks you for details it doesn't know; hands you the window for
     passwords and card numbers. What worked is kept as a recipe and replayed next time.
+  - **"Check my mails":** Ari reads your Gmail in its browser and tells you who wrote and about what (the unread
+    ones, newest first); "read the second one" or "what does the mail from Kaancha say" reads that one out. Sign in
+    to Gmail once in that window when Ari hands it to you. Your mail stays on the PC: these tools never go to
+    Claude.
   - **"Play <song> on Spotify":** Spotify's web player in Ari's browser. Sign in once in that window when Ari hands
     it to you.
   - **Tasks in desktop apps** ("in Calculator, work out …"): the app on the Workstation, its buttons and fields

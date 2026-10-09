@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+**Added:** "check my mails": Ari reads your unread Gmail in its browser on the Workstation (signed in once) and says who wrote and about what; "read the second one" / "what does the mail from Kaancha say" reads one out; a plain "yes" after the list reads the newest. Never sent to Claude.
+
 **Fix, Ari's Workstation by voice:** moving windows is understood said loosely ("take the Chrome window to your workstation", "bring Claude here", "now move it to my desktop", "take this screen"); "open Chrome and check my emails" is a task in Ari's browser on the Workstation (Gmail), not Chrome on your desktop; "open X on your workstation" opens it there; Ari's own island is never taken; app nicknames ("VS Code") find their window.
 
 **Ari's Workstation (P7):** Ari works on its own Windows virtual desktop ("Ari's Workstation"): searches and web tasks in its own browser profile, "play <song> on Spotify", tasks in desktop apps by control name (UI Automation, then window messages, then the vision tier with numbered boxes; local only, never saved), "fill this form" (never presses Submit), "move that window to me" / "take this". It asks on the island, in Helios and on the phone when it needs a detail, a choice or a yes for send/buy/delete/post, and hands you passwords and card numbers. Turn it on by adding `workstation` to `plugins.live`.

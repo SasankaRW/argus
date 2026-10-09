@@ -79,6 +79,17 @@ ari:
         window to your workstation\"). Without a name: the window in front."
       workflow: take
       input: {name: {type: string, description: "the app or window title (optional)"}}
+    - name: check_email
+      description: "The user's new (unread) Gmail emails: who from, the subject, a line of each (\"check my
+        emails\", \"any new mail?\"). Read in Ari's browser, signed in once."
+      workflow: mail_new
+      private: true
+    - name: read_email
+      description: "Read one of the user's emails aloud: which one by number, sender or subject (\"read the second
+        one\", \"what does the mail from Kaancha say\")."
+      workflow: mail_read
+      private: true
+      input: {which: {type: string, description: "1, 2, last, from <name>, or words of the subject (empty: the newest)"}}
     - name: workstation_windows
       description: What is open on Ari's Workstation.
       workflow: status
