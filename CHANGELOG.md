@@ -7,6 +7,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 **Added:** Gmail for Ari (plugin `gmail`): "check my mails" says who wrote and about what; "read the second one" / "what does the mail from Kaancha say" reads one out. Read-only through Google's Gmail API, allowed once in your own Chrome (Sasanka profile); the key stays on the PC and mail never goes to Claude. Replaces reading Gmail in Ari's browser, which needed a second sign-in.
 
+**Fix, Gmail:** clicking Allow now saves the key (it was lost: Google's answer comes after the job that asked has ended, and the job's connection no longer worked then). If saving fails, the reason is written to `data/plugins/gmail/allow-error.txt`.
+
 **Fix, Ari's Workstation by voice:** moving windows is understood said loosely ("take the Chrome window to your workstation", "bring Claude here", "now move it to my desktop", "take this screen"); "open Chrome and check my emails" is a task in Ari's browser on the Workstation (Gmail), not Chrome on your desktop; "open X on your workstation" opens it there; Ari's own island is never taken; app nicknames ("VS Code") find their window.
 
 **Ari's Workstation (P7):** Ari works on its own Windows virtual desktop ("Ari's Workstation"): searches and web tasks in its own browser profile, "play <song> on Spotify", tasks in desktop apps by control name (UI Automation, then window messages, then the vision tier with numbered boxes; local only, never saved), "fill this form" (never presses Submit), "move that window to me" / "take this". It asks on the island, in Helios and on the phone when it needs a detail, a choice or a yes for send/buy/delete/post, and hands you passwords and card numbers. Turn it on by adding `workstation` to `plugins.live`.

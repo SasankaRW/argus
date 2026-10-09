@@ -22,7 +22,9 @@ import secrets
 import subprocess
 import threading
 import time
+import urllib.error
 import urllib.parse
+import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
@@ -222,6 +224,24 @@ class _Back(BaseHTTPRequestHandler):
         self.wfile.write(body.encode())
 
 
+class _Direct:
+    """Google's token address only, not tied to any job. The OK arrives minutes after the job that asked for it has
+    ended, and ctx.http (which records every call on that job) refuses to work then."""
+
+    def request(self, method: str, url: str, *, data: bytes | None = None, content_type: str | None = None,
+                **_: Any) -> tuple[int, bytes]:
+        if not url.startswith(TOKEN):
+            raise PermissionError("only Google's token address")
+        req = urllib.request.Request(url, data=data, method=method)  # noqa: S310 - fixed https address
+        if content_type:
+            req.add_header("Content-Type", content_type)
+        try:
+            with urllib.request.urlopen(req, timeout=20) as r:  # noqa: S310
+                return r.status, r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, e.read()
+
+
 def start_allow(ctx: Context, opener=open_in_chrome, wait_s: float = 600) -> str:
     """Open Google's "Allow" page in your Chrome and keep listening (in the background, up to 10 minutes) for its
     OK; the key is saved when it comes. Returns the address opened."""
@@ -241,7 +261,7 @@ def start_allow(ctx: Context, opener=open_in_chrome, wait_s: float = 600) -> str
     flow = {"url": url, "state": state, "done": threading.Event(), "code": None, "error": None,
             "until": time.time() + wait_s}
     _PENDING["flow"] = flow
-    http, path = ctx.http, token_path(ctx)
+    http, path = getattr(ctx, "after_job_http", None) or _Direct(), token_path(ctx)
 
     def listen() -> None:
         srv.timeout = 1.0
@@ -259,8 +279,12 @@ def start_allow(ctx: Context, opener=open_in_chrome, wait_s: float = 600) -> str
                                            "expires_at": time.time() + float(got.get("expires_in") or 3600)}),
                                encoding="utf-8")
                 os.replace(tmp, path)  # never half a file
-        except Exception:  # noqa: BLE001, S110 - no OK: the next "check my mail" opens the page again
-            pass
+        except Exception as e:  # noqa: BLE001 - no OK: the next "check my mail" opens the page again
+            try:  # and say why, so it can be read
+                path.parent.mkdir(parents=True, exist_ok=True)
+                (path.parent / "allow-error.txt").write_text(f"{type(e).__name__}: {e}", encoding="utf-8")
+            except OSError:
+                pass
         finally:
             srv.server_close()
             flow["done"].set()
