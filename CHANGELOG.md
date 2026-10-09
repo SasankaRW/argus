@@ -9,6 +9,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 **Fix, Gmail:** clicking Allow now saves the key (it was lost: Google's answer comes after the job that asked has ended, and the job's connection no longer worked then). If saving fails, the reason is written to `data/plugins/gmail/allow-error.txt`.
 
+**Fix, Spotify sign-in in Ari's browser:** the browser now runs with its sandbox on and without the automation flag, so Spotify no longer calls it "less secure" and its sign-in page can load the reCAPTCHA. Sign in there once with email and password or the email code (not Google); Ari says so when it asks.
+
 **Fix, Ari's Workstation by voice:** moving windows is understood said loosely ("take the Chrome window to your workstation", "bring Claude here", "now move it to my desktop", "take this screen"); "open Chrome and check my emails" is a task in Ari's browser on the Workstation (Gmail), not Chrome on your desktop; "open X on your workstation" opens it there; Ari's own island is never taken; app nicknames ("VS Code") find their window.
 
 **Ari's Workstation (P7):** Ari works on its own Windows virtual desktop ("Ari's Workstation"): searches and web tasks in its own browser profile, "play <song> on Spotify", tasks in desktop apps by control name (UI Automation, then window messages, then the vision tier with numbered boxes; local only, never saved), "fill this form" (never presses Submit), "move that window to me" / "take this". It asks on the island, in Helios and on the phone when it needs a detail, a choice or a yes for send/buy/delete/post, and hands you passwords and card numbers. Turn it on by adding `workstation` to `plugins.live`.

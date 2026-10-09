@@ -691,7 +691,8 @@ def spotify(ctx: Context):
     got = ctx.step("play", b.run, getattr(ctx, "spotify_first", None) or spotify_first)  # the direct route
     if got.get("login"):
         return ctx.step("hand over", _hand_over, ctx, desk,
-                        "Spotify wants you to sign in once, in this window (it's my browser); then ask me again")
+                        "Spotify wants you to sign in once, in this window (it's my browser): use your email and "
+                        "password, or the email code; Google sign-in won't work here. Then ask me again")
     if not got.get("ok"):  # Spotify changed its page: work it out, and keep what worked as a recipe
         check = getattr(ctx, "spotify_now", None) or (lambda: b.run(spotify_now))
         out = run_task(ctx, b, f'Play the song "{q}" on Spotify (the web player is open)', q=q,
