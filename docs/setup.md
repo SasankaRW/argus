@@ -301,18 +301,21 @@ daily cap.
 - **Everything search** (`everything`): "find my CV", "PDFs I changed today" (`ext:pdf dm:today`), "files over
   1 GB". Uses Everything (voidtools) on the PC: install it, keep it running, and put its command line `es.exe`
   (voidtools.com/downloads) in the Everything folder. Names only; folders in `paths.blocked` never show up.
-- **Ari speaks up**: an important message (a price under yours, an issue overdue, a failed backup, a reminder)
-  is also said out loud at the PC, only while you're using it, between `ari.speak_hours` (08:00-22:00), at most
-  one every 10 minutes (`ari.speak_up: false` turns it off). Tracker issues that become overdue are told once.
-- **Talking with Ari** (`ari.live`, on): after "Hey Ari" it's a conversation. Just talk back and forth; talk over
-  Ari to interrupt (it pauses at once; if it was only "mm-hm" or its own voice coming back, it carries on);
-  "thanks Ari" or "that's all" ends it, or 20 s of quiet (`ari.talk_idle_s`). Ari knows when you've finished a
-  sentence rather than just paused (Smart Turn, an 8 MB model taken once from PyPI and checked; Silero VAD from
-  faster-whisper). Answers are spoken a sentence at a time, with a soft pulse while Ari thinks. Headphones make
-  interrupting easiest; with speakers, Ari learns how loud its own echo is. `ari.live: false` is the classic mode
-  (every request starts with "Hey Ari"; a few seconds of follow-up, `ari.follow_up`).
-- **Your words** (`ari.vocabulary`, `ari.heard_as`): Whisper is told the names to expect (yours, the people and
-  places Ari remembers, apps like WhatsApp), and common mishearings are put right ("open what's up" -> WhatsApp).
+- **Ari only speaks when you've spoken to it.** Important messages (a price under yours, an overdue issue, a
+  failed backup, an approval) go to the island and the phone. `ari.speak_up: true` also says them out loud at the
+  PC, only while you're using it, between `ari.speak_hours` (08:00-22:00), at most one every 10 minutes.
+- **Talking with Ari**: after "Hey Ari" you can carry on for 10 s after each answer without saying it again
+  (`ari.talk_idle_s`); talk over Ari to interrupt (it pauses at once; if it was only "mm-hm" or its own voice
+  coming back, it carries on); "thanks Ari" or "that's all" ends it. While the PC is playing sound (a video,
+  music, a call) or when it hears a long stream of words, "Hey Ari" is needed again, so the voices in a video
+  aren't taken as questions. After Ari asks "Shall I?", a plain yes or no always counts. Ari knows when you've
+  finished a sentence rather than just paused (Smart Turn, an 8 MB model taken once from PyPI and checked; Silero
+  VAD from faster-whisper). Answers are spoken a sentence at a time, with a soft pulse while Ari thinks.
+  Headphones make interrupting easiest; with speakers, Ari learns how loud its own echo is.
+- **Your words** (`ari.vocabulary`, `ari.heard_as`): Whisper is given the names to expect (yours, the people and
+  places Ari remembers, apps like WhatsApp) as hotwords when it writes down a request, and common mishearings are
+  put right ("open what's up" -> WhatsApp). The "Hey Ari" check gets no names, and when Whisper only reads the names
+  back on noise ("about Do Not, Disturb, PC, Zoom"), it is thrown away.
   Add your own: `vocabulary: [Kaancha, Nimali]`, `heard_as: {kancha: Kaancha}`.
 - **Ari's test set**: `python -m argus.ari_eval` (with Argus running) says 40 everyday things to Ari's first
   decision and checks it picks the right tool, with how long the model took; nothing is done for real. Each run is
@@ -341,8 +344,10 @@ daily cap.
   at the PC. If the voice can't speak (the PC is off, it is still loading), Ari shows the words and stays
   silent; nothing else speaks. Old `ari.voice` / `ari.voice_engine` settings are ignored.
 
-  It sounds like `data/voices/ari-clip.wav` on the PC (a 5-15 s recording; an existing one is kept), or like any
-  clip you set as `ari.voice_clip`; without a clip it uses Chatterbox's own voice. `expressive_model: standard` is slower but has stronger moods. Every clip
+  The voice server owns the voice: it takes it from `data/voices/ari-clip.wav` on the PC when it starts (or from
+  `ari.voice_clip`), and everything Ari says, on the PC, in Helios and on the phone, is said in it. Without a clip
+  it is Chatterbox's own voice. A new clip file is picked up on the next sentence; `GET :8611/health` says which
+  voice is in use. `expressive_model: standard` is slower but has stronger moods. Every clip
   Chatterbox makes carries Resemble's inaudible watermark. While an answer takes a moment, Ari says a short
   "hmm, let me check" instead of staying silent.
 - **Train Ari on your voice** (Helios > Ari > *train on my voice*): read sentences aloud (about 300, 20 minutes;

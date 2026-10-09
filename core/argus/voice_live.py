@@ -408,7 +408,6 @@ class Talk:
     chime: Callable[[], None] = lambda: None
     clock: Callable[[], float] = time.monotonic
     idle_s: float = 20.0  # conversation ends after this long without you speaking
-    live: bool = True  # False: every request needs "Hey Ari" (except right after "Shall I?")
     transcribe_wake: Callable[[Any], str] | None = None  # the small model, for "is this for Ari?" (first 3 s)
     on_false_barge: Callable[[], None] = lambda: None  # it was Ari's own voice: be harder to interrupt
     in_talk_until: float = 0.0
@@ -417,6 +416,10 @@ class Talk:
     live_every_s: float = 1.0
     run: Callable[[Callable[[], None]], None] = lambda f: threading.Thread(target=f, daemon=True).start()
     quiet: Callable[[], bool] = lambda: False  # in a call or a game: answers are shown on the island, not spoken
+    # After an answer, is this (said without "Hey Ari") for Ari? The listener says no while the PC plays sound and
+    # for long streams of words (a video, a call). Skipped when Ari asked something or you pressed Talk.
+    follow_ok: Callable[[str], bool] = lambda text: True
+    _awaiting: bool = False  # Ari asked something ("Shall I?"), or Talk / "Hey Ari" alone: the next words are ours
     _live_at: float = 0.0
     _live_busy: bool = False
     _live_text: str = ""
@@ -443,7 +446,8 @@ class Talk:
             self.player.stop()
             self.chime()
             self.report("listening")
-            self._keep_talking(pending=True)
+            self._awaiting = True
+            self._keep_talking()
 
     def frame(self, frame, voice: float) -> str | None:
         with self._lock:
@@ -517,14 +521,18 @@ class Talk:
         rest = self.wake_rest(text)
         if rest is None and not (self.in_conversation or barged or self.transcribe_wake is not None):
             return None  # not for Ari
+        if rest is None and not barged and self.in_conversation and not self._awaiting and not self.follow_ok(text):
+            log.info("heard after an answer, not for Ari", extra={"text": text[:80]})
+            return None
         command = (rest if rest is not None else text).strip(" ,.!?")
         if (self.in_conversation or barged) and BYE.match(text):  # "thanks Ari": not a wake phrase
             command = text
         if not command:  # "Hey Ari" alone: listening
             self.chime()
             self.report("listening")
+            self._awaiting = True
             self._following = True  # waiting for the command: plain "listening", not the follow-up ring
-            self._keep_talking(pending=True)
+            self._keep_talking()
             return "wake"
         if BYE.match(command):
             self.in_talk_until = 0.0
@@ -532,6 +540,7 @@ class Talk:
             self.report("idle")
             return "bye"
         self._following = False
+        self._awaiting = False
         if self.show is not None:
             self.show("thinking", command)  # the island keeps what you said on show while Ari works
         else:
@@ -544,7 +553,7 @@ class Talk:
         streamed = {"text": "", "mood": "neutral"}
         if self.ask_async:
             self.run(lambda: self._answered(seq, command, self._call(seq, command, streamed), streamed))
-            self._keep_talking(pending=True)
+            self._keep_talking()
             return command
         self._answered(seq, command, self._call(seq, command, streamed), streamed)
         return command
@@ -590,7 +599,9 @@ class Talk:
                     self._speak(command, reply, streamed, late)
                     self._spoken_seq = max(self._spoken_seq, seq)
             self._flush()
-            self._keep_talking(pending=bool(ans.get("pending")))
+            if ans.get("pending"):
+                self._awaiting = True  # "Shall I?": a plain yes / no is for Ari
+            self._keep_talking()
 
     def _speak(self, command: str, reply: str, streamed: dict, late: bool) -> None:
         if self.quiet():  # in a call or a game: shown, not said
@@ -631,9 +642,8 @@ class Talk:
             self._open.clear()
             self._held.clear()
 
-    def _keep_talking(self, pending: bool = False) -> None:
-        if self.live or pending:
-            self.in_talk_until = self.clock() + self.idle_s + 30.0  # the reply's own length is added by tick()
+    def _keep_talking(self) -> None:
+        self.in_talk_until = self.clock() + self.idle_s + 30.0  # the reply's own length is added by tick()
 
     def tick(self) -> None:
         """Call often: the quiet clock only runs once Ari has finished talking; at the end, back to waiting."""
@@ -656,6 +666,7 @@ class Talk:
         if self.in_talk_until and now >= self.in_talk_until:
             self.in_talk_until = 0.0
             self._following = False
+            self._awaiting = False
             self.report("idle")
 
 

@@ -453,15 +453,20 @@ order (`ari.py`, then `worker/think.py`):
 6. **Needs current information** (news, weather) → Claude with web search, read-only, within the daily cap.
 
 **Local first:** questions about your own things always go through a tool (your files via `knowledge`, Argus's
-data). General knowledge is answered by the local model when it's sure.
+data). General knowledge is answered by the local model when it's sure. Ari uses one local model (the first tier,
+kept warm), then Claude: no second local model is swapped in next to the voice and Whisper.
 
 **Voice:**
 
 - **Hearing:** the browser's speech recognition, or Whisper on the PC (private).
-- **Speaking:** one voice: Chatterbox on the PC's GPU (`voice_server.py`). If it can't speak, Ari shows the words
-  and stays silent; there is no second voice.
-- **`ari_listen.py`:** "Hey Ari" on the PC mic with no browser. Tiny Whisper listens for the wake phrase;
-  nothing leaves the PC.
+- **Speaking:** one voice: Chatterbox on the PC's GPU (`voice_server.py`). The server owns the voice (taken from
+  one clip at start), so the listener, Helios and the phone all get the same one. If it can't speak, Ari shows the
+  words and stays silent; there is no second voice.
+- **`ari_listen.py` + `voice_live.py`:** "Hey Ari" on the PC mic with no browser; nothing leaves the PC. Silero VAD
+  and Smart Turn cut your sentences; tiny Whisper (no hints) checks for the wake phrase; the better model writes
+  down the request with your names as hotwords. After an answer you can carry on without "Hey Ari" for a few
+  seconds, except while the PC plays sound or for a long stream of words.
+- **Ari speaks only when spoken to.** Notices go to the island and the phone; `ari.speak_up` can say them aloud.
 
 **The Ari pill.** Ari reports what it's doing as `ari.state` events (listening, thinking, working with the tool
 name, speaking, done). Helios shows a pill at the top (pulse or comet look), and `ari_popup.py` shows the same pill

@@ -1,30 +1,12 @@
-"""Hey Ari on the PC's microphone: cutting speech out of the stream, the wake phrase, follow-ups (no real audio)."""
+"""Hey Ari on the PC's microphone: the wake phrase, what counts after an answer, Whisper reading its hints back,
+speaking up (no real audio)."""
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
 
-from argus.ari_listen import BLOCK, RATE, Listener, Segmenter, barge, notice_text, speak_hours_ok, wake_rest
-
-
-def blocks(ms: int, level: float) -> list:
-    n = ms * RATE // 1000 // BLOCK
-    rng = np.random.default_rng(1)
-    return [(rng.standard_normal(BLOCK) * level).astype(np.float32) for _ in range(n)]
-
-
-def run(seg: Segmenter, stream: list) -> list:
-    return [c for b in stream if (c := seg.feed(b)) is not None]
-
-
-def test_speech_becomes_clips_and_the_room_does_not():
-    seg = Segmenter()
-    clips = run(seg, blocks(2000, 0.003) + blocks(900, 0.2) + blocks(1000, 0.003)
-                + blocks(100, 0.2) + blocks(1000, 0.003)       # a click: too short
-                + blocks(1500, 0.2) + blocks(1000, 0.003))
-    assert len(clips) == 2
-    assert 900 <= len(clips[0]) * BLOCK * 1000 // RATE <= 1700
+from argus import ari_listen, vocab
+from argus.ari_listen import follow_ok, notice_text, speak_hours_ok, wake_rest
 
 
 @pytest.mark.parametrize("said,rest", [
@@ -39,71 +21,56 @@ def test_wake_phrase(said, rest):
     assert wake_rest(said) == rest
 
 
-def make(texts: list[str], answers: list[dict] | None = None):
-    t = [0.0]
-    sent, spoken, chimes = [], [], []
-    it = iter(texts)
-    ans = iter(answers or [{"reply": "ok"}] * 10)
-    lis = Listener(transcribe_wake=lambda a: next(it), transcribe=lambda a: next(it),
-                   say=lambda text: (sent.append(text), next(ans))[1], speak=spoken.append,
-                   chime=lambda: chimes.append(1), clock=lambda: t[0])
-    return lis, t, sent, spoken, chimes
+def test_whisper_reading_the_names_back_is_not_a_question():
+    names = ["Kaancha", "Do Not", "Disturb", "PC", "Ari", "Argus", "Helios", "WhatsApp", "Snapchat", "Zoom"]
+    for noise in ("about Do Not, Disturb, PC, Bluetooth", "Argus, Helios, WhatsApp, Snapchat, Snapchat",
+                  "Talking to Ari about Do Not, Disturb, PC, Zoom, Discord.", "about Do Not, Disturb"):
+        assert vocab.echo(noise, names + vocab.BUILTIN), noise
+    for real in ("Open WhatsApp", "call Kaancha on WhatsApp", "what's on my screen", "turn on Do Not Disturb",
+                 "how's the weather tomorrow"):
+        assert not vocab.echo(real, names + vocab.BUILTIN), real
 
 
-def clip(ms=1000):
-    return blocks(ms, 0.2)
+def test_the_wake_check_gets_no_hints_and_the_request_gets_the_names(monkeypatch):
+    calls: list = []
+
+    class Seg:
+        def __init__(self, text):
+            self.text, self.no_speech_prob, self.avg_logprob = text, 0.0, -0.1
+
+    class Model:
+        def __init__(self, out):
+            self.out = out
+
+        def transcribe(self, audio, **kw):
+            calls.append(kw)
+            return iter([Seg(self.out)]), None
+
+    out = {"text": "Hey Ari"}
+    import argus.worker.hear as hear
+
+    monkeypatch.setattr(hear, "model", lambda name: Model(out["text"]))
+    monkeypatch.setitem(ari_listen.VOCAB, "words", ["Kaancha", "WhatsApp"])
+    assert ari_listen.whisper("tiny.en", names=False)(b"") == "Hey Ari"
+    assert calls[-1]["hotwords"] is None and "initial_prompt" not in calls[-1]
+    out["text"] = "about Kaancha, WhatsApp, Spotify, Chrome"  # noise read back as the hints
+    assert ari_listen.whisper("small.en")(b"") == ""
+    assert calls[-1]["hotwords"] == "Kaancha, WhatsApp"
 
 
-def test_wake_and_command_in_one_breath():
-    lis, t, sent, spoken, _ = make(["Hey Ari, what's running?"], [{"reply": "Nothing is running."}])
-    lis.clip(clip())
-    assert sent == ["what's running"] and spoken == ["Nothing is running."]
+def test_after_an_answer_the_pcs_sound_and_long_talk_need_hey_ari(monkeypatch):
+    monkeypatch.setitem(ari_listen.STRICT, "on", False)
+    assert follow_ok("and tomorrow?")
+    assert not follow_ok(" ".join(["word"] * (ari_listen.FOLLOW_MAX_WORDS + 1)))  # the TV, someone else
+    monkeypatch.setitem(ari_listen.STRICT, "on", True)  # a video is playing
+    assert not follow_ok("and tomorrow?")
 
 
-def test_wake_alone_then_the_command_then_a_yes():
-    lis, t, sent, spoken, chimes = make(
-        ["Hey Ari.", "sort downloads every morning at 7", "yes"],
-        [{"reply": "Every day at 7 am, I'll sort Downloads. Shall I set that up?", "pending": {"kind": "schedule"}},
-         {"reply": "Done."}])
-    lis.clip(clip())
-    assert chimes == [1] and sent == []
-    t[0] = 3.0
-    lis.clip(clip(2500))
-    t[0] = 9.0  # answered within 8 s of the question: no wake phrase needed
-    lis.clip(clip(500))
-    assert sent == ["sort downloads every morning at 7", "yes"] and spoken[-1] == "Done."
+def test_speaking_up_is_off_unless_you_turn_it_on():
+    from argus.config import AriConfig
 
-
-def test_other_talk_is_ignored_and_long_talk_is_not_transcribed():
-    lis, t, sent, spoken, chimes = make(["so then he said"])
-    assert lis.clip(clip()) is None and sent == [] and chimes == []
-    assert lis.clip(clip(6000)) is None  # longer than a wake phrase: not even written down
-
-
-def test_follow_up_without_the_wake_phrase():
-    lis, t, sent, spoken, _ = make(["Hey Ari, weather in Kandy?", "and tomorrow?", "and next week?"],
-                                   [{"reply": "Showers."}, {"reply": "Sunny."}, {"reply": "x"}])
-    lis.speak = lambda text: (spoken.append(text), 2.0)[1]  # takes 2 s to say
-    lis.clip(clip())
-    t[0] = 7.5  # within 2 s of speaking + 6 s
-    lis.clip(clip())
-    assert sent == ["weather in Kandy", "and tomorrow?"]
-    t[0] = 30.0  # long after: needs "Hey Ari" again ("and next week?" has none)
-    lis.clip(clip())
-    assert sent == ["weather in Kandy", "and tomorrow?"]
-
-
-def test_stop_or_a_new_question_while_ari_talks():
-    assert barge("Stop.", "It's 29 degrees in Kandy") == ("stop", "")
-    assert barge("okay wait", "...") == ("stop", "")
-    assert barge("Hey Ari, what time is it", "It's 29 degrees") == ("wake", "what time is it")
-    assert barge("29 degrees in Kandy", "It's 29 degrees in Kandy today") is None  # its own voice
-    assert barge("the kettle is boiling", "...") is None
-    lis, t, sent, spoken, chimes = make(["Hey Ari, what time is it?"], [{"reply": "It's 9."}])
-    stopped = []
-    lis.stop_speaking = lambda: stopped.append(1)
-    assert lis.interrupt(clip(), "It's 29 degrees in Kandy") == "what time is it"
-    assert stopped == [1] and sent == ["what time is it"]
+    assert AriConfig().speak_up is False
+    assert AriConfig(live=False, follow_up=True).talk_idle_s == 10  # old settings still load (ignored)
 
 
 def test_speaking_up_hours_and_words():

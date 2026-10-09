@@ -184,11 +184,6 @@ def test_the_pcs_expressive_voice_is_shared_with_the_laptop_safely(tmp_path, mon
     (tmp_path / ".env").write_text("ARGUS_WORKER_TOKEN=abc\n")
     monkeypatch.delenv("ARGUS_WORKER_TOKEN", raising=False)
     assert vs.worker_token(tmp_path / ".env") == "abc"
-    monkeypatch.chdir(tmp_path)
-    assert vs.their_clip("/opt/argus/data/voices/ari-clip.wav") is None  # the laptop's path, no clip here
-    (tmp_path / "data" / "voices").mkdir(parents=True)
-    (tmp_path / "data" / "voices" / "ari-clip.wav").write_bytes(b"RIFF")
-    assert vs.their_clip("/opt/argus/data/voices/ari-clip.wav").endswith("ari-clip.wav")  # this PC's own
 
 
 def test_helios_voice_doesnt_wait_for_a_pc_that_is_off(tmp_path):

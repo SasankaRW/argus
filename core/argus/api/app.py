@@ -1317,15 +1317,11 @@ def create_app(argus: Argus) -> FastAPI:
     _expr: dict = {}
 
     def expressive():
-        """Ari's voice client, made again when its settings change."""
-        a = argus.cfg.ari
-        key = (a.expressive_url, a.voice_clip)
-        if _expr.get("key") != key:
-            clip = Path(a.voice_clip or argus.cfg.db_path.parent / "voices" / "ari-clip.wav").expanduser()
-            if not clip.is_absolute():
-                clip = argus.cfg.base_dir / clip
+        """Ari's voice client, made again when its address changes."""
+        url = argus.cfg.ari.expressive_url
+        if _expr.get("url") != url:
             tok = argus.cfg.secrets.worker_token  # the PC's voice asks for it from another machine
-            _expr.update(key=key, client=Expressive(a.expressive_url, clip, token=tok))
+            _expr.update(url=url, client=Expressive(url, token=tok))
         return _expr["client"]
 
     @app.post("/ari-voice/say", dependencies=guarded)

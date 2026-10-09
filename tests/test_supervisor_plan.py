@@ -52,3 +52,7 @@ def test_the_expressive_voice_runs_in_its_own_python(monkeypatch):
     argv = dict(supervisor.plan(args))["ari-voice"]
     assert argv[0] == "exe:.venv-voice/Scripts/python.exe" and argv[1] == "core/argus/voice_server.py"
     assert argv[argv.index("--port") + 1] == "8611"
+    assert "--clip" not in argv  # no ari.voice_clip: the server's own data/voices/ari-clip.wav
+    monkeypatch.setattr(supervisor, "load_ari", lambda: AriConfig(voice_clip="data/voices/me.wav"))
+    argv = dict(supervisor.plan(args))["ari-voice"]
+    assert argv[argv.index("--clip") + 1] == "data/voices/me.wav"

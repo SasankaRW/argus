@@ -44,7 +44,7 @@ MAX_W = 430
 MAX_H = 300
 W, H = MAX_W + 2 * 30 + 2 * MARGIN, MAX_H + MARGIN  # the window (room for the widest shoulders)
 
-FOLLOW_S = 20.0  # how long Ari listens for a follow-up after answering (ari.talk_idle_s)
+FOLLOW_S = 10.0  # how long Ari listens for a follow-up after answering (ari.talk_idle_s)
 WORDS = {"listening": "listening", "thinking": "thinking", "working": "on it", "speaking": "speaking",
          "starting": "starting"}
 NICE = {"search_my_files": "searching your files", "find_file": "looking for the file", "open_app": "opening it",

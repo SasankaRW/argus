@@ -33,34 +33,61 @@ class FakeEngine:
     def __init__(self):
         self.said = []
 
-    def say(self, text, clip=None):
-        self.said.append((text, clip))
+    voice = "chatterbox"
+
+    def say(self, text):
+        self.said.append(text)
         if not plain(text):
             raise ValueError("nothing to say")
         return vs.to_wav(np.zeros(2400, np.float32), 24000)
 
 
-def test_the_voice_server_and_a_server_that_is_gone(tmp_path, monkeypatch):
-    monkeypatch.setattr(vs, "DEFAULT_CLIP", tmp_path / "none.wav")  # not this machine's own clip
+def test_the_voice_server_and_a_server_that_is_gone():
     eng = FakeEngine()
     srv = ThreadingHTTPServer(("127.0.0.1", 0), vs.handler(eng))
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     url = f"http://127.0.0.1:{srv.server_address[1]}"
     try:
-        assert json.loads(urllib.request.urlopen(url + "/health").read())["ok"] is True
-        clip = tmp_path / "voices" / "ari-clip.wav"
-        e = Expressive(url, clip)
-        wav = e.say("[cheerful] Oh nice! [laugh]")  # no clip file yet: the server's own voice
+        h = json.loads(urllib.request.urlopen(url + "/health").read())
+        assert h["ok"] is True and h["voice"] == "chatterbox"
+        wav = Expressive(url).say("[cheerful] Oh nice! [laugh]")
         with wave.open(io.BytesIO(wav)) as w:
             assert w.getframerate() == 24000
-        assert eng.said[0] == ("[cheerful] Oh nice! [laugh]", None) and not clip.exists()  # nothing is made for it
-        clip.parent.mkdir()
-        clip.write_bytes(b"RIFF")
-        e.say("Again.")
-        assert eng.said[1] == ("Again.", str(clip.resolve()))  # your clip, once it is there
+        # an old client still sending a clip of its own: ignored, the server's one voice says it
+        req = urllib.request.Request(url + "/say", data=json.dumps({"text": "Again.", "clip": "C:/x.wav"}).encode(),
+                                     method="POST", headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req).read()
+        assert eng.said == ["[cheerful] Oh nice! [laugh]", "Again."]
     finally:
         srv.shutdown()
-    assert Expressive(url, None).say("Hello") is None  # server gone: None, and the words are shown
+    assert Expressive(url).say("Hello") is None  # server gone: None, and the words are shown
+
+
+def test_one_voice_is_taken_from_the_clip_once_and_again_only_when_it_changes(tmp_path):
+    import os
+
+    class Model:
+        def __init__(self):
+            self.taken = []
+
+        def prepare_conditionals(self, clip, exaggeration=0.5):
+            self.taken.append(clip)
+
+    clip = tmp_path / "ari-clip.wav"
+    e = vs.Engine(clip=clip)
+    e.m = Model()
+    e._take_voice()
+    assert e.m.taken == [] and e.voice == "chatterbox"  # no clip: Chatterbox's own voice, from the start
+    clip.write_bytes(b"RIFF")
+    e._take_voice()
+    e._take_voice()
+    assert e.m.taken == [str(clip)] and e.voice == str(clip)  # taken once, not per sentence
+    os.utime(clip, (1, 1))  # a new clip file
+    e._take_voice()
+    assert len(e.m.taken) == 2
+    clip.unlink()
+    e._take_voice()
+    assert len(e.m.taken) == 2 and e.voice == str(clip)  # removed mid-session: keeps the voice it had
 
 
 def test_mood_to_chatterbox_settings():
@@ -214,11 +241,11 @@ def test_warming_up_the_voice_says_one_word_and_waits_for_the_server(tmp_path):
     threading.Thread(target=srv.serve_forever, daemon=True).start()
 
     try:
-        e = Expressive(f"http://127.0.0.1:{srv.server_address[1]}", tmp_path / "clip.wav")
-        assert e.warm(tries=2, wait=0.01) is True and eng.said[0][0] == "Hi."
+        e = Expressive(f"http://127.0.0.1:{srv.server_address[1]}")
+        assert e.warm(tries=2, wait=0.01) is True and eng.said[0] == "Hi."
     finally:
         srv.shutdown()
-    assert Expressive("http://127.0.0.1:9", None).warm(tries=2, wait=0.01) is False
+    assert Expressive("http://127.0.0.1:9").warm(tries=2, wait=0.01) is False
 
 
 def test_the_model_is_loaded_once_even_when_two_ask_at_the_same_time():

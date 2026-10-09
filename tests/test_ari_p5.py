@@ -209,7 +209,7 @@ def test_a_voice_hiccup_is_retried_not_swapped_for_a_second_voice(monkeypatch, t
         return io.BytesIO(b"WAV")
 
     monkeypatch.setattr(urllib.request, "urlopen", urlopen)
-    e = Expressive("http://127.0.0.1:9", None, SimpleNamespace())
+    e = Expressive("http://127.0.0.1:9")
     assert e.say("one.") == b"WAV" and e.recent()
     assert e.say("two.") is None and e.say("two.") is None  # down for a minute after a failure ...
     assert e.say("two.", timeout=90, force=True) == b"WAV" and calls[-1] == 90  # ... unless retried on purpose
