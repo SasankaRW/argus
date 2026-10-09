@@ -9,8 +9,6 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 **Fix, Gmail:** clicking Allow now saves the key (it was lost: Google's answer comes after the job that asked has ended, and the job's connection no longer worked then). If saving fails, the reason is written to `data/plugins/gmail/allow-error.txt`.
 
-**Added, console map:** the laptop console has a live map of the home lab beside a smaller Ari pane: argusd at the top, each machine below it with its state, what it is running and how many jobs it finished, and a dot that travels down a line when a job is handed to that machine and back up when it finishes. The panes are now really see-through (tmux no longer paints its own background over the terminal's).
-
 **Fix, logs and apps:** a failed job's log line now carries its error (on Python 3.13 the adapter dropped it, so the Logs page said "job failed" and nothing else). Ari looks at an app's controls again when the first look is nearly empty (Spotify, Discord, Teams and VS Code build them on the first look) before falling back to the picture, and a Spotify app error is said instead of retried blind.
 
 **Changed, Spotify:** "play <song> on Spotify" now plays in the Spotify app on Ari's Workstation (you're already signed in there; no sign-in in Ari's browser, which Spotify blocks). Ari's browser is the fallback when the app isn't installed, or set `spotify: web` in the workstation settings. Gmail says plainly when `GMAIL_CLIENT_SECRET` is the client ID instead of the secret.
@@ -24,6 +22,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 **Fix:** Ari no longer gets stuck on "open Spotify" and other PC tools: the logged-in worker on the PC now offers `desktop` + `session` (with `session` alone no worker could take them), a PC tool with no worker online fails at once with the reason, and a second supervisor in the same mode exits instead of starting duplicate workers. Ari tries all local models before Claude again.
 
 **Fix, Ari cleanup:** Ari no longer talks unprompted: notices aren't said aloud unless `ari.speak_up: true`; Whisper reading its own name hints back on noise ("about Do Not, Disturb, PC…") is dropped and the "Hey Ari" check gets no hints; after an answer, speech without "Hey Ari" is ignored while the PC plays sound or when it's a long stream of words (10 s window, `ari.talk_idle_s`). One voice for real: the voice server takes it from one clip at start and ignores per-request clips. The old one-request listener (`ari.live: false`, `ari.follow_up`) is removed; old settings still load.
+
+**Changed, console:** back to the classic console look (the live map is removed); its panes now really show the terminal's see-through background (tmux no longer paints its own over it).
 
 **Added:** a live terminal console for the laptop (`argus-console`): logo with an eye that follows Ari, status, Ari's conversation, events and logs in one window, opened at Hyprland login by `deploy/linux/console-setup.sh`. The console window is see-through (65%; Ctrl+Shift+A then M/L to change it live).
 
