@@ -71,12 +71,24 @@ def untouchable(w: Win, never: list[str]) -> bool:
     return any(n.strip().lower() in hay for n in never if n.strip())
 
 
+# what people call an app -> its program's name
+ALIASES = {"vs code": "code", "vscode": "code", "visual studio code": "code", "edge": "msedge", "word": "winword",
+           "excel": "excel", "file explorer": "explorer", "files": "explorer", "teams": "ms teams",
+           "terminal": "windowsterminal", "settings": "systemsettings", "whatsapp": "whatsapp"}
+
+
+def is_argus(w: Win) -> bool:
+    """Argus's own windows (the island over the screen, the voice): never moved."""
+    exe = w.exe.lower().removesuffix(".exe")
+    return exe in ("python", "pythonw") and w.title.strip().lower() in ("ari", "")
+
+
 def find(windows: list[Win], name: str, never: list[str]) -> Win | None:
     """The window you meant: its program, then all the words in program + title."""
-    want = _norm(name)
+    want = ALIASES.get(_norm(name), _norm(name))
     if not want:
         return None
-    ok = [w for w in windows if not untouchable(w, never)]
+    ok = [w for w in windows if not untouchable(w, never) and not is_argus(w)]
     for w in ok:
         if w.exe == want or _norm(w.exe) == want:
             return w
@@ -740,7 +752,7 @@ def _which(ctx: Context, desk: Desk, name: str, default: str) -> Win | None:
         return None if w is None or untouchable(w, never) else w
     fg = desk.foreground()
     w = next((x for x in wins if x.hwnd == fg), None)
-    return None if w is None or untouchable(w, never) else w
+    return None if w is None or untouchable(w, never) or is_argus(w) else w
 
 
 @workflow(PLUGIN, "give")

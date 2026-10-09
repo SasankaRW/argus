@@ -179,6 +179,48 @@ def test_said_plainly_goes_straight_to_the_tool(said, tool, args):
     assert straight_to(tools, said) == (tool, args)
 
 
+WS_TOOLS = ("move_window_to_me", "take_window", "search_in_browser", "web_search", "open_app", "do_in_browser",
+            "open_on_workstation", "switch_to_window")
+
+
+@pytest.mark.parametrize("said,tool,args", [
+    # what you said on 9 Oct (from logs/ari.log), and the like
+    ("Take this screen", "take_window", {}),
+    ("Take the Spotify screen", "take_window", {"name": "spotify"}),
+    ("Take the Chrome window to your workstation", "take_window", {"name": "chrome"}),
+    ("Can you bring Claude to this workstation", "move_window_to_me", {"name": "claude"}),
+    ("Now move it to this workstation", "move_window_to_me", {}),
+    ("bring the claude window to my desktop", "move_window_to_me", {"name": "claude"}),
+    ("take the claude window off my screen", "take_window", {"name": "claude"}),
+    ("send spotify to your desktop", "take_window", {"name": "spotify"}),
+    ("bring me the vs code window", "move_window_to_me", {"name": "vs code"}),
+    ("put this on your desktop", "take_window", {}),
+    ("Can you open Chrome and check for my emails", "do_in_browser",
+     {"goal": "check for my emails", "url": "https://mail.google.com/"}),
+    ("open the browser and find the opening hours of Keells", "do_in_browser",
+     {"goal": "find the opening hours of Keells"}),
+    ("open notepad on your workstation", "open_on_workstation", {"name": "notepad"}),
+    ("open spotify", "open_app", {"name": "spotify"}),  # plain "open X": on your desktop, as before
+])
+def test_moving_windows_and_browser_tasks_said_loosely(said, tool, args):
+    assert straight_to({t: {} for t in WS_TOOLS}, said) == (tool, args)
+
+
+@pytest.mark.parametrize("said", ["take a note", "take me to the settings", "bring up my calendar", "get the weather",
+                                  "give me a joke", "send the report to Kaancha", "put on some music",
+                                  "take a screenshot", "take the bins out", "move the chrome window"])
+def test_not_a_window_move(said):
+    got = straight_to({t: {} for t in WS_TOOLS}, said)
+    assert got is None or got[0] not in ("take_window", "move_window_to_me"), got
+
+
+def test_argus_own_island_is_never_taken_and_app_nicknames_work():
+    d = FakeDesk([(2, "Ari", "pythonw", "you"), (3, "main.py - Visual Studio Code", "code", "you")])
+    d.fg = 2
+    assert not ws.take(ctx(d, {}))["done"] and d.on[2] == "you"  # the island in front: not moved
+    assert ws.take(ctx(d, {"name": "vs code"}))["done"] and d.on[3] == "ari"
+
+
 def test_search_for_alone_is_still_a_question():
     tools = {t: {} for t in ("search_in_browser", "web_search")}
     assert straight_to(tools, "search for the latest python release") is None

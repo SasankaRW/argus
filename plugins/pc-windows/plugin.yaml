@@ -16,7 +16,8 @@ permissions:
 ari:
   tools:
     - name: switch_to_window
-      description: Bring an open app's window to the front (Chrome, Spotify, VS Code, ...).
+      description: "Bring an open app's window to the front on the user's desktop (Chrome, Spotify, VS Code, ...).
+        To move a window between the user's desktop and Ari's Workstation use move_window_to_me or take_window."
       workflow: switch
       input: {name: {type: string, description: the app or window title}}
       required: [name]

@@ -324,6 +324,58 @@ GIVE = re.compile(_PLEASE + r"(?:give (?:me|it to me)(?: (?:that|this|it|the win
 TAKE = re.compile(_PLEASE + r"(?:take (?:this|that|it)(?: one| window)?|take (?:the )?(?P<name>[\w .'-]{2,30}?) window|"
                   r"(?:move|send|put) (?:this|that|it|the (?P<name2>[\w .'-]{2,30}?) window) (?:to|on|onto) "
                   r"(?:your|ari'?s) (?:workstation|desktop))(?:,? please)?\W*$", re.I)
+# Moving windows between your desktop and Ari's Workstation, said loosely ("take the Chrome window to your
+# workstation", "bring Claude here", "now move it to my desktop", "take this screen"). Where it goes: named by the
+# place ("your / Ari's / the workstation" -> Ari's; "me / here / my or this desktop / screen / workstation" -> yours),
+# else by the verb (take, send, put, push -> Ari's; bring, give, get, pull -> yours). "move" alone says neither.
+_MOVE_VERB = r"(?P<verb>take|move|bring|send|put|give|get|pull|push|shift|drag|throw)"
+_SPOT = r"(?:work\s?station|desktop|screen|side|space|work\s?space)"
+_PLACE_ARI = (r"(?:(?:to|on|onto|into|over to|in)\s+(?:your|ari'?s|ari|the|his|its)\s+(?:own\s+)?" + _SPOT +
+              r"|(?:off|away from)\s+my\s+" + _SPOT + r"|away)")
+_PLACE_YOU = (r"(?:to\s+me|over\s+here|here|back|(?:to|on|onto|into|over to|in)\s+(?:my|this|the main|our)\s+"
+              r"(?:own\s+)?(?:" + _SPOT[3:-1] + r"|work)\b.*)")
+MOVE_WIN = re.compile(_PLEASE + r"(?:(?:now|okay|ok|so|and|then)[,\s]+)*" + _MOVE_VERB +
+                      r"\s+(?:me\s+)?(?P<what>.*?)\s*(?P<place>" + _PLACE_ARI + "|" + _PLACE_YOU +
+                      r")?(?:,?\s*(?:please|now|for me))?\W*$", re.I)
+_TO_ARI_VERBS = {"take", "send", "put", "push", "throw"}
+_TO_YOU_VERBS = {"bring", "give", "get", "pull"}
+_JUST_POINTING = {"", "this", "that", "it", "this one", "that one", "them", "this window", "that window", "the window",
+                  "this screen", "that screen", "the screen", "this app", "that app", "it back", "that back"}
+
+
+def move_window(text: str) -> tuple[str, str] | None:
+    """("take_window" | "move_window_to_me", the window's name or "") for a request to move a window, else None."""
+    m = MOVE_WIN.match(text.strip())
+    if not m:
+        return None
+    verb, place = m.group("verb").lower(), (m.group("place") or "").lower()
+    what = re.sub(r"\s+", " ", m.group("what") or "").strip(" ,.").lower()
+    if place:
+        tool = "take_window" if re.match(_PLACE_ARI, place, re.I) else "move_window_to_me"
+    elif verb in _TO_ARI_VERBS:
+        tool = "take_window"
+    elif verb in _TO_YOU_VERBS:
+        tool = "move_window_to_me"
+    else:
+        return None  # "move the chrome window": to where?
+    if verb in ("give", "get") and not place and what in ("", "it", "that", "this"):
+        return "move_window_to_me", ""
+    if what in _JUST_POINTING:
+        return tool, ""
+    if re.match(r"(?:a|an|some|me|up|out|off|over|care|time|it|us|to|from|in|into)\b", what) or \
+            re.search(r"\b(?:out|off|up|down|over|in)$", what):
+        return None  # "take a note", "take me to …", "bring up my calendar", "get me a coffee"
+    if not place and not re.search(r"\b(?:window|screen|app|tab)$", what) and verb not in ("take", "bring"):
+        return None  # "get the weather", "send the report", "put on some music": not a window without a place
+    name = re.sub(r"^(?:the|this|that|my|your|ari'?s)\s+", "", what)
+    name = re.sub(r"\s+(?:window|screen|app|application|tab|one)$", "", name).strip()
+    words = name.split()
+    if not name or len(words) > 4 or re.search(r"\b(?:file|folder|song|music|volume|photo|picture|money|message)\b",
+                                               name):
+        return None  # not a window ("take a photo", "send money", "give me a song")
+    return tool, name
+
+
 FILL_FORM = re.compile(_PLEASE + r"(?:fill|complete) (?:in |out )?(?:this|the|that|my) (?:form|application|page)"
                        r"(?: for me)?(?:,? please)?\W*$", re.I)
 SPOTIFY = re.compile(_PLEASE + r"(?:(?:open spotify and )?(?:play|put on)\s+(?P<q>.+?)\s+(?:on|in|from) spotify|"
@@ -331,6 +383,17 @@ SPOTIFY = re.compile(_PLEASE + r"(?:(?:open spotify and )?(?:play|put on)\s+(?P<
 GOOGLE = re.compile(_PLEASE + r"(?:google|(?:open|do|run) (?:a )?(?:google |web |browser )?search (?:for |on |about )?|"
                     r"search (?:for )?(?=.+ (?:in|on) (?:the |a )?(?:browser|chrome|google|edge)\W*$))"
                     r"(?P<q>.+?)(?: (?:in|on) (?:the |a )?(?:browser|chrome|google|edge))?\W*$", re.I)
+
+
+# "open Chrome and check my emails", "open the browser and find …": a task in Ari's browser on its Workstation
+OPEN_BROWSER_TASK = re.compile(_PLEASE + r"(?:open|use|go to|get on)\s+(?:up\s+)?(?:the\s+|a\s+|your\s+)?"
+                               r"(?:google\s+)?(?:chrome|browser|web browser|edge|brave|firefox|internet)"
+                               r"(?:\s+(?:on|in) (?:your|ari'?s|the) (?:work\s?station|desktop))?"
+                               r"\s*(?:,|and(?: then)?|to)\s+(?P<goal>.{3,150}?)(?:,? please)?\W*$", re.I)
+# "open Notepad on your workstation" / "start Spotify on Ari's desktop": the app goes to the Workstation
+OPEN_THERE = re.compile(_PLEASE + r"(?:open|launch|start|run)\s+(?:up\s+)?(?:the\s+)?(?P<app>[a-z][\w+ -]{1,28}?)"
+                        r"(?:\s+app)?\s+(?:on|in|at)\s+(?:your|ari'?s|the)\s+(?:own\s+)?(?:work\s?station|desktop|"
+                        r"computer|screen|side)(?:,? please)?\W*$", re.I)
 
 
 TYPE_NOW = re.compile(_PLEASE + r"type\s+(?P<t>\S.{0,158}?)\W*$", re.I)
@@ -434,6 +497,17 @@ def straight_to(tools: dict[str, dict], text: str) -> tuple[str, dict] | None:
         return "fix_ticket", out
     if "work_summary" in tools and WORK_NOW.match(text):
         return "work_summary", {}
+    mw = move_window(text) if {"take_window", "move_window_to_me"} <= tools.keys() else None
+    if mw is not None:
+        return mw[0], ({"name": mw[1]} if mw[1] else {})
+    ob = OPEN_BROWSER_TASK.match(text)
+    if ob and "do_in_browser" in tools:
+        goal = ob.group("goal").strip(" ,.")
+        url = ("https://mail.google.com/" if re.search(r"\b(?:e-?mails?|gmail|inbox|mail)\b", goal, re.I) else "")
+        return "do_in_browser", {"goal": goal, **({"url": url} if url else {})}
+    ow = OPEN_THERE.match(text)
+    if ow and "open_on_workstation" in tools and not NOT_APP.search(ow.group("app")):
+        return "open_on_workstation", {"name": ow.group("app").strip()}
     gv = GIVE.match(text)
     if gv and "move_window_to_me" in tools:
         name = (gv.group("name") or "").strip()
