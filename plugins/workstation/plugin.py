@@ -24,6 +24,7 @@ import re
 import shutil
 import subprocess
 import time
+import traceback
 import urllib.parse
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -703,9 +704,12 @@ def spotify(ctx: Context):
             except PermanentError:
                 raise
             except Exception as e:  # noqa: BLE001 - say what broke, instead of the job being retried blind
+                ctx.log.error("spotify in the app failed", extra={"error": f"{type(e).__name__}: {e}",
+                                                                  "trace": traceback.format_exc(limit=6)})
                 return {"done": False, "problem": f"I couldn't drive the Spotify app ({type(e).__name__}: {e})"}
             if out.get("done"):
                 return {"done": True, "playing": q, "in": "the Spotify app"}
+            ctx.log.warning("spotify in the app not done", extra={"problem": str(out.get("problem"))[:300]})
             return {**out, "done": False,
                     "problem": out.get("problem") or f"I couldn't get {q} playing in the Spotify app"}
     desk = desk_for(ctx)  # no Spotify app (or set to the web player): Spotify's web player in Ari's browser
