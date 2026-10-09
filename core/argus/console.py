@@ -455,7 +455,7 @@ def run_view(name: str, api: Api, fps: float = 6) -> int:
 
 
 TMUX_CONF = """set -g mouse on
-set -g status-style "bg=#0b0f14,fg=#6b7280"
+set -g status-style "bg=default,fg=#6b7280"
 set -g status-left "#[bg=#5eead4,fg=#0b0f14,bold] ◉ ARGUS #[default] "
 set -g status-right "#[fg=#a78bfa]%H:%M #[fg=#6b7280]· #h "
 set -g status-left-length 20
@@ -463,8 +463,9 @@ set -g pane-border-style "fg=#1f2937"
 set -g pane-active-border-style "fg=#5eead4"
 set -g pane-border-status top
 set -g pane-border-format " #[fg=#a78bfa]#{pane_title} "
-set -g window-style "bg=#0b0f14"
-set -g window-active-style "bg=#0b0f14"
+# bg=default, not a colour: the terminal's own background shows through (kitty's background_opacity)
+set -g window-style "bg=default"
+set -g window-active-style "bg=default"
 set -g default-terminal "tmux-256color"
 set -ga terminal-overrides ",*:Tc"
 """
