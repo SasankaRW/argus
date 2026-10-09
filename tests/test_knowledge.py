@@ -44,8 +44,15 @@ def setup(tmp_path: Path, monkeypatch) -> tuple[Argus, Path]:
 
 def run(cl, w, workflow, **inp):
     job = cl.post("/jobs", {"plugin": "knowledge", "workflow": workflow, "needs": ["desktop"], "input": inp})
-    assert w.run_once(wait=2)
-    j = wait_for(lambda: (x := cl.get(f"/jobs/{job['id']}"))["state"] in ("succeeded", "dead") and x)
+
+    def done():  # keep the worker going: it may take another queued job (a background one) first
+        x = cl.get(f"/jobs/{job['id']}")
+        if x["state"] in ("succeeded", "dead"):
+            return x
+        w.run_once(wait=0.5)
+        return None
+
+    j = wait_for(done, timeout=30)
     assert j["state"] == "succeeded", j["error"]
     return j["result"]
 
