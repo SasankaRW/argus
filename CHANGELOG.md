@@ -5,7 +5,11 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
-**Fix, Ari cleanup:** Ari no longer talks unprompted: notices aren't said aloud unless `ari.speak_up: true`; Whisper reading its own name hints back on noise ("about Do Not, Disturb, PC…") is dropped and the "Hey Ari" check gets no hints; after an answer, speech without "Hey Ari" is ignored while the PC plays sound or when it's a long stream of words (10 s window, `ari.talk_idle_s`). One voice for real: the voice server takes it from one clip at start and ignores per-request clips. Ari uses one local model, then Claude. The old one-request listener (`ari.live: false`, `ari.follow_up`) is removed; old settings still load.
+**Ari's Workstation (P7):** Ari works on its own Windows virtual desktop ("Ari's Workstation"): searches and web tasks in its own browser profile, "play <song> on Spotify", tasks in desktop apps by control name (UI Automation, then window messages, then the vision tier with numbered boxes; local only, never saved), "fill this form" (never presses Submit), "move that window to me" / "take this". It asks on the island, in Helios and on the phone when it needs a detail, a choice or a yes for send/buy/delete/post, and hands you passwords and card numbers. Turn it on by adding `workstation` to `plugins.live`.
+
+**Fix:** Ari no longer gets stuck on "open Spotify" and other PC tools: the logged-in worker on the PC now offers `desktop` + `session` (with `session` alone no worker could take them), a PC tool with no worker online fails at once with the reason, and a second supervisor in the same mode exits instead of starting duplicate workers. Ari tries all local models before Claude again.
+
+**Fix, Ari cleanup:** Ari no longer talks unprompted: notices aren't said aloud unless `ari.speak_up: true`; Whisper reading its own name hints back on noise ("about Do Not, Disturb, PC…") is dropped and the "Hey Ari" check gets no hints; after an answer, speech without "Hey Ari" is ignored while the PC plays sound or when it's a long stream of words (10 s window, `ari.talk_idle_s`). One voice for real: the voice server takes it from one clip at start and ignores per-request clips. The old one-request listener (`ari.live: false`, `ari.follow_up`) is removed; old settings still load.
 
 **Added:** a live terminal console for the laptop (`argus-console`): logo with an eye that follows Ari, status, Ari's conversation, events and logs in one window, opened at Hyprland login by `deploy/linux/console-setup.sh`.
 

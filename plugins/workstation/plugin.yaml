@@ -1,0 +1,86 @@
+id: workstation
+name: Ari's Workstation
+version: 1.0.0
+kind: workflow
+argus_api: ">=1.0 <2.0"
+description: Ari works on its own Windows virtual desktop, "Ari's Workstation" - searches, does tasks on websites, plays Spotify and opens apps there, and hands windows to you.
+runs_on: desktop
+needs: [session]          # your logged-in Windows session: the virtual desktops are yours
+
+workflows: [search, browse, do, spotify, in_app, fill, open_app, give, take, status]
+
+permissions:
+  files: {read: [], write: [], delete: none}
+  models: [T1, V1]          # the local models only (pages and screens never go to Claude); V1 sees windows
+
+config:
+  browser: {type: choice, choices: [chrome, edge], default: chrome, label: Ari's browser}
+  search_url: {type: text, default: "https://www.google.com/search?q={q}", label: "Search address ({q} is the search)"}
+  never_touch:
+    type: list
+    default: [directfn, 1password, bitwarden, keepass, lastpass, dashlane, keeper, credential manager]
+    label: Windows Ari never moves or works in (app or title words)
+
+ari:
+  tools:
+    - name: search_in_browser
+      description: "Open a browser on Ari's Workstation (Ari's own virtual desktop) and search the web there, for
+        when the user wants to see the results page (\"google X\", \"search X in the browser\"). To answer a
+        question yourself, use web_search instead."
+      workflow: search
+      input: {query: {type: string, description: what to search for}}
+      required: [query]
+    - name: browse_on_workstation
+      description: Open a web page in Ari's browser on Ari's Workstation (a web address).
+      workflow: browse
+      input: {url: {type: string, description: "https://... address"}}
+      required: [url]
+    - name: do_in_browser
+      description: "Do a task on a website in Ari's browser on Ari's Workstation: find something on a site, fill a
+        form, click through pages. Asks before sending, buying, deleting or posting, asks for details it doesn't
+        know, hands the window over for passwords and card numbers."
+      workflow: do
+      input:
+        goal: {type: string, description: what to do, in the user's words}
+        url: {type: string, description: "the site to start on (https://...), if known"}
+      required: [goal]
+    - name: do_in_app
+      description: "Do something in a desktop app on Ari's Workstation by pressing its buttons and filling its
+        fields by name (no mouse). Opens the app there if needed. Asks before sending, buying or deleting."
+      workflow: in_app
+      input:
+        app: {type: string, description: the app's name}
+        goal: {type: string, description: what to do, in the user's words}
+      required: [app, goal]
+    - name: fill_form
+      description: "Fill in the form in the window the user is looking at (\"fill this form\"). Only types into
+        fields and picks options; the user checks it and presses Submit or Send. Asks for details it doesn't know."
+      workflow: fill
+      input:
+        goal: {type: string, description: "anything the user said about what to put in (optional)"}
+        window: {type: string, description: "the app or window title, if not the one in front (optional)"}
+    - name: play_on_spotify
+      description: Play a song, artist or playlist on Spotify (in Ari's browser on Ari's Workstation).
+      workflow: spotify
+      input: {query: {type: string, description: "the song, artist or playlist"}}
+      required: [query]
+    - name: open_on_workstation
+      description: Start an app on Ari's Workstation, away from the user's desktop (to work in it, or keep it out of their way).
+      workflow: open_app
+      input: {name: {type: string, description: the app's name}}
+      required: [name]
+    - name: move_window_to_me
+      description: "Bring a window to the desktop the user is on now and put it in front (\"move that window to me\",
+        \"give me that\"). Without a name: the window Ari last worked in."
+      workflow: give
+      input: {name: {type: string, description: "the app or window title (optional)"}}
+    - name: take_window
+      description: "Move a window to Ari's Workstation (\"take this\"). Without a name: the window in front."
+      workflow: take
+      input: {name: {type: string, description: "the app or window title (optional)"}}
+    - name: workstation_windows
+      description: What is open on Ari's Workstation.
+      workflow: status
+
+helios:
+  node: {label: Ari's Workstation, group: pc}
