@@ -4,7 +4,8 @@
     python -m argus.console ari       the conversation with Ari as it happens
     python -m argus.console events    everything Argus does, as it happens
     python -m argus.console logs      argusd's and the worker's logs, coloured
-    python -m argus.console all       all four in one tmux window (what the laptop opens at login)
+    python -m argus.console map       the live map of your home lab: machines, links, jobs travelling between them
+    python -m argus.console all       all five in one tmux window (what the laptop opens at login)
 
 It only reads, through argusd's API (`--url`, default http://127.0.0.1:8600; the token from --token,
 $ARGUS_WORKER_TOKEN or ~/.config/argus/console.env). When argusd is restarting each view says so and carries on.
@@ -435,19 +436,194 @@ class LogsView:
         return out
 
 
+# ------------------------------------------------------------------ the map
+
+
+def machine_of(worker_id: str) -> str:
+    """Which machine a worker belongs to: "desktop-saspc" and "worker-saspc" are both saspc; "worker-calypso-now" is
+    calypso; "phone-pixel-8a" is pixel-8a."""
+    name = worker_id.lower()
+    for pre in ("desktop-", "worker-", "phone-", "gpu-"):
+        if name.startswith(pre):
+            name = name[len(pre):]
+            break
+    return name.removesuffix("-now") or worker_id
+
+
+PULSE_S = 2.5  # how long a job travelling between argusd and a machine is shown
+
+
+class MapView:
+    """The live map: argusd at the top, your machines below it, a line to each. A dot travels down a line when a job
+    is handed to that machine and back up when it finishes; each machine says what it is running right now."""
+
+    def __init__(self, api: Api):
+        self.api = api
+        self.data: dict[str, Any] = {}
+        self.names: dict[str, str] = {}  # job id -> "plugin·workflow", from job.queued
+        self.busy: dict[str, dict[str, str]] = {}  # machine -> {job id: name}
+        self.pulse: dict[str, tuple[float, int]] = {}  # machine -> (when, +1 handed out / -1 came back)
+        self.done: dict[str, int] = {}  # machine -> jobs finished while watching
+        feed = Feed(api, "job.queued,job.leased,job.running,job.succeeded,job.dead,job.retry,job.waiting", backlog=0)
+        feed.subs.append(lambda evs: self.apply(evs, time.monotonic()))
+        feed.start()
+        threading.Thread(target=self._poll, daemon=True, name="map").start()
+
+    def apply(self, evs: list[dict], now: float) -> None:
+        for e in evs:
+            kind, data = e.get("kind", ""), e.get("data") or {}
+            jid = str(data.get("job_id") or "")
+            if kind == "job.queued" and jid:
+                wf = data.get("workflow") or e.get("step") or ""
+                self.names[jid] = f"{e.get('from_component') or ''}·{wf}".strip("·")
+                self.names = dict(list(self.names.items())[-300:])
+            elif kind in ("job.leased", "job.running") and data.get("worker"):
+                m = machine_of(str(data["worker"]))
+                self.busy.setdefault(m, {})[jid] = self.names.get(jid) or "a job"
+                if kind == "job.leased":
+                    self.pulse[m] = (now, 1)
+            elif kind in ("job.succeeded", "job.dead", "job.retry", "job.waiting"):
+                for m, jobs in self.busy.items():
+                    if jobs.pop(jid, None) is not None:
+                        self.pulse[m] = (now, -1)
+                        if kind == "job.succeeded":
+                            self.done[m] = self.done.get(m, 0) + 1
+
+    def _poll(self) -> None:
+        while True:
+            d: dict[str, Any] = {}
+            for key, path in (("status", "/status"), ("ears", "/ari/listener"), ("models", "/models/ollama")):
+                try:
+                    d[key] = self.api.get(path)
+                except Exception:  # noqa: BLE001
+                    d[key] = None
+            self.data = d
+            time.sleep(2)
+
+    def machines(self) -> list[dict]:
+        """One entry per machine, from the workers argusd knows (online if any of its workers is)."""
+        got: dict[str, dict] = {}
+        for w in (self.data.get("status") or {}).get("workers") or []:
+            m = machine_of(str(w.get("id") or ""))
+            row = got.setdefault(m, {"name": m, "online": False, "caps": set(), "workers": 0})
+            row["online"] = row["online"] or w.get("state") == "online"
+            row["workers"] += 1
+            row["caps"].update(w.get("capabilities") or w.get("caps") or [])
+        return sorted(got.values(), key=lambda r: (not r["online"], r["name"]))
+
+    def render(self, t: float, height: int, width: int = 80) -> Any:
+        Console, Group, Live, Panel, Table, Text = _rich()
+        now = t  # the clock the view runner gives every frame (time.monotonic)
+        st = self.data.get("status") or {}
+        if not self.api.up and not st:
+            return offline(Text, self.api)
+        ms = self.machines()
+        w, h = max(width, 30), max(height, 8)
+        grid = [[(" ", "") for _ in range(w)] for _ in range(h)]
+
+        def put(x: int, y: int, text: str, style: str = "") -> None:
+            for i, ch in enumerate(text):
+                if 0 <= y < h and 0 <= x + i < w:
+                    grid[y][x + i] = (ch, style)
+
+        title = " MAP "
+        put(0, 0, title, f"bold black on {ACCENT}")
+        jobs = st.get("jobs") or {}
+        put(len(title) + 1, 0, f"{int(jobs.get('running') or 0)} running · {int(jobs.get('queued') or 0)} queued"
+            + (f" · {int(jobs['dead'])} dead" if jobs.get("dead") else ""), DIM)
+        hub = f"◉ {st.get('instance') or 'argusd'}  v{st.get('version', '?')}"
+        hx = (w - len(hub) - 4) // 2
+        put(hx, 2, "╭" + "─" * (len(hub) + 2) + "╮", ACCENT)
+        put(hx, 3, "│ " + hub + " │", f"bold {ACCENT}")
+        put(hx, 4, "╰" + "─" * (len(hub) + 2) + "╯", ACCENT)
+        cx = hx + (len(hub) + 4) // 2
+        if not ms:
+            put(2, 7, "no machines have reported in yet", DIM)
+        n = len(ms)
+        slot = (w - 2) // max(n, 1)
+        bw = max(14, min(slot - 2, 30))
+        top = 10 if h >= 18 else 8 if h >= 14 else 7  # where the machine boxes start
+        bus = top - (3 if top == 10 else 2)
+        centres = [1 + i * slot + (slot - bw) // 2 + bw // 2 for i in range(n)]
+        if centres:  # the lines: hub down to a bar, the bar across, a drop to each machine
+            for y in range(5, bus):
+                put(cx, y, "│", FAINT)
+            lo, hi = min(centres + [cx]), max(centres + [cx])
+            for x in range(lo, hi + 1):
+                put(x, bus, "─", FAINT)
+            put(cx, bus, "┼" if lo < cx < hi else "┬", FAINT)
+        for i, m in enumerate(ms):
+            x0 = centres[i] - bw // 2
+            on = m["online"]
+            col = OK if on else DIM
+            run = list(self.busy.get(m["name"], {}).values())
+            lines = [("● online" if on else "○ offline") + (f" · {m['workers']} workers" if m["workers"] > 1 else ""),
+                     (" ".join(sorted(m["caps"]))[:bw - 4] or "-"),
+                     ("▶ " + run[0] if run else "· idle")[:bw - 4]]
+            if len(run) > 1:
+                lines.append(f"+{len(run) - 1} more running"[:bw - 4])
+            else:
+                lines.append(f"{self.done.get(m['name'], 0)} done"[:bw - 4])
+            put(x0, top, "╭─ " + m["name"][:bw - 6] + " " + "─" * max(0, bw - 5 - len(m["name"][:bw - 6])) + "╮",
+                f"bold {col}")
+            for j, ln in enumerate(lines):
+                y = top + 1 + j
+                put(x0, y, "│" + " " * (bw - 2) + "│", col)
+                put(x0 + 2, y, ln, (ACCENT if ln.startswith("▶") else TEXT) if on else DIM)
+            put(x0, top + 1 + len(lines), "╰" + "─" * (bw - 2) + "╯", col)
+            drop = centres[i]
+            for y in range(bus + 1, top):
+                put(drop, y, "│", FAINT)
+            put(drop, bus, "┼" if drop == cx else "┬", FAINT)
+            when, way = self.pulse.get(m["name"], (-99.0, 0))
+            age = now - when
+            if 0 <= age < PULSE_S:  # a dot on its way: down when a job was handed out, up when it came back
+                frac = (age * 1.6) % 1.0
+                n_rows = top - bus - 1
+                y = bus + 1 + int((frac if way > 0 else 1 - frac) * max(n_rows, 1)) % max(n_rows, 1)
+                put(drop, min(y, top - 1), "●", ACCENT if way > 0 else OK)
+                put(cx, 5 + int(frac * max(bus - 5, 1)) % max(bus - 5, 1), "●", ACCENT if way > 0 else OK)
+        ears = (self.data.get("ears") or {}).get("listener")
+        models = [m["name"] for m in ((self.data.get("models") or {}).get("models") or [])[:3]]
+        foot = h - 2
+        if foot >= top + 6:  # room under the boxes; in a short pane the map is all there is
+            put(0, foot, "ears " + ("● listening for \"Hey Ari\"" if ears else "○ no listener"), OK if ears else DIM)
+            if models:
+                put(0, foot + 1, "models " + "  ".join(models), ACCENT2)
+        out = Text()
+        for y, row in enumerate(grid):
+            cells = "".join(c for c, _ in row).rstrip()
+            x = 0
+            while x < len(cells):
+                style = row[x][1]
+                e = x
+                while e < len(cells) and row[e][1] == style:
+                    e += 1
+                out.append(cells[x:e], style=style or None)
+                x = e
+            if y < h - 1:
+                out.append("\n")
+        return out
+
+
 # ------------------------------------------------------------------ running
 
 
 def run_view(name: str, api: Api, fps: float = 6) -> int:
     Console, Group, Live, Panel, Table, Text = _rich()
     console = Console()
-    view: Any = {"deck": Deck, "ari": AriView, "events": EventsView, "logs": LogsView}[name](api)
+    view: Any = {"deck": Deck, "ari": AriView, "events": EventsView, "logs": LogsView, "map": MapView}[name](api)
     sys.stdout.write(f"\x1b]2;{'argus' if name == 'deck' else name}\x07")  # the pane's title (tmux shows it)
     with Live(console=console, screen=True, auto_refresh=False, transient=False) as live:
         while True:
             t = time.monotonic()
             try:
-                r = view.render(t, console.size.width) if name == "deck" else view.render(t, console.size.height)
+                if name == "deck":
+                    r = view.render(t, console.size.width)
+                elif name == "map":
+                    r = view.render(t, console.size.height, console.size.width)
+                else:
+                    r = view.render(t, console.size.height)
             except Exception as e:  # noqa: BLE001 - never die on one bad frame
                 r = Text(f"  (view error: {type(e).__name__}: {e})", style=BAD)
             live.update(r, refresh=True)
@@ -455,7 +631,7 @@ def run_view(name: str, api: Api, fps: float = 6) -> int:
 
 
 TMUX_CONF = """set -g mouse on
-set -g status-style "bg=#0b0f14,fg=#6b7280"
+set -g status-style "bg=default,fg=#6b7280"
 set -g status-left "#[bg=#5eead4,fg=#0b0f14,bold] ◉ ARGUS #[default] "
 set -g status-right "#[fg=#a78bfa]%H:%M #[fg=#6b7280]· #h "
 set -g status-left-length 20
@@ -463,16 +639,17 @@ set -g pane-border-style "fg=#1f2937"
 set -g pane-active-border-style "fg=#5eead4"
 set -g pane-border-status top
 set -g pane-border-format " #[fg=#a78bfa]#{pane_title} "
-set -g window-style "bg=#0b0f14"
-set -g window-active-style "bg=#0b0f14"
+# bg=default, not a colour: the terminal's own background shows through (kitty's background_opacity)
+set -g window-style "bg=default"
+set -g window-active-style "bg=default"
 set -g default-terminal "tmux-256color"
 set -ga terminal-overrides ",*:Tc"
 """
 
 
 def run_all(argv: list[str]) -> int:
-    """All four views in one tmux window: the deck (logo, eye, status) top left, Ari top right, events bottom left
-    and logs bottom right."""
+    """All five views in one tmux window: the deck (logo, eye, status) top left, a small Ari and the live map top
+    right, events bottom left and logs bottom right."""
     if shutil.which("tmux") is None:
         print("tmux isn't installed: sudo pacman -S tmux (or run one view: python -m argus.console deck)")
         return 2
@@ -498,7 +675,8 @@ def run_all(argv: list[str]) -> int:
     ari = tmux("split-window", "-h", "-t", deck, "-l", "55%", "-P", "-F", "#{pane_id}", cmd("ari"))
     events = tmux("split-window", "-v", "-t", deck, "-l", "42%", "-P", "-F", "#{pane_id}", cmd("events"))
     logs = tmux("split-window", "-v", "-t", ari, "-l", "42%", "-P", "-F", "#{pane_id}", cmd("logs"))
-    for pane, title in ((deck, "argus"), (ari, "ari"), (events, "events"), (logs, "logs")):
+    live_map = tmux("split-window", "-h", "-t", ari, "-l", "62%", "-P", "-F", "#{pane_id}", cmd("map"))  # Ari: small
+    for pane, title in ((deck, "argus"), (ari, "ari"), (events, "events"), (logs, "logs"), (live_map, "map")):
         tmux("select-pane", "-t", pane, "-T", title)
     tmux("select-pane", "-t", deck)
     os.execvp("tmux", ["tmux", "attach", "-t", session])
@@ -507,7 +685,7 @@ def run_all(argv: list[str]) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="argus-console", description="Live terminal views of Argus.")
-    ap.add_argument("view", nargs="?", default="all", choices=["all", "deck", "ari", "events", "logs"])
+    ap.add_argument("view", nargs="?", default="all", choices=["all", "deck", "ari", "events", "logs", "map"])
     ap.add_argument("--url", default=os.environ.get("ARGUS_URL", "http://127.0.0.1:8600"))
     ap.add_argument("--token", default=None)
     a = ap.parse_args(argv)

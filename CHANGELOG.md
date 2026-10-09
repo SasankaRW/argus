@@ -9,6 +9,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 **Fix, Gmail:** clicking Allow now saves the key (it was lost: Google's answer comes after the job that asked has ended, and the job's connection no longer worked then). If saving fails, the reason is written to `data/plugins/gmail/allow-error.txt`.
 
+**Added, console map:** the laptop console has a live map of the home lab beside a smaller Ari pane: argusd at the top, each machine below it with its state, what it is running and how many jobs it finished, and a dot that travels down a line when a job is handed to that machine and back up when it finishes. The panes are now really see-through (tmux no longer paints its own background over the terminal's).
+
 **Fix, logs and apps:** a failed job's log line now carries its error (on Python 3.13 the adapter dropped it, so the Logs page said "job failed" and nothing else). Ari looks at an app's controls again when the first look is nearly empty (Spotify, Discord, Teams and VS Code build them on the first look) before falling back to the picture, and a Spotify app error is said instead of retried blind.
 
 **Changed, Spotify:** "play <song> on Spotify" now plays in the Spotify app on Ari's Workstation (you're already signed in there; no sign-in in Ari's browser, which Spotify blocks). Ari's browser is the fallback when the app isn't installed, or set `spotify: web` in the workstation settings. Gmail says plainly when `GMAIL_CLIENT_SECRET` is the client ID instead of the secret.

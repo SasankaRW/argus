@@ -269,9 +269,10 @@ order. The `EventHub` is woken after each commit, reads the new rows and hands t
 - A subscriber that falls behind is **dropped**. It reconnects with its last `seq` and replays the gap. One slow
   browser can never slow Argus down.
 - `argus-events` (`tail.py`) is the same stream in a terminal.
-- `console.py` (`python -m argus.console`) is the laptop's live terminal: one window split in four (the Argus logo
-  with an eye that follows Ari and the machines, jobs and models; Ari's conversation; events; logs). It only reads
-  through argusd's API. `deploy/linux/console-setup.sh` opens it by itself when Hyprland starts.
+- `console.py` (`python -m argus.console`) is the laptop's live terminal: one window split in five (the Argus logo
+  with an eye that follows Ari and the machines, jobs and models; a small Ari conversation; the live map of the
+  home lab, where a dot travels to a machine when a job is handed to it and back when it finishes; events; logs).
+  It only reads through argusd's API. `deploy/linux/console-setup.sh` opens it by itself when Hyprland starts.
 
 Events are kept for `events.retention_days` (90).
 
