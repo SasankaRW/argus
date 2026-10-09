@@ -280,3 +280,34 @@ def test_spotify_without_the_app_uses_the_web_player(monkeypatch):
     c2.find_app = lambda name: pytest.fail("not looked for")
     with pytest.raises(Stop):
         ws.spotify(c2)
+
+
+# ---- an app that lists its controls only after the first look (Spotify, Discord, VS Code: Chromium)
+
+class LateUia:
+    def __init__(self, counts):
+        self.counts = list(counts)
+        self.looks = 0
+
+    def snapshot(self):
+        self.looks += 1
+        n = self.counts.pop(0) if len(self.counts) > 1 else self.counts[0]
+        return {"items": [{"n": i} for i in range(n)]}
+
+
+def test_an_app_that_lists_its_controls_late_is_looked_at_again(monkeypatch):
+    u = LateUia([0, 1, 12])
+    monkeypatch.setattr(ws, "surface_for", lambda c, h: u)
+    c = ctx(FakeDesk([]))
+    c.sleep = lambda s: None
+    assert ws.pick_surface(c, 5) is u and u.looks == 3  # the third look had its controls: no picture needed
+
+
+def test_an_app_with_no_controls_goes_to_the_picture_after_four_looks(monkeypatch):
+    u = LateUia([0])
+    monkeypatch.setattr(ws, "surface_for", lambda c, h: u)
+    c = ctx(FakeDesk([]))
+    c.sleep = lambda s: None
+    made = []
+    c.vision_for = lambda hwnd, uia: made.append((hwnd, uia)) or "pictured"
+    assert ws.pick_surface(c, 5) == "pictured" and u.looks == 4 and made == [(5, u)]
