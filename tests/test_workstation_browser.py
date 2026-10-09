@@ -155,7 +155,7 @@ def test_the_page_cannot_send_ari_to_local_addresses():
 def plug_ctx(desk, b, inp, **extra):
     c = ctx(extra.pop("decisions", []))
     c.input, c.desk, c.browser, c.browser_pids = inp, desk, b, {77}
-    c.config = {"never_touch": ["directfn"], "browser": "chrome"}
+    c.config = {"never_touch": ["directfn"], "browser": "chrome", "spotify": "web"}  # (the app route: test_workstation)
     for k, v in extra.items():
         setattr(c, k, v)
     return c

@@ -212,8 +212,7 @@ class AriBrowser:  # pragma: no cover - needs Playwright and a real Chrome
                 chromium_sandbox=True,  # Playwright turns the sandbox off by default; sites (Spotify, Google) then
                 # call the browser "less secure" and refuse the sign-in
                 ignore_default_args=["--enable-automation"],
-                args=["--no-first-run", "--no-default-browser-check", "--disable-features=Translate",
-                      "--disable-blink-features=AutomationControlled"])
+                args=["--no-first-run", "--no-default-browser-check", "--disable-features=Translate"])
             self.ctx.on("page", lambda p: setattr(self, "page", p))  # a link that opened a new tab: work there
             self.page = self.ctx.pages[0] if self.ctx.pages else self.ctx.new_page()
 

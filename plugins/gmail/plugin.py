@@ -136,6 +136,9 @@ def _client(ctx: Context) -> tuple[str, str]:
     if not cid or not sec:
         raise PermanentError("Gmail isn't set up yet: put GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET in the PC's .env "
                              "(docs/setup.md, Gmail)")
+    if str(sec).strip().endswith(".apps.googleusercontent.com") or str(cid).strip() == str(sec).strip():
+        raise PermanentError("GMAIL_CLIENT_SECRET in the PC's .env is the client ID, not the secret: the secret "
+                             "starts with GOCSPX- (Google Cloud, Clients, your client, Client secrets)")
     return cid, sec
 
 

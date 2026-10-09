@@ -184,7 +184,7 @@ def test_a_failed_exchange_leaves_the_reason(tmp_path):
     q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(opened[0][0]).query))
     urllib.request.urlopen(f"{q['redirect_uri']}/?state={q['state']}&code=BAD").read()
     for _ in range(100):
-        if (tmp_path / "allow-error.txt").exists():
+        if (tmp_path / "allow-error.txt").exists() and (tmp_path / "allow-error.txt").read_text():
             break
         time.sleep(0.05)
     assert "bad code" in (tmp_path / "allow-error.txt").read_text()
@@ -206,6 +206,13 @@ def test_a_wrong_answer_to_the_address_is_ignored(tmp_path):
 def test_not_set_up_yet_is_said_plainly(tmp_path):
     out = gm.new(ctx(tmp_path, secrets_ok=False))
     assert not out["done"] and "GMAIL_CLIENT_ID" in out["problem"]
+
+
+def test_the_client_id_pasted_as_the_secret_is_said_plainly(tmp_path):
+    c = ctx(tmp_path)
+    c.secrets = SimpleNamespace(get=lambda k, d=None: "123-abc.apps.googleusercontent.com")
+    out = gm.new(c)
+    assert not out["done"] and "GOCSPX" in out["problem"] and not (tmp_path / "token.json").exists()
 
 
 def test_a_key_google_refuses_asks_again(tmp_path):
