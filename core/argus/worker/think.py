@@ -341,7 +341,7 @@ def mail_said(name: str, r: dict) -> str:
     lead = f"From {_who(str(r.get('from') or ''))}, {str(r.get('subject') or 'no subject').rstrip('.')}."
     if not text:
         return lead + " It's empty, or just pictures."
-    tail = "" if r.get("whole") else " That's only the start: I couldn't open the whole thing."
+    tail = "" if r.get("whole") else " That's just the preview."
     if r.get("whole") and len(str(r.get("text") or "")) > 700:
         tail = " That's the gist; the rest is on my workstation."
     return f"{lead} It says: {text}{tail}"

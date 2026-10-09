@@ -5,7 +5,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
-**Added:** "check my mails": Ari reads your unread Gmail in its browser on the Workstation (signed in once) and says who wrote and about what; "read the second one" / "what does the mail from Kaancha say" reads one out; a plain "yes" after the list reads the newest. Never sent to Claude.
+**Added:** Gmail for Ari (plugin `gmail`): "check my mails" says who wrote and about what; "read the second one" / "what does the mail from Kaancha say" reads one out. Read-only through Google's Gmail API, allowed once in your own Chrome (Sasanka profile); the key stays on the PC and mail never goes to Claude. Replaces reading Gmail in Ari's browser, which needed a second sign-in.
 
 **Fix, Ari's Workstation by voice:** moving windows is understood said loosely ("take the Chrome window to your workstation", "bring Claude here", "now move it to my desktop", "take this screen"); "open Chrome and check my emails" is a task in Ari's browser on the Workstation (Gmail), not Chrome on your desktop; "open X on your workstation" opens it there; Ari's own island is never taken; app nicknames ("VS Code") find their window.
 

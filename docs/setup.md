@@ -264,10 +264,6 @@ daily cap.
     Ari's browser, driven inside the page (never your mouse or keyboard), one step at a time by the local model. It
     asks before sending, buying, deleting or posting; asks you for details it doesn't know; hands you the window for
     passwords and card numbers. What worked is kept as a recipe and replayed next time.
-  - **"Check my mails":** Ari reads your Gmail in its browser and tells you who wrote and about what (the unread
-    ones, newest first); "read the second one" or "what does the mail from Kaancha say" reads that one out. Sign in
-    to Gmail once in that window when Ari hands it to you. Your mail stays on the PC: these tools never go to
-    Claude.
   - **"Play <song> on Spotify":** Spotify's web player in Ari's browser. Sign in once in that window when Ari hands
     it to you.
   - **Tasks in desktop apps** ("in Calculator, work out …"): the app on the Workstation, its buttons and fields
@@ -289,6 +285,19 @@ daily cap.
   - **"Fill this form":** the window you're looking at (a web page or an app). Ari only types into fields and picks
     options, asks for what it doesn't know (tick "remember" for details like your email), and never presses Submit
     or Send: you check it and press it. Passwords, card, passport and account numbers are yours to type.
+- **Gmail** (`gmail`): "check my mails" (or "any new emails?", "open Chrome and check my emails") says how many
+  unread mails you have, who from and about what; "read the second one" or "what does the mail from Kaancha say"
+  reads one out; a plain "yes" after the list reads the newest. Read-only through Google's Gmail API: Argus can't
+  send or delete, reading doesn't mark mail as read, and your mail never goes to Claude. Set it up once:
+  1. console.cloud.google.com: a new project (e.g. "Argus"); APIs & Services > Library > **Gmail API** > Enable.
+  2. Google Auth Platform: Branding (app name "Argus", your email), Audience: External, add your Gmail as a test
+     user, then **Publish app** (in "Testing" Google asks you to allow it again every 7 days; published, it shows
+     "Google hasn't verified this app": Advanced > continue, it's your own).
+  3. Clients > Create client > **Desktop app**. Put its ID and secret in the PC's `.env`:
+     `GMAIL_CLIENT_ID=...` and `GMAIL_CLIENT_SECRET=...`, then `.\scripts\pc-worker.ps1 restart`.
+  4. Add `gmail` to `plugins.live` on the laptop, and say "check my mails". The first time Ari opens Google's page
+     in your own Chrome (the profile in the plugin's `chrome_profile`, Sasanka by default): click Allow, then ask
+     again. The key is kept in `data/plugins/gmail/token.json` on the PC (never in Git).
 - **PC keyboard** (`pc-keys`): "type 'see you at 6' ", "press ctrl+s" in the window in front (always asks
   first; never types passwords).
 - **PC status** (`pc-system`): "how's the PC doing?", "what's using my GPU?", "how much space is left on G?",
