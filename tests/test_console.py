@@ -1,5 +1,5 @@
 """The terminal console (python -m argus.console): each view renders from argusd's answers, the eye follows Ari,
-and the tmux layout puts the four views where they belong. A fake argusd; no network, no real terminal."""
+and the tmux layout puts the five views where they belong. A fake argusd; no network, no real terminal."""
 
 from __future__ import annotations
 
@@ -138,9 +138,9 @@ def test_the_token_comes_from_a_file(tmp_path):
     assert con.token_from(tmp_path / "missing") is None
 
 
-def test_the_four_views_are_laid_out_in_one_tmux_window(monkeypatch, tmp_path):
+def test_the_five_views_are_laid_out_in_one_tmux_window(monkeypatch, tmp_path):
     calls: list[list[str]] = []
-    panes = iter(["%0", "%1", "%2", "%3"])
+    panes = iter(["%0", "%1", "%2", "%3", "%4"])
 
     class Done:
         returncode = 0
@@ -165,6 +165,7 @@ def test_the_four_views_are_laid_out_in_one_tmux_window(monkeypatch, tmp_path):
     assert any("split-window -h -t %0" in c and "console ari" in c for c in flat)       # Ari: the right half
     assert any("split-window -v -t %0" in c and "console events" in c for c in flat)    # events: under the deck
     assert any("split-window -v -t %1" in c and "console logs" in c for c in flat)      # logs: under Ari
+    assert any("split-window -h -t %1" in c and "console map" in c for c in flat)       # the map: beside Ari
     assert [c for c in flat if "select-pane -t %0 -T argus" in c]
     assert attached == [["tmux", "attach", "-t", "argus"]]
     assert (tmp_path / ".config" / "argus" / "console.tmux.conf").read_text().startswith("set -g mouse on")
@@ -173,3 +174,56 @@ def test_the_four_views_are_laid_out_in_one_tmux_window(monkeypatch, tmp_path):
 def test_without_tmux_it_says_how_to_get_it(monkeypatch, capsys):
     monkeypatch.setattr(con.shutil, "which", lambda n: None)
     assert con.run_all([]) == 2 and "pacman -S tmux" in capsys.readouterr().out
+
+
+# ---- the live map
+
+def test_workers_belong_to_machines():
+    assert con.machine_of("desktop-saspc") == con.machine_of("worker-saspc") == "saspc"
+    assert con.machine_of("worker-calypso-now") == con.machine_of("worker-calypso") == "calypso"
+    assert con.machine_of("phone-pixel-8a") == "pixel-8a"
+
+
+def map_with(workers):
+    api = FakeApi()
+    api.answers["/status"]["workers"] = workers
+    mv = con.MapView(api)
+    wait_for(lambda: mv.data.get("status"))
+    return mv
+
+
+def test_the_map_shows_the_machines_and_what_they_run():
+    mv = map_with([{"id": "worker-calypso", "state": "online", "capabilities": ["laptop"]},
+                   {"id": "desktop-saspc", "state": "online", "capabilities": ["desktop", "session"]},
+                   {"id": "worker-saspc", "state": "online", "capabilities": ["gpu"]},
+                   {"id": "phone-pixel-8a", "state": "offline"}])
+    now = time.monotonic()
+    mv.apply([{"kind": "job.queued", "from_component": "gmail", "data": {"job_id": "j9", "workflow": "new"}},
+              {"kind": "job.leased", "data": {"job_id": "j9", "worker": "desktop-saspc"}}], now)
+    out = text_of(mv.render(now, 24, 110), 110)
+    for want in ("MAP", "calypso", "saspc", "pixel-8a", "● online", "○ offline", "▶ gmail·new", "2 workers"):
+        assert want in out, want
+    assert "ears" in out and "qwen2.5vl:7b" in out
+    mv.apply([{"kind": "job.succeeded", "data": {"job_id": "j9"}}], now + 1)
+    out = text_of(mv.render(now + 1, 24, 110), 110)
+    assert "▶ gmail" not in out and "1 done" in out and "· idle" in out
+
+
+def test_a_dot_travels_while_a_job_moves_and_stops_after():
+    mv = map_with([{"id": "worker-saspc", "state": "online"}])
+    now = time.monotonic()
+    mv.apply([{"kind": "job.leased", "data": {"job_id": "j1", "worker": "worker-saspc"}}], now)
+    assert mv.pulse["saspc"][1] == 1
+    moving = text_of(mv.render(now, 24, 80), 80)
+    assert "●" in moving.split("saspc")[0].replace("● online", "")  # a dot on the line above the machine's box
+    quiet = text_of(con.MapView.render(mv, now + 60, 24, 80), 80)
+    assert "●" not in quiet.split("saspc")[0]
+
+
+def test_the_map_fits_a_small_pane_and_says_when_argusd_is_away():
+    mv = map_with([{"id": "worker-calypso", "state": "online"}, {"id": "worker-saspc", "state": "online"}])
+    out = text_of(mv.render(0.0, 10, 40), 40)
+    assert "calypso" in out and "saspc" in out
+    gone = con.MapView(FakeApi(down=True))
+    time.sleep(0.2)
+    assert "isn't answering" in text_of(gone.render(0.0, 20, 80))
