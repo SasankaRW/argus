@@ -20,7 +20,9 @@ import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
@@ -83,6 +85,22 @@ class MainActivity : Activity() {
                 if (!inside) startActivity(Intent(Intent.ACTION_VIEW, req.url))
                 return !inside
             }
+
+            // A blank page told nothing: say why Helios didn't load and how to change the address
+            override fun onReceivedError(view: WebView, req: WebResourceRequest, err: WebResourceError) {
+                if (req.isForMainFrame) problem(view, "Can't reach Argus at ${prefs.url}", err.description.toString())
+            }
+
+            override fun onReceivedHttpError(view: WebView, req: WebResourceRequest, resp: WebResourceResponse) {
+                if (req.isForMainFrame && resp.statusCode >= 400) {
+                    val why = when (resp.statusCode) {
+                        401, 403 -> "The worker token was refused (check it in Connection)."
+                        404 -> "Argus answered but has no Helios page (the Helios build is missing on that machine)."
+                        else -> "Argus answered with error ${resp.statusCode}."
+                    }
+                    problem(view, "Helios didn't load", why)
+                }
+            }
         }
         w.webChromeClient = object : WebChromeClient() {
             // Ari's microphone in Helios
@@ -108,6 +126,16 @@ class MainActivity : Activity() {
             w.url == null -> w.loadUrl("${prefs.url}/helios/?app=1&token=${Uri.encode(prefs.token)}")
         }
         setContentView(w)
+    }
+
+    private fun problem(view: WebView, title: String, why: String) {
+        fun esc(t: String) = t.replace("&", "&amp;").replace("<", "&lt;")
+        val page = "<html><body style='background:#0b0f14;color:#e5e7eb;font-family:sans-serif;padding:28px'>" +
+            "<h3>${esc(title)}</h3><p style='color:#9ca3af'>${esc(why)}</p>" +
+            "<p style='color:#9ca3af'>Check that Tailscale is on, the address is right (the laptop is " +
+            "<b>calypso</b> now, not the PC), and Argus is running. Long-press the Argus icon &gt; Connection to change it.</p>" +
+            "<p><a href='${Prefs(this).url}/helios/?app=1&token=${Uri.encode(Prefs(this).token)}' style='color:#5eead4'>Try again</a></p></body></html>"
+        view.loadDataWithBaseURL(null, page, "text/html", "utf-8", null)
     }
 
     @Deprecated("Activity.onBackPressed is fine here: no AndroidX")
