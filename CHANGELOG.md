@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+**Fix, phone app:** a blank screen now says why: it can't reach Argus at that address (and that the laptop is `calypso` now), the token was refused, or Helios isn't built there, with a Try again link. Rebuild the app in Android Studio to get it.
+
 **Added:** Gmail for Ari (plugin `gmail`): "check my mails" says who wrote and about what; "read the second one" / "what does the mail from Kaancha say" reads one out. Read-only through Google's Gmail API, allowed once in your own Chrome (Sasanka profile); the key stays on the PC and mail never goes to Claude. Replaces reading Gmail in Ari's browser, which needed a second sign-in.
 
 **Fix, Gmail:** clicking Allow now saves the key (it was lost: Google's answer comes after the job that asked has ended, and the job's connection no longer worked then). If saving fails, the reason is written to `data/plugins/gmail/allow-error.txt`.
