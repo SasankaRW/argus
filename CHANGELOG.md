@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+**Fix, Spotify:** when Ari had to ask you something while working in the Spotify app, the job crashed ("call ctx.approve() inside ctx.step"); the question now reaches you.
+
 **Fix, Spotify:** "play X on Spotify" no longer stops at "Spotify is already open on your desktop": the open Spotify window comes over to Ari's Workstation and plays the song.
 
 **Fix, phone app:** a blank screen now says why: it can't reach Argus at that address (and that the laptop is `calypso` now), the token was refused, or Helios isn't built there, with a Try again link. Rebuild the app in Android Studio to get it.

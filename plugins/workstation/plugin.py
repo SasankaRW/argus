@@ -638,13 +638,15 @@ def fill(ctx: Context):
 class SimpleCtx:
     """The same job, another workflow's input (open_app inside in_app)."""
 
-    def __init__(self, ctx: Context, inp: dict):
-        self._ctx, self.input = ctx, inp
+    def __init__(self, ctx: Context, inp: dict, own_steps: bool = False):
+        self._ctx, self.input, self._own = ctx, inp, own_steps
 
     def __getattr__(self, k: str) -> Any:
         return getattr(self._ctx, k)
 
     def step(self, name: str, fn: Any, *a: Any, **k: Any) -> Any:
+        if self._own:  # called from a workflow's top level: its steps are real ones (an ask must be inside one)
+            return self._ctx.step(name, fn, *a, **k)
         return fn(*a, **k)  # already inside the caller's step
 
 
@@ -715,7 +717,7 @@ def spotify(ctx: Context):
                     "the results (hover it and press its Play button, or double-click it). "
                     "Done when a song is playing.")
             try:
-                out = in_app(SimpleCtx(ctx, {"app": "Spotify", "goal": goal}))
+                out = in_app(SimpleCtx(ctx, {"app": "Spotify", "goal": goal}, own_steps=True))
             except PermanentError:
                 raise
             except Exception as e:  # noqa: BLE001 - say what broke, instead of the job being retried blind
