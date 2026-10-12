@@ -313,3 +313,12 @@ def test_an_app_with_no_controls_goes_to_the_picture_after_four_looks(monkeypatc
     made = []
     c.vision_for = lambda hwnd, uia: made.append((hwnd, uia)) or "pictured"
     assert ws.pick_surface(c, 5) == "pictured" and u.looks == 4 and made == [(5, u)]
+
+
+def test_spotify_open_on_your_desktop_is_brought_over_and_played(monkeypatch):
+    monkeypatch.setattr(ws, "in_app", lambda c: {"done": True})
+    d = FakeDesk([(5, "Spotify Premium", "spotify", "you")])
+    c = ctx(d, {"query": "Famous by Kanye West"})
+    c.find_app = lambda name: pytest.fail("the open window is enough")
+    out = ws.spotify(c)
+    assert out["done"] and d.on[5] == "ari"
