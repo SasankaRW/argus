@@ -322,3 +322,17 @@ def test_spotify_open_on_your_desktop_is_brought_over_and_played(monkeypatch):
     c.find_app = lambda name: pytest.fail("the open window is enough")
     out = ws.spotify(c)
     assert out["done"] and d.on[5] == "ari"
+
+
+def test_spotify_questions_to_you_run_inside_a_real_step(monkeypatch):
+    steps = []
+
+    def fake_in_app(c):  # what run_task does when Ari has to ask you: a step of the job itself
+        c.step("spotify ask 1", lambda: "asked")
+        return {"done": True}
+
+    monkeypatch.setattr(ws, "in_app", fake_in_app)
+    d = FakeDesk([(5, "Spotify Premium", "spotify", "ari")])
+    c = ctx(d, {"query": "Famous"})
+    c.step = lambda name, fn, *a, **k: (steps.append(name), fn(*a, **k))[1]
+    assert ws.spotify(c)["done"] and "spotify ask 1" in steps
