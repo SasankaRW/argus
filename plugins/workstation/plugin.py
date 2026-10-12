@@ -681,6 +681,19 @@ def spotify_first(page: Any) -> dict:  # pragma: no cover - a real page
     return spotify_now(page)
 
 
+def _bring_over(ctx: Context, name: str) -> bool:
+    """A window you have open on your own desktop goes to the Workstation; True when there is such a window."""
+    desk = desk_for(ctx)
+    w = find(desk.windows(), name, _never(ctx))
+    if w is None:
+        return False
+    ws = desk.workstation()
+    if desk.desktop_of(w.hwnd) != ws:
+        desk.move(w.hwnd, ws)
+    _remember(ctx, desk, w)
+    return True
+
+
 @workflow(PLUGIN, "spotify")
 def spotify(ctx: Context):
     """"Play <song> on Spotify": in the Spotify app on Ari's Workstation (you're signed in there already); with no app
@@ -694,7 +707,9 @@ def spotify(ctx: Context):
     if ctx.dry_run:
         return {"would_play": q, "dry_run": True}
     if str(ctx.config.get("spotify") or "app") == "app":  # the app you're already signed in to
-        found = (getattr(ctx, "find_app", None) or start_menu_app)("spotify")
+        # Spotify already open on your desktop: it comes over to me (you asked me to play something in it)
+        mine = ctx.step("bring Spotify over", _bring_over, ctx, "spotify")
+        found = mine or (getattr(ctx, "find_app", None) or start_menu_app)("spotify")
         if found is not None:
             goal = (f'Search for "{q}" (click the Search box, type it, press Enter), then play the first song in '
                     "the results (hover it and press its Play button, or double-click it). "
