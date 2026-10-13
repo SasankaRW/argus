@@ -1,0 +1,53 @@
+id: vault
+name: Notes vault
+version: 1.0.0
+kind: workflow
+argus_api: ">=1.0 <2.0"
+description: 'Your Obsidian vault (~/Vault, synced with Syncthing): whatever lands in "00 Inbox" (from Obsidian, Ari, the share menu or Life Hub "learn: ...") is filed under the right topic and linked to related notes, your words unchanged. Notes you mark #enhance are improved by Claude, keeping your original text.'
+runs_on: desktop             # where ~/Vault is; the laptop after the move
+
+triggers:
+  - folder_watch: {workflow: file, paths: ["~/Vault/00 Inbox"], match: "*.md", stable_for: 5m}   # 5 minutes after you stop typing
+  - schedule: {workflow: tidy, cron: "*/10 * * * *"}   # Life Hub notes, marked notes, anything the watch missed
+  - manual: {workflow: tidy, label: File my inbox now}
+
+workflows: [file, tidy, capture, enhance, find]
+
+permissions:
+  files: {read: ["~/Vault"], write: ["~/Vault"], edit: ["~/Vault"], delete: none}
+  models: [T1, V1]            # T1 picks the place; V1 reads text in shared pictures
+  claude_calls_per_day: 20    # enhancing marked notes (with web search for facts and sources)
+  network: ["*", "config:lifehub_url"]   # shared links (public pages only) and your Life Hub
+  secrets: [LIFEHUB_API_KEY]
+
+config:
+  filing: {type: choice, choices: [ask, auto], default: ask, label: "Where each note goes: ask me every time (ask), or only when unsure (auto)"}
+  enhance_per_day: {type: int, default: 10, label: Enhance at most this many notes a day}
+  lifehub_url: {type: text, default: "http://127.0.0.1:8081", label: "Life Hub address (for its learn: notes; empty: off)"}
+
+share:
+  - {workflow: capture, label: Save to my notes vault, accepts: [url, text, image]}
+
+ari:
+  tools:
+    - name: save_to_vault
+      description: 'Put something the user learned or wants to keep on a topic into their Obsidian notes vault ("add to my notes on Docker: ...", "I learned that ...", "save this to my vault"). It gets filed under the right topic.'
+      workflow: capture
+      input:
+        text: {type: string, description: "what to keep, in the user's words"}
+        topic: {type: string, description: "the topic, if the user named one (optional)"}
+        enhance: {type: boolean, description: "true if the user asked to improve or expand it"}
+      required: [text]
+    - name: enhance_vault_note
+      description: Improve one of the user's vault notes with Claude (clearer structure, explanation, examples, sources), keeping their original text. Use when the user asks to enhance, expand or clean up their note on a topic.
+      workflow: enhance
+      input: {topic: {type: string, description: "the note's topic or title"}}
+      required: [topic]
+    - name: find_in_vault
+      description: Search the user's Obsidian notes vault (things they learned) by meaning and words; returns matching notes with their topic, area and a passage.
+      workflow: find
+      input: {query: {type: string, description: "what to look for, in a few words"}}
+      required: [query]
+
+helios:
+  node: {label: Notes vault, group: files}

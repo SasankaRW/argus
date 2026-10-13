@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Notes vault:** an Obsidian vault synced over Tailscale with Syncthing. Notes from Obsidian, Ari, the share menu or Life Hub `learn:` are filed under the right topic and linked; notes marked `#enhance` are improved by Claude, keeping your own text.
+
 **Added, game mode:** the island's new game key (and Helios > Power > Game mode, or "game mode on") gives the PC's GPU to a game: Ari goes off, the PC's local models are unloaded from Ollama and refused until it ends, Ari's voice and "Hey Ari" stop. Ari's text answers use Claude meanwhile; other model jobs wait. By itself (`ari.game_mode_auto`, the island's "auto" row or Settings): on after a game has been in front for 20 s, off 60 s after it closes, but never ends a game mode you turned on. Helios shows how much video memory it freed.
 
 **Added, the model call log:** every model call (Ari, plugins, the workstation) is kept on Argus: which model, the playbook and messages as sent, the raw reply, accepted or rejected (and why) or the error, the time and tokens. Helios > Models > **Calls** lists them live with filters (model, who asked, rejected or failed, text) and shows what was sent and the reply side by side; each job's Inspector has its **Model calls** in order, so an escalation reads as a chain. Pictures are never kept. Kept 7 days and 200 MB at most (`models.call_log`, `call_log_days`, `call_log_mb`, `call_log_prompts`).
