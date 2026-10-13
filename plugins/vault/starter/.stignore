@@ -1,0 +1,5 @@
+// Obsidian's per-device files: each device keeps its own layout and cache
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+.obsidian/cache
+.trash

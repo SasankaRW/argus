@@ -107,6 +107,8 @@ class Trigger(_M):
 class FilePerms(_M):
     read: list[str] = Field(default_factory=list)
     write: list[str] = Field(default_factory=list)
+    # folders where existing files may be rewritten (ctx.files.replace_text); the old version is kept first
+    edit: list[str] = Field(default_factory=list)
     delete: Literal["none", "recycle_bin"] = "none"
 
 

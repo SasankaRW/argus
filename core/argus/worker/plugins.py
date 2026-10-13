@@ -41,6 +41,11 @@ class PermissionDenied(PermanentError):  # noqa: N818 - reads naturally at the c
     """The plugin asked for something its manifest does not allow. Retrying won't help: the job goes dead."""
 
 
+class FileChanged(Exception):  # noqa: N818 - reads naturally at the call site
+    """replace_text: the file changed after it was read (you or a sync). An ordinary error, so the job retries
+    later and reads it again."""
+
+
 def _expand(p: str) -> Path:
     return Path(os.path.expandvars(os.path.expanduser(p))).resolve()
 
@@ -54,6 +59,7 @@ class Files:
         self.plugin = plugin
         self.read_roots = [_expand(p) for p in perms.get("read", [])]
         self.write_roots = [_expand(p) for p in perms.get("write", [])]
+        self.edit_roots = [_expand(p) for p in perms.get("edit", [])]
         self.delete = perms.get("delete", "none")
         self.allowed = [_expand(p) for p in rules.get("allowed", [])]
         self.blocked = [_expand(p) for p in rules.get("blocked", [])]
@@ -237,6 +243,40 @@ class Files:
                 pass
         self._trace("file.moved", info)
         return str(target)
+
+    def replace_text(self, path: str | Path, text: str, *, expect_mtime: float | None = None,
+                     encoding: str = "utf-8") -> str:
+        """Rewrite an existing file (only in permissions.files.edit folders). The old version is copied to
+        ~/.argus-trash/versions/<date>/ first, so it can always be brought back. `expect_mtime`: the file's
+        modified time when you read it; if it changed since (you edited it, or a sync brought a newer copy),
+        FileChanged is raised and nothing is written. Returns the path of the kept old version."""
+        p = self._check(path, True)
+        if not _within(p, self.edit_roots):
+            raise PermissionDenied(f"{self.plugin} may not change existing files in {p.parent} "
+                                   "(add the folder under permissions.files.edit)")
+        if not p.is_file():
+            raise FileNotFoundError(str(p))
+        if expect_mtime is not None and abs(p.stat().st_mtime - expect_mtime) > 0.001:
+            raise FileChanged(f"{p.name} changed since it was read")
+        data = text.encode(encoding)
+        backup = ""
+        if not self.dry_run:
+            old = p.read_bytes()
+            if old == data:
+                return ""
+            day = Path.home() / ".argus-trash" / "versions" / time.strftime("%Y-%m-%d")
+            day.mkdir(parents=True, exist_ok=True)
+            dst = day / f"{time.strftime('%H%M%S')} {p.name}"
+            i = 1
+            while dst.exists():
+                dst, i = day / f"{time.strftime('%H%M%S')} ({i}) {p.name}", i + 1
+            dst.write_bytes(old)
+            backup = str(dst)
+            tmp = p.with_name(f".{p.name}.argus-tmp")
+            tmp.write_bytes(data)
+            os.replace(tmp, p)
+        self._trace("file.updated", {"path": str(p), "size": len(data), "backup": backup, "dry_run": self.dry_run})
+        return backup
 
     def remove_empty_dir(self, path: str | Path) -> bool:
         """Remove a folder only if it is empty (nothing is lost, so write permission is enough)."""
