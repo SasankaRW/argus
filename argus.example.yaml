@@ -42,6 +42,7 @@ ari:
   # expressive_url: http://127.0.0.1:8611   # Ari's one voice (Chatterbox on the PC's GPU; docs/setup.md)
   hearing: browser         # browser | whisper (Whisper on the PC's GPU; the browser while the PC is off)
   whisper_model: small.en
+  languages: [en]          # talk in other languages (Sinhala, a video) is ignored, not guessed at; [] = off
 
 brief:
   enabled: true

@@ -349,6 +349,32 @@ def whisper(name: str, names: bool = True) -> Callable[[object], str]:
     return run
 
 
+LANG_SECONDS = 6  # the language is told from the first seconds
+
+
+def accepted_share(probs: dict[str, float], accept: list[str]) -> float:
+    """How sure the language check is that this is one of the accepted languages (0..1)."""
+    return float(sum(probs.get(code, 0.0) for code in accept))
+
+
+def language_check(name: str, accept: list[str]) -> Callable[[object], float]:
+    """A small multilingual Whisper as a function: audio -> how sure it is one of `accept` (0..1). English-only
+    models can't tell: they write any speech down as English, which is how Sinhala became made-up questions."""
+    from .worker.hear import model
+
+    m = model(name)
+    lock = threading.Lock()
+
+    def run(audio) -> float:
+        with lock:
+            _, info = m.transcribe(audio[: LANG_SECONDS * RATE], beam_size=1,  # type: ignore[attr-defined]
+                                   without_timestamps=True, condition_on_previous_text=False)
+        probs = dict(getattr(info, "all_language_probs", None) or [(info.language, info.language_probability)])
+        return accepted_share(probs, accept)
+
+    return run
+
+
 FOLLOW_MAX_WORDS = 25
 
 
@@ -358,7 +384,8 @@ def follow_ok(text: str) -> bool:
     return not STRICT["on"] and len(text.split()) <= FOLLOW_MAX_WORDS
 
 
-def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device) -> int:
+def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device,
+         lang_t: Callable | None = None) -> int:
     """Talking with Ari: "Hey Ari", then back and forth for a few seconds (voice_live.py says how)."""
     import numpy as np
     import sounddevice as sd  # type: ignore[import-not-found]
@@ -434,7 +461,7 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device) -> i
                    ask=ask, player=player, report=client.state, chime=lambda: player.cue(vl.chime_samples(), RATE),
                    idle_s=float(cfg.ari.talk_idle_s), on_false_barge=gate.fooled,
                    live_words=wake_t if cfg.ari.live_words else None, show=client.state, ask_async=True,
-                   quiet=lambda: MIC["busy"] is not None, follow_ok=follow_ok)
+                   quiet=lambda: MIC["busy"] is not None, follow_ok=follow_ok, language=lang_t)
     spoke_up = [0.0]
     voc_at = [time.monotonic()]
 
@@ -741,7 +768,14 @@ def main(argv: list[str] | None = None) -> int:
         def cmd_t(audio):  # type: ignore[misc]
             return (big["t"] or small_cmd)(audio)
     device = int(args.device) if args.device and args.device.isdigit() else args.device
-    return live(cfg, client, wake_t, cmd_t, device)
+    lang_t = None
+    accept = [str(x).strip().lower() for x in (cfg.ari.languages or []) if str(x).strip()]
+    if accept and str(cfg.ari.language_model or "").strip():
+        try:
+            lang_t = language_check(str(cfg.ari.language_model), accept)
+        except Exception as e:  # noqa: BLE001 - no language check: Ari still listens, as before
+            log.warning("no language check", extra={"model": cfg.ari.language_model, "error": str(e)[:160]})
+    return live(cfg, client, wake_t, cmd_t, device, lang_t)
 
 
 if __name__ == "__main__":

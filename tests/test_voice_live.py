@@ -409,3 +409,23 @@ def test_the_model_is_let_go_while_you_are_away_and_loaded_when_you_are_back(mon
     except StopIteration:
         pass
     assert len(pings) == 2  # at the start, then not while away, then at once when back
+
+
+def test_talk_in_another_language_is_not_turned_into_a_question():
+    talk, p, asked, heard, clock = make(heard=["Hey Ari, what's running?"])
+    shares = [0.05]  # Sinhala with a friend: the language check is sure it isn't English
+    talk.language = lambda audio: shares.pop(0)
+    speak(talk)
+    assert asked == [] and heard == ["Hey Ari, what's running?"]  # not even written down
+
+
+def test_english_passes_the_language_check_and_follow_ups_need_more_certainty():
+    talk, p, asked, heard, clock = make(heard=["Hey Ari, hi", "and the backups?"])
+    shares = [0.9, 0.45]  # then a mixed, unsure line said without "Hey Ari"
+    talk.language = lambda audio: shares.pop(0)
+    speak(talk)
+    assert asked == ["hi"]
+    p.busy = False
+    talk.tick()
+    speak(talk)
+    assert asked == ["hi"] and heard == ["and the backups?"]

@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+**Fix, hearing:** talk in another language (Sinhala with friends or on a video) no longer turns into a made-up English question. A small multilingual Whisper (`ari.language_model`, tiny) tells the language first; anything not in `ari.languages` (default English) is ignored, and words said without "Hey Ari" after an answer need to be clearly English. The log says "heard another language, not for Ari".
+
 **Fix, Spotify:** when Ari had to ask you something while working in the Spotify app, the job crashed ("call ctx.approve() inside ctx.step"); the question now reaches you.
 
 **Fix, Spotify:** "play X on Spotify" no longer stops at "Spotify is already open on your desktop": the open Spotify window comes over to Ari's Workstation and plays the song.
