@@ -16,10 +16,13 @@ Rules:
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import logging
 import socket
 import sqlite3
+import subprocess
+import sys
 import time
 from collections.abc import Callable
 from typing import Any
@@ -34,6 +37,46 @@ log = logging.getLogger("argus.power")
 
 STALE_POWER_JOB = 300  # seconds a power button's job may wait for an offline PC
 WAKE_REPEAT = 600.0
+WAKE_ANSWER_S = 150.0  # a woken PC should be online (its worker registered) within this long
+WAKE_COPIES = 3  # magic packets are UDP: send each a few times
+NOT_LAN = ("lo", "tailscale", "docker", "br-", "veth", "virbr", "wg", "zt", "tun", "tap")
+
+
+def broadcasts_from(ip_json: list[dict]) -> list[tuple[str, str]]:
+    """(this machine's address, its network's broadcast) for each home-network card, from `ip -j -4 addr`. Tailscale,
+    Docker, VPNs and loopback are skipped: a wake packet must go out on the wire the PC is on."""
+    out: list[tuple[str, str]] = []
+    for card in ip_json:
+        name = str(card.get("ifname") or "")
+        if name.startswith(NOT_LAN) or "UP" not in (card.get("flags") or []):
+            continue
+        for a in card.get("addr_info") or []:
+            if a.get("family") != "inet" or not a.get("local"):
+                continue
+            try:
+                net = ipaddress.ip_interface(f"{a['local']}/{a.get('prefixlen', 24)}").network
+            except ValueError:
+                continue
+            if not net.is_private or net.subnet_of(ipaddress.ip_network("100.64.0.0/10")) or net.prefixlen >= 31:
+                continue
+            out.append((str(a["local"]), str(a.get("broadcast") or net.broadcast_address)))
+    return out
+
+
+def lan_broadcasts() -> list[tuple[str, str]]:  # pragma: no cover - asks the system
+    """The home-network cards of this machine (Linux: `ip`; elsewhere none, the configured address is used)."""
+    if not sys.platform.startswith("linux"):
+        return []
+    try:
+        p = subprocess.run(["ip", "-j", "-4", "addr", "show"], capture_output=True, text=True, timeout=5)
+        return broadcasts_from(json.loads(p.stdout or "[]"))
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return []
+
+
+WAKE_HINT = ("The PC didn't come online. On the PC: the network card's \"Wake on Magic Packet\" on, Windows Fast "
+             "Startup off, a cable (not Wi-Fi); in the BIOS: Power On By PCI-E on, ErP off. "
+             "dev.ps1 wol-check looks at the Windows side.")
 
 
 class PowerError(Exception):
@@ -54,6 +97,8 @@ class PowerManager:
         self.warned_at: float | None = None
         self.held = False
         self.jobs = None  # JobStore, set by Argus: the shutdown is a job for the PC's worker
+        self.find_lans: Callable[[], list[tuple[str, str]]] = lan_broadcasts
+        self.wake_check: dict[str, Any] | None = None  # the last wake: {at, to, result: waiting|online|no_answer}
 
     def _pc_work(self, conn: sqlite3.Connection) -> tuple[int, int]:
         """(PC jobs waiting to start, PC jobs running). The power buttons' own jobs don't count: a queued shutdown
@@ -96,6 +141,16 @@ class PowerManager:
             now = self.clock()
             waiting, running = self._pc_work(conn)
             online = self._pc_online(conn)
+            wc = self.wake_check
+            if wc is not None and wc["result"] == "waiting":
+                if online:
+                    wc["result"] = "online"
+                    wc["after_s"] = round(now - wc["at"])
+                elif now - wc["at"] > WAKE_ANSWER_S:
+                    wc["result"] = "no_answer"
+                    insert_event(conn, now, "power.wake_no_answer", src="power", dst="pc",
+                                 data={"to": wc["to"], "hint": WAKE_HINT})
+                    log.warning("the PC didn't wake", extra={"to": wc["to"]})
             if online and not self.was_online:  # the PC just came on: did we wake it?
                 self.by_argus = now - self.last_wake < 900
                 insert_event(conn, now, "power.pc_online", src="pc", dst="power",
@@ -177,18 +232,39 @@ class PowerManager:
         await self.store.write(fn)
 
     def wake(self) -> dict[str, Any]:
-        """Send the Wake-on-LAN magic packet to the PC (from this machine; it must be on the PC's network)."""
+        """Send the Wake-on-LAN magic packet to the PC, a few times, out of every home-network card of this machine
+        (to its network's broadcast) as well as to `power.wol_broadcast`. Then watch whether the PC comes online."""
         mac = self.cfg.power.pc_mac
         if not mac:
             raise PowerError("set power.pc_mac in argus.yaml first (the PC's wired network card: ipconfig /all)")
         packet = b"\xff" * 6 + bytes.fromhex(mac.replace(":", "")) * 16
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            s.sendto(packet, (self.cfg.power.wol_broadcast, self.cfg.power.wol_port))
-        log.info("wake-on-lan sent", extra={"mac": mac})
-        return {"sent": True, "mac": mac}
+        port = self.cfg.power.wol_port
+        targets: list[tuple[str | None, str]] = [(None, self.cfg.power.wol_broadcast)]
+        if self.cfg.power.wol_broadcast == "255.255.255.255":  # the default: also each card's own network
+            targets += [(local, bcast) for local, bcast in self.find_lans()]
+        sent: list[str] = []
+        errors: list[str] = []
+        for local, addr in targets:
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                    if local:
+                        s.bind((local, 0))  # leave by that card, not whichever the routing table picks
+                    for _ in range(WAKE_COPIES):
+                        s.sendto(packet, (addr, port))
+                sent.append(addr if local is None else f"{addr} (from {local})")
+            except OSError as e:
+                errors.append(f"{addr}: {e}")
+        if not sent:
+            raise OSError("; ".join(errors) or "no network to send on")
+        now = self.clock()
+        self.last_wake = now
+        self.wake_check = {"at": now, "to": sent, "result": "waiting"}
+        log.info("wake-on-lan sent", extra={"mac": mac, "to": sent, "errors": errors})
+        return {"sent": True, "mac": mac, "to": sent}
 
     def status(self) -> dict[str, Any]:
         return {"mode": self.cfg.power.mode, "state": self.state, "idle_since": self.idle_since,
+                "wake_check": self.wake_check,
                 "idle_minutes": self.cfg.power.idle_minutes, "woken_by_argus": self.by_argus,
                 "shutdown_at": self.warned_at + self.cfg.power.warn_minutes * 60 if self.warned_at else None}

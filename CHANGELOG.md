@@ -5,6 +5,10 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+**Added, laptop power:** Helios > Power > The laptop: restart Argus, restart the laptop, shut it down (a minute ahead, with Cancel; shut down asks twice). Island shortcuts and Ari can restart Argus or the laptop. `deploy/linux/power-setup.sh` adds the polkit rule that allows only these (run once on the laptop; the installers do it).
+
+**Fix, waking the PC:** the wake packet now goes out of each of the laptop's home-network cards to that network's broadcast, three times (it could leave by Tailscale or Docker). The Power page says whether the PC came online, and what to check if not. New `dev.ps1 wol-check` (and `wol-check fix`) checks the PC's network card and Fast Startup.
+
 **Fix, hearing:** talk in another language (Sinhala with friends or on a video) no longer turns into a made-up English question. A small multilingual Whisper (`ari.language_model`, tiny) tells the language first; anything not in `ari.languages` (default English) is ignored, and words said without "Hey Ari" after an answer need to be clearly English. The log says "heard another language, not for Ari".
 
 **Fix, Spotify:** when Ari had to ask you something while working in the Spotify app, the job crashed ("call ctx.approve() inside ctx.step"); the question now reaches you.

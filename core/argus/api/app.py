@@ -55,6 +55,7 @@ import hmac
 import json
 import mimetypes
 import re
+import socket
 import threading
 import time
 import urllib.request
@@ -71,7 +72,7 @@ from pydantic import BaseModel, Field
 from .. import ari as ari_mod
 from .. import ari_export as export_mod
 from .. import ask as ask_mod
-from .. import daily, guidance, logview, vocab, voice_corpus
+from .. import daily, guidance, laptop_power, logview, vocab, voice_corpus
 from .. import island as island_mod
 from .. import settings as settings_mod
 from ..approvals import ApprovalClosed, ApprovalError, ApprovalNotFound, BadToken
@@ -649,6 +650,8 @@ def create_app(argus: Argus) -> FastAPI:
             return {"view": a[5:]}
         if a.startswith("power:"):
             return {"power": await power_action(a[6:])}
+        if a.startswith("laptop:") and a != "laptop:shutdown":  # shutting the laptop down: Helios only, twice
+            return {"power": await laptop_power_action(a[7:], None)}
         if a.startswith("run:"):
             _, pid, wf = (a.split(":", 2) + ["", ""])[:3]
             p = argus.plugin_host.plugins.get(pid)
@@ -663,7 +666,7 @@ def create_app(argus: Argus) -> FastAPI:
 
     async def island_choices() -> list[dict]:
         acts = [{"action": a["id"], "label": a["label"], "group": "plugin buttons" if a["id"].startswith("run:")
-                 else "power" if a["id"].startswith("power:") else "phone"}
+                 else "power" if a["id"].startswith(("power:", "laptop:")) else "phone"}
                 for a in ask_mod.catalog(argus.plugin_host) if not a["id"].startswith("show:")]
         acts += [{"action": f"show:{k}", "label": f"Open {v}", "group": "Helios pages"}
                  for k, v in island_mod.PAGES.items()]
@@ -942,7 +945,7 @@ def create_app(argus: Argus) -> FastAPI:
                                                                        **spec))
             reply, out = f"Done. {q['say'][0].upper()}{q['say'][1:]}, I'll {q['label']}.", {"schedule": s}
         else:
-            if q["action"].startswith("power:") and q["action"] != "power:wake":
+            if q["action"].startswith(("power:", "laptop:")) and q["action"] != "power:wake":
                 try:
                     out = await do_action(q["action"])
                 except HTTPException as e:
@@ -2207,7 +2210,29 @@ def create_app(argus: Argus) -> FastAPI:
         return {**argus.power.status(), "pc_online": bool(online),
                 "pc": {k: pc.get(k) for k in ("id", "host", "state", "last_seen")} if pc else None,
                 "wol": bool(argus.cfg.power.pc_mac), "delay": argus.cfg.power.shutdown_delay_seconds,
-                "recent": recent, "pending": pending}
+                "recent": recent, "pending": pending,
+                "laptop": {"available": laptop_power.available(), "host": socket.gethostname(),
+                           "scheduled": laptop_power.scheduled()}}
+
+    @app.post("/power/laptop/{action}", dependencies=guarded)
+    async def laptop_power_action(action: str, body: dict | None = None) -> dict:
+        """The laptop's own buttons (Argus's server): restart-argus, reboot, shutdown (needs confirm), cancel."""
+        try:
+            out = await asyncio.to_thread(laptop_power.run, action, confirm=bool((body or {}).get("confirm")))
+        except laptop_power.LaptopPowerError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from None
+        now = time.time()
+
+        def fn(c):
+            insert_event(c, now, "power.laptop", src="helios", dst="power", data={"action": action})
+            if action in ("reboot", "shutdown"):
+                what = "restarts" if action == "reboot" else "shuts down"
+                link = (argus.cfg.approvals.public_url or "").rstrip("/")
+                add_message(c, now, "phone", phone_message(
+                    f"Laptop {what} in 1 minute", "Argus will be away until it's back. Cancel in Helios > Power.",
+                    tags=["zzz"], click=f"{link}/helios/#power" if link else None), dedupe_key=f"laptop:{int(now)}")
+        await argus.store.write(fn)
+        return out
 
     @app.post("/power/{action}", dependencies=guarded)
     async def power_action(action: str) -> dict:

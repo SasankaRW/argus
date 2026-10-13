@@ -27,6 +27,9 @@ PHONE = re.compile(r"\b(where'?s|where is|find|ring|locate|lost|can'?t find)\b.*
 VIEWS = {"queue": "Queue", "runs": "Runs", "logs": "Logs", "power": "Power", "share": "Share", "map": "Live map"}
 POWER = {"sleep": "Put the PC to sleep", "shutdown": "Shut the PC down", "restart": "Restart the PC",
          "wake": "Wake the PC", "cancel": "Cancel a pending shutdown"}
+LAPTOP = {"restart-argus": "Restart Argus", "reboot": "Restart the laptop (Argus's server)",
+          "cancel": "Cancel the laptop's restart or shutdown"}  # shut down: Helios only, it asks twice
+LAPTOP_WORDS = {"reboot": r"\b(restart|reboot)\b", "cancel": r"\bcancel\b"}
 POWER_WORDS = {"sleep": r"\b(sleep|suspend)\b", "shutdown": r"\b(shut ?down|turn off|power off|switch off)\b",
                "restart": r"\b(restart|reboot)\b", "wake": r"\b(wake|turn on|power on|switch on)\b",
                "cancel": r"\bcancel (the )?(shut ?down|restart|sleep)\b"}
@@ -46,6 +49,8 @@ def catalog(plugin_host) -> list[dict[str, Any]]:
                             "about": f"{p.manifest.name}: {p.manifest.description}"[:200]})
     for a, label in POWER.items():
         out.append({"id": f"power:{a}", "label": label, "about": "PC power"})
+    for a, label in LAPTOP.items():
+        out.append({"id": f"laptop:{a}", "label": label, "about": "the laptop's power (Argus's server)"})
     out.append({"id": "phone:ring", "label": "Ring my phone", "about": "find the phone: a loud notification"})
     for v, label in VIEWS.items():
         out.append({"id": f"show:{v}", "label": f"Open {label}", "about": "a Helios page"})
@@ -60,6 +65,11 @@ def rules(text: str, actions: list[dict[str, Any]], snap: dict[str, Any]) -> dic
     for a, rx in POWER_WORDS.items():
         if re.search(rx, t) and re.search(r"\b(pc|computer|machine|desktop)\b", t):
             return {"reply": f"{POWER[a]}?", "action": f"power:{a}"}
+    for a, rx in LAPTOP_WORDS.items():
+        if re.search(rx, t) and re.search(r"\b(laptop|server|calypso)\b", t):
+            return {"reply": f"{LAPTOP[a]}?", "action": f"laptop:{a}"}
+    if re.search(r"\brestart (argus|argusd)\b", t):
+        return {"reply": "Restart Argus?", "action": "laptop:restart-argus"}
     if QUESTIONS["queue"].search(t):
         return {"reply": describe_queue(snap), "action": "show:queue"}
     if QUESTIONS["approvals"].search(t):

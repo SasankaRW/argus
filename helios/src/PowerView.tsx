@@ -6,7 +6,11 @@ import type { Selection } from "./MapView";
 type Power = { mode: string; state: string; idle_since: number | null; idle_minutes: number; pc_online: boolean;
   shutdown_at: number | null; woken_by_argus: boolean;
   pc: { id: string; host: string; state: string; last_seen: number | null } | null; wol: boolean; delay: number;
-  recent: Job[]; pending: Job[] };
+  recent: Job[]; pending: Job[];
+  wake_check?: { at: number; to: string[]; result: "waiting" | "online" | "no_answer"; after_s?: number } | null;
+  laptop?: { available: boolean; host: string; scheduled: { mode: "reboot" | "poweroff"; at: number } | null } };
+
+const HHMM = (t: number) => new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
 
 const ASK: Record<string, string> = {
   sleep: "Put the PC to sleep now? Running jobs pause and continue when it wakes.",
@@ -82,6 +86,18 @@ export function PowerControls({ events, onSelect, compact = false }: { events: A
         </div>
       )}
       {msg && <div className="tip">{msg}</div>}
+      {p.wake_check && !p.pc_online && p.wake_check.result !== "online" && (
+        <div className="tip">
+          {p.wake_check.result === "waiting"
+            ? `Wake sent ${ago(p.wake_check.at)} to ${p.wake_check.to.join(", ")}; waiting for the PC (about 2 min).`
+            : <>The PC didn't come online after the wake ({ago(p.wake_check.at)}, sent to {p.wake_check.to.join(", ")}).
+              On the PC run <code>.\scripts\dev.ps1 wol-check</code> (network card's "Wake on Magic Packet" on, Fast Startup off, a cable);
+              in the BIOS: Power On By PCI-E on, ErP off.</>}
+        </div>
+      )}
+      {p.wake_check?.result === "online" && p.wake_check.after_s !== undefined && Date.now() / 1000 - p.wake_check.at < 600 && (
+        <div className="tip">Woke up {p.wake_check.after_s} s after the signal.</div>
+      )}
       {!p.wol && !compact && <div className="tip">Wake needs the PC's network card address: set <code>power.pc_mac</code> in argus.yaml (from <code>ipconfig /all</code>). It works once Argus runs on the laptop; while Argus runs on the PC itself there is nothing to wake it.</div>}
       {!compact && p.recent.length > 0 && (
         <>
@@ -100,11 +116,62 @@ export function PowerControls({ events, onSelect, compact = false }: { events: A
   );
 }
 
+const LAPTOP_ASK: Record<string, string> = {
+  "restart-argus": "Restart Argus? Helios, Ari and the phone are away for about 10 seconds.",
+  reboot: "Restart the laptop in 1 minute? Argus is away for a minute or two; you can cancel until then.",
+  shutdown: "Shut the laptop down in 1 minute? Argus stays off until someone presses the laptop's power button.",
+};
+
+// The laptop's own buttons (Argus's server): restart Argus, restart, shut down (asked twice), cancel.
+export function LaptopControls({ events }: { events: ArgusEvent[] }) {
+  const [p, reload] = usePower(events);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const l = p?.laptop;
+  if (!l) return null;
+  const act = async (a: string) => {
+    if (LAPTOP_ASK[a] && !window.confirm(LAPTOP_ASK[a])) return;
+    if (a === "shutdown" && !window.confirm("Really shut it down? With no screen and no battery, only its power button brings it back.")) return;
+    setBusy(a); setMsg(null);
+    try {
+      await api(`/power/laptop/${a}`, { method: "POST", body: JSON.stringify({ confirm: a === "shutdown" }) });
+      setMsg(a === "restart-argus" ? "Argus is restarting; this page reconnects by itself."
+        : a === "cancel" ? "Cancelled." : `The laptop ${a === "reboot" ? "restarts" : "shuts down"} in 1 minute.`);
+      reload();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message.replace(/^\/power\/laptop\/[\w-]+: /, "") : String(e));
+    } finally { setBusy(null); }
+  };
+  return (
+    <div className="power">
+      <div className="pwr-head">
+        <span className="dot" style={{ background: "var(--ok)" }} />
+        <b>Laptop · On</b>
+        <span className="muted">{l.host} · runs Argus</span>
+      </div>
+      {!l.available && <div className="tip">These work when Argus runs on the Linux laptop.</div>}
+      <div className="pwr-btns">
+        <button type="button" className="btn pbtn" disabled={busy !== null || !l.available} onClick={() => act("restart-argus")}>Restart Argus</button>
+        <button type="button" className="btn pbtn" disabled={busy !== null || !l.available || !!l.scheduled} onClick={() => act("reboot")}>Restart</button>
+        <button type="button" className="btn pbtn danger" disabled={busy !== null || !l.available || !!l.scheduled} onClick={() => act("shutdown")}>Shut down</button>
+      </div>
+      {l.scheduled && (
+        <div className="pwr-pending">
+          <span>{l.scheduled.mode === "reboot" ? "Restarting" : "Shutting down"} at {HHMM(l.scheduled.at)}</span>
+          <button type="button" className="btn primary-btn" disabled={busy !== null} onClick={() => act("cancel")}>Cancel</button>
+        </div>
+      )}
+      {msg && <div className="tip">{msg}</div>}
+    </div>
+  );
+}
+
 export function PowerView({ events, onSelect }: { events: ArgusEvent[]; onSelect: (s: Selection) => void }) {
   return (
     <section className="panel powerpage" aria-label="Power">
-      <div className="ph"><span className="pt">Power</span><span className="muted">the PC: wake, sleep, restart, shut down</span></div>
+      <div className="ph"><span className="pt">Power</span><span className="muted">the PC and the laptop: wake, sleep, restart, shut down</span></div>
       <div className="qbody"><PowerControls events={events} onSelect={onSelect} /></div>
+      <div className="qbody"><div className="sect">The laptop</div><LaptopControls events={events} /></div>
       <div className="qbody"><div className="sect">Your phone</div><FindPhone /></div>
     </section>
   );

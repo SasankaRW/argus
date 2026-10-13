@@ -76,6 +76,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now argusd argus-worker
 echo "argus ALL=(root) NOPASSWD: /usr/bin/systemctl restart argusd argus-worker" | sudo tee /etc/sudoers.d/argus-update >/dev/null
 sudo chmod 440 /etc/sudoers.d/argus-update
+sudo bash "$DIR/deploy/linux/power-setup.sh" || echo "laptop power buttons not set up (power-setup.sh)"
 if [ -f /etc/systemd/system/argus-update.timer ]; then  # set up before: keep its units current
   sudo cp "$DIR/deploy/linux/argus-update.service" "$DIR/deploy/linux/argus-update.timer" /etc/systemd/system/
   sudo systemctl daemon-reload

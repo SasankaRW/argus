@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 import argus.worker.power as wpower
+from argus import laptop_power, power
 from argus.config import load_config
 from argus.context import Argus
 from argus.worker import Worker
@@ -36,11 +37,12 @@ def test_wake_sends_the_magic_packet(tmp_path):
     a = make(tmp_path, f"power:\n  pc_mac: 04:7C:16:AB:CD:EF\n  wol_broadcast: 127.0.0.1\n  wol_port: {port}\n")
     with Server(a.open()) as srv:
         cl = client(srv.url)
-        assert cl.post("/power/wake") == {"sent": True, "mac": "04:7C:16:AB:CD:EF"}
-        assert cl.get("/power")["wol"] is True
-    data = rx.recv(200)
+        assert cl.post("/power/wake") == {"sent": True, "mac": "04:7C:16:AB:CD:EF", "to": ["127.0.0.1"]}
+        st = cl.get("/power")
+        assert st["wol"] is True and st["wake_check"]["result"] == "waiting" and st["wake_check"]["to"] == ["127.0.0.1"]
+    got = [rx.recv(200) for _ in range(power.WAKE_COPIES)]  # sent a few times: UDP may drop one
     rx.close()
-    assert data == b"\xff" * 6 + bytes.fromhex("047C16ABCDEF") * 16
+    assert got == [b"\xff" * 6 + bytes.fromhex("047C16ABCDEF") * 16] * power.WAKE_COPIES
 
 
 def test_wake_needs_the_mac(tmp_path):
@@ -166,3 +168,123 @@ def test_auto_shutdown_skips_when_someone_uses_the_pc(monkeypatch):
     monkeypatch.setattr(wpower, "input_idle_seconds", lambda: 3000.0)
     ctx = Context({"id": "j2", "input": {"idle_minutes": 20, "delay": 60}}, R())
     assert wpower.auto_shutdown(ctx)["pc"] == "shutting down in 60 s" and ran[-1][:2] == ["shutdown", "/s"]
+
+
+def card(name, local, prefix, up=True, **extra):
+    return {"ifname": name, "flags": ["BROADCAST", "UP"] if up else ["BROADCAST"],
+            "addr_info": [{"family": "inet", "local": local, "prefixlen": prefix, **extra}]}
+
+
+IP_JSON = [card("lo", "127.0.0.1", 8), card("wlan0", "192.168.1.20", 24, broadcast="192.168.1.255"),
+           card("enp3s0", "10.0.0.5", 16), card("tailscale0", "100.101.1.2", 32), card("docker0", "172.17.0.1", 16),
+           card("eth1", "192.168.5.2", 24, up=False)]
+
+
+def test_wake_goes_out_of_the_home_network_cards_only():
+    # not Tailscale, Docker, loopback or a card that is down; the broadcast is the network's own
+    assert power.broadcasts_from(IP_JSON) == [("192.168.1.20", "192.168.1.255"), ("10.0.0.5", "10.0.255.255")]
+
+
+def test_wake_check_says_whether_the_pc_came_online(tmp_path):
+    import asyncio
+
+    a = make(tmp_path, "power:\n  pc_mac: 04:7C:16:AB:CD:EF\n  wol_broadcast: 127.0.0.1\n  wol_port: 9\n")
+    a.open()
+    t = [1000.0]
+    a.power.clock = lambda: t[0]
+    a.power.wake()
+    assert a.power.status()["wake_check"]["result"] == "waiting"
+    t[0] += power.WAKE_ANSWER_S + 1
+    asyncio.run(a.power.tick())
+    assert a.power.status()["wake_check"]["result"] == "no_answer"
+
+
+def test_the_default_broadcast_also_uses_each_home_card(tmp_path, monkeypatch):
+    sent: list[tuple] = []
+
+    class Sock:
+        def __init__(self, *a):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def setsockopt(self, *a):
+            pass
+
+        def bind(self, addr):
+            sent.append(("bind", addr[0]))
+
+        def sendto(self, data, addr):
+            sent.append(("to", addr[0]))
+
+    monkeypatch.setattr(power.socket, "socket", Sock)
+    a = make(tmp_path, "power:\n  pc_mac: 04:7C:16:AB:CD:EF\n")
+    a.open()
+    a.power.find_lans = lambda: [("192.168.1.20", "192.168.1.255")]
+    out = a.power.wake()
+    assert out["to"] == ["255.255.255.255", "192.168.1.255 (from 192.168.1.20)"]
+    assert ("bind", "192.168.1.20") in sent and sent.count(("to", "192.168.1.255")) == power.WAKE_COPIES
+
+
+# ---- the laptop's own buttons (Argus's server)
+
+class Done:
+    def __init__(self, code=0, err=""):
+        self.returncode, self.stderr, self.stdout = code, err, ""
+
+
+def test_laptop_reboot_is_scheduled_and_shutdown_needs_confirm(monkeypatch):
+    monkeypatch.setattr(laptop_power, "available", lambda: True)
+    ran: list[list[str]] = []
+    out = laptop_power.run("reboot", runner=lambda cmd, **k: ran.append(cmd) or Done())
+    assert out["ok"] and ran[-1][:3] == ["/usr/bin/shutdown", "-r", "+1"]
+    with pytest.raises(laptop_power.LaptopPowerError, match="confirm"):
+        laptop_power.run("shutdown", runner=lambda cmd, **k: Done())
+    laptop_power.run("shutdown", confirm=True, runner=lambda cmd, **k: ran.append(cmd) or Done())
+    assert ran[-1][:3] == ["/usr/bin/shutdown", "-h", "+1"]
+    laptop_power.run("cancel", runner=lambda cmd, **k: ran.append(cmd) or Done())
+    assert ran[-1] == ["/usr/bin/shutdown", "-c"]
+
+
+def test_laptop_without_the_polkit_rule_says_how_to_allow_it(monkeypatch):
+    monkeypatch.setattr(laptop_power, "available", lambda: True)
+    with pytest.raises(laptop_power.LaptopPowerError, match="power-setup.sh"):
+        laptop_power.run("reboot", runner=lambda cmd, **k: Done(1, "Access denied"))
+
+
+def test_restart_argus_runs_a_moment_later(monkeypatch):
+    monkeypatch.setattr(laptop_power, "available", lambda: True)
+    spawned: list = []
+    out = laptop_power.run("restart-argus", spawn=lambda cmd, **k: spawned.append(cmd))
+    assert out["ok"] and "systemctl restart argusd argus-worker" in spawned[0][-1] and "sleep" in spawned[0][-1]
+
+
+def test_laptop_buttons_only_on_linux(monkeypatch):
+    monkeypatch.setattr(laptop_power, "available", lambda: False)
+    with pytest.raises(laptop_power.LaptopPowerError, match="Linux"):
+        laptop_power.run("reboot", runner=lambda cmd, **k: Done())
+
+
+def test_a_scheduled_restart_is_read_from_logind(tmp_path):
+    f = tmp_path / "scheduled"
+    f.write_text("USEC=2000000000000000\nWARN_WALL=1\nMODE=reboot\n", encoding="utf-8")
+    assert laptop_power.scheduled(f, clock=lambda: 1999999000) == {"mode": "reboot", "at": 2000000000.0}
+    assert laptop_power.scheduled(f, clock=lambda: 2000000001) is None
+    assert laptop_power.scheduled(tmp_path / "none") is None
+
+
+def test_laptop_endpoint_and_island_actions(tmp_path, monkeypatch):
+    ran: list[str] = []
+    monkeypatch.setattr(laptop_power, "run", lambda action, confirm=False: ran.append(action) or {"ok": True})
+    with Server(make(tmp_path).open()) as srv:
+        cl = client(srv.url)
+        assert cl.post("/power/laptop/reboot") == {"ok": True}
+        assert "laptop" in cl.get("/power")
+        assert cl.post("/ask/do", {"action": "laptop:restart-argus"})["power"] == {"ok": True}
+        with pytest.raises(ApiError):  # shutting the laptop down: Helios only, where it asks twice
+            cl.post("/ask/do", {"action": "laptop:shutdown"})
+    assert ran == ["reboot", "restart-argus"]

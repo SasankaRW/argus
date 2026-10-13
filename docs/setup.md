@@ -470,6 +470,20 @@ any other job (a job already running finishes first). **Wake** sends Wake-on-LAN
 set `power.pc_mac` (from `ipconfig /all`, the wired card) and turn on Wake-on-LAN in the BIOS and the network
 card. It is useful once argusd runs on the laptop; while argusd runs on the PC, shutting the PC down stops Argus too.
 
+**Wake doesn't work?** The packet goes out of each of the laptop's home-network cards to that network's broadcast
+(and to `power.wol_broadcast`), three times. The Power page then says whether the PC came online within about two
+minutes. If not, run `.\scripts\dev.ps1 wol-check` on the PC: it shows the MAC for `power.pc_mac` and whether the
+network card may wake the PC and Fast Startup is off (`wol-check fix` turns those on, as administrator). In the
+BIOS: Power On By PCI-E (Wake on LAN) on, ErP off. Wi-Fi can't be woken: the PC needs a cable.
+
+## Laptop power buttons
+
+Helios > Power > **The laptop**: **Restart Argus**, **Restart** and **Shut down** (both a minute ahead, with
+**Cancel**; shut down asks twice, since only the laptop's power button brings it back). Island shortcuts and Ari
+("restart the laptop") can restart Argus or the laptop, never shut it down. They need a polkit rule that allows
+only these to the argus user (argusd can't use sudo); the installers add it, or run once:
+`sudo bash /opt/argus/deploy/linux/power-setup.sh`.
+
 ## Problems
 
 | Symptom | Fix |

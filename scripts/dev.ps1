@@ -18,6 +18,7 @@
 #   .\scripts\dev.ps1 approval  send a pretend bill that waits for your approval (phone or Helios)
 #   .\scripts\dev.ps1 approve   approve the newest waiting approval ("approve no" rejects it)
 #   .\scripts\dev.ps1 mcp       let Claude Code use Argus (adds Argus as an MCP server to the claude CLI)
+#   .\scripts\dev.ps1 wol-check can Argus wake this PC? ("wol-check fix" turns on what's off, as administrator)
 #
 # Version control (see CONTRIBUTING.md):
 #   .\scripts\dev.ps1 github            one-time: log in to GitHub, create the private repo, push everything
@@ -290,6 +291,7 @@ switch ($Command) {
     "run"   { Need-Venv; & $Py -m argus }
     "worker" { Need-Venv; & $Py -m argus.worker.cli --cap desktop --cap gpu }
     "events" { Need-Venv; & $Py -m argus.tail }
+    "wol-check" { & (Join-Path $PSScriptRoot "wol-check.ps1") -Fix:($Arg -eq "fix") }
     "models" {
         Need-Venv
         if ($Arg -eq "claude") { & $Py -m argus.models.doctor --claude } else { & $Py -m argus.models.doctor }
