@@ -101,6 +101,9 @@ Take "a PDF lands in Downloads" as the example.
 5. **Model call.** A step calls `ctx.llm(...)`. The router asks T1 (qwen2.5-coder:7b) and checks the answer in
    code. If it fails the check, T1 gets another try with the reason. If it still fails, the question goes to T2
    with T1's attempt as advice. Each hop is an event, so the map shows `plugin → T1 → T2`.
+   Every try is also kept in the call log (`model_calls`: model, prompt as sent, raw reply, verdict, time; never
+   pictures), sent from a background thread to `POST /jobs/{id}/calls`; Helios > Models > Calls and each job's
+   Inspector show them.
 6. **Approval (if needed).** `ctx.approve(...)` writes an approval and an ntfy message together. The job moves
    to `waiting` and the worker is **free** for other work. You tap Approve. The job returns to the queue ahead of
    scheduled work, the step runs again, and `ctx.approve` now returns your answer.

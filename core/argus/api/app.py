@@ -72,6 +72,7 @@ from pydantic import BaseModel, Field
 from .. import ari as ari_mod
 from .. import ari_export as export_mod
 from .. import ask as ask_mod
+from .. import calls as calls_mod
 from .. import daily, guidance, laptop_power, logview, vocab, voice_corpus
 from .. import island as island_mod
 from .. import settings as settings_mod
@@ -757,6 +758,43 @@ def create_app(argus: Argus) -> FastAPI:
             input=body.input, output=body.output, tier=body.tier, escalated=body.escalated,
             keep=argus.cfg.guidance.keep_samples, subject=body.subject, used=body.used))
         return {"id": sid}
+
+    # -------------------------------------------------------------- the model call log (C0)
+
+    @app.post("/jobs/{job_id}/calls", dependencies=guarded)
+    async def add_model_call(job_id: str, body: dict) -> dict:
+        """One model call from a worker (the router): model, prompt, raw reply, verdict, time."""
+        m = argus.cfg.models
+        if not m.call_log:
+            return {"id": None}
+        cid = await argus.store.write(lambda c: calls_mod.add_call(
+            c, time.time(), job_id, body, keep_days=m.call_log_days, max_mb=m.call_log_mb,
+            prompts=m.call_log_prompts))
+        return {"id": cid}
+
+    @app.get("/models/calls", dependencies=guarded)
+    async def model_calls(limit: int = Query(100, ge=1, le=500), before: int | None = None,
+                          model: str | None = None, plugin: str | None = None, verdict: str | None = None,
+                          q: str | None = None) -> dict:
+        """Model calls, newest first (filters: model or tier, plugin, verdict ok / rejected / error / problems,
+        text in the prompt or reply). `before`: the next page."""
+        return await argus.store.read(lambda c: {
+            "calls": calls_mod.list_calls(c, limit=limit, before=before, model=model, plugin=plugin,
+                                          verdict=verdict, q=(q or "").strip() or None),
+            **calls_mod.summary(c), "enabled": argus.cfg.models.call_log})
+
+    @app.get("/models/calls/{call_id}", dependencies=guarded)
+    async def model_call(call_id: int) -> dict:
+        r = await argus.store.read(lambda c: c.execute("SELECT * FROM model_calls WHERE id = ?",
+                                                       (call_id,)).fetchone())
+        if r is None:
+            raise HTTPException(status_code=404, detail="no such call (pruned?)")
+        return calls_mod.row_json(r, full=True)
+
+    @app.get("/jobs/{job_id}/calls", dependencies=guarded)
+    async def job_calls(job_id: str) -> list[dict]:
+        """A job's model calls in order, in full (the Inspector's "Model calls")."""
+        return await argus.store.read(lambda c: calls_mod.list_calls(c, job=job_id, limit=200))
 
     @app.get("/jobs/{job_id}/samples", dependencies=guarded)
     async def job_samples(job_id: str) -> list[dict]:

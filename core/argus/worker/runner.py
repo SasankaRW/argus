@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+import queue
 import socket
 import threading
 import time
@@ -110,8 +111,41 @@ class _JobReporter:
         return self._lost.is_set()
 
 
+class _CallLog:
+    """Model calls on their way to argusd (Helios > Models > Calls), sent from a background thread so a big prompt
+    never slows an answer. Full queue or argusd away: the record is dropped, never the job."""
+
+    def __init__(self) -> None:
+        self.q: queue.Queue = queue.Queue(maxsize=500)
+        self.thread: threading.Thread | None = None
+        self.lock = threading.Lock()
+
+    def put(self, client: ArgusClient, job_id: str, body: dict) -> None:
+        with self.lock:
+            if self.thread is None or not self.thread.is_alive():
+                self.thread = threading.Thread(target=self._run, name="model-call-log", daemon=True)
+                self.thread.start()
+        try:
+            self.q.put_nowait((client, job_id, body))
+        except queue.Full:
+            pass
+
+    def _run(self) -> None:
+        while True:
+            client, job_id, body = self.q.get()
+            try:
+                client.post(f"/jobs/{job_id}/calls", body)
+            except Exception as e:  # noqa: BLE001 - the log is a nicety
+                log.debug("model call not logged", extra={"error": str(e)[:200]})
+            finally:
+                self.q.task_done()
+
+
+CALL_LOG = _CallLog()
+
+
 class _JobBoard:
-    """The router's link to argusd for one job: permits, breaker reports and trace events."""
+    """The router's link to argusd for one job: permits, breaker reports, trace events and the call log."""
 
     def __init__(self, client: ArgusClient, worker_id: str, job_id: str, ctx: Context, jlog):
         self.client, self.worker, self.job_id, self.ctx, self.log = client, worker_id, job_id, ctx, jlog
@@ -127,6 +161,9 @@ class _JobBoard:
 
     def event(self, kind: str, src: str | None, dst: str | None, data: dict) -> None:
         self.client.trace(self.job_id, self.worker, kind, src=src, dst=dst, step=self.ctx._step, data=data)
+
+    def call(self, record: dict) -> None:
+        CALL_LOG.put(self.client, self.job_id, {"worker": self.worker, "step": self.ctx._step, **record})
 
 
 class _Heartbeat(threading.Thread):

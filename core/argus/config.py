@@ -74,6 +74,11 @@ class ModelsConfig(_Strict):
     # What a worker must offer to run model work (Ari's replies, Ask, guidance). Empty: any worker. On the laptop:
     # [gpu], so the PC's worker (with Ollama) does it and the laptop wakes the PC for it instead of trying itself.
     needs: list[str] = Field(default_factory=list)
+    # Every model call kept for Helios > Models > Calls: model, prompt, raw reply, verdict, time (pictures never).
+    call_log: bool = True
+    call_log_days: float = Field(7, gt=0, le=90)
+    call_log_mb: int = Field(200, ge=10, le=5000)
+    call_log_prompts: bool = True  # false: replies and metadata only, not what was sent
 
     @field_validator("tiers")
     @classmethod

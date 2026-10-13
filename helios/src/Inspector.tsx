@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, Approval, ArgusEvent, ArgusMap, Job, Status } from "./api";
 import { ago, clock, pretty, shortId, tone, uptime } from "./format";
+import { JobCalls } from "./Calls";
 import type { Selection } from "./MapView";
 
 type Props = {
@@ -605,6 +606,7 @@ function JobPanel({ id, events, onSelect }: { id: string; events: ArgusEvent[]; 
         {job.error && (<><div className="sect">Error</div><pre className="code bad">{job.error}</pre></>)}
         <Changes id={id} plugin={job.plugin} tick={lastSeq + events.filter((e) => e.kind.startsWith("job.")).length} onSelect={onSelect} />
         <ModelAnswers id={id} tick={job.state === "succeeded" ? 1 : 0} />
+        <JobCalls id={id} tick={job.state === "succeeded" ? 1 : 0} />
         {job.result !== null && job.result !== undefined && (<><div className="sect">Result</div><pre className="code">{pretty(job.result)}</pre></>)}
         <div className="sect">Input</div>
         <pre className="code">{pretty(job.input) || "{}"}</pre>
