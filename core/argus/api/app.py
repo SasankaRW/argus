@@ -651,6 +651,8 @@ def create_app(argus: Argus) -> FastAPI:
             return {"view": a[5:]}
         if a.startswith("power:"):
             return {"power": await power_action(a[6:])}
+        if a in ("game:on", "game:off"):
+            return {"game": await set_game({"on": a == "game:on", "by": "you"})}
         if a.startswith("laptop:") and a != "laptop:shutdown":  # shutting the laptop down: Helios only, twice
             return {"power": await laptop_power_action(a[7:], None)}
         if a.startswith("run:"):
@@ -1086,6 +1088,52 @@ def create_app(argus: Argus) -> FastAPI:
 
         dropped = await argus.store.write(fn)
         return {**now, "on": on, "dropped": len(dropped)}
+
+    # -------------------------------------------------------------- game mode (game.py)
+
+    game: dict[str, Any] = {"on": False, "by": None, "since": None, "app": "", "freed_mb": None, "unloaded": [],
+                            "ari_was_off": False}
+
+    def game_now() -> dict:
+        return {"on": game["on"], "auto": bool(argus.cfg.ari.game_mode_auto), "by": game["by"],
+                "since": game["since"], "app": game["app"], "freed_mb": game["freed_mb"],
+                "unloaded": game["unloaded"]}
+
+    @app.get("/ari/game", dependencies=guarded)
+    async def ari_game() -> dict:
+        """Game mode: {on, auto, by: you | auto, since, app, freed_mb}."""
+        return game_now()
+
+    @app.post("/ari/game", dependencies=guarded)
+    async def ari_game_set(body: dict[str, Any]) -> dict:
+        """{on, by?, app?}: game mode on or off (by "auto" from the PC; an automatic off never ends one you turned
+        on). {auto}: turn the automatic part on or off (kept). {freed_mb, unloaded}: what the PC freed."""
+        return await set_game(body)
+
+    async def set_game(body: dict[str, Any]) -> dict:
+        if "auto" in body:
+            try:
+                await argus.change_settings({"ari.game_mode_auto": bool(body["auto"])})
+            except settings_mod.SettingError as e:
+                raise HTTPException(status_code=422, detail=str(e)) from None
+        if "freed_mb" in body or "unloaded" in body:
+            game["freed_mb"] = body.get("freed_mb")
+            game["unloaded"] = [str(x) for x in body.get("unloaded") or []][:20]
+        by = "auto" if body.get("by") == "auto" else "you"
+        if "on" in body and bool(body["on"]) != game["on"]:
+            if body["on"]:
+                game.update(on=True, by=by, since=time.time(), app=str(body.get("app") or "")[:60], freed_mb=None,
+                            unloaded=[], ari_was_off=hush["until"] > time.time())
+                argus.models.local_paused = "game mode: the PC's GPU is for the game"
+                await set_power(False)
+            elif by == "you" or game["by"] == "auto":  # an automatic off never ends game mode you turned on
+                game.update(on=False, by=by, since=time.time(), app="")
+                argus.models.local_paused = None
+                if not game["ari_was_off"]:
+                    await set_power(True)
+        now = game_now()
+        await argus.store.write(lambda c: insert_event(c, time.time(), "ari.game", src="helios", dst="ari", data=now))
+        return now
 
     @app.post("/ari/listener", dependencies=guarded)
     async def ari_listener_here(body: dict | None = None) -> dict:

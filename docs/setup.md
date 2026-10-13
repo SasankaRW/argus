@@ -484,6 +484,14 @@ Helios > Power > **The laptop**: **Restart Argus**, **Restart** and **Shut down*
 only these to the argus user (argusd can't use sudo); the installers add it, or run once:
 `sudo bash /opt/argus/deploy/linux/power-setup.sh`.
 
+## Game mode
+
+The island's game key (a game pad), Helios > Power > Game mode, or "Ari, game mode on": Ari goes off, the PC's
+local models are unloaded and refused, Ari's voice and "Hey Ari" stop, so the game gets the GPU (Helios says how
+much it freed). Ari's text answers (Helios, the phone) use Claude meanwhile. **By itself** (on by default; the
+island's "Game mode · auto" row or Settings > Ari): on after a game has been in front for `ari.game_on_after_s`
+(20 s), off `ari.game_off_after_s` (60 s) after it closes; game mode you turned on stays on until you turn it off.
+
 ## Problems
 
 | Symptom | Fix |

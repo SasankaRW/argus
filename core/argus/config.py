@@ -335,6 +335,12 @@ class AriConfig(_Strict):
     quiet_in_calls: bool = True
     call_apps: list[str] = Field(default_factory=list)
     live_words: bool = True  # the island shows the words as you say them (the small model hears you every second)
+    # Game mode (the island's game key): Ari off, the PC's local models unloaded and refused, Ari's voice and
+    # "Hey Ari" stopped, so the game gets the GPU. Auto: on after a game has been in front this long, off again after
+    # this long without one (only if it turned itself on).
+    game_mode_auto: bool = True
+    game_on_after_s: int = Field(20, ge=5, le=600)
+    game_off_after_s: int = Field(60, ge=10, le=1800)
     # After an answer, carry on without "Hey Ari" for this long (not while the PC plays sound, and not with a long
     # stream of words); talk over Ari to interrupt; "thanks Ari" ends it. Smart Turn (downloaded once) knows when
     # you've finished a sentence.
