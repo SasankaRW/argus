@@ -166,12 +166,48 @@ export function LaptopControls({ events }: { events: ArgusEvent[] }) {
   );
 }
 
+type Game = { on: boolean; auto: boolean; by: "you" | "auto" | null; since: number | null; app: string; freed_mb: number | null; unloaded: string[] };
+
+// Game mode: Ari off and the PC's GPU freed for a game (the island's game key does the same).
+export function GameControls({ events }: { events: ArgusEvent[] }) {
+  const [g, setG] = useState<Game | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const tick = events.filter((e) => e.kind === "ari.game").map((e) => e.seq).pop() ?? 0;
+  useEffect(() => { api<Game>("/ari/game").then(setG).catch(() => {}); }, [tick]);
+  if (!g) return null;
+  const set = async (body: Partial<Game> & { by?: string }) => {
+    setMsg(null);
+    try { setG(await api<Game>("/ari/game", { method: "POST", body: JSON.stringify(body) })); }
+    catch (e) { setMsg(e instanceof Error ? e.message : String(e)); }
+  };
+  return (
+    <div className="power">
+      <div className="pwr-head">
+        <span className="dot" style={{ background: g.on ? "var(--amber)" : "var(--tx3)" }} />
+        <b>Game mode · {g.on ? "on" : "off"}</b>
+        <span className="muted">{g.on ? `${g.by === "auto" ? `by itself${g.app ? ` (${g.app})` : ""}` : "you turned it on"}${g.since ? ` · ${ago(g.since)}` : ""}` : "Ari and the local models as usual"}</span>
+      </div>
+      <div className="tip">
+        Ari goes quiet, the PC's local models are unloaded and refused, Ari's voice and "Hey Ari" stop, so the game gets the GPU.
+        Ari's text answers (Helios, the phone) use Claude meanwhile; other model jobs wait.
+        {g.on && g.freed_mb != null ? ` Freed ${(g.freed_mb / 1024).toFixed(1)} GB of video memory${g.unloaded.length ? ` (${g.unloaded.join(", ")})` : ""}.` : ""}
+      </div>
+      <div className="pwr-btns">
+        <button type="button" className={`btn pbtn ${g.on ? "primary-btn" : ""}`} onClick={() => set({ on: !g.on, by: "you" })}>{g.on ? "Game mode off" : "Game mode on"}</button>
+        <label className="pwr-check"><input type="checkbox" checked={g.auto} onChange={(e) => set({ auto: e.target.checked })} /> by itself while a game is open</label>
+      </div>
+      {msg && <div className="tip">{msg}</div>}
+    </div>
+  );
+}
+
 export function PowerView({ events, onSelect }: { events: ArgusEvent[]; onSelect: (s: Selection) => void }) {
   return (
     <section className="panel powerpage" aria-label="Power">
       <div className="ph"><span className="pt">Power</span><span className="muted">the PC and the laptop: wake, sleep, restart, shut down</span></div>
       <div className="qbody"><PowerControls events={events} onSelect={onSelect} /></div>
       <div className="qbody"><div className="sect">The laptop</div><LaptopControls events={events} /></div>
+      <div className="qbody"><div className="sect">Game mode</div><GameControls events={events} /></div>
       <div className="qbody"><div className="sect">Your phone</div><FindPhone /></div>
     </section>
   );

@@ -54,6 +54,7 @@ class ModelBoard:
         # Is the Claude CLI logged in? From `claude auth status` on the workers, and from failed calls.
         self.claude_auth: dict[str, Any] = {"logged_in": None, "checked_at": None, "worker": None, "detail": None}
         self.poke: Callable[[], None] = lambda: None  # wakes the outbox (set by Argus)
+        self.local_paused: str | None = None  # game mode: the local (Ollama) tiers are refused, Claude isn't
 
     def _auth(self, conn: sqlite3.Connection, now: float, logged_in: bool, worker: str | None,
               detail: str | None) -> None:
@@ -118,6 +119,8 @@ class ModelBoard:
         if tier not in self.cfg.models.tiers:
             return Permit(False, f"unknown tier {tier}")
         provider = self.cfg.models.tiers[tier].provider
+        if self.local_paused and provider == "ollama":
+            return Permit(False, self.local_paused)
 
         def fn(conn: sqlite3.Connection) -> Permit:
             now = self.clock()

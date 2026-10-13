@@ -74,6 +74,11 @@ class ModelsConfig(_Strict):
     # What a worker must offer to run model work (Ari's replies, Ask, guidance). Empty: any worker. On the laptop:
     # [gpu], so the PC's worker (with Ollama) does it and the laptop wakes the PC for it instead of trying itself.
     needs: list[str] = Field(default_factory=list)
+    # Every model call kept for Helios > Models > Calls: model, prompt, raw reply, verdict, time (pictures never).
+    call_log: bool = True
+    call_log_days: float = Field(7, gt=0, le=90)
+    call_log_mb: int = Field(200, ge=10, le=5000)
+    call_log_prompts: bool = True  # false: replies and metadata only, not what was sent
 
     @field_validator("tiers")
     @classmethod
@@ -330,6 +335,12 @@ class AriConfig(_Strict):
     quiet_in_calls: bool = True
     call_apps: list[str] = Field(default_factory=list)
     live_words: bool = True  # the island shows the words as you say them (the small model hears you every second)
+    # Game mode (the island's game key): Ari off, the PC's local models unloaded and refused, Ari's voice and
+    # "Hey Ari" stopped, so the game gets the GPU. Auto: on after a game has been in front this long, off again after
+    # this long without one (only if it turned itself on).
+    game_mode_auto: bool = True
+    game_on_after_s: int = Field(20, ge=5, le=600)
+    game_off_after_s: int = Field(60, ge=10, le=1800)
     # After an answer, carry on without "Hey Ari" for this long (not while the PC plays sound, and not with a long
     # stream of words); talk over Ari to interrupt; "thanks Ari" ends it. Smart Turn (downloaded once) knows when
     # you've finished a sentence.

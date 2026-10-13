@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, ArgusEvent } from "./api";
 import { ApprovalCard } from "./Inspector";
+import { CallLog } from "./Calls";
 
 function ago(t: number) {
   const s = Date.now() / 1000 - t;
@@ -491,6 +492,7 @@ export function ModelsView({ events }: { events: ArgusEvent[] }) {
           </div>
         </section>
       </div>
+      <CallLog events={events} />
     </div>
   );
 }

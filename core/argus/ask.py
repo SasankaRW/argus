@@ -29,6 +29,8 @@ POWER = {"sleep": "Put the PC to sleep", "shutdown": "Shut the PC down", "restar
          "wake": "Wake the PC", "cancel": "Cancel a pending shutdown"}
 LAPTOP = {"restart-argus": "Restart Argus", "reboot": "Restart the laptop (Argus's server)",
           "cancel": "Cancel the laptop's restart or shutdown"}  # shut down: Helios only, it asks twice
+GAME = re.compile(r"\bgam(?:e|ing) mode\b(?:\s+(?:on|(?P<off>off)))?|\b(?:i'?m|i am) (?:going to )?gam(?:e|ing)\b|"
+                  r"\b(?P<off2>stop|end|exit|turn off) gam(?:e|ing) mode\b")
 LAPTOP_WORDS = {"reboot": r"\b(restart|reboot)\b", "cancel": r"\bcancel\b"}
 POWER_WORDS = {"sleep": r"\b(sleep|suspend)\b", "shutdown": r"\b(shut ?down|turn off|power off|switch off)\b",
                "restart": r"\b(restart|reboot)\b", "wake": r"\b(wake|turn on|power on|switch on)\b",
@@ -51,6 +53,8 @@ def catalog(plugin_host) -> list[dict[str, Any]]:
         out.append({"id": f"power:{a}", "label": label, "about": "PC power"})
     for a, label in LAPTOP.items():
         out.append({"id": f"laptop:{a}", "label": label, "about": "the laptop's power (Argus's server)"})
+    out.append({"id": "game:on", "label": "Game mode on", "about": "free the PC's GPU for a game (Ari off)"})
+    out.append({"id": "game:off", "label": "Game mode off", "about": "Ari and the local models back"})
     out.append({"id": "phone:ring", "label": "Ring my phone", "about": "find the phone: a loud notification"})
     for v, label in VIEWS.items():
         out.append({"id": f"show:{v}", "label": f"Open {label}", "about": "a Helios page"})
@@ -65,6 +69,11 @@ def rules(text: str, actions: list[dict[str, Any]], snap: dict[str, Any]) -> dic
     for a, rx in POWER_WORDS.items():
         if re.search(rx, t) and re.search(r"\b(pc|computer|machine|desktop)\b", t):
             return {"reply": f"{POWER[a]}?", "action": f"power:{a}"}
+    g = GAME.search(t)
+    if g:
+        off = bool(g.group("off") or g.group("off2"))
+        return {"reply": "Game mode off: Ari back?" if off else "Game mode on? I'll go quiet and free the GPU.",
+                "action": "game:off" if off else "game:on"}
     for a, rx in LAPTOP_WORDS.items():
         if re.search(rx, t) and re.search(r"\b(laptop|server|calypso)\b", t):
             return {"reply": f"{LAPTOP[a]}?", "action": f"laptop:{a}"}

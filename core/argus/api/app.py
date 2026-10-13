@@ -72,6 +72,7 @@ from pydantic import BaseModel, Field
 from .. import ari as ari_mod
 from .. import ari_export as export_mod
 from .. import ask as ask_mod
+from .. import calls as calls_mod
 from .. import daily, guidance, laptop_power, logview, vocab, voice_corpus
 from .. import island as island_mod
 from .. import settings as settings_mod
@@ -650,6 +651,8 @@ def create_app(argus: Argus) -> FastAPI:
             return {"view": a[5:]}
         if a.startswith("power:"):
             return {"power": await power_action(a[6:])}
+        if a in ("game:on", "game:off"):
+            return {"game": await set_game({"on": a == "game:on", "by": "you"})}
         if a.startswith("laptop:") and a != "laptop:shutdown":  # shutting the laptop down: Helios only, twice
             return {"power": await laptop_power_action(a[7:], None)}
         if a.startswith("run:"):
@@ -757,6 +760,43 @@ def create_app(argus: Argus) -> FastAPI:
             input=body.input, output=body.output, tier=body.tier, escalated=body.escalated,
             keep=argus.cfg.guidance.keep_samples, subject=body.subject, used=body.used))
         return {"id": sid}
+
+    # -------------------------------------------------------------- the model call log (C0)
+
+    @app.post("/jobs/{job_id}/calls", dependencies=guarded)
+    async def add_model_call(job_id: str, body: dict) -> dict:
+        """One model call from a worker (the router): model, prompt, raw reply, verdict, time."""
+        m = argus.cfg.models
+        if not m.call_log:
+            return {"id": None}
+        cid = await argus.store.write(lambda c: calls_mod.add_call(
+            c, time.time(), job_id, body, keep_days=m.call_log_days, max_mb=m.call_log_mb,
+            prompts=m.call_log_prompts))
+        return {"id": cid}
+
+    @app.get("/models/calls", dependencies=guarded)
+    async def model_calls(limit: int = Query(100, ge=1, le=500), before: int | None = None,
+                          model: str | None = None, plugin: str | None = None, verdict: str | None = None,
+                          q: str | None = None) -> dict:
+        """Model calls, newest first (filters: model or tier, plugin, verdict ok / rejected / error / problems,
+        text in the prompt or reply). `before`: the next page."""
+        return await argus.store.read(lambda c: {
+            "calls": calls_mod.list_calls(c, limit=limit, before=before, model=model, plugin=plugin,
+                                          verdict=verdict, q=(q or "").strip() or None),
+            **calls_mod.summary(c), "enabled": argus.cfg.models.call_log})
+
+    @app.get("/models/calls/{call_id}", dependencies=guarded)
+    async def model_call(call_id: int) -> dict:
+        r = await argus.store.read(lambda c: c.execute("SELECT * FROM model_calls WHERE id = ?",
+                                                       (call_id,)).fetchone())
+        if r is None:
+            raise HTTPException(status_code=404, detail="no such call (pruned?)")
+        return calls_mod.row_json(r, full=True)
+
+    @app.get("/jobs/{job_id}/calls", dependencies=guarded)
+    async def job_calls(job_id: str) -> list[dict]:
+        """A job's model calls in order, in full (the Inspector's "Model calls")."""
+        return await argus.store.read(lambda c: calls_mod.list_calls(c, job=job_id, limit=200))
 
     @app.get("/jobs/{job_id}/samples", dependencies=guarded)
     async def job_samples(job_id: str) -> list[dict]:
@@ -1048,6 +1088,52 @@ def create_app(argus: Argus) -> FastAPI:
 
         dropped = await argus.store.write(fn)
         return {**now, "on": on, "dropped": len(dropped)}
+
+    # -------------------------------------------------------------- game mode (game.py)
+
+    game: dict[str, Any] = {"on": False, "by": None, "since": None, "app": "", "freed_mb": None, "unloaded": [],
+                            "ari_was_off": False}
+
+    def game_now() -> dict:
+        return {"on": game["on"], "auto": bool(argus.cfg.ari.game_mode_auto), "by": game["by"],
+                "since": game["since"], "app": game["app"], "freed_mb": game["freed_mb"],
+                "unloaded": game["unloaded"]}
+
+    @app.get("/ari/game", dependencies=guarded)
+    async def ari_game() -> dict:
+        """Game mode: {on, auto, by: you | auto, since, app, freed_mb}."""
+        return game_now()
+
+    @app.post("/ari/game", dependencies=guarded)
+    async def ari_game_set(body: dict[str, Any]) -> dict:
+        """{on, by?, app?}: game mode on or off (by "auto" from the PC; an automatic off never ends one you turned
+        on). {auto}: turn the automatic part on or off (kept). {freed_mb, unloaded}: what the PC freed."""
+        return await set_game(body)
+
+    async def set_game(body: dict[str, Any]) -> dict:
+        if "auto" in body:
+            try:
+                await argus.change_settings({"ari.game_mode_auto": bool(body["auto"])})
+            except settings_mod.SettingError as e:
+                raise HTTPException(status_code=422, detail=str(e)) from None
+        if "freed_mb" in body or "unloaded" in body:
+            game["freed_mb"] = body.get("freed_mb")
+            game["unloaded"] = [str(x) for x in body.get("unloaded") or []][:20]
+        by = "auto" if body.get("by") == "auto" else "you"
+        if "on" in body and bool(body["on"]) != game["on"]:
+            if body["on"]:
+                game.update(on=True, by=by, since=time.time(), app=str(body.get("app") or "")[:60], freed_mb=None,
+                            unloaded=[], ari_was_off=hush["until"] > time.time())
+                argus.models.local_paused = "game mode: the PC's GPU is for the game"
+                await set_power(False)
+            elif by == "you" or game["by"] == "auto":  # an automatic off never ends game mode you turned on
+                game.update(on=False, by=by, since=time.time(), app="")
+                argus.models.local_paused = None
+                if not game["ari_was_off"]:
+                    await set_power(True)
+        now = game_now()
+        await argus.store.write(lambda c: insert_event(c, time.time(), "ari.game", src="helios", dst="ari", data=now))
+        return now
 
     @app.post("/ari/listener", dependencies=guarded)
     async def ari_listener_here(body: dict | None = None) -> dict:

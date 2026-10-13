@@ -132,12 +132,19 @@ class AriState:
     since: float = 0.0
     think_job: str | None = None
     off: bool = False  # Ari turned off (or paused): not listening anywhere until turned back on
+    game: bool = False  # game mode: the GPU is the game's (Ari off, models unloaded)
+    game_auto: bool = True  # game mode turns itself on while a game is open
 
     def apply(self, events: list[dict], now: float) -> bool:
         """Feed events (oldest first). True when what shows changed."""
         changed = False
         for e in events:
             data = e.get("data") or {}
+            if e["kind"] == "ari.game":
+                g, auto = bool(data.get("on")), bool(data.get("auto", True))
+                if (g, auto) != (self.game, self.game_auto):
+                    self.game, self.game_auto, changed = g, auto, True
+                continue
             if e["kind"] == "ari.listening":
                 off = not data.get("listening", True)
                 if off != self.off:
@@ -592,12 +599,13 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             self.buttons = []
             if mode == "idle":
                 if self.hover and self.spring.h > 16:
-                    qp.setPen(QColor("#ef6a6a" if self.ari.off else "#5d6670"))
+                    qp.setPen(QColor("#f5a524" if self.ari.game else "#ef6a6a" if self.ari.off else "#5d6670"))
                     qp.setFont(F_LABEL)
-                    qp.drawText(body, Qt.AlignmentFlag.AlignCenter, "a r i · off" if self.ari.off else "a r i")
-                elif self.ari.off:  # a small red dot on the lip: Ari is off
+                    qp.drawText(body, Qt.AlignmentFlag.AlignCenter, "a r i · game mode" if self.ari.game
+                                else "a r i · off" if self.ari.off else "a r i")
+                elif self.ari.off:  # a small dot on the lip: Ari is off (amber: game mode)
                     qp.setPen(Qt.PenStyle.NoPen)
-                    qp.setBrush(QColor("#ef6a6a"))
+                    qp.setBrush(QColor("#f5a524" if self.ari.game else "#ef6a6a"))
                     qp.drawEllipse(QPointF(body.center().x(), body.center().y()), 2.2, 2.2)
             elif mode in ("active", "done") and self.spring.h > 24:
                 self.draw_active(qp, body, tone, mode)
@@ -713,6 +721,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             talk = QRectF(x1 - 30, y, 30, 30)
             more = QRectF(talk.x() - 36, y, 30, 30)
             power = QRectF(more.x() - 36, y, 30, 30)
+            gamek = QRectF(power.x() - 36, y, 30, 30)
             if "clock" in on:
                 now = time.localtime()
                 qp.setFont(F_CLOCK)
@@ -722,12 +731,13 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 qp.drawText(QRectF(x0, y, tw + 4, 30), Qt.AlignmentFlag.AlignVCenter, tstr)
                 qp.setFont(F_SMALL)
                 qp.setPen(QColor("#6f7680"))
-                qp.drawText(QRectF(x0 + tw + 9, y + 1, power.x() - x0 - tw - 12, 30), Qt.AlignmentFlag.AlignVCenter,
+                qp.drawText(QRectF(x0 + tw + 9, y + 1, gamek.x() - x0 - tw - 12, 30), Qt.AlignmentFlag.AlignVCenter,
                             time.strftime("%a %d %b", now))
             else:
                 qp.setFont(F_TEXT)
                 qp.setPen(QColor("#e4e6e8"))
                 qp.drawText(QRectF(x0, y, 120, 30), Qt.AlignmentFlag.AlignVCenter, "Ari")
+            self.round_key(qp, gamek, "game", "game-on" if self.ari.game else "game")
             self.round_key(qp, power, "power", "start" if self.ari.off else "power")
             self.round_key(qp, more, "helios:#ari", "more")
             self.round_key(qp, talk, "talk", "mic")
@@ -736,6 +746,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             st = info.status or {}
             jobs = st.get("jobs") or {}
             rows: list[tuple[str, str, str, str | None]] = []  # dot, text, right, click key
+            rows.append(("#f5a524" if self.ari.game else "#4b5058",
+                         "Game mode on" if self.ari.game else "Game mode off",
+                         "auto ✓" if self.ari.game_auto else "auto off", "gameauto"))
             for wid in order:
                 if wid == "status":
                     running = (jobs.get("running") or 0) + (jobs.get("leased") or 0)
@@ -928,6 +941,17 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 arc.cubicTo(c.x() - 5.5, c.y() + 5.5, c.x() + 5.5, c.y() + 5.5, c.x() + 5.5, c.y() - 0.5)
                 qp.drawPath(arc)
                 qp.drawLine(QPointF(c.x(), c.y() + 4), QPointF(c.x(), c.y() + 7))
+            elif icon in ("game", "game-on"):  # a game pad: game mode (amber while on)
+                col = QColor("#f5a524" if icon == "game-on" else ("#d4d7dc" if hot else "#8b929b"))
+                qp.setPen(QPen(col, 1.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+                qp.setBrush(Qt.BrushStyle.NoBrush)
+                qp.drawRoundedRect(QRectF(c.x() - 8, c.y() - 4.5, 16, 9), 4.5, 4.5)
+                qp.drawLine(QPointF(c.x() - 5.5, c.y()), QPointF(c.x() - 2.5, c.y()))
+                qp.drawLine(QPointF(c.x() - 4, c.y() - 1.5), QPointF(c.x() - 4, c.y() + 1.5))
+                qp.setPen(Qt.PenStyle.NoPen)
+                qp.setBrush(col)
+                qp.drawEllipse(QPointF(c.x() + 3.2, c.y() - 0.8), 1.1, 1.1)
+                qp.drawEllipse(QPointF(c.x() + 5.4, c.y() + 1.2), 1.1, 1.1)
             elif icon in ("power", "start"):  # power: turn Ari off; start (green): turn it back on
                 col = QColor("#34d399" if icon == "start" else ("#f87171" if hot else "#8b929b"))
                 pen = QPen(col, 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
@@ -985,6 +1009,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 return
             if key == "power":
                 self.toggle_power()
+            elif key == "game":
+                self.toggle_game()
+            elif key == "gameauto":
+                self.toggle_game_auto()
             elif key == "talk":
                 self.talk()
             elif key.startswith(("helios:", "show:")):
@@ -1006,6 +1034,31 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                     api.call("POST", "/ari/stop", {"job": job or ""})
                 except Exception:  # noqa: BLE001 - Argus out of reach: say so
                     bus.flash.emit("Stop didn't reach Argus")
+            threading.Thread(target=go, daemon=True).start()
+
+        def toggle_game(self) -> None:
+            """Game mode on (Ari off, the GPU freed for the game) or off (Ari back)."""
+            on = not self.ari.game
+            self.ari.game = on
+            self.kick()
+
+            def go() -> None:
+                try:
+                    api.call("POST", "/ari/game", {"on": on, "by": "you"})
+                except Exception:  # noqa: BLE001
+                    bus.flash.emit("Couldn't reach Argus")
+            threading.Thread(target=go, daemon=True).start()
+
+        def toggle_game_auto(self) -> None:
+            auto = not self.ari.game_auto
+            self.ari.game_auto = auto
+            self.kick()
+
+            def go() -> None:
+                try:
+                    api.call("POST", "/ari/game", {"auto": auto})
+                except Exception:  # noqa: BLE001
+                    bus.flash.emit("Couldn't reach Argus")
             threading.Thread(target=go, daemon=True).start()
 
         def toggle_power(self) -> None:
@@ -1204,8 +1257,13 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                     seq = int(api.call("GET", "/events?kinds=ari.state&limit=1&newest=true").get("seq") or 0)
                     ears = api.call("GET", "/ari/listening")  # off already? (the red dot from the start)
                     bus.events.emit([{"kind": "ari.listening", "data": ears}])
-                r = api.call("GET", "/events?kinds=ari.state,ari.listening,step.running,ari.ask,approval.approved,"
-                             f"approval.rejected,approval.expired&after={seq}&limit=200&wait=20", timeout=30)
+                    try:
+                        bus.events.emit([{"kind": "ari.game", "data": api.call("GET", "/ari/game")}])
+                    except Exception:  # noqa: BLE001 - an older Argus without game mode
+                        pass
+                r = api.call("GET", "/events?kinds=ari.state,ari.listening,ari.game,step.running,ari.ask,"
+                             f"approval.approved,approval.rejected,approval.expired&after={seq}&limit=200&wait=20",
+                             timeout=30)
                 evs = r.get("events") or []
                 if evs:
                     seq = max(int(e["seq"]) for e in evs)
@@ -1214,7 +1272,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                             bus.ask.emit(e.get("data") or {})
                         elif str(e.get("kind")).startswith("approval."):
                             bus.answered.emit(str((e.get("data") or {}).get("approval") or ""))
-                    bus.events.emit([e for e in evs if e.get("kind") in ("ari.state", "ari.listening",
+                    bus.events.emit([e for e in evs if e.get("kind") in ("ari.state", "ari.listening", "ari.game",
                                                                          "step.running")])
                 elif time.monotonic() - t0 < 1:  # an older Argus that doesn't wait: don't ask in a tight loop
                     time.sleep(1.2)

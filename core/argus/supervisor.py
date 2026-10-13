@@ -96,6 +96,7 @@ class Child:
         self.proc: subprocess.Popen | None = None
         self.fails = 0
         self.next_start = 0.0
+        self.held = False  # game mode: stopped on purpose, not started again until it ends
 
     def start(self) -> None:
         logs = ROOT / "logs"
@@ -136,6 +137,8 @@ class Child:
 
     def check(self) -> None:
         """Start again if it exited: 5 s, then longer while it keeps failing fast (at most 5 minutes)."""
+        if self.held:
+            return
         if self.alive() or time.monotonic() < self.next_start:
             return
         if self.proc is not None:
@@ -208,6 +211,40 @@ def busy(url: str, token: str | None) -> bool:
             return bool(json.loads(r.read())["running"])
     except Exception:
         return False
+
+
+def api_call(url: str, token: str | None, path: str, body: dict | None = None) -> dict | None:
+    """argusd, from the supervisor: GET (no body) or POST. None when it can't be reached."""
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url.rstrip("/") + path, data=data, method="POST" if data else "GET",
+                                 headers={"Content-Type": "application/json"})
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=8) as r:  # noqa: S310 - our own Argus
+            return json.loads(r.read() or b"{}")
+    except Exception:  # noqa: BLE001 - restarting or out of reach
+        return None
+
+
+def game_watch(url: str, token: str | None, children: list[Child]) -> Any:
+    """Game mode on the PC you sit at (game.py): only where "Hey Ari" or Ari's voice run."""
+    if not any(c.name in ("ari-listen", "ari-voice") for c in children):
+        return None
+    from . import busy as busy_mod
+    from .game import GameWatch, ollama_unload
+
+    try:
+        from .config import load_config
+
+        cfg = load_config(ROOT / "argus.yaml")
+        ollama, a = os.environ.get("ARGUS_OLLAMA_URL") or cfg.ollama.url, cfg.ari
+    except Exception as e:  # noqa: BLE001
+        log.info("no game mode here", extra={"error": str(e)[:120]})
+        return None
+    return GameWatch(lambda: api_call(url, token, "/ari/game"), lambda b: api_call(url, token, "/ari/game", b),
+                     children, look=lambda: busy_mod.now(tuple(a.call_apps or ())),
+                     unload=lambda: ollama_unload(ollama), on_after=a.game_on_after_s, off_after=a.game_off_after_s)
 
 
 LOCK_PORTS = {"main": 8617, "desk": 8618}  # one supervisor per mode on a machine
@@ -287,6 +324,8 @@ def main(argv: list[str] | None = None) -> int:
         time.sleep(2)  # argusd first
     changed_at: float | None = None
     last_look = time.monotonic()
+    games = game_watch(args.url, token, children)
+    game_at = 0.0
     keeper = None
     if not args.desk_only and not args.no_worker:  # the PC with the GPU worker: Ollama must be up
         try:
@@ -303,6 +342,12 @@ def main(argv: list[str] | None = None) -> int:
                 except OSError as e:  # could not start it: try again later
                     log.error("could not start", extra={"proc": c.name, "error": str(e)})
                     c.next_start = time.monotonic() + 60
+            if games is not None and time.monotonic() - game_at >= 5:
+                game_at = time.monotonic()
+                try:
+                    games.tick()
+                except Exception as e:  # noqa: BLE001 - never stop supervising for this
+                    log.warning("game mode check failed", extra={"error": str(e)[:200]})
             if time.monotonic() - last_look >= args.interval:
                 last_look = time.monotonic()
                 if keeper is not None:

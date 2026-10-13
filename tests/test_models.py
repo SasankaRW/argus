@@ -368,3 +368,81 @@ def test_router_asks_for_a_permit_per_call():
         b.permit = lambda tier: calls.append(tier) or orig(tier)
         Router(providers(ol), b, chain=["T1"]).ask("sort", "x", schema=Placement, check=check)
         assert calls == ["T1", "T1"]
+
+
+# ------------------------------------------------------------------ the call log (C0)
+
+
+class LoggingBoard(FakeBoard):
+    def __init__(self):
+        super().__init__()
+        self.calls: list[dict] = []
+
+    def call(self, record):
+        self.calls.append(record)
+
+
+def test_router_logs_every_call_with_prompt_reply_and_verdict():
+    with FakeOllama({"t1": ["not json at all", WRONG], "t2": [GOOD]}) as ol:
+        b = LoggingBoard()
+        Router(providers(ol), b, chain=["T1", "T2"], source="demo").ask("sort it", {"f": "lecture"},
+                                                                        schema=Placement, check=check)
+    assert [(c["tier"], c["model"], c["verdict"]) for c in b.calls] == [
+        ("T1", "t1", "rejected"), ("T1", "t1", "rejected"), ("T2", "t2", "ok")]
+    first, retry, last = b.calls
+    assert first["system"].startswith("sort it") and json.loads(first["prompt"])[0]["content"].startswith("{")
+    assert first["reply"] == "not json at all" and first["reason"] and first["provider"] == "ollama"
+    assert json.loads(retry["prompt"])[-1]["content"].startswith("That answer was rejected")
+    assert "Lectures" in json.loads(last["prompt"])[0]["content"]  # T2 was told what T1 said
+    assert last["images"] == 0 and isinstance(last["latency_ms"], int)
+
+
+def test_the_call_log_end_to_end_and_pictures_are_not_kept(tmp_path):
+    import argus.worker.demo  # noqa: F401
+    from argus.worker import runner
+
+    with FakeOllama({"qwen2.5-coder:7b": [WRONG], "qwen2.5-coder:14b": [GOOD]}) as ol:
+        argus = make(tmp_path).open()
+        with Server(argus) as srv:
+            cl = client(srv.url)
+            w = Worker(cl, "gpu-worker", ollama_url=ol.url)
+            w.register()
+            jid = cl.post("/jobs", {"plugin": "demo", "workflow": "classify",
+                                    "input": {"filename": "lecture_07.pdf"}})["id"]
+            assert w.run_once(wait=2)
+            runner.CALL_LOG.q.join()  # sent in the background
+            calls = cl.get(f"/jobs/{jid}/calls")
+            assert [c["verdict"] for c in calls] == ["rejected", "rejected", "ok"]
+            assert calls[0]["plugin"] == "demo" and calls[0]["model"] == "qwen2.5-coder:7b"
+            assert calls[-1]["tier"] == "T2" and "Documents" in calls[-1]["reply"] and calls[0]["system"]
+            page = cl.get("/models/calls?verdict=problems")
+            assert len(page["calls"]) == 2 and "qwen2.5-coder:14b" in page["models"] and page["count"] == 3
+            assert "reply_start" in page["calls"][0] and "system" not in page["calls"][0]
+            one = cl.get(f"/models/calls/{calls[-1]['id']}")
+            assert one["prompt"][0]["role"] == "user"
+            assert cl.get("/models/calls?q=lecture_07")["calls"]
+            # a picture is counted, never stored
+            cl.post(f"/jobs/{jid}/calls", {"tier": "V1", "verdict": "ok", "images": 1, "reply": "a cat",
+                                           "prompt": [{"role": "user", "content": "what is it?"}]})
+            assert cl.get("/models/calls?model=V1")["calls"][0]["images"] == 1
+
+
+def test_the_call_log_is_pruned_by_age_and_size(tmp_path):
+    from argus import calls as calls_mod
+
+    argus = make(tmp_path).open()
+    big = "x" * 400_000
+
+    def fill(c):
+        for i in range(12):
+            calls_mod.add_call(c, 1000.0 + i, "j", {"verdict": "ok", "reply": big}, keep_days=7, max_mb=200)
+        calls_mod.add_call(c, 1000.0 + 8 * 86400, "j", {"verdict": "ok", "reply": "new"}, keep_days=7, max_mb=200)
+        n_age = calls_mod.prune(c, 1000.0 + 8 * 86400, 7, 200)
+        for i in range(12):
+            calls_mod.add_call(c, 2e6 + i, "j", {"verdict": "ok", "reply": big}, keep_days=7, max_mb=200)
+        n_size = calls_mod.prune(c, 2e6 + 20, 7, 3)  # 3 MB at most
+        left = c.execute("SELECT COALESCE(SUM(bytes), 0) FROM model_calls").fetchone()[0]
+        return n_age, n_size, left
+
+    n_age, n_size, left = run(argus.store.write(fill))
+    assert n_age == 12 and n_size > 0 and left <= 3 * 1024 * 1024

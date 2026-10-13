@@ -58,6 +58,8 @@ class Board(Protocol):
 
     def event(self, kind: str, src: str | None, dst: str | None, data: dict[str, Any]) -> None: ...
 
+    # optional: `call(record)` keeps each model call (prompt, reply, verdict) for Helios > Models > Calls
+
 
 @dataclass
 class Answer:
@@ -88,6 +90,23 @@ def parse_json(text: str) -> Any:
         raise
 
 
+CALL_TEXT_MAX = 60_000  # characters of a prompt or reply kept in the call log
+
+
+def _sent(messages: list[dict[str, Any]]) -> str:
+    """The messages as sent, for the call log: text only (pictures are counted, never kept)."""
+    out = [{"role": m.get("role"), "content": str(m.get("content") or "")[:CALL_TEXT_MAX]} for m in messages]
+    return json.dumps(out, ensure_ascii=False)
+
+
+def _tokens(meta: dict[str, Any]) -> tuple[int | None, int | None]:
+    """(in, out) from a reply's details: Ollama's counts, or Claude's usage."""
+    u = meta.get("usage") if isinstance(meta.get("usage"), dict) else {}
+    tin = meta.get("prompt_eval_count", u.get("input_tokens"))
+    tout = meta.get("eval_count", u.get("output_tokens"))
+    return (int(tin) if isinstance(tin, (int, float)) else None, int(tout) if isinstance(tout, (int, float)) else None)
+
+
 def _clip(v: Any, n: int = 400) -> str:
     s = v if isinstance(v, str) else json.dumps(v, ensure_ascii=False, default=str)
     return s if len(s) <= n else s[:n] + "…"
@@ -103,6 +122,25 @@ class Router:
         self.source = source  # the component asking (the plugin), for the map
         self.clock = clock
         self.current_tier: str | None = None  # the tier being tried right now (checks may look at it)
+
+    def _record(self, tier: str, provider: Any, attempt: int, system: str, messages: list[dict[str, Any]],
+                verdict: str, *, reply: Reply | None = None, reason: str | None = None,
+                latency_ms: float | None = None) -> None:
+        """One call for the call log (best effort: a log that fails never fails the answer)."""
+        keep = getattr(self.board, "call", None)
+        if keep is None:
+            return
+        tin, tout = _tokens(reply.meta) if reply is not None else (None, None)
+        try:
+            keep({"tier": tier, "provider": getattr(provider, "kind", ""), "model": getattr(provider, "model", None),
+                  "attempt": attempt, "verdict": verdict, "reason": (reason or "")[:2000] or None,
+                  "latency_ms": round(latency_ms if latency_ms is not None else (reply.latency_ms if reply else 0)),
+                  "tokens_in": tin, "tokens_out": tout,
+                  "images": sum(len(m.get("images") or []) for m in messages),
+                  "system": system[:CALL_TEXT_MAX], "prompt": _sent(messages),
+                  "reply": (reply.text[:CALL_TEXT_MAX] if reply is not None else None)})
+        except Exception:  # noqa: BLE001
+            pass
 
     def ask(self, playbook: str, input: Any, *, schema: type[BaseModel] | None = None, check: Check | None = None,
             chain: list[str] | None = None, attempts: int | None = None, images: list[str] | None = None,
@@ -163,10 +201,13 @@ class Router:
                     self.board.report(tier, False, ms, str(e))
                     kind = "model.timeout" if isinstance(e, ModelTimeout) else "model.error"
                     self.board.event(kind, comp, self.source, {"tier": tier, "error": _clip(str(e), 200)})
+                    self._record(tier, provider, attempt, system, messages, "error", reason=str(e), latency_ms=ms)
                     trail.append({"tier": tier, "attempt": attempt, "error": str(e)})
                     break  # an unreachable model won't improve on a retry; move up the chain
                 self.board.report(tier, True, reply.latency_ms, None)
                 value, problem = self._judge(reply.text, input, schema, check)
+                self._record(tier, provider, attempt, system, messages, "ok" if problem is None else "rejected",
+                             reply=reply, reason=problem)
                 if problem is None:
                     self.board.event("model.reply", comp, self.source,
                                      {"tier": tier, "attempt": attempt, "ok": True,
