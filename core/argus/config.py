@@ -313,6 +313,11 @@ class AriConfig(_Strict):
     # "Hey Ari" on the PC's microphone, no browser (python -m argus.ari_listen; `dev.ps1 up` starts it when on).
     listen: bool = False
     listen_wake_model: str = "tiny.en"  # listens for the wake phrase (small and fast; the command uses whisper_model)
+    # Only these languages are for Ari: talk in other languages (Sinhala with friends, a video) is ignored instead
+    # of being turned into a made-up English question. A small multilingual model tells the language (empty
+    # list: off).
+    languages: list[str] = Field(default_factory=lambda: ["en"])
+    language_model: str = "tiny"
     # A wake-word model for "Hey Ari" (openWakeWord .onnx, e.g. data/models/hey_ari.onnx; pip install -e .[wake]).
     # Empty: Whisper listens for "Hey Ari" at the start of what it hears.
     wake_model: str = ""

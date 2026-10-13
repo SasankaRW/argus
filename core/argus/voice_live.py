@@ -419,6 +419,11 @@ class Talk:
     # After an answer, is this (said without "Hey Ari") for Ari? The listener says no while the PC plays sound and
     # for long streams of words (a video, a call). Skipped when Ari asked something or you pressed Talk.
     follow_ok: Callable[[str], bool] = lambda text: True
+    # audio -> how sure it is a language Ari understands (0..1). Talk in another language is not for Ari, however
+    # Whisper writes it down. Stricter for words said without "Hey Ari" after an answer.
+    language: Callable[[Any], float] | None = None
+    lang_need: float = 0.3
+    lang_need_follow: float = 0.6
     _awaiting: bool = False  # Ari asked something ("Shall I?"), or Talk / "Hey Ari" alone: the next words are ours
     _live_at: float = 0.0
     _live_busy: bool = False
@@ -505,6 +510,15 @@ class Talk:
             if self.wake_rest(head) is None:
                 if head:
                     log.info("heard, no wake phrase", extra={"text": head[:80]})
+                return None
+        if self.language is not None:
+            following = self.in_conversation and not barged and not self._awaiting
+            share = float(self.language(audio))
+            if share < (self.lang_need_follow if following else self.lang_need):
+                log.info("heard another language, not for Ari", extra={"accepted": round(share, 2)})
+                if barged:
+                    self.player.resume()  # someone talking in the room: Ari carries on
+                    return "resumed"
                 return None
         text = (self.transcribe(audio) or "").strip()
         if barged:

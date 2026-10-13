@@ -44,6 +44,7 @@ sudo cp "$DIR/deploy/linux/argusd.service" "$DIR/deploy/linux/argus-worker.servi
 sudo systemctl daemon-reload
 sudo systemctl enable --now argusd argus-worker
 echo "argus ALL=(root) NOPASSWD: /usr/bin/systemctl restart argusd argus-worker" | sudo tee /etc/sudoers.d/argus-update >/dev/null
+sudo bash "$DIR/deploy/linux/power-setup.sh" || echo "laptop power buttons not set up (power-setup.sh)"
 
 say "firewall: only Tailscale and SSH"
 sudo ufw default deny incoming >/dev/null

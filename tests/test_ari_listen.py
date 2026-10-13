@@ -101,3 +101,12 @@ def test_important_phone_messages_become_notices(tmp_path):
 
     assert arun(a.store.write(fn)) == [{"title": "Argus backup failed", "text": "disk full"}]
     a.store.close()
+
+
+def test_accepted_share_adds_the_accepted_languages():
+    from argus.ari_listen import accepted_share
+
+    probs = {"si": 0.7, "en": 0.2, "ta": 0.1}
+    assert accepted_share(probs, ["en"]) == 0.2
+    assert abs(accepted_share(probs, ["en", "si"]) - 0.9) < 1e-9
+    assert accepted_share({}, ["en"]) == 0.0
