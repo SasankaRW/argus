@@ -21,3 +21,7 @@ android/.kotlin/
 
 # change packages (scripts/change.py)
 .change/
+# the eyes studio when it's run by hand in the repo (the plugin works in data/eyes/studio)
+plugins/eyes/studio/out/
+plugins/eyes/studio/*.png
+plugins/eyes/studio/rest.frame
