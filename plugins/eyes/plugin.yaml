@@ -1,0 +1,30 @@
+id: eyes
+name: Eyes clip maker
+version: 0.1.0
+kind: workflow
+argus_api: ">=1.0 <2.0"
+description: 'Makes a robot-eyes clip for each app you use (the cooler screen, see argus.eyes). Once an app has been in front about 2 minutes in total, Claude first looks for an existing clip that fits (another code editor -> the code clip); otherwise it writes a short calm story for the eyes in a studio folder on this PC, looks at a contact sheet, fixes it and renders it. Argus checks the clip (loops cleanly, starts and ends on the shared resting pose, eyes only) before the player gets it. YouTube, GitHub and Gmail always get their own clip.'
+runs_on: desktop             # the clips live next to the cooler
+
+triggers:
+  - schedule: {workflow: scan, cron: "*/5 * * * *"}   # an app that has earned a clip gets one (one at a time)
+
+workflows: [scan, make, status]
+
+permissions:
+  files: {read: [], write: [], delete: none}   # only data/eyes (clips, map.json, the studio), handled by the plugin itself
+  models: []
+  network: []
+  secrets: []
+  claude_calls_per_day: 0    # it runs the claude CLI itself (clips_per_day), not Argus's text-only Claude
+
+config:
+  model: {type: text, default: opus, label: "Claude model for the clips (opus, sonnet, haiku or a full claude-... id)"}
+  claude_command: {type: text, default: claude, label: The claude command (or a full path to it)}
+  minutes: {type: int, default: 15, label: Minutes Claude may take for one clip}
+  clips_per_day: {type: int, default: 6, label: New clips per day (reusing a clip counts too)}
+  min_seconds: {type: int, default: 120, label: "Seconds an app must have been in front (in total) before it gets a clip"}
+  own_clip: {type: list, default: [youtube, github, gmail], label: "Keys that always get their own clip (never reuse one)"}
+
+helios:
+  node: {label: Eyes clips, group: assistant}

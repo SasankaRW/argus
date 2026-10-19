@@ -111,6 +111,73 @@ class Clip:
         return zlib.decompress(self.blobs[self.src[i]])
 
 
+# ------------------------------------------------------------------ checking a new clip (the clip maker)
+
+CLIP_MIN_S, CLIP_MAX_S = 20.0, 90.0
+HOME_DIFF = 0.6   # mean difference (0-255) to the resting pose that still counts as "at home" (a switch point)
+START_DIFF = 1.0  # frame 0 must be the shared resting pose
+SEAM_DIFF = 2.0   # last frame -> first frame
+MAX_AWAY_S = 15.0  # at most this long between two home moments (so a switch never waits long)
+
+
+def _rgb(px: bytes) -> Any:
+    import numpy as np
+
+    v = np.frombuffer(px, dtype="<u2").astype(np.int32)
+    return np.stack([(v >> 11) << 3, ((v >> 5) & 63) << 2, (v & 31) << 3], axis=-1)
+
+
+def check_clip(data: bytes, rest: bytes | None = None) -> dict[str, Any]:
+    """Is this a good clip for the player? `rest` is the shared resting pose (frame 0 of default.eyes).
+    {"problems": [...], "neutral": [frames at home], "seconds", "seam"}: no problems means it may be saved."""
+    import numpy as np
+
+    try:
+        c = Clip(data)
+    except (ValueError, KeyError, struct.error, json.JSONDecodeError) as e:
+        return {"problems": [f"not a clip: {e}"], "neutral": [], "seconds": 0.0, "seam": 0.0}
+    problems: list[str] = []
+    secs = len(c) / c.fps
+    if abs(c.fps - 20) > 0.01:
+        problems.append(f"{c.fps:g} fps: clips are 20 fps")
+    if not CLIP_MIN_S <= secs <= CLIP_MAX_S:
+        problems.append(f"{secs:.1f} s long: a clip is {CLIP_MIN_S:.0f} to {CLIP_MAX_S:.0f} s (30 to 60 is best)")
+    frames = {i: _rgb(zlib.decompress(c.blobs[i])) for i in sorted(set(c.src))}
+    first = frames[c.src[0]]
+    ref = _rgb(rest) if rest else first
+
+    def diff(a: Any, b: Any) -> float:
+        return float(np.abs(a - b).mean())
+
+    if rest and diff(first, ref) > START_DIFF:
+        problems.append("it doesn't start on the shared resting pose (begin with a home beat)")
+    seam = diff(frames[c.src[-1]], first)
+    if seam > SEAM_DIFF:
+        problems.append(f"the loop jumps from the last frame to the first ({seam:.1f}; end with a home beat)")
+    at_home = {i: diff(f, ref) < HOME_DIFF for i, f in frames.items()}
+    neutral = [i for i in range(len(c)) if at_home[c.src[i]]]
+    if neutral:
+        gaps = [(b - a) for a, b in zip(neutral, neutral[1:], strict=False)] + [len(c) - neutral[-1] + neutral[0]]
+        worst = max(gaps) / c.fps
+        if worst > MAX_AWAY_S:
+            problems.append(f"{worst:.0f} s without a home beat: come home at least every {MAX_AWAY_S:.0f} s")
+    else:
+        problems.append("never at the resting pose (home beats)")
+    colour = max(float((np.abs(f - f[..., 1:2]).max(axis=-1) > 24).mean()) for f in frames.values())
+    if colour > 0.002:
+        problems.append("colours on screen: only white eyes on black")
+    lit = max(float((f[..., 1] > 128).mean()) for f in frames.values())
+    if lit > 0.30:
+        problems.append(f"{lit:.0%} of the screen lit at once: only the eyes are drawn")
+    return {"problems": problems, "neutral": neutral, "seconds": round(secs, 1), "seam": round(seam, 2)}
+
+
+def repack(data: bytes, neutral: Iterable[int], about: str) -> bytes:
+    """The same frames with these neutral frames and description."""
+    c = Clip(data)
+    return pack((c.pixels(i) for i in range(len(c))), fps=c.fps, neutral=neutral, about=about)
+
+
 # ------------------------------------------------------------------ the player
 
 class Player:
