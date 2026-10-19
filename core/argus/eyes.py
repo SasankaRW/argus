@@ -1,6 +1,7 @@
 """Robot eyes on the cooler's screen (DeepCool LM360): plays saved clips, light enough to run all day.
 
-    python -m argus.eyes run [--clip default]          the player (`dev.ps1 up` starts it when eyes.enabled)
+    python -m argus.eyes run [--clip NAME]             the player (`dev.ps1 up` starts it when eyes.enabled);
+                                                       --clip plays one clip instead of following the front app
     python -m argus.eyes pack in.gif out.eyes          turn a GIF into a clip (needs Pillow and numpy)
     python -m argus.eyes brightness up|down [--steps]  try the screen's brightness buttons
 
@@ -10,6 +11,10 @@ one before is stored as "same again" and not sent, so the long calm holds cost a
 
 **Switching clips** never jumps: every clip lists its *neutral* frames (the shared resting pose; frame 0 at least).
 A new clip starts only when the playing one reaches a neutral frame.
+
+**Following you:** the app in front picks the clip (see focus.py for the keys): `clips/map.json` ({"key": "clip"})
+first, then a clip named after the key (`youtube.eyes`), else `new` (curious) for an app's first two minutes and
+`default` after that.
 
 **Away:** when the PC is locked, or nobody has touched it for `eyes.away_after_s`, the screen goes black and
 nothing is sent until you're back.
@@ -42,6 +47,7 @@ log = logging.getLogger("argus.eyes")
 MAGIC = b"ARGUS-EYES 1\n"
 RETRY_S = 30.0
 AWAY_CHECK_S = 2.0
+NEW_FOR_S = 120.0  # an app without a clip of its own gets the curious "new" clip for its first two minutes
 KEEPALIVE_S = 1.0  # the screen gets a frame at least this often, even during a still hold or while dark
 
 
@@ -111,8 +117,10 @@ class Player:
     """Plays clips on the screen. `step()` shows one frame and says how long until the next."""
 
     def __init__(self, screen: Any, clips_dir: Path, away: Callable[[], bool] = lambda: False,
-                 clock: Callable[[], float] = time.monotonic):
+                 clock: Callable[[], float] = time.monotonic, choose: Callable[[], str | None] | None = None):
         self.screen, self.dir, self.away, self.clock = screen, Path(clips_dir), away, clock
+        self.choose = choose  # which clip now (following the front app); None: keep what was asked for
+        self._chose_at = -1e9
         self.clip: Clip | None = None
         self.i = 0
         self.wanted: str | None = None
@@ -176,6 +184,15 @@ class Player:
             return 0.5
         if self.dark:
             self.dark, self.full = False, True
+        if self.choose is not None and now - self._chose_at >= 1.0:
+            self._chose_at = now
+            try:
+                name = self.choose()
+            except Exception as e:  # noqa: BLE001 - keep playing what we have
+                self._say("couldn't pick a clip", error=str(e)[:120])
+                name = None
+            if name:
+                self.want(name)
         switch = self.wanted and (self.clip is None or self.wanted != self.clip.name)
         if switch and (self.clip is None or self.i in self.clip.neutral) and now >= self.clip_retry:
             nxt = self._get(self.wanted)
@@ -200,6 +217,48 @@ class Player:
             wait = self.step()
             nxt = max(nxt + wait, self.clock())  # keeps 20 fps steady; never tries to catch up after a pause
             time.sleep(max(0.0, nxt - self.clock()))
+
+
+class Chooser:
+    """The clip for the app in front: map.json, then a clip named after the key, then `new` (first two
+    minutes of an app) or `default`. None until an app has been in front long enough to count."""
+
+    def __init__(self, focus: Any, clips_dir: Path):
+        self.focus, self.dir = focus, Path(clips_dir)
+        self._map: dict[str, str] = {}
+        self._map_mtime = -1.0
+        self.last = ""
+
+    def _mapping(self) -> dict[str, str]:
+        f = self.dir / "map.json"
+        try:
+            m = f.stat().st_mtime
+        except OSError:
+            self._map, self._map_mtime = {}, -1.0
+            return self._map
+        if m != self._map_mtime:
+            self._map_mtime = m
+            try:
+                got = json.loads(f.read_text())
+                self._map = {str(k): str(v) for k, v in got.items()} if isinstance(got, dict) else {}
+            except (OSError, ValueError, AttributeError):
+                self._map = {}
+        return self._map
+
+    def __call__(self) -> str | None:
+        key = self.focus.current()
+        if key is None:
+            return None
+        name = self._mapping().get(key)
+        if not name and (self.dir / f"{key}.eyes").exists():
+            name = key
+        if not name:
+            new = self.focus.seconds(key) < NEW_FOR_S and (self.dir / "new.eyes").exists()
+            name = "new" if new else "default"
+        if name != self.last:
+            self.last = name
+            log.info("clip", extra={"key": key, "clip": name})
+        return name
 
 
 class Stopper:
@@ -316,6 +375,10 @@ def check(cfg: Any) -> int:  # pragma: no cover - prints what it finds on this P
     print(f"locked: {locked()}   idle: {idle_s():.0f} s   away after: {cfg.eyes.away_after_s} s   "
           f"-> {away_now(cfg.eyes.away_after_s) or 'here'}")
     s = Screen()
+    from .focus import front, key_for
+
+    exe, title, cls = front()
+    print(f"in front: {key_for(exe, title, cls, cfg.eyes.ignore) or '(passing window: ignored)'}  ({Path(exe).name})")
     print("screen: " + ("connected" if s.open() else s.why))
     s.close()
     return 0
@@ -325,7 +388,7 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="argus-eyes", description="Robot eyes on the cooler's screen")
     sub = p.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run", help="play clips on the screen")
-    r.add_argument("--clip", default="default")
+    r.add_argument("--clip", default=None, help="play only this clip (default: follow the app in front)")
     r.add_argument("--log-file", default="logs/eyes.log")
     r.add_argument("--awake", action="store_true", help="never go dark (for testing)")
     r.add_argument("--stop-file", type=Path, default=None, help="end (between frames) when this file appears")
@@ -374,8 +437,16 @@ def main(argv: list[str] | None = None) -> int:
 
     setup_logging("INFO", Path(args.log_file))
     after = cfg.eyes.away_after_s
-    player = Player(Screen(), clips_dir(cfg), away=(lambda: "") if args.awake else (lambda: away_now(after)))
-    player.want(args.clip)
+    choose = None
+    if args.clip is None:
+        from .focus import Focus, watch
+
+        focus = Focus(ignore=cfg.eyes.ignore, seen_file=clips_dir(cfg).parent / "seen.json")
+        watch(focus.window)
+        choose = Chooser(focus, clips_dir(cfg))
+    player = Player(Screen(), clips_dir(cfg), away=(lambda: "") if args.awake else (lambda: away_now(after)),
+                    choose=choose)
+    player.want(args.clip or "default")
     stop = Stopper(args.stop_file)
     stop.install()
     log.info("eyes started", extra={"clip": args.clip, "clips": str(clips_dir(cfg))})
@@ -383,6 +454,8 @@ def main(argv: list[str] | None = None) -> int:
         player.run(stop)
     finally:
         player.screen.close()
+        if choose is not None:
+            choose.focus.save()
     log.info("eyes stopped")
     return 0
 

@@ -7,6 +7,7 @@ import argparse
 import pytest
 
 from argus import eyes, lm360, supervisor
+from argus import focus as fo
 from argus.eyes import Clip, Player, pack
 from argus.lm360 import BLACK, FRAME_BYTES
 
@@ -271,3 +272,100 @@ def test_the_supervisor_runs_the_eyes_only_when_on(monkeypatch):
     assert "--stop-file" in dict(supervisor.plan(args))["eyes"]
     monkeypatch.setattr(supervisor, "eyes_on", lambda: False)
     assert [n for n, _ in supervisor.plan(args)] == ["argusd", "worker"]
+
+
+# ------------------------------------------------------------------ following the app in front
+
+
+@pytest.mark.parametrize("exe, title, cls, want", [
+    (r"C:\Program Files\Microsoft VS Code\Code.exe", "eyes.py - argus", "Chrome_WidgetWin_1", "code"),
+    (r"C:\x\Spotify.exe", "Spotify Premium", "Chrome_WidgetWin_0", "spotify"),
+    (r"C:\x\chrome.exe", "lofi beats - YouTube - Google Chrome", "Chrome_WidgetWin_1", "youtube"),
+    (r"C:\x\msedge.exe", "SasankaRW/argus: Pull requests · GitHub - Microsoft Edge", "", "github"),
+    (r"C:\x\firefox.exe", "Inbox (3) - me@gmail.com - Gmail — Mozilla Firefox", "", "gmail"),
+    (r"C:\x\chrome.exe", "Stack Overflow - Google Chrome", "", "browser"),
+    (r"C:\Windows\explorer.exe", "", "Shell_TrayWnd", None),      # the taskbar
+    (r"C:\Windows\explorer.exe", "", "WorkerW", None),            # the desktop
+    (r"C:\Windows\explorer.exe", "Downloads", "CabinetWClass", "explorer"),
+    (r"C:\x\notepad.exe", "Save as", "#32770", None),             # a dialog
+    (r"C:\Windows\SystemApps\LockApp.exe", "", "", None),          # the lock screen
+    ("", "", "", None),                                            # couldn't read it
+])
+def test_a_window_becomes_a_key(exe, title, cls, want):
+    assert fo.key_for(exe, title, cls) == want
+
+
+def test_the_ignore_list():
+    assert fo.key_for(r"C:\x\obs64.exe", "OBS", "", ignore=["OBS64.exe"]) is None
+
+
+def test_a_key_counts_only_after_it_is_held(tmp_path):
+    clock = Clock()
+    f = fo.Focus(hold_s=10, seen_file=tmp_path / "seen.json", clock=clock)
+    f.window(r"C:\x\Code.exe")
+    assert f.current() is None
+    clock.t = 9
+    assert f.current() is None
+    clock.t = 10
+    assert f.current() == "code"
+    f.window(r"C:\x\chrome.exe", "x - YouTube - Google Chrome")   # Alt+Tab for a moment ...
+    clock.t = 15
+    f.window(r"C:\x\Code.exe")                                      # ... and back
+    clock.t = 30
+    assert f.current() == "code"
+    assert f.seconds("code") == 20
+    f.save()
+    again = fo.Focus(seen_file=tmp_path / "seen.json", clock=clock)
+    assert again.seconds("code") == 20 and "title" not in (tmp_path / "seen.json").read_text()
+
+
+def test_passing_windows_keep_the_key(tmp_path):
+    clock = Clock()
+    f = fo.Focus(hold_s=0, clock=clock)
+    f.window(r"C:\x\Spotify.exe")
+    assert f.current() == "spotify"
+    f.window(r"C:\Windows\explorer.exe", "", "Shell_TrayWnd")
+    clock.t = 60
+    assert f.current() == "spotify"
+
+
+class FakeFocus:
+    def __init__(self, key=None, seconds=0.0):
+        self.key, self.secs = key, seconds
+
+    def current(self):
+        return self.key
+
+    def seconds(self, key):
+        return self.secs
+
+
+def test_the_chooser_picks_map_then_own_clip_then_new_then_default(tmp_path):
+    f = FakeFocus()
+    c = eyes.Chooser(f, tmp_path)
+    assert c() is None                         # nothing held yet: keep playing
+    f.key = "spotify"
+    assert c() == "default"                    # no new.eyes yet
+    write(tmp_path, "new", [1])
+    assert c() == "new"                        # an app's first two minutes
+    f.secs = eyes.NEW_FOR_S
+    assert c() == "default"
+    write(tmp_path, "spotify", [2])
+    assert c() == "spotify"
+    (tmp_path / "map.json").write_text('{"spotify": "music"}')
+    assert c() == "music"
+
+
+def test_the_player_follows_the_chooser(tmp_path):
+    write(tmp_path, "default", [1, 1])
+    write(tmp_path, "code", [5, 5])
+    clock = Clock()
+    s = FakeScreen()
+    pick = {"name": None}
+    p = Player(s, tmp_path, clock=clock, choose=lambda: pick["name"])
+    p.want("default")
+    play(p, clock, 2)
+    pick["name"] = "code"
+    clock.t += 1.0
+    play(p, clock, 2)
+    assert s.sent[0] == 1 and s.sent[-1] == 5
