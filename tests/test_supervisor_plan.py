@@ -9,6 +9,13 @@ import pytest
 from argus import supervisor
 
 
+@pytest.fixture(autouse=True)
+def _eyes_off(monkeypatch):
+    """The robot eyes follow argus.yaml on this PC: off here, so the plans below don't depend on it
+    (tests/test_eyes.py checks them on and off)."""
+    monkeypatch.setattr(supervisor, "eyes_on", lambda: False)
+
+
 def names(monkeypatch, listen=True, popup=True, voice=False, **flags):
     monkeypatch.setattr(supervisor, "ari_on", lambda what: {"listen": listen, "popup": popup}[what])
     monkeypatch.setattr(supervisor, "expressive_on", lambda: voice)

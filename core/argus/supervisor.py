@@ -90,9 +90,23 @@ def listen_on() -> bool:
     return ari_on("listen")
 
 
+EYES_STOP = "logs/eyes.stop"  # the eyes end between frames when this appears (Child.stop)
+
+
+def eyes_on() -> bool:
+    """eyes.enabled in argus.yaml: the robot eyes on the cooler's screen."""
+    try:
+        from .config import load_config
+
+        return bool(load_config(ROOT / "argus.yaml").eyes.enabled)
+    except Exception:
+        return False
+
+
 class Child:
-    def __init__(self, name: str, args: list[str], marker: Path | None = None):
+    def __init__(self, name: str, args: list[str], marker: Path | None = None, stop_file: Path | None = None):
         self.name, self.args, self.marker = name, args, marker
+        self.stop_file = stop_file  # asks it to end by itself first (the eyes: never cut a frame in half)
         self.proc: subprocess.Popen | None = None
         self.fails = 0
         self.next_start = 0.0
@@ -123,6 +137,19 @@ class Child:
         if not self.alive():
             return
         assert self.proc is not None
+        if self.stop_file is not None:
+            try:
+                self.stop_file.parent.mkdir(parents=True, exist_ok=True)
+                self.stop_file.touch()
+                self.proc.wait(5)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+            self.stop_file.unlink(missing_ok=True)
+        if not self.alive():  # it ended by itself
+            if self.marker is not None:
+                self.marker.unlink(missing_ok=True)
+            log.info("stopped", extra={"proc": self.name})
+            return
         if WIN:  # the whole tree (a claude.cmd -> node child, for example)
             subprocess.run(["taskkill", "/PID", str(self.proc.pid), "/T", "/F"], capture_output=True)
         else:
@@ -289,6 +316,8 @@ def plan(args: argparse.Namespace) -> list[tuple[str, list[str]]]:
                                   *(["--host", "0.0.0.0"] if a.expressive_share else [])]))  # noqa: S104
     if desk and ari_on("popup"):  # Ari's island at the top of the screen
         out.append(("ari-popup", ["-m", "argus.ari_popup"]))
+    if desk and eyes_on():  # the robot eyes on the cooler's screen (tiny: plain Python and pyusb)
+        out.append(("eyes", ["-m", "argus.eyes", "run", "--log-file", "logs/eyes.log", "--stop-file", EYES_STOP]))
     if not args.no_worker and not args.desk_only:
         caps = ["--cap", "desktop", "--cap", "gpu"] + ([] if args.no_session else ["--cap", "session"])
         out.append(("worker", ["-m", "argus.worker.cli", *caps, "--log-file", "logs/worker.log"]))
@@ -316,7 +345,8 @@ def main(argv: list[str] | None = None) -> int:
     env = parse_env_file(ROOT / ".env")
     token = os.environ.get("ARGUS_WORKER_TOKEN") or env.get("ARGUS_WORKER_TOKEN")
 
-    children = [Child(name, argv, marker_path() if name == "argusd" else None) for name, argv in plan(args)]
+    children = [Child(name, argv, marker_path() if name == "argusd" else None,
+                      ROOT / EYES_STOP if name == "eyes" else None) for name, argv in plan(args)]
     commit, deps = head(), deps_hash()
     log.info("supervising", extra={"commit": (commit or "?")[:10], "processes": [c.name for c in children]})
     for c in children:

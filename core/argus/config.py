@@ -363,6 +363,13 @@ class AriConfig(_Strict):
     pill: Literal["pulse", "comet"] = "pulse"
 
 
+class EyesConfig(_Strict):
+    # Robot eyes on the cooler's screen (DeepCool LM360): python -m argus.eyes run; `dev.ps1 up` starts it when on.
+    # Needs pip install -e .[eyes] and DeepCool's own app closed (only one program can hold the screen).
+    enabled: bool = False
+    away_after_s: int = Field(600, ge=30, le=86400)  # nobody at the PC this long (or it's locked): the screen goes dark
+
+
 class GuidanceConfig(_Strict):
     enabled: bool = True
     at: str = Field("03:30", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")  # the nightly review (needs Claude)
@@ -444,6 +451,7 @@ class Config(_Strict):
     plugins: PluginsConfig = Field(default_factory=PluginsConfig)
     share: ShareConfig = Field(default_factory=ShareConfig)
     ari: AriConfig = Field(default_factory=AriConfig)
+    eyes: EyesConfig = Field(default_factory=EyesConfig)
     brief: BriefConfig = Field(default_factory=BriefConfig)
     guidance: GuidanceConfig = Field(default_factory=GuidanceConfig)
     ari_health: AriHealthConfig = Field(default_factory=AriHealthConfig)
