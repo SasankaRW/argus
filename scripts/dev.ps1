@@ -11,6 +11,7 @@
 #   .\scripts\dev.ps1 worker  run a worker in this terminal (for debugging; "up" runs one in the background)
 #   .\scripts\dev.ps1 demo    submit a demo job (needs argusd and a worker running)
 #   .\scripts\dev.ps1 events  watch live events in the terminal
+#   .\scripts\dev.ps1 trace   Ari's latest requests and what isn't working ("trace last" or "trace <job>": one in full)
 #   .\scripts\dev.ps1 helios  rebuild Helios after changing helios/src (needs Node.js; the built copy is in Git)
 #   .\scripts\dev.ps1 models  check Ollama, the tier models and Claude ("models claude" also makes one real Claude call)
 #   .\scripts\dev.ps1 classify  send a model job; T1's answer is rejected on purpose so you see an escalation
@@ -291,6 +292,7 @@ switch ($Command) {
     "run"   { Need-Venv; & $Py -m argus }
     "worker" { Need-Venv; & $Py -m argus.worker.cli --cap desktop --cap gpu }
     "events" { Need-Venv; & $Py -m argus.tail }
+    "trace" { Need-Venv; & $Py -m argus.trace $Arg }
     "wol-check" { & (Join-Path $PSScriptRoot "wol-check.ps1") -Fix:($Arg -eq "fix") }
     "models" {
         Need-Venv

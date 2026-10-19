@@ -5,6 +5,12 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+**Fix, hearing:** Ari threw your English away. The language check (the tiny model) scored accented English 16–58 % "English", so 28 requests in a row were dropped as "another language". Now a better model tells the language (`ari.language_model: small`), and speech is ignored only when it is clearly another language (or, said without "Hey Ari" after an answer, when another language comes first). A misheard "Hey Ari" ("Hey, I did it") gets a second listen with the better model.
+
+**Added, following what Ari does:** every request is one story: how it was heard (the language check, a second listen), what Ari did (the tools, the models that answered or were rejected), the answer, how long it took, and the result: ok, failed and why, stopped, or ignored and why. Helios > Ari has a **Timeline** (click a request for its full trace) and **Not working**: what went wrong lately, grouped by cause with counts, an example and a hint. `dev.ps1 trace` shows the same in a terminal (`trace last`, `trace <job>`). Job log lines now say what Ari heard and said, the tools and the first problem (a job that "succeeded" but couldn't do it is now a warning), and how long it took.
+
+**Changed, the laptop console:** quieter (greys and one accent; red only for what failed) and easier to follow. The Logs pane shows each request as one line (`l` switches to the raw logs with the model calls in between, `f` failures only, `/` search, ↑↓ and Enter open a request's trace). The events pane is a timeline: a lane per machine with its jobs over the last hour (`+`/`-` zoom). The deck says what isn't working (`p` for the details).
+
 - **Notes vault:** an Obsidian vault synced over Tailscale with Syncthing. Notes from Obsidian, Ari, the share menu or Life Hub `learn:` are filed under the right topic and linked; notes marked `#enhance` are improved by Claude, keeping your own text.
 
 **Added, game mode:** the island's new game key (and Helios > Power > Game mode, or "game mode on") gives the PC's GPU to a game: Ari goes off, the PC's local models are unloaded from Ollama and refused until it ends, Ari's voice and "Hey Ari" stop. Ari's text answers use Claude meanwhile; other model jobs wait. By itself (`ari.game_mode_auto`, the island's "auto" row or Settings): on after a game has been in front for 20 s, off 60 s after it closes, but never ends a game mode you turned on. Helios shows how much video memory it freed.

@@ -120,7 +120,24 @@ class AriClient:
     NEW_CHAT_S = 30 * 60
     WAIT_S = 300.0  # how long an answer is waited for (the PC may have to wake its model first)
 
-    def say(self, text: str, on_partial: Callable[[str, str], None] | None = None) -> dict:
+    def _later(self, method: str, path: str, body: dict) -> None:
+        """Tell Argus something for the timeline, in the background (never in the way of listening)."""
+        def go() -> None:
+            try:
+                self._req(method, path, body, timeout=5)
+            except Exception:  # noqa: BLE001 - argusd away: the timeline misses one note
+                pass
+        threading.Thread(target=go, daemon=True, name="ari-note").start()
+
+    def ignored(self, d: dict) -> None:
+        self._later("POST", "/ari/ignored", d)
+
+    def answered(self, d: dict) -> None:
+        if self.conv:
+            self._later("POST", "/ari/spoken", {"conv": self.conv, **d})
+
+    def say(self, text: str, on_partial: Callable[[str, str], None] | None = None,
+            heard: dict | None = None) -> dict:
         """Ask Ari. `on_partial(text_so_far, mood)`: the finished sentences of a reply still being written (small
         talk streams), so they can be spoken before the rest is ready."""
         LAST_ASKED[0] = started = time.monotonic()
@@ -131,7 +148,8 @@ class AriClient:
             self.conv_file.touch()
         except OSError:
             pass
-        r = json.loads(self._req("POST", "/ari", {"text": text, **({"conv": self.conv} if self.conv else {})}))
+        r = json.loads(self._req("POST", "/ari", {"text": text, "source": "voice", "heard": heard or None,
+                                                  **({"conv": self.conv} if self.conv else {})}))
         if r.get("conv") and r["conv"] != self.conv:
             self.conv = r["conv"]
             try:
@@ -357,9 +375,11 @@ def accepted_share(probs: dict[str, float], accept: list[str]) -> float:
     return float(sum(probs.get(code, 0.0) for code in accept))
 
 
-def language_check(name: str, accept: list[str]) -> Callable[[object], float]:
-    """A small multilingual Whisper as a function: audio -> how sure it is one of `accept` (0..1). English-only
-    models can't tell: they write any speech down as English, which is how Sinhala became made-up questions."""
+def language_check(name: str, accept: list[str]) -> Callable[[object], dict]:
+    """A multilingual Whisper as a function: audio -> {accepted: how sure it is one of `accept` (0..1), top: the
+    language it thinks most likely, top_p}. English-only models can't tell: they write any speech down as English,
+    which is how Sinhala became made-up questions. Accented English spreads its guess over several languages, so the
+    decision (voice_live.not_for_ari) only drops speech that is clearly another language."""
     from .worker.hear import model
 
     m = model(name)
@@ -370,7 +390,9 @@ def language_check(name: str, accept: list[str]) -> Callable[[object], float]:
             _, info = m.transcribe(audio[: LANG_SECONDS * RATE], beam_size=1,  # type: ignore[attr-defined]
                                    without_timestamps=True, condition_on_previous_text=False)
         probs = dict(getattr(info, "all_language_probs", None) or [(info.language, info.language_probability)])
-        return accepted_share(probs, accept)
+        top = max(probs.items(), key=lambda kv: kv[1]) if probs else ("?", 0.0)
+        return {"accepted": round(accepted_share(probs, accept), 3), "top": top[0], "top_p": round(float(top[1]), 3),
+                "accept": list(accept)}
 
     return run
 
@@ -451,7 +473,7 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device,
                 partial(so_far, mood)
 
         try:
-            return client.say(text, first_words)
+            return client.say(text, first_words, heard=dict(talk.last_heard))
         finally:
             t.cancel()
             if not player.busy:
@@ -461,7 +483,8 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device,
                    ask=ask, player=player, report=client.state, chime=lambda: player.cue(vl.chime_samples(), RATE),
                    idle_s=float(cfg.ari.talk_idle_s), on_false_barge=gate.fooled,
                    live_words=wake_t if cfg.ari.live_words else None, show=client.state, ask_async=True,
-                   quiet=lambda: MIC["busy"] is not None, follow_ok=follow_ok, language=lang_t)
+                   quiet=lambda: MIC["busy"] is not None, follow_ok=follow_ok, language=lang_t,
+                   on_ignored=client.ignored, on_answered=client.answered)
     spoke_up = [0.0]
     voc_at = [time.monotonic()]
 

@@ -322,7 +322,7 @@ class AriConfig(_Strict):
     # of being turned into a made-up English question. A small multilingual model tells the language (empty
     # list: off).
     languages: list[str] = Field(default_factory=lambda: ["en"])
-    language_model: str = "tiny"
+    language_model: str = "small"  # tells the language (multilingual; tiny was too unsure of accented English)
     # A wake-word model for "Hey Ari" (openWakeWord .onnx, e.g. data/models/hey_ari.onnx; pip install -e .[wake]).
     # Empty: Whisper listens for "Hey Ari" at the start of what it hears.
     wake_model: str = ""

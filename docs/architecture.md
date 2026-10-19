@@ -273,8 +273,14 @@ order. The `EventHub` is woken after each commit, reads the new rows and hands t
   browser can never slow Argus down.
 - `argus-events` (`tail.py`) is the same stream in a terminal.
 - `console.py` (`python -m argus.console`) is the laptop's live terminal: one window split in four (the Argus logo
-  with an eye that follows Ari and the machines, jobs and models; Ari's conversation; events; logs). It only reads
-  through argusd's API. `deploy/linux/console-setup.sh` opens it by itself when Hyprland starts.
+  with an eye that follows Ari, the machines, jobs, models and what isn't working; Ari's conversation; a timeline
+  of each machine's jobs; each request as one line, with its trace on Enter). It only reads through argusd's API.
+  `deploy/linux/console-setup.sh` opens it by itself when Hyprland starts.
+- `timeline.py` turns Argus's own tables (ari_turns, jobs, steps, model_calls, events) into stories: each request to
+  Ari (heard → tools and models → answer, ok / failed / ignored and why), one request's full trace, what went wrong
+  lately grouped by cause (`/problems`), and the machines' job lanes. Helios > Ari (Timeline, Not working), the
+  console and `dev.ps1 trace` read it. The PC's listener adds how a request was heard (`POST /ari` with `heard`),
+  speech it ignored and why (`ari.ignored`), and when the answer arrived (`/ari/spoken`).
 
 Events are kept for `events.retention_days` (90).
 
