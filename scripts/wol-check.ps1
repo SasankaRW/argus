@@ -45,6 +45,10 @@ foreach ($a in $wired) {
         $p = $props | Where-Object { $_.RegistryKeyword -eq $kw }
         if (-not $p) { continue }
         $on = "$($p.RegistryValue)" -eq "1"
+        if ($kw -eq "*ModernStandbyWoLMagicPacket") {  # laptops with Modern Standby only: not needed on a desktop
+            Say $null ("{0}: {1} (only matters for Modern Standby laptops)" -f $p.DisplayName, $p.DisplayValue)
+            continue
+        }
         Say $on ("{0} ({1}): {2}" -f $p.DisplayName, $kw, $p.DisplayValue)
         if ($Fix -and -not $on -and $kw -ne "WakeOnLink") {
             Set-NetAdapterAdvancedProperty -Name $a.Name -RegistryKeyword $kw -RegistryValue 1 -ErrorAction SilentlyContinue
