@@ -48,6 +48,7 @@ eyes:
   # robot eyes on the cooler's screen (DeepCool LM360): pip install -e .[eyes], close DeepCool's app
   enabled: false
   away_after_s: 600       # nobody at the PC this long (or it's locked): the screen goes dark
+  ignore: []              # programs that never change the eyes, e.g. [obs64, discord]
 
 brief:
   enabled: true

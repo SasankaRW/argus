@@ -368,6 +368,7 @@ class EyesConfig(_Strict):
     # Needs pip install -e .[eyes] and DeepCool's own app closed (only one program can hold the screen).
     enabled: bool = False
     away_after_s: int = Field(600, ge=30, le=86400)  # nobody at the PC this long (or it's locked): the screen goes dark
+    ignore: list[str] = Field(default_factory=list)  # programs that never change the eyes (e.g. ["obs64", "discord"])
 
 
 class GuidanceConfig(_Strict):
