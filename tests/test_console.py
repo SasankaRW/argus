@@ -38,6 +38,30 @@ class FakeApi:
             "/ari/c1": {"turns": [{"role": "you", "text": "what is running", "created_at": now},
                                   {"role": "ari", "text": "Two jobs, nothing stuck.", "created_at": now}]},
             "/logs": [{"name": "argusd"}, {"name": "ollama"}, {"name": "worker-crash"}],
+            "/problems?hours=24": {"count": 3, "headline": "3 problems: tool play_on_spotify ×2, hearing",
+                                   "problems": [{"area": "tool play_on_spotify", "what": "search box not found",
+                                                 "count": 2, "hint": None},
+                                                {"area": "hearing", "what": "another language", "count": 1,
+                                                 "hint": "speech that wasn't English was ignored"}]},
+            "/timeline/lanes?minutes=60": {"since": now - 3600, "now": now, "workers": [
+                {"worker": "desktop-saspc", "jobs": [{"start": now - 1800, "end": now - 1500, "plugin": "workstation",
+                                                      "state": "dead"},
+                                                     {"start": now - 600, "end": now - 300, "plugin": "ari",
+                                                      "state": "succeeded"}]}]},
+            "/ari/timeline?limit=80": {"requests": [
+                {"at": now - 60, "text": "play famous on spotify", "result": "failed", "job_id": "j9",
+                 "why": "search box not found", "tools": [{"tool": "play_on_spotify", "ok": False}],
+                 "ms": 8200, "models": [{"model": "qwen3:8b", "verdict": "ok"}]},
+                {"at": now - 90, "text": "kohomada", "result": "ignored", "why": "another language (si 80%)"},
+                {"at": now - 120, "text": "what's the time", "result": "ok", "reply": "It's 7 pm.", "ms": 900}]},
+            "/ari/trace/j9": {"text": "play famous on spotify", "result": "failed", "why": "search box not found",
+                              "heard": {"accepted": 0.4, "top": "si", "top_p": 0.45, "second_listen": True},
+                              "steps": [{"kind": "model", "what": "qwen3:8b (decide 1)", "ok": True, "ms": 900},
+                                        {"kind": "step", "what": "tool 1: play_on_spotify", "ok": False,
+                                         "ms": 7000, "why": "search box not found"}]},
+            "/models/calls?limit=60": {"calls": [{"created_at": now - 30, "plugin": "ari", "workflow": "think",
+                                                  "model": "qwen3:8b", "verdict": "rejected", "latency_ms": 1200,
+                                                  "reason": "not one of the tools"}]},
             "/logs/argusd?lines=40": {"offset": 10, "entries": [
                 {"source": "argusd", "ts": "2026-10-08T12:00:01Z", "level": "warning", "logger": "argus.voice",
                  "msg": "ari's voice unavailable, showing text", "extra": {"error": "timed out"}}]},
@@ -119,16 +143,55 @@ def test_the_ari_view_follows_the_conversation():
     assert "what is running" in out and "Two jobs, nothing stuck." in out and "ARI" in out
 
 
-def test_the_events_and_logs_views():
+def test_the_timeline_and_events():
     ev = con.EventsView(FakeApi())
-    wait_for(lambda: ev.rows)
-    out = text_of(ev.render(0.0, 20))
+    wait_for(lambda: ev.rows and ev.lanes, 6)
+    out = text_of(ev.render(0.0, 30, 120))
+    assert "TIMELINE" in out and "desktop-saspc" in out and "ari▬" in out and "now" in out
     assert "job.succeeded" in out and "backup" in out and "files=3" in out
+    ev.key("+")
+    assert ev.minutes == 30
+
+
+def test_the_logs_view_tells_each_request_as_a_line_and_opens_its_trace():
     lg = con.LogsView(FakeApi())
-    wait_for(lambda: lg.rows)
-    out = text_of(lg.render(0.0, 20))
+    wait_for(lambda: lg.stories and lg.rows and lg.calls, 6)
+    out = text_of(lg.render(0.0, 30))
+    assert "play famous on spotify" in out and "search box not found" in out and "kohomada" in out
+    assert "what's the time" in out and "It's 7 pm." in out and "8.2s" in out
+    lg.key("f")  # failures and ignored only
+    out = text_of(lg.render(0.0, 30))
+    assert "what's the time" not in out and "kohomada" in out
+    lg.key("f")
+    lg.key("\x1b[A")  # up, then down again: the newest line, the failed request
+    lg.key("\x1b[B")
+    lg.key("\r")
+    wait_for(lambda: lg.trace)
+    out = text_of(lg.render(0.0, 40))
+    assert "trace of" in out and "second listen" in out and "tool 1: play_on_spotify" in out
+    lg.key("\x1b")
+    assert lg.trace is None
+    lg.key("l")  # the raw logs, with the model calls in between
+    out = text_of(lg.render(0.0, 30))
     assert "showing text" in out and "WRN" in out and "error=timed out" in out
+    assert "MDL" in out and "qwen3:8b" in out and "rejected" in out
+    lg.key("/")
+    for ch in "voice":
+        lg.key(ch)
+    lg.key("\r")
+    out = text_of(lg.render(0.0, 30))
+    assert "showing text" in out and "qwen3:8b" not in out
     assert "ollama" not in lg.at and "worker-crash" not in lg.at  # not the noisy ones
+
+
+def test_the_deck_says_what_isnt_working():
+    deck = con.Deck(FakeApi())
+    wait_for(lambda: deck.data.get("problems"))
+    out = text_of(deck.render(0.5))
+    assert "3 problems" in out and "p: details" in out
+    deck.key("p")
+    out = text_of(deck.render(0.5))
+    assert "search box not found" in out and "not working" in out
 
 
 def test_the_token_comes_from_a_file(tmp_path):

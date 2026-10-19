@@ -76,6 +76,7 @@ from .. import calls as calls_mod
 from .. import daily, guidance, laptop_power, logview, vocab, voice_corpus
 from .. import island as island_mod
 from .. import settings as settings_mod
+from .. import timeline as timeline_mod
 from ..approvals import ApprovalClosed, ApprovalError, ApprovalNotFound, BadToken
 from ..config import PRIORITY_INTERACTIVE
 from ..context import Argus
@@ -212,6 +213,8 @@ class AskDo(BaseModel):
 class AriSay(BaseModel):
     text: str = Field(min_length=1, max_length=1000)
     conv: str | None = Field(None, pattern=r"^[A-Za-z0-9_-]{1,40}$")
+    source: str | None = Field(None, max_length=20)  # voice, helios, phone (the timeline says where it came from)
+    heard: dict[str, Any] | None = None  # the listener's notes: the language check, a second listen for "Hey Ari"
 
 
 class AriAnswer(BaseModel):
@@ -1192,6 +1195,67 @@ def create_app(argus: Argus) -> FastAPI:
     @app.post("/ari", dependencies=guarded)
     async def ari_say(body: AriSay) -> dict:
         """Say something to Ari. Returns the reply at once, or a turn that fills in (poll GET /ari/{conv})."""
+        out = await ari_say_inner(body)
+        conv = out.get("conv") or body.conv
+        if conv and (body.source or body.heard):  # how it came, for the timeline
+            meta = json.dumps({"source": body.source or "typed", "heard": body.heard or None}, default=str)[:2000]
+            await argus.store.write(lambda c: c.execute(
+                "UPDATE ari_turns SET meta = ? WHERE id = (SELECT id FROM ari_turns WHERE conv = ? AND role = 'you'"
+                " ORDER BY id DESC LIMIT 1)", (meta, conv)))
+        return out
+
+    # -------------------------------------------------------------- the timeline: requests as stories (timeline.py)
+
+    @app.post("/ari/spoken", dependencies=guarded)
+    async def ari_spoken(body: dict[str, Any]) -> dict:
+        """The listener has Ari's answer: {conv, answer_ms (from when you finished speaking), spoken (or only shown)}
+        on Ari's newest turn in that chat."""
+        conv = str(body.get("conv") or "")
+        meta = json.dumps({k: body.get(k) for k in ("answer_ms", "spoken", "empty") if k in body})
+
+        def fn(c):
+            c.execute("UPDATE ari_turns SET meta = ? WHERE id = (SELECT id FROM ari_turns WHERE conv = ? AND"
+                      " role = 'ari' ORDER BY id DESC LIMIT 1)", (meta, conv))
+        await argus.store.write(fn)
+        return {"ok": True}
+
+    @app.post("/ari/ignored", dependencies=guarded)
+    async def ari_ignored(body: dict[str, Any]) -> dict:
+        """Speech the listener didn't take as a request, and why ("another language", "no wake phrase")."""
+        data = {k: body.get(k) for k in ("why", "text", "lang", "top_p", "english") if body.get(k) is not None}
+        data["text"] = str(data.get("text") or "")[:120]
+        await argus.store.write(lambda c: insert_event(c, time.time(), "ari.ignored", src="pc", dst="ari",
+                                                       data=data))
+        return {"ok": True}
+
+    @app.get("/ari/timeline", dependencies=guarded)
+    async def ari_timeline(limit: int = Query(50, ge=1, le=300), before: float | None = None,
+                           ignored: bool = True) -> dict:
+        """Your requests to Ari as stories, newest first: heard, what Ari did, the answer, the result and why."""
+        rows = await argus.store.read(lambda c: timeline_mod.requests(c, limit=limit, before=before,
+                                                                     ignored=ignored))
+        return {"requests": rows}
+
+    @app.get("/ari/trace/{ref}", dependencies=guarded)
+    async def ari_trace(ref: str) -> dict:
+        """One request in full (its job id, its turn id, or "last"): every step, model call and tool, in order."""
+        t = await argus.store.read(lambda c: timeline_mod.trace(c, ref))
+        if t is None:
+            raise HTTPException(status_code=404, detail="no such request")
+        return t
+
+    @app.get("/timeline/lanes", dependencies=guarded)
+    async def timeline_lanes(minutes: float = Query(60, gt=0, le=24 * 60)) -> dict:
+        """What each machine worked on in the last `minutes`: a lane of jobs per worker (the console's timeline)."""
+        return await argus.store.read(lambda c: timeline_mod.lanes(c, time.time(), minutes))
+
+    @app.get("/problems", dependencies=guarded)
+    async def problems(hours: float = Query(24, gt=0, le=24 * 14)) -> dict:
+        """What went wrong lately, grouped by cause with counts, an example and a hint."""
+        p = await argus.store.read(lambda c: timeline_mod.problems(c, time.time(), hours))
+        return {**p, "headline": timeline_mod.headline(p)}
+
+    async def ari_say_inner(body: AriSay) -> dict:
         conv = body.conv or new_id().lower()
         body.text = vocab.fix(body.text, argus.cfg.ari.heard_as)  # "open what's up" -> "open WhatsApp"
         text = ari_mod.WAKE.sub("", body.text).strip() or body.text.strip()

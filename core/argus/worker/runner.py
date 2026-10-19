@@ -144,6 +144,35 @@ class _CallLog:
 CALL_LOG = _CallLog()
 
 
+def outcome(job: dict, result: Any) -> dict:
+    """A job's result in a few readable fields for its log line: what Ari heard and said, the tools and how they
+    went, and the first problem (a tool that failed or said it couldn't, a step "not done")."""
+    out: dict[str, Any] = {}
+    if not isinstance(result, dict):
+        return out
+    inp = job.get("input") if isinstance(job.get("input"), dict) else {}
+    if job.get("plugin") == "ari" and inp.get("text"):
+        out["heard"] = str(inp["text"])[:80]
+    if result.get("reply"):
+        out["reply"] = str(result["reply"])[:100]
+    tools = []
+    for u in result.get("used") or []:
+        if not isinstance(u, dict):
+            continue
+        res = u.get("result")
+        bad = u.get("error") or (res.get("problem") if isinstance(res, dict) and res.get("done") is False else None)
+        tools.append(f"{u.get('tool')} {'✗' if bad else '✓'}")
+        if bad and "problem" not in out:
+            out["problem"] = f"{u.get('tool')}: {str(bad).splitlines()[0][:140]}"
+    if tools:
+        out["tools"] = ", ".join(tools)
+    if result.get("done") is False and "problem" not in out:
+        out["problem"] = str(result.get("problem") or "not done")[:160]
+    if result.get("tier"):
+        out["model"] = result["tier"]
+    return out
+
+
 class _JobBoard:
     """The router's link to argusd for one job: permits, breaker reports, trace events and the call log."""
 
@@ -369,13 +398,18 @@ class Worker:
         if plugin is not None:
             self._attach(ctx, plugin, job_id)
         jlog.info("job started", extra={"attempt": job.get("attempt"), "checkpoints": len(ctx._done)})
+        t0 = time.monotonic()
         try:
             result = wf.fn(ctx)
             ctx._flush_trace()
             if reporter.lease_lost:
                 raise LeaseLostError(409, {"error": "lease_lost"})
             self.client.succeed(job_id, self.id, result)
-            jlog.info("job succeeded", extra={"skipped_steps": ctx.skipped})
+            took = round((time.monotonic() - t0) * 1000)
+            story = outcome(job, result)
+            (jlog.warning if story.get("problem") else jlog.info)(
+                "job succeeded" if not story.get("problem") else "job finished with a problem",
+                extra={"skipped_steps": ctx.skipped, "took_ms": took, **story})
             return "succeeded"
         except LeaseLostError:
             jlog.warning("lease lost; leaving the job to argus")
@@ -388,12 +422,13 @@ class Worker:
         except PermanentError as e:
             why = str(e) or type(e).__name__
             self._report(jlog, lambda: self.client.fail(job_id, self.id, why, False))
-            jlog.error("job failed permanently", extra={"error": why})
+            jlog.error("job failed permanently", extra={"error": why, "took_ms": round((time.monotonic() - t0) * 1000)})
             return "dead"
         except Exception as e:
             detail = f"{type(e).__name__}: {e}"
             self._report(jlog, lambda: self.client.fail(job_id, self.id, detail, True))
-            jlog.error("job failed", extra={"error": detail, "trace": traceback.format_exc(limit=5)})
+            jlog.error("job failed", extra={"error": detail, "took_ms": round((time.monotonic() - t0) * 1000),
+                                            "trace": traceback.format_exc(limit=5)})
             return "failed"
         finally:
             if ctx._unsent:

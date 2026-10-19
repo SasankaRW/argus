@@ -4,6 +4,7 @@ import type { Selection } from "./MapView";
 import { powerAri, useAri, useEars } from "./ariState";
 import { listen, pref, setPref, speak, Speech, stopSpeaking, voiceStatus, VoiceStatus } from "./voice";
 import { plain } from "./spoken";
+import { ProblemsCard, Timeline } from "./Timeline";
 
 type Turn = { id: number; role: "you" | "ari"; text: string | null; action: string | null; label?: string | null;
   pending: { kind: string; action: string } | null; job_id: string | null; created_at: number;
@@ -87,6 +88,8 @@ export function AriHome({ onOpen }: { onOpen: (conv: string) => void }) {
         </div>
       </section>
       <AriSettings />
+      <ProblemsCard />
+      <Timeline />
     </div>
   );
 }

@@ -197,6 +197,13 @@ def test_two_stage_wake_check_uses_the_small_model_first():
     assert asked == [] and heard_small == []
 
 
+def test_a_misheard_hey_ari_gets_a_second_listen():
+    talk, p, asked, heard, clock = make(heard=["Hey Ari, what's the time", "Hey Ari, what's the time"])
+    talk.transcribe_wake = lambda a: "Hey, I did it."  # tiny.en, as in the logs
+    speak(talk)
+    assert asked == ["what's the time"]
+
+
 def test_talk_button_starts_a_conversation():
     talk, p, asked, heard, clock = make(heard=["what's running"])
     talk.wake()
@@ -411,21 +418,44 @@ def test_the_model_is_let_go_while_you_are_away_and_loaded_when_you_are_back(mon
     assert len(pings) == 2  # at the start, then not while away, then at once when back
 
 
+def lang(en, top="en", top_p=None):
+    return {"accepted": en, "top": top, "top_p": en if top_p is None else top_p, "accept": ["en"]}
+
+
 def test_talk_in_another_language_is_not_turned_into_a_question():
     talk, p, asked, heard, clock = make(heard=["Hey Ari, what's running?"])
-    shares = [0.05]  # Sinhala with a friend: the language check is sure it isn't English
-    talk.language = lambda audio: shares.pop(0)
+    said = [lang(0.05, "si", 0.82)]  # Sinhala with a friend: clearly another language
+    talk.language = lambda audio: said.pop(0)
     speak(talk)
     assert asked == [] and heard == ["Hey Ari, what's running?"]  # not even written down
 
 
-def test_english_passes_the_language_check_and_follow_ups_need_more_certainty():
-    talk, p, asked, heard, clock = make(heard=["Hey Ari, hi", "and the backups?"])
-    shares = [0.9, 0.45]  # then a mixed, unsure line said without "Hey Ari"
-    talk.language = lambda audio: shares.pop(0)
+def test_accented_english_is_not_thrown_away():
+    # from the logs: your English scored 0.16-0.58 "English", the rest spread over other languages
+    talk, p, asked, heard, clock = make(heard=["Hey Ari, play a song", "and louder"])
+    said = [lang(0.34, "si", 0.41), lang(0.45, "en")]
+    talk.language = lambda audio: said.pop(0)
     speak(talk)
-    assert asked == ["hi"]
+    assert asked == ["play a song"]
     p.busy = False
     talk.tick()
     speak(talk)
-    assert asked == ["hi"] and heard == ["and the backups?"]
+    assert asked == ["play a song", "and louder"]
+
+
+def test_follow_ups_in_another_language_are_ignored():
+    talk, p, asked, heard, clock = make(heard=["Hey Ari, hi", "kohomada machan"])
+    said = [lang(0.9), lang(0.2, "si", 0.5)]  # someone in the room, after Ari answered
+    talk.language = lambda audio: said.pop(0)
+    speak(talk)
+    p.busy = False
+    talk.tick()
+    speak(talk)
+    assert asked == ["hi"] and heard == ["kohomada machan"]
+
+
+def test_not_for_ari_only_drops_clear_cases():
+    assert vl.not_for_ari(lang(0.16, "si", 0.71), following=False)
+    assert vl.not_for_ari(lang(0.34, "si", 0.41), following=False) is None
+    assert vl.not_for_ari(lang(0.1, "en", 0.1), following=True) is None  # English first: ours
+    assert vl.not_for_ari(vl.as_lang(0.05), following=False) is None  # an older check (a share only): never drops

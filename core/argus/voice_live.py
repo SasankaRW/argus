@@ -298,6 +298,33 @@ def _words(s: str) -> list[str]:
     return re.findall(r"[a-z0-9']+", s.lower())
 
 
+GREETING = re.compile(r"^\W*(?:hey|hi|hay|ok|okay)\b", re.I)
+
+
+def as_lang(v: Any) -> dict:
+    """The language check's answer as {accepted, top, top_p} (an older check gives only the share)."""
+    if isinstance(v, dict):
+        return v
+    return {"accepted": float(v), "top": "?", "top_p": 0.0}
+
+
+def not_for_ari(lang: dict, following: bool) -> str | None:
+    """Why this isn't for Ari, or None. Only clear cases count: accented English spreads the guess over several
+    languages (your English scored 0.16-0.58 "English" on the small model), so a low English score alone is not
+    enough. After "Hey Ari" it must clearly be another language; words said without it after an answer (a video, the
+    room) need the other language only to come first."""
+    accepted = float(lang.get("accepted") or 0.0)
+    top, top_p = str(lang.get("top") or "?"), float(lang.get("top_p") or 0.0)
+    ours = top in (lang.get("accept") or ["en"]) or top == "?"
+    if ours:
+        return None
+    if following and accepted < 0.3:
+        return f"another language ({top} {top_p:.0%}, English {accepted:.0%}), said without Hey Ari"
+    if top_p >= 0.6 and accepted < 0.2:
+        return f"another language ({top} {top_p:.0%}, English {accepted:.0%})"
+    return None
+
+
 def echo_of(heard: str, speaking: str) -> bool:
     """Is what the mic heard just Ari's own words coming back? (most of its words are in what Ari is saying)"""
     h, s = _words(heard), set(_words(speaking))
@@ -415,15 +442,19 @@ class Talk:
     show: Callable[[str, str], None] | None = None  # (phase, text): the island's words
     live_every_s: float = 1.0
     run: Callable[[Callable[[], None]], None] = lambda f: threading.Thread(target=f, daemon=True).start()
+    # The timeline (Helios > Ari > Timeline): speech that wasn't taken as a request and why, and how long an answer
+    # took from the moment you finished speaking. `last_heard`: how the newest request was heard (sent with it).
+    on_ignored: Callable[[dict], None] = lambda d: None
+    on_answered: Callable[[dict], None] = lambda d: None
+    last_heard: dict = field(default_factory=dict)
     quiet: Callable[[], bool] = lambda: False  # in a call or a game: answers are shown on the island, not spoken
     # After an answer, is this (said without "Hey Ari") for Ari? The listener says no while the PC plays sound and
     # for long streams of words (a video, a call). Skipped when Ari asked something or you pressed Talk.
     follow_ok: Callable[[str], bool] = lambda text: True
-    # audio -> how sure it is a language Ari understands (0..1). Talk in another language is not for Ari, however
+    # audio -> {accepted, top, top_p} (or just how sure it is a language Ari understands, 0..1). Talk in another
+    # language is not for Ari, however Whisper writes it down (see not_for_ari).
     # Whisper writes it down. Stricter for words said without "Hey Ari" after an answer.
-    language: Callable[[Any], float] | None = None
-    lang_need: float = 0.3
-    lang_need_follow: float = 0.6
+    language: Callable[[Any], Any] | None = None
     _awaiting: bool = False  # Ari asked something ("Shall I?"), or Talk / "Hey Ari" alone: the next words are ours
     _live_at: float = 0.0
     _live_busy: bool = False
@@ -505,17 +536,32 @@ class Talk:
         self._gen += 1  # words still being worked out for this turn are no longer wanted
         self._live_text = ""
         barged, self.paused_for_barge = self.paused_for_barge, False
+        self.last_heard = {}
         if not (barged or self.in_conversation) and self.transcribe_wake is not None:
             head = (self.transcribe_wake(audio[: 3 * RATE]) or "").strip()  # quick look: was it "Hey Ari …"?
+            second = False
+            if self.wake_rest(head) is None and GREETING.match(head) and len(head.split()) <= 6:
+                # "Hey, I did it": the small model often mishears "Hey Ari". A second, better listen to the start
+                again = (self.transcribe(audio[: 3 * RATE]) or "").strip()
+                if self.wake_rest(again) is not None:
+                    log.info("wake phrase found on a second listen", extra={"first": head[:60], "second": again[:60]})
+                    head, second = again, True
+                else:  # it started like "Hey ...": maybe you, misheard. Shown on the timeline (background talk isn't)
+                    self.on_ignored({"why": "no wake phrase", "text": again or head})
             if self.wake_rest(head) is None:
                 if head:
-                    log.info("heard, no wake phrase", extra={"text": head[:80]})
+                    log.info("ignored: no wake phrase", extra={"text": head[:80]})
                 return None
+            self.last_heard = {"second_listen": True} if second else {}
+        lang: dict = {}
         if self.language is not None:
             following = self.in_conversation and not barged and not self._awaiting
-            share = float(self.language(audio))
-            if share < (self.lang_need_follow if following else self.lang_need):
-                log.info("heard another language, not for Ari", extra={"accepted": round(share, 2)})
+            lang = as_lang(self.language(audio))
+            why = not_for_ari(lang, following)
+            if why:
+                log.info(f"ignored: {why}", extra={**lang, "following": following})
+                self.on_ignored({"why": why, "lang": lang.get("top"), "top_p": lang.get("top_p"),
+                                 "english": lang.get("accepted")})
                 if barged:
                     self.player.resume()  # someone talking in the room: Ari carries on
                     return "resumed"
@@ -559,7 +605,11 @@ class Talk:
             self.show("thinking", command)  # the island keeps what you said on show while Ari works
         else:
             self.report("thinking")
-        log.info("heard", extra={"text": command})
+        log.info("heard", extra={"text": command, **({"english": lang.get("accepted"), "lang": lang.get("top")}
+                                                      if lang else {})})
+        self.last_heard = {**({k: lang.get(k) for k in ("accepted", "top", "top_p")} if lang else {}),
+                           **({"second_listen": True} if self.last_heard.get("second_listen") else {}),
+                           **({"follow_up": True} if self.in_conversation and not barged else {})}
         self._ask_seq += 1
         seq = self._ask_seq
         self._last_q = command
@@ -600,7 +650,12 @@ class Talk:
         with self._lock:
             if seq not in self._open:
                 return  # dropped (Stop)
-            self._open.pop(seq, None)
+            asked = self._open.pop(seq, None) or {}
+            try:
+                self.on_answered({"answer_ms": round((self.clock() - float(asked.get("at") or self.clock())) * 1000),
+                                  "spoken": not self.quiet(), "empty": not (ans.get("reply") or "").strip()})
+            except Exception:  # noqa: BLE001 - the timeline is a nicety
+                pass
             reply = (ans.get("reply") or "").strip()
             if reply and any(s > seq for s in self._open):
                 self._held.append((seq, command, ans))
