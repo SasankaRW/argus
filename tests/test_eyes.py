@@ -123,11 +123,59 @@ def test_away_goes_dark_once_and_comes_back_whole(tmp_path):
     away["on"] = True
     clock.t += eyes.AWAY_CHECK_S
     play(p, clock, 10)
-    assert s.sent == [1, "black"]
+    assert s.sent[:2] == [1, "black"] and set(s.sent[1:]) == {"black"}  # dark: black again now and then
+    assert len(s.sent) <= 2 + 5 / eyes.KEEPALIVE_S
     away["on"] = False
     clock.t += eyes.AWAY_CHECK_S
+    n = len(s.sent)
     play(p, clock, 2)
-    assert s.sent == [1, "black", 1]  # the frame is a repeat, but the screen was black: sent whole
+    assert s.sent[n:] == [1]  # the frame is a repeat, but the screen was black: sent whole
+
+
+def test_a_still_hold_still_sends_a_frame_every_second(tmp_path):
+    write(tmp_path, "a", [5] * 100)  # 5 s of the same frame
+    clock = Clock()
+    s = FakeScreen()
+    p = Player(s, tmp_path, clock=clock)
+    p.want("a")
+    play(p, clock, 100)
+    assert s.sent == [5] * 5  # once at the start, then the keepalive each second
+
+
+def test_the_stopper_ends_on_a_signal_or_the_stop_file(tmp_path):
+    f = tmp_path / "eyes.stop"
+    f.write_text("")  # left over from a killed run: cleared at start
+    clock = Clock()
+    stop = eyes.Stopper(f, clock=clock)
+    assert not f.exists() and not stop()
+    f.write_text("")
+    assert not stop()  # looked 0 s ago: looks again after 0.5 s
+    clock.t += 0.5
+    assert stop()
+    other = eyes.Stopper()
+    other._ask(2, None)  # what Ctrl+C does
+    assert other()
+
+
+def test_the_supervisor_asks_the_eyes_to_stop_before_killing(tmp_path, monkeypatch):
+    class Proc:
+        pid, returncode, seen = 1, None, False
+
+        def poll(self):
+            self.seen = self.seen or f.exists()  # exits as soon as it sees the stop file
+            return 0 if self.seen else None
+
+        def wait(self, timeout=None):
+            self.poll()
+            return 0
+
+    f = tmp_path / "eyes.stop"
+    killed = []
+    monkeypatch.setattr(supervisor.subprocess, "run", lambda *a, **k: killed.append(a))
+    c = supervisor.Child("eyes", [], stop_file=f)
+    c.proc = Proc()
+    c.stop()
+    assert killed == [] and not f.exists()
 
 
 def test_no_screen_means_a_quiet_retry_every_30_s(tmp_path):
@@ -202,6 +250,7 @@ def test_the_screen_sends_init_then_header_and_pixels():
     assert s.frame(fr(5))
     w = FakeUsb.core.dev.writes
     assert w[0] == lm360.INIT and w[1] == lm360.HEADER and w[2] == fr(5)
+    assert s.unstick() and w[3:] == [lm360.BLACK, lm360.INIT]  # a frame's worth of zeros, then INIT again
 
 
 def test_the_screen_never_raises():
@@ -219,5 +268,6 @@ def test_the_supervisor_runs_the_eyes_only_when_on(monkeypatch):
     args = argparse.Namespace(no_worker=False, no_session=False, no_argusd=False, desk_only=False)
     monkeypatch.setattr(supervisor, "eyes_on", lambda: True)
     assert [n for n, _ in supervisor.plan(args)] == ["argusd", "eyes", "worker"]
+    assert "--stop-file" in dict(supervisor.plan(args))["eyes"]
     monkeypatch.setattr(supervisor, "eyes_on", lambda: False)
     assert [n for n, _ in supervisor.plan(args)] == ["argusd", "worker"]

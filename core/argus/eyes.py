@@ -14,6 +14,9 @@ A new clip starts only when the playing one reaches a neutral frame.
 **Away:** when the PC is locked, or nobody has touched it for `eyes.away_after_s`, the screen goes black and
 nothing is sent until you're back.
 
+**Stopping** always happens between frames, never inside one (a frame cut in half leaves the screen black until
+the PC loses power): Ctrl+C, closing the window and the supervisor's stop file all just ask the loop to end.
+
 **Never in the way:** no cooler, DeepCool's app holding the screen, a USB error: one log line, then it tries again
 every 30 s.
 """
@@ -39,6 +42,7 @@ log = logging.getLogger("argus.eyes")
 MAGIC = b"ARGUS-EYES 1\n"
 RETRY_S = 30.0
 AWAY_CHECK_S = 2.0
+KEEPALIVE_S = 1.0  # the screen gets a frame at least this often, even during a still hold or while dark
 
 
 # ------------------------------------------------------------------ clips
@@ -118,7 +122,8 @@ class Player:
         self.next_try = 0.0
         self.clip_retry = 0.0
         self.said = ""
-        self._away_at, self._away = -1e9, False
+        self._away_at, self._away = -1e9, ""
+        self.sent_at = -1e9
 
     def want(self, name: str) -> None:
         """Play this clip next (from its next neutral frame)."""
@@ -144,10 +149,15 @@ class Player:
         if now - self._away_at >= AWAY_CHECK_S:
             self._away_at = now
             try:
-                self._away = bool(self.away())
-            except Exception:  # noqa: BLE001
-                self._away = False
-        return self._away
+                got = self.away()
+            except Exception as e:  # noqa: BLE001 - can't tell: assume you're here
+                log.info("away check failed", extra={"error": str(e)[:120]})
+                got = ""
+            got = (got if isinstance(got, str) else ("away" if got else "")) or ""
+            if got != self._away:
+                log.info("screen dark: " + got if got else "playing again")
+            self._away = got
+        return bool(self._away)
 
     def step(self) -> float:
         now = self.clock()
@@ -161,8 +171,8 @@ class Player:
             self._say("screen connected")
             self.full = True
         if self._is_away():
-            if not self.dark and self.screen.frame(BLACK):
-                self.dark = True
+            if (not self.dark or now - self.sent_at >= KEEPALIVE_S) and self.screen.frame(BLACK):
+                self.dark, self.sent_at = True, now
             return 0.5
         if self.dark:
             self.dark, self.full = False, True
@@ -175,8 +185,9 @@ class Player:
                 self.clip_retry = now + RETRY_S  # keep playing what we have; look for the file again later
         if self.clip is None:
             return 1.0
-        if (self.full or self.clip.changed(self.i)) and self.screen.frame(self.clip.pixels(self.i)):
-            self.full = False
+        send = self.full or self.clip.changed(self.i) or now - self.sent_at >= KEEPALIVE_S
+        if send and self.screen.frame(self.clip.pixels(self.i)):
+            self.full, self.sent_at = False, now
         elif not self.screen.ok:
             self.next_try = now  # lost it mid-frame: try again right away, then every 30 s
             return 0.0
@@ -191,22 +202,84 @@ class Player:
             time.sleep(max(0.0, nxt - self.clock()))
 
 
+class Stopper:
+    """Ends the player between frames. Ctrl+C, Ctrl+Break, closing the window (SIGBREAK on Windows) and SIGTERM
+    only set a flag, so a frame is never cut in half; `stop_file` appearing does the same (the supervisor creates
+    it, waits, and only then kills)."""
+
+    def __init__(self, stop_file: Path | None = None, clock: Callable[[], float] = time.monotonic):
+        self.file, self.clock = stop_file, clock
+        self.asked = False
+        self._looked = -1e9
+        if self.file is not None:
+            self.file.unlink(missing_ok=True)  # an old one from a run that was killed
+
+    def install(self) -> None:  # pragma: no cover - real signals
+        import signal
+
+        for name in ("SIGINT", "SIGBREAK", "SIGTERM"):
+            sig = getattr(signal, name, None)
+            if sig is not None:
+                try:
+                    signal.signal(sig, self._ask)
+                except (OSError, ValueError):
+                    pass
+
+    def _ask(self, *_: Any) -> None:
+        self.asked = True
+
+    def __call__(self) -> bool:
+        if not self.asked and self.file is not None and self.clock() - self._looked >= 0.5:
+            self._looked = self.clock()
+            self.asked = self.file.exists()
+        return self.asked
+
+
 # ------------------------------------------------------------------ the PC
 
-def away_now(after_s: float) -> bool:  # pragma: no cover - Windows only
-    """Locked (the input desktop isn't ours) or nobody has touched the PC for `after_s` seconds."""
+def idle_s() -> float:  # pragma: no cover - Windows only
+    """Seconds since the last key press or mouse move (Windows; 0 elsewhere). 32-bit tick maths, so it stays
+    right after 25 or 50 days of uptime."""
+    if os.name != "nt":
+        return 0.0
+    import ctypes
+    from ctypes import wintypes
+
+    class LastInput(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.UINT), ("dwTime", wintypes.DWORD)]
+
+    li = LastInput()
+    li.cbSize = ctypes.sizeof(li)
+    if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(li)):  # type: ignore[attr-defined]
+        return 0.0
+    k32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    k32.GetTickCount.restype = wintypes.DWORD
+    return ((k32.GetTickCount() - li.dwTime) & 0xFFFFFFFF) / 1000.0
+
+
+def locked() -> bool:  # pragma: no cover - Windows only
+    """True on the lock screen: the input desktop isn't ours to open then."""
     if os.name != "nt":
         return False
     import ctypes
-
-    from .ari_listen import idle_seconds
+    from ctypes import wintypes
 
     user32 = ctypes.windll.user32  # type: ignore[attr-defined]
-    desk = user32.OpenInputDesktop(0, False, 0x0100)  # DESKTOP_SWITCHDESKTOP: fails on the lock screen
+    user32.OpenInputDesktop.restype = ctypes.c_void_p
+    user32.OpenInputDesktop.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    user32.CloseDesktop.argtypes = [ctypes.c_void_p]
+    desk = user32.OpenInputDesktop(0, False, 0x0100)  # DESKTOP_SWITCHDESKTOP
     if not desk:
         return True
     user32.CloseDesktop(desk)
-    return idle_seconds() >= after_s
+    return False
+
+
+def away_now(after_s: float) -> str:  # pragma: no cover - Windows only
+    """Why the screen should be dark: "locked", "idle" (nobody for `after_s`), or "" (you're here)."""
+    if locked():
+        return "locked"
+    return "idle" if idle_s() >= after_s else ""
 
 
 def clips_dir(cfg: Any) -> Path:
@@ -231,17 +304,38 @@ def pack_gif(src: Path, dst: Path, about: str = "", neutral_every: float = 0.0) 
     return len(frames)
 
 
+def check(cfg: Any) -> int:  # pragma: no cover - prints what it finds on this PC
+    d = clips_dir(cfg)
+    print(f"clips folder: {d}")
+    for f in sorted(d.glob("*.eyes")):
+        try:
+            c = Clip.load(f)
+            print(f"  {f.stem}: {len(c)} frames at {c.fps:g} fps, {len(c.neutral)} neutral, {c.about!r}")
+        except (OSError, ValueError) as e:
+            print(f"  {f.stem}: unreadable ({e})")
+    print(f"locked: {locked()}   idle: {idle_s():.0f} s   away after: {cfg.eyes.away_after_s} s   "
+          f"-> {away_now(cfg.eyes.away_after_s) or 'here'}")
+    s = Screen()
+    print("screen: " + ("connected" if s.open() else s.why))
+    s.close()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="argus-eyes", description="Robot eyes on the cooler's screen")
     sub = p.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run", help="play clips on the screen")
     r.add_argument("--clip", default="default")
     r.add_argument("--log-file", default="logs/eyes.log")
+    r.add_argument("--awake", action="store_true", help="never go dark (for testing)")
+    r.add_argument("--stop-file", type=Path, default=None, help="end (between frames) when this file appears")
+    sub.add_parser("check", help="what the player sees: the clip, the screen, whether you count as away")
     k = sub.add_parser("pack", help="turn a GIF into a clip")
     k.add_argument("src", type=Path)
     k.add_argument("dst", type=Path)
     k.add_argument("--about", default="")
     k.add_argument("--neutral-every", type=float, default=0.0, help="seconds between neutral frames (0: frame 0)")
+    sub.add_parser("unstick", help="try to bring back a screen left black by a frame cut in half")
     b = sub.add_parser("brightness", help="press the screen's brightness button")
     b.add_argument("way", choices=["up", "down"])
     b.add_argument("--steps", type=int, default=1)
@@ -251,6 +345,16 @@ def main(argv: list[str] | None = None) -> int:
         n = pack_gif(args.src, args.dst, args.about, args.neutral_every)
         print(f"{args.dst}: {n} frames, {args.dst.stat().st_size / 1e6:.1f} MB")
         return 0
+    if args.cmd == "unstick":
+        s = Screen()
+        if not s.open():
+            print(s.why, file=sys.stderr)
+            return 1
+        ok = s.unstick() and s.frame(BLACK)
+        s.close()
+        print("sent; if it's still black, the only cure is a power cut (switch the PSU off for 10 s)" if ok
+              else "couldn't send")
+        return 0 if ok else 1
     if args.cmd == "brightness":
         s = Screen()
         if not s.open():
@@ -261,19 +365,25 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if ok else 1
 
     from .config import load_config
+
+    cfg = load_config()
+    if args.cmd == "check":
+        return check(cfg)
+
     from .logs import setup_logging
 
     setup_logging("INFO", Path(args.log_file))
-    cfg = load_config()
-    player = Player(Screen(), clips_dir(cfg), away=lambda: away_now(cfg.eyes.away_after_s))
+    after = cfg.eyes.away_after_s
+    player = Player(Screen(), clips_dir(cfg), away=(lambda: "") if args.awake else (lambda: away_now(after)))
     player.want(args.clip)
+    stop = Stopper(args.stop_file)
+    stop.install()
     log.info("eyes started", extra={"clip": args.clip, "clips": str(clips_dir(cfg))})
     try:
-        player.run()
-    except KeyboardInterrupt:
-        pass
+        player.run(stop)
     finally:
         player.screen.close()
+    log.info("eyes stopped")
     return 0
 
 

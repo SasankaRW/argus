@@ -90,8 +90,22 @@ class Screen:
             return False
 
     def frame(self, pixels: bytes) -> bool:
-        """Show one frame (FRAME_BYTES of RGB565). False when the screen is gone."""
-        return self._write(HEADER) and self._write(pixels)
+        """Show one frame (FRAME_BYTES of RGB565). False when the screen is gone.
+
+        The header and the pixels must always go together: a header without its 153,600 bytes leaves the screen
+        counting the next program's bytes as pixels, and it stays black until the PC loses power. So a caller
+        must never be killed between the two (the player stops between frames; see eyes.py)."""
+        if not self._write(HEADER):
+            return False
+        if self._write(pixels):
+            return True
+        log.warning("a frame was cut short: if the screen stays black, try `python -m argus.eyes unstick`")
+        return False
+
+    def unstick(self) -> bool:
+        """Try to bring a screen back that's waiting for the rest of a cut-short frame: a frame's worth of zero
+        bytes finishes whatever it is waiting for, then INIT again. Only on request (`eyes unstick`)."""
+        return self._write(BLACK) and self._write(INIT)
 
     def brightness(self, up: bool, steps: int = 1) -> bool:
         return all(self._write(BRIGHTER if up else DIMMER) for _ in range(max(0, steps)))

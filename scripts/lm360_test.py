@@ -15,6 +15,7 @@ import argparse
 import sys
 import time
 
+from argus.eyes import Stopper
 from argus.lm360 import H, Screen, W, to_rgb565
 
 
@@ -40,6 +41,8 @@ def main() -> None:
     ap.add_argument("--seconds", type=float, default=20, help="how long to play the GIF")
     args = ap.parse_args()
 
+    stop = Stopper()  # Ctrl+C ends the test between frames: a frame cut in half leaves the screen black
+    stop.install()
     screen = Screen()
     if not screen.open():
         sys.exit(screen.why)
@@ -52,19 +55,21 @@ def main() -> None:
     cycle = [to_rgb565(eyes(o)) for o in (1, 0.8, 0.5, 0.2, 0.05, 0.2, 0.5, 0.8)]
     t0 = time.perf_counter()
     for i in range(args.frames):
+        if stop():
+            break
         screen.frame(cycle[i % len(cycle)])
     dt = time.perf_counter() - t0
     fps = args.frames / dt
     print(f"Step 2: {args.frames} frames in {dt:.2f} s = {fps:.1f} fps ({1000 / fps:.1f} ms per frame).")
 
-    if args.gif:
+    if args.gif and not stop():
         from PIL import Image, ImageSequence
 
         gif = Image.open(args.gif)
         frames = [(to_rgb565(f), f.info.get("duration", 50) / 1000) for f in ImageSequence.Iterator(gif)]
         print(f"Step 3: playing {args.gif} ({len(frames)} frames) for {args.seconds:.0f} s ...")
         end, nxt, i = time.perf_counter() + args.seconds, time.perf_counter(), 0
-        while time.perf_counter() < end:
+        while time.perf_counter() < end and not stop():
             data, dur = frames[i % len(frames)]
             screen.frame(data)
             nxt += dur
