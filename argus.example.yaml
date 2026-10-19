@@ -44,6 +44,11 @@ ari:
   whisper_model: small.en
   languages: [en]          # talk in other languages (Sinhala, a video) is ignored, not guessed at; [] = off
 
+eyes:
+  # robot eyes on the cooler's screen (DeepCool LM360): pip install -e .[eyes], close DeepCool's app
+  enabled: false
+  away_after_s: 600       # nobody at the PC this long (or it's locked): the screen goes dark
+
 brief:
   enabled: true
   at: "07:00"              # the morning brief on the phone: overnight results, what waits for you, today's schedules

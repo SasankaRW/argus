@@ -90,6 +90,16 @@ def listen_on() -> bool:
     return ari_on("listen")
 
 
+def eyes_on() -> bool:
+    """eyes.enabled in argus.yaml: the robot eyes on the cooler's screen."""
+    try:
+        from .config import load_config
+
+        return bool(load_config(ROOT / "argus.yaml").eyes.enabled)
+    except Exception:
+        return False
+
+
 class Child:
     def __init__(self, name: str, args: list[str], marker: Path | None = None):
         self.name, self.args, self.marker = name, args, marker
@@ -289,6 +299,8 @@ def plan(args: argparse.Namespace) -> list[tuple[str, list[str]]]:
                                   *(["--host", "0.0.0.0"] if a.expressive_share else [])]))  # noqa: S104
     if desk and ari_on("popup"):  # Ari's island at the top of the screen
         out.append(("ari-popup", ["-m", "argus.ari_popup"]))
+    if desk and eyes_on():  # the robot eyes on the cooler's screen (tiny: plain Python and pyusb)
+        out.append(("eyes", ["-m", "argus.eyes", "run", "--log-file", "logs/eyes.log"]))
     if not args.no_worker and not args.desk_only:
         caps = ["--cap", "desktop", "--cap", "gpu"] + ([] if args.no_session else ["--cap", "session"])
         out.append(("worker", ["-m", "argus.worker.cli", *caps, "--log-file", "logs/worker.log"]))

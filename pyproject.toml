@@ -35,6 +35,8 @@ listen = ["faster-whisper>=1.0", "sounddevice>=0.4", "numpy>=1.24", "soundcard>=
 # "Hey Ari" as a wake-word model (ari.wake_model), instead of Whisper reading everything it hears
 wake = ["openwakeword>=0.6"]
 popup = ["PySide6-Essentials>=6.6"]
+# the robot eyes on the cooler's screen (DeepCool LM360, python -m argus.eyes)
+eyes = ["pyusb>=1.2", "libusb-package>=1.0"]
 # training Ari's hearing on your voice (python -m argus.voice_train); PyTorch with CUDA is installed separately
 train = ["faster-whisper>=1.0", "transformers>=4.44", "peft>=0.12", "accelerate>=0.30", "safetensors>=0.4"]  # Ari's island at the top of the screen (native Qt, no browser engine)
 
