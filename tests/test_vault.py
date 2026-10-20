@@ -86,7 +86,7 @@ def test_replace_text_only_in_edit_folders_keeps_the_old_version(tmp_path, monke
 
 # ------------------------------------------------------------------ a real Argus
 
-def setup(tmp_path, monkeypatch, extra="", config="filing: auto"):
+def setup(tmp_path, monkeypatch, extra="", config="filing: auto, write_spoken: false"):
     home = tmp_path / "home"
     (home / "Vault" / "00 Inbox").mkdir(parents=True)
     (home / "Vault" / "Home.md").write_text("# Home\n\n## Areas\n\n", encoding="utf-8")
@@ -176,6 +176,33 @@ def test_capture_then_file_a_new_topic_then_add_to_it(tmp_path, monkeypatch):
 
         found = run(cl, w, "find", query="dockerignore context")["result"]["notes"]
         assert found and found[0]["title"] == "Image Layers" and "dockerignore" in found[0]["passage"]
+
+
+def test_what_you_tell_ari_is_written_up_and_filed_by_itself(tmp_path, monkeypatch):
+    """Spoken notes become a clean note (title, gist, bullets) with your words folded under it; with filing auto
+    and a sure answer it is filed without asking. model: local here (no Claude)."""
+    said = "uh so I learned today that um postgres vacuum like frees the dead rows so space can be reused"
+    replies = {MODEL: [
+        {"title": "Postgres Vacuum", "note": "VACUUM frees dead rows.\n\n- the space can be reused",
+         "topic": "Databases"},
+        {"action": "new", "area": "Databases", "title": "Postgres Vacuum", "tags": ["postgres"],
+         "summary": "What VACUUM does", "confidence": 0.9},
+    ]}
+    argus, vault = setup(tmp_path, monkeypatch, config="model: local")  # filing auto and write_spoken by default
+    with FakeOllama(replies) as ol, Server(argus.open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        r = run(cl, w, "capture", text=said)
+        assert r["state"] == "succeeded", r["error"]
+        cap = Path(r["result"]["saved"])
+        meta, body = vt.split_fm(cap.read_text(encoding="utf-8"))
+        assert meta == {"source": "ari", "topic": "Databases", "title": "Postgres Vacuum"}
+        assert body.startswith("VACUUM frees dead rows.") and f"> [!quote]- What I said\n> {said}" in body
+        r = run(cl, w, "file", path=str(cap))
+        assert r["state"] == "succeeded" and r["result"]["action"] == "new", r
+        note = (vault / "Topics" / "Databases" / "Postgres Vacuum.md").read_text(encoding="utf-8")
+        assert "- the space can be reused" in note and said in note
 
 
 def test_filing_asks_where_it_goes_and_your_answer_wins(tmp_path, monkeypatch):
@@ -275,7 +302,7 @@ def test_tidy_takes_life_hub_notes_and_tells_about_conflicts(tmp_path, monkeypat
     base, calls = serve_lifehub([{"id": 7, "uid": "abcdefgh-1", "name": "Rust", "notes": "Rust: borrow checker rules",
                                   "priority": 1, "deleted": False}])
     (tmp_path / ".env").write_text("LIFEHUB_API_KEY=k3y\n", encoding="utf-8")
-    argus, vault = setup(tmp_path, monkeypatch, config=f"filing: auto, lifehub_url: '{base}'")
+    argus, vault = setup(tmp_path, monkeypatch, config=f"filing: auto, write_spoken: false, lifehub_url: '{base}'")
     (vault / "Topics" / "Rust").mkdir(parents=True)
     (vault / "Topics" / "Rust" / "Ownership.sync-conflict-20261013-101010-ABCDEF.md").write_text("x", encoding="utf-8")
     with FakeOllama({MODEL: [{}]}) as ol, Server(argus.open()) as srv:

@@ -4,11 +4,14 @@ Everything you want to keep lands in `00 Inbox` first: a note you write in Obsid
 keeps the copies in step over Tailscale), "Ari, add to my notes on Docker: ...", the share menu (a link, text or a
 picture) or Life Hub's quick add ("learn: ..."). Then:
 
+- `capture` (Ari, your diary, the share menu): what you said is written up as a clean note first (title, gist,
+  bullets; your words folded under it) by the chosen writer (`model`: claude or local), unless `write_spoken` is off.
 - `file` (the Inbox watch, 5 minutes after a note stops changing): finds the closest notes (local embeddings),
-  and T1 picks the place: added to an existing topic note as a dated section, or a new topic note under an area
-  (`Topics/<Area>/<Title>.md`). Your text is copied word for word. Links go both ways in each note's "Related"
-  section, new topics are listed on their area's map (`Maps/<Area> map.md`). With `filing: ask` (the default) you
-  confirm each place first; with `auto` only when it isn't sure. The capture is moved to `00 Inbox/_done`.
+  and the chosen model picks the place: added to an existing topic note as a dated section, or a new topic note
+  under an area (`Topics/<Area>/<Title>.md`). The note's text is copied word for word. Links go both ways in each
+  note's "Related" section, new topics are listed on their area's map (`Maps/<Area> map.md`). With `filing: auto`
+  (the default) you are asked only when it isn't sure or for a new area; with `ask`, every time. The capture is
+  moved to `00 Inbox/_done`.
 - `tidy` (every 10 minutes): Life Hub's "learn:" notes into the Inbox, notes you marked for enhancing, Syncthing
   conflict copies (you hear about each once), and anything in the Inbox the watch missed.
 - `enhance`: a note marked `#enhance` (or `enhance: true`, or "Ari, enhance my note on ...") is rewritten by
@@ -318,6 +321,51 @@ def place_check(titles: list[str], known: list[str]):
     return check
 
 
+def ask_model(ctx: Context, prompt: str, task: Any, *, schema: Any, check: Any = None, subject: Any = None) -> Any:
+    """The chosen writer (config `model`): Claude, falling back to the local models when Claude is away or over its
+    daily budget; or the local models only (nothing leaves your machines)."""
+    if (ctx.config.get("model") or "claude") == "claude":
+        try:
+            return ctx.claude(prompt, task, schema=schema, check=check)
+        except Exception as e:  # noqa: BLE001
+            ctx.log.info("vault: Claude didn't answer; the local models will", extra={"why": str(e)[:200]})
+    return ctx.llm(prompt, task, schema=schema, check=check, tiers=ctx.local_tiers(), claude_last=False,
+                   subject=subject)
+
+
+class Written(BaseModel):
+    title: str = ""
+    note: str = ""
+    topic: str = ""
+
+
+WRITE_UP = """The user told their assistant something they learned or want to keep. Turn it into a short, clean
+note for their Obsidian vault of things they learn.
+- "title": the subject (1-6 words, Title Case, no dates).
+- "note": the note in markdown: a one-line gist, then the points as short bullets. Use only what they said;
+  fix the spoken wording (filler words, repeats, mis-heard words that are obvious), but add no new facts.
+- "topic": the broader topic it belongs to (1-3 words), or the one they named.
+Answer in JSON only."""
+
+
+def write_up(ctx: Context, said: str, topic: str = "") -> dict | None:
+    """What you said, as a clean note (title + body with your words folded under it). None: keep it as said."""
+    def check(w: Written, _inp: Any) -> str | None:
+        if not clean_title(w.title) or not w.note.strip():
+            return "a title and a note are needed"
+        if len(w.note) > max(1500, 3 * len(said)):
+            return "too long: only what the user said, as short bullets"
+        return None
+
+    try:
+        w = ask_model(ctx, WRITE_UP, {"said": said[:6000], "topic_hint": topic or None}, schema=Written, check=check)
+    except EscalationExhausted:
+        return None
+    quote = "\n".join("> " + ln if ln.strip() else ">" for ln in said.strip().splitlines())
+    return {"title": clean_title(w.title), "topic": topic or clean_title(w.topic, 40),
+            "body": f"{w.note.strip()}\n\n> [!quote]- What I said\n{quote}"}
+
+
 def decide(ctx: Context, cap: dict) -> dict:
     """Where the capture goes (not written yet): {action, note, area, title, tags, summary, related, sure, why}."""
     notes = topic_notes(ctx)
@@ -328,8 +376,8 @@ def decide(ctx: Context, cap: dict) -> dict:
               "start": note_text(ctx, n, 300)} for n in near]
     task = {"note": cap["body"][:4000], "topic_hint": hint or None, "areas": known, "closest_notes": cands}
     try:
-        p = ctx.llm(PLACE, task, schema=Place, check=place_check([n["title"] for n in near], known),
-                    claude_last=False, subject=cap["path"])
+        p = ask_model(ctx, PLACE, task, schema=Place, check=place_check([n["title"] for n in near], known),
+                      subject=cap["path"])
     except EscalationExhausted:
         p = Place(action="new", area=hint or (near[0]["area"] if near else "Inbox"), title=cap["title"] or "Note",
                   confidence=0.0)
@@ -484,7 +532,7 @@ def file_one(ctx: Context, path: str, n: int = 0) -> dict:
     plan = ctx.step(f"place{sfx}", decide, ctx, cap)
 
     def ask():
-        if (ctx.config.get("filing") or "ask") == "auto" and plan["sure"]:
+        if (ctx.config.get("filing") or "auto") == "auto" and plan["sure"]:
             return plan
         return confirm(ctx, cap, plan)
 
@@ -614,6 +662,13 @@ def capture(ctx: Context):
             parts.append(f"![[{p['file']}]]" + (f"\n\n{p['about']}" if p["about"] else "") +
                          ("\n\n> " + p["text"].replace("\n", "\n> ") if p["text"] else ""))
 
+    spoken = meta["source"] in ("ari", "diary") and text and not url and not files
+    if spoken and ctx.config.get("write_spoken", True):
+        up = ctx.step("write up", write_up, ctx, text, meta["topic"])
+        if up:
+            text = up["body"]
+            meta["title"] = up["title"]
+            meta["topic"] = meta["topic"] or up["topic"]
     for t in (note, text):
         if t and t not in parts:
             parts.insert(0, t)
@@ -803,7 +858,8 @@ def lifehub_notes(ctx: Context) -> list[dict]:
         return []
     rows = json.loads(raw or b"[]")
     return [{"id": r["id"], "uid": r.get("uid"), "text": r.get("notes") or r.get("name") or "",
-             "enhance": r.get("priority") == 1} for r in rows if not r.get("deleted")]
+             "enhance": r.get("priority") == 1, "from": "diary" if r.get("store") == "diary" else "lifehub"}
+            for r in rows if not r.get("deleted")]
 
 
 def take_from_lifehub(ctx: Context, row: dict) -> dict:
@@ -812,7 +868,12 @@ def take_from_lifehub(ctx: Context, row: dict) -> dict:
         return {"would_take": row["uid"]}
     seen = ctx.store.get("lifehub_taken") or []
     if row["uid"] not in seen and row["text"].strip():
-        write_capture(ctx, row["text"], {"source": "lifehub", "enhance": row["enhance"]})
+        text, meta = row["text"], {"source": row.get("from") or "lifehub", "enhance": row["enhance"]}
+        if meta["source"] == "diary" and ctx.config.get("write_spoken", True):  # said to Ari in your diary
+            up = write_up(ctx, text)
+            if up:
+                text, meta["title"], meta["topic"] = up["body"], up["title"], up["topic"]
+        write_capture(ctx, text, meta)
         ctx.store.set("lifehub_taken", (seen + [row["uid"]])[-1000:])
     base = str(ctx.config.get("lifehub_url")).rstrip("/")
     ctx.http.request("DELETE", f"{base}/api/items/{row['id']}",

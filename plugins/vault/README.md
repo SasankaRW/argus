@@ -62,9 +62,14 @@ Check any time: `.\scripts\vault-setup.ps1 status` (who is connected, is the vau
 - **Life Hub:** quick add > Note, or `learn: …` from any tab (`learn!: …` = also enhance). Works offline; it's
   taken into the vault when the laptop is reachable.
 
-**Where it goes:** with `filing: ask` (the default) you confirm each place (Helios and the phone): area, title, or
-the title of an existing note to add to. Switch to `auto` in the plugin's settings once its choices look right;
-then it asks only when unsure or for a brand-new area.
+**Written up:** what you tell Ari (and what you learned, from your diary) becomes a clean note first: a title, a
+one-line gist and bullets, your words folded under "What I said" (`write_spoken`, on). Typed notes stay as written.
+
+**Who writes it:** `model: claude` (default; falls back to the local models when Claude is away or over its daily
+budget) or `local` (nothing leaves your machines). The same model picks where notes go.
+
+**Where it goes:** with `filing: auto` (the default) it files by itself and asks (Helios and the phone) only when
+unsure or for a brand-new area: area, title, or the title of an existing note to add to. `ask`: every time.
 
 **Enhance:** `#enhance` anywhere in a topic note (or the Mark for enhance template, or `enhance: true`). Within
 10 minutes Claude rewrites it: summary, key ideas, explanation, examples, common mistakes, test-yourself

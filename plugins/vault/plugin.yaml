@@ -3,7 +3,7 @@ name: Notes vault
 version: 1.0.0
 kind: workflow
 argus_api: ">=1.0 <2.0"
-description: 'Your Obsidian vault (~/Vault, synced with Syncthing): whatever lands in "00 Inbox" (from Obsidian, Ari, the share menu or Life Hub "learn: ...") is filed under the right topic and linked to related notes, your words unchanged. Notes you mark #enhance are improved by Claude, keeping your original text.'
+description: 'Your Obsidian vault (~/Vault, synced with Syncthing): whatever lands in "00 Inbox" (from Obsidian, Ari, your diary, the share menu or Life Hub "learn: ...") is filed under the right topic and linked to related notes. What you say to Ari is written up as a clean note (your words kept under it); typed notes stay as you wrote them. Notes you mark #enhance are improved by Claude, keeping your original text.'
 runs_on: desktop             # where ~/Vault is; the laptop after the move
 
 triggers:
@@ -16,12 +16,14 @@ workflows: [file, tidy, capture, enhance, find]
 permissions:
   files: {read: ["~/Vault"], write: ["~/Vault"], edit: ["~/Vault"], delete: none}
   models: [T1, V1]            # T1 picks the place; V1 reads text in shared pictures
-  claude_calls_per_day: 20    # enhancing marked notes (with web search for facts and sources)
+  claude_calls_per_day: 80    # writing notes and choosing places (model: claude), and enhancing marked notes
   network: ["*", "config:lifehub_url"]   # shared links (public pages only) and your Life Hub
   secrets: [LIFEHUB_API_KEY]
 
 config:
-  filing: {type: choice, choices: [ask, auto], default: ask, label: "Where each note goes: ask me every time (ask), or only when unsure (auto)"}
+  filing: {type: choice, choices: [auto, ask], default: auto, label: "Where each note goes: on its own, asking only when unsure (auto), or ask me every time (ask)"}
+  model: {type: choice, choices: [claude, local], default: claude, label: "Who writes your spoken notes and picks where notes go: Claude, or the local models (nothing leaves your machines)"}
+  write_spoken: {type: bool, default: true, label: "Turn what you tell Ari (or your diary) into a clean note, your words kept under it"}
   enhance_per_day: {type: int, default: 10, label: Enhance at most this many notes a day}
   lifehub_url: {type: text, default: "http://127.0.0.1:8081", label: "Life Hub address (for its learn: notes; empty: off)"}
 
