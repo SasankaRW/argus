@@ -341,6 +341,7 @@ class AriConfig(_Strict):
     game_mode_auto: bool = True
     game_on_after_s: int = Field(20, ge=5, le=600)
     game_off_after_s: int = Field(60, ge=10, le=1800)
+    game_mode_stop_ollama: bool = True  # game mode stops Ollama itself (its few hundred MB too), not only its models
     # After an answer, carry on without "Hey Ari" for this long (not while the PC plays sound, and not with a long
     # stream of words); talk over Ari to interrupt; "thanks Ari" ends it. Smart Turn (downloaded once) knows when
     # you've finished a sentence.

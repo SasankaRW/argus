@@ -487,8 +487,11 @@ only these to the argus user (argusd can't use sudo); the installers add it, or 
 ## Game mode
 
 The island's game key (a game pad), Helios > Power > Game mode, or "Ari, game mode on": Ari goes off, the PC's
-local models are unloaded and refused, Ari's voice and "Hey Ari" stop, so the game gets the GPU (Helios says how
-much it freed). Ari's text answers (Helios, the phone) use Claude meanwhile. **By itself** (on by default; the
+local models are unloaded and refused, Ari's voice and "Hey Ari" stop, Ollama itself is stopped
+(`ari.game_mode_stop_ollama`, on by default; it keeps a few hundred MB even with no model), and a worker that had
+loaded Whisper on the GPU restarts to give it all back and hears on the CPU until game mode ends. So the game gets
+the whole GPU; Helios says how much was freed and what else still uses it (`/ari/game` `still`). While it lasts, an
+Ollama that starts again is stopped again; when it ends, Ollama starts again (its task, or `ollama serve`). Ari's text answers (Helios, the phone) use Claude meanwhile. **By itself** (on by default; the
 island's "Game mode · auto" row or Settings > Ari): on after a game has been in front for `ari.game_on_after_s`
 (20 s), off `ari.game_off_after_s` (60 s) after it closes; game mode you turned on stays on until you turn it off.
 

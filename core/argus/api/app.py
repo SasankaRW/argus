@@ -1095,12 +1095,12 @@ def create_app(argus: Argus) -> FastAPI:
     # -------------------------------------------------------------- game mode (game.py)
 
     game: dict[str, Any] = {"on": False, "by": None, "since": None, "app": "", "freed_mb": None, "unloaded": [],
-                            "ari_was_off": False}
+                            "still": [], "used_mb": None, "ari_was_off": False}
 
     def game_now() -> dict:
         return {"on": game["on"], "auto": bool(argus.cfg.ari.game_mode_auto), "by": game["by"],
                 "since": game["since"], "app": game["app"], "freed_mb": game["freed_mb"],
-                "unloaded": game["unloaded"]}
+                "unloaded": game["unloaded"], "still": game["still"], "used_mb": game["used_mb"]}
 
     @app.get("/ari/game", dependencies=guarded)
     async def ari_game() -> dict:
@@ -1110,7 +1110,8 @@ def create_app(argus: Argus) -> FastAPI:
     @app.post("/ari/game", dependencies=guarded)
     async def ari_game_set(body: dict[str, Any]) -> dict:
         """{on, by?, app?}: game mode on or off (by "auto" from the PC; an automatic off never ends one you turned
-        on). {auto}: turn the automatic part on or off (kept). {freed_mb, unloaded}: what the PC freed."""
+        on). {auto}: turn the automatic part on or off (kept). {freed_mb, unloaded}: what the PC freed;
+        {still, used_mb}: what else still uses its GPU."""
         return await set_game(body)
 
     async def set_game(body: dict[str, Any]) -> dict:
@@ -1122,11 +1123,14 @@ def create_app(argus: Argus) -> FastAPI:
         if "freed_mb" in body or "unloaded" in body:
             game["freed_mb"] = body.get("freed_mb")
             game["unloaded"] = [str(x) for x in body.get("unloaded") or []][:20]
+        if "still" in body:  # what else still uses the GPU, and how much of it is in use
+            game["still"] = [str(x)[:60] for x in body.get("still") or []][:20]
+            game["used_mb"] = body.get("used_mb")
         by = "auto" if body.get("by") == "auto" else "you"
         if "on" in body and bool(body["on"]) != game["on"]:
             if body["on"]:
                 game.update(on=True, by=by, since=time.time(), app=str(body.get("app") or "")[:60], freed_mb=None,
-                            unloaded=[], ari_was_off=hush["until"] > time.time())
+                            unloaded=[], still=[], used_mb=None, ari_was_off=hush["until"] > time.time())
                 argus.models.local_paused = "game mode: the PC's GPU is for the game"
                 await set_power(False)
             elif by == "you" or game["by"] == "auto":  # an automatic off never ends game mode you turned on

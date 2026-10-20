@@ -16,6 +16,19 @@ log = logging.getLogger("argus.hear")
 _models: dict[str, object] = {}
 _lock = threading.Lock()
 _gpu = {"ok": True}  # once the GPU fails, later models go straight to the CPU (a second try can hang forever)
+_on_gpu: set[str] = set()  # the models loaded on the GPU (game mode gives them back)
+GAME = {"on": False}  # game mode: the GPU is the game's, so Whisper runs on the CPU (set by the worker)
+
+
+def on_gpu() -> bool:
+    """Has this process put a model on the GPU? (Then only a fresh process gives all of its memory back.)"""
+    return bool(_on_gpu)
+
+
+def release() -> None:
+    """Drop the loaded models (the next request loads again, on the CPU while game mode is on)."""
+    with _lock:
+        _models.clear()
 
 
 def cuda_dlls() -> list[str]:
@@ -52,6 +65,19 @@ _dll_dirs: set[str] = set()
 
 
 def model(name: str):
+    if GAME["on"]:  # never touch the GPU while a game has it
+        name_cpu = name + "@cpu"
+        with _lock:
+            if name_cpu not in _models:
+                cuda_dlls()
+                try:
+                    from faster_whisper import WhisperModel  # type: ignore[import-not-found]
+                except ImportError:
+                    raise PermanentError("faster-whisper is not installed on this PC (pip install -e .[hearing])") \
+                        from None
+                _models[name_cpu] = _load(WhisperModel, name, "cpu", "int8")
+                log.info("whisper loaded", extra={"model": name, "device": "cpu", "why": "game mode"})
+            return _models[name_cpu]
     with _lock:
         if name not in _models:
             cuda_dlls()
@@ -64,6 +90,7 @@ def model(name: str):
                     m = _load(WhisperModel, name, "cuda", "float16")
                     _prove(m)  # loading works without CUDA's libraries; the first real use is what fails
                     _models[name] = m
+                    _on_gpu.add(name)
                     log.info("whisper loaded", extra={"model": name, "device": "cuda"})
                 except Exception as e:  # no CUDA 12 cuBLAS / cuDNN 9: the CPU is fine for short commands
                     _gpu["ok"] = False
