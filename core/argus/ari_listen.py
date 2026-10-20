@@ -537,6 +537,16 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device,
 
     threading.Thread(target=watch, daemon=True, name="ari-watch").start()
     threading.Thread(target=side, daemon=True, name="ari-side").start()
+
+    def drained() -> list[float]:
+        out = list(player.out_levels)
+        player.out_levels.clear()
+        return out
+
+    live = LiveLevels(client, active=lambda: player.busy or talk.in_conversation or talk.turns.talking,
+                      speaking=lambda: player.busy, out_levels=drained,
+                      english=lambda: talk.last_heard.get("english", talk.last_heard.get("accepted")))
+    threading.Thread(target=live.run, daemon=True, name="ari-live").start()
     guard = vl.PlaybackGuard() if cfg.ari.playback_guard else None
     if guard is not None:
         threading.Thread(target=loopback, args=(guard,), daemon=True, name="ari-loopback").start()
@@ -558,6 +568,7 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device,
                 continue
             rms = float(np.sqrt(np.mean(np.square(frame))))
             loudest = max(loudest, rms)
+            live.add(rms)
             if time.monotonic() - since > 60:
                 skipped = vad.share_skipped() if isinstance(vad, vl.Quiet) else 0.0
                 log.info("microphone level", extra={"loudest": round(loudest, 4), "vad_skipped": round(skipped, 2)})
@@ -585,6 +596,57 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device,
     except KeyboardInterrupt:
         pass
     return 0
+
+
+def level(rms: float) -> float:
+    """A sound level as 0..1 for the live view: -55 dB (quiet room) is 0, -10 dB (shouting close) is 1."""
+    import math
+
+    return round(max(0.0, min(1.0, (20 * math.log10(max(rms, 1e-9)) + 55) / 45)), 2)
+
+
+class LiveLevels:
+    """The mic's level (and Ari's voice's) for the laptop console's waveform: sent a few times a second while
+    something happens (you talking, a conversation, Ari speaking), about once a second otherwise."""
+
+    def __init__(self, client: Any, active: Callable[[], bool], speaking: Callable[[], bool],
+                 out_levels: Callable[[], list[float]], english: Callable[[], Any],
+                 clock: Callable[[], float] = time.monotonic):
+        self.client, self.active, self.speaking, self.out_levels, self.english = (client, active, speaking,
+                                                                                  out_levels, english)
+        self.clock = clock
+        self.mic: list[float] = []
+        self.lock = threading.Lock()
+        self.sent = 0.0
+
+    def add(self, rms: float) -> None:
+        with self.lock:
+            self.mic.append(level(rms))
+            if len(self.mic) > 200:
+                del self.mic[:100]
+
+    def body(self) -> dict | None:
+        """What to send now, or None (not yet)."""
+        busy = self.active()
+        if self.clock() - self.sent < (0.2 if busy else 1.0):
+            return None
+        with self.lock:
+            mic, self.mic = self.mic, []
+        if not busy and mic:
+            mic = [max(mic)]  # quiet times: one bar a second is enough
+        out = [level(x) for x in self.out_levels()] if self.speaking() else []
+        self.sent = self.clock()
+        return {"mic": mic[-60:], "out": out[-60:], "speaking": self.speaking(), "english": self.english()}
+
+    def run(self) -> None:  # pragma: no cover - a loop
+        while True:
+            b = self.body()
+            if b is not None:
+                try:
+                    self.client._req("POST", "/ari/live", b, timeout=3)
+                except Exception:  # noqa: BLE001 - only a view (an older argusd: 404)
+                    time.sleep(5)
+            time.sleep(0.05)
 
 
 def loopback(guard: Any, every_s: float = 60.0) -> None:

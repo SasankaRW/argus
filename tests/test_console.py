@@ -140,14 +140,14 @@ def test_the_ari_view_follows_the_conversation():
     v = con.AriView(FakeApi())
     wait_for(lambda: v.turns)
     out = text_of(v.render(0.0, 30))
-    assert "what is running" in out and "Two jobs, nothing stuck." in out and "ARI" in out
+    assert "what is running" in out and "Two jobs, nothing stuck." in out and "idle" in out
 
 
 def test_the_timeline_and_events():
     ev = con.EventsView(FakeApi())
     wait_for(lambda: ev.rows and ev.lanes, 6)
     out = text_of(ev.render(0.0, 30, 120))
-    assert "TIMELINE" in out and "desktop-saspc" in out and "ari▬" in out and "now" in out
+    assert "last 60 min" in out and "desktop-saspc" in out and "ari━" in out and "now" in out
     assert "job.succeeded" in out and "backup" in out and "files=3" in out
     ev.key("+")
     assert ev.minutes == 30
@@ -236,3 +236,70 @@ def test_the_four_views_are_laid_out_in_one_tmux_window(monkeypatch, tmp_path):
 def test_without_tmux_it_says_how_to_get_it(monkeypatch, capsys):
     monkeypatch.setattr(con.shutil, "which", lambda n: None)
     assert con.run_all([]) == 2 and "pacman -S tmux" in capsys.readouterr().out
+
+
+def test_the_panes_fill_their_space():
+    """No half-empty panes: the deck adds Ari's day as a chart, what runs now and the models; the logs pane puts
+    the newest log lines under a short list of requests; the chart helper stacks and scales."""
+    api = FakeApi()
+    now = time.time()
+    start = (int(now) // 3600 - 23) * 3600
+    api.answers["/timeline/activity?hours=24"] = {
+        "start": start, "jobs": [{"ok": 5, "failed": i % 7 == 0} for i in range(24)],
+        "ari": [{"ok": i % 4, "failed": int(i == 20), "ignored": int(i == 21)} for i in range(24)],
+        "total": {"ok": 30, "failed": 1, "ignored": 1, "jobs_ok": 120, "jobs_failed": 4, "answer_ms": 1400}}
+    api.answers["/jobs?state=running&limit=6"] = [{"plugin": "ari", "workflow": "think", "created_at": now - 5,
+                                                   "lease_owner": "worker-saspc"}]
+    api.answers["/models/calls?limit=80"] = {"calls": [{"model": "qwen3:8b", "verdict": "ok", "latency_ms": 900},
+                                                       {"model": "qwen3:8b", "verdict": "rejected",
+                                                        "latency_ms": 1200}]}
+    deck = con.Deck(api)
+    deck._activity_at = -1e9
+    wait_for(lambda: deck.data.get("running") and deck.activity)
+    text = text_of(deck.render(1.0, 104, 34), 104)
+    assert "ari · last 24 h" in text and "30 answered" in text and "ari·think" in text and "qwen3:8b" in text
+    assert len(text.rstrip().splitlines()) >= 30  # the pane is used to the bottom
+
+    logs = con.LogsView(api)
+    wait_for(lambda: logs.stories and logs.rows)
+    text = text_of(logs.render(1.0, 30, 160), 160)
+    assert "latest log lines" in text and "voice unavailable" in text
+
+    from rich.text import Text
+    chart = con.bars(Text, [{"ok": 1}, {"ok": 4, "failed": 2}, {}], [("ok", "x"), ("failed", "y")], 4, 12, start)
+    rows = chart.plain.splitlines()
+    assert len(rows) == 5 and rows[0].strip() and "█" in rows[-2]
+
+
+def test_ari_strip_shows_the_voice_then_the_request_as_it_happens():
+    api = FakeApi()
+    now = time.time()
+    api.answers["/live"] = {"voice": {"mic": [0.1, 0.5, 0.9, 0.3], "out": [], "speaking": False, "english": 0.94,
+                                      "at": now},
+                            "model": {"state": "text", "job_id": "j9", "step": "decide 1", "model": "qwen3:8b",
+                                      "text": '{"tool": "play_on_spotify"', "ms": 900}, "model_at": now}
+    api.answers["/ari/trace/j9"] = {"steps": [
+        {"kind": "step", "what": "decide 1", "ok": True, "ms": 900},
+        {"kind": "model", "what": "qwen3:8b (decide 1)", "ok": True, "ms": 880},
+        {"kind": "step", "what": "tool 1: play_on_spotify", "ok": True, "ms": None}]}
+    v = con.AriView(api)
+    wait_for(lambda: v.live.get("voice"))
+    out = text_of(v.render(1.0, 16, 90), 94)
+    assert "English 94%" in out and "▁" in out or "█" in out  # the waveform
+    v.ari.phase, v.ari.think_job, v.ari.text = "working", "j9", "play famous on spotify"
+    wait_for(lambda: v.trace)
+    out = text_of(v.render(1.0, 16, 110), 114)
+    assert "heard" in out and "understood" in out and "play on spotify" in out and "speak" in out
+    assert "qwen3:8b" in out and "tok/s" in out and "play_on_spotify" in out  # the model, live
+    assert v.typed("hello there", 0.0) and v.typed("hello there ari", 10.0) == "hello there ari"
+
+
+def test_the_deck_becomes_the_game_mode_screen():
+    api = FakeApi()
+    api.answers["/ari/game"] = {"on": True, "by": "auto", "since": time.time() - 600, "app": "Cyberpunk2077",
+                                "freed_mb": 9300, "used_mb": 900, "unloaded": ["qwen3:8b"], "still": ["chrome.exe"]}
+    deck = con.Deck(api)
+    wait_for(lambda: deck.data.get("game"))
+    out = text_of(deck.render(1.0, 90, 30), 90)
+    assert "▄▀▀" in out and "Cyberpunk2077" in out and "9.1 GB" in out and "qwen3:8b" in out
+    assert "chrome.exe" in out and "a minute after the game closes" in out

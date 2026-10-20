@@ -55,7 +55,8 @@ WORDMARK = [
     "██║  ██║██║  ██║╚██████╔╝╚██████╔╝███████║",
     "╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝  ╚═════╝ ╚══════╝",
 ]
-GRADIENT = [MID] * 6  # the wordmark: grey at rest (the eye beside it carries Ari's colour)
+GRADIENT = ["#d1d5db", "#b4b9c1", "#979da7", "#7b828d", "#5f6673", "#4b5563"]  # the wordmark at rest: light to dim
+GRADIENT_ON = ["#99f6e4", "#7ef0dc", "#5eead4", "#3fbfae", "#2a9488", "#1f6f66"]  # while Ari works
 
 
 def eye(phase: str, t: float, width: int = 15) -> list[str]:
@@ -92,6 +93,138 @@ SPARK = "▁▂▃▄▅▆▇█"
 
 def spark(values: list[float], top: float = 100.0) -> str:
     return "".join(SPARK[min(7, max(0, int(v / max(top, 1e-9) * 7.99)))] for v in values)
+
+
+def blend(a: str, b: str, f: float) -> str:
+    """The colour between hex `a` and `b` at `f` (0..1)."""
+    f = max(0.0, min(1.0, f))
+    pa = [int(a[i:i + 2], 16) for i in (1, 3, 5)]
+    pb = [int(b[i:i + 2], 16) for i in (1, 3, 5)]
+    return "#" + "".join(f"{round(x + (y - x) * f):02x}" for x, y in zip(pa, pb, strict=True))
+
+
+def ramp(a: str, b: str, n: int = 8) -> list[str]:
+    return [blend(a, b, i / max(1, n - 1)) for i in range(n)]
+
+
+DEEP = "#134e4a"  # the accent at its darkest, where the gradients start
+TEAL_RAMP = ramp(DEEP, ACCENT)
+GREY_RAMP = ramp("#2a313b", MID)
+LINE = "#334155"  # the frames: just visible
+
+
+def gspark(Text: Any, values: list[float], top: float = 100.0, colours: list[str] | None = None) -> Any:
+    """A sparkline whose bars shade from dark (low) to bright (high)."""
+    colours = colours or TEAL_RAMP
+    t = Text()
+    for v in values:
+        f = max(0.0, min(1.0, v / max(top, 1e-9)))
+        t.append(SPARK[min(7, int(f * 7.99))], style=colours[min(len(colours) - 1, 2 + int(f * (len(colours) - 2.01)))])
+    return t
+
+
+SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+
+def chip(Text: Any, label: str, colour: str = ACCENT, fg: str = "#0b0f14") -> Any:
+    """A rounded label: ▐ label ▌ (half blocks make the ends round)."""
+    t = Text()
+    t.append("▐", style=colour)
+    t.append(f" {label} ", style=f"bold {fg} on {colour}")
+    t.append("▌", style=colour)
+    return t
+
+
+def meter(Text: Any, frac: float, width: int, colours: list[str] | None = None) -> Any:
+    """A thin gauge, ━━━━━━━━──── with the filled part shading from dark to bright."""
+    colours = colours or TEAL_RAMP
+    t = Text()
+    filled = round(max(0.0, min(1.0, frac)) * width)
+    for i in range(width):
+        if i < filled:
+            t.append("━", style=colours[min(len(colours) - 1, int(i / max(1, width) * len(colours)))])
+        else:
+            t.append("─", style=LINE)
+    return t
+
+
+def card(body: Any, title: str | None = None, height: int | None = None, hint: str | None = None,
+         main: bool = False) -> Any:
+    """A rounded panel with a quiet title (the modern look of every box in the console). `main`: a pane's own
+    frame, its title led by an accent dot."""
+    from rich import box
+    from rich.panel import Panel
+    from rich.text import Text
+
+    head = None
+    if title:
+        head = Text(" ")
+        if main:
+            head.append("● ", style=ACCENT)
+        head.append(f"{title} ", style=f"bold {TEXT if main else MID}")
+    return Panel(body, box=box.ROUNDED, border_style=LINE, padding=(0, 1), height=height,
+                 title=head, title_align="left",
+                 subtitle=Text(f" {hint} ", style=FAINT) if hint else None, subtitle_align="right")
+
+
+EIGHTHS = " ▁▂▃▄▅▆▇█"
+
+
+def bars(Text: Any, buckets: list[dict], stack: list[tuple[str, str]], height: int, width: int,
+         start: float | None = None) -> Any:
+    """A stacked bar chart, one bar per bucket (an hour), `stack` bottom to top as (key, colour), scaled to the
+    tallest bar, with the hours under it when `start` is given. Partial cells use eighth blocks."""
+    out = Text()
+    n = max(1, len(buckets))
+    cw = max(1, width // n)
+    pad = " " * max(0, width - cw * n)
+    top = max([sum(int(b.get(k) or 0) for k, _ in stack) for b in buckets] + [1])
+    scale = height * 8 / top
+    cols = []
+    for b in buckets:
+        cum, segs = 0.0, []
+        for k, colour in stack:
+            v = int(b.get(k) or 0)
+            if v:
+                cum += v * scale
+                segs.append((max(1.0, cum) if not segs else cum, colour))  # anything at all shows at least 1/8
+        cols.append(segs)
+    for row in range(height - 1, -1, -1):
+        out.append(pad)
+        lo, hi = row * 8, (row + 1) * 8
+        for segs in cols:
+            total = segs[-1][0] if segs else 0
+            if total <= lo:
+                out.append(("·" if row == 0 else " ").ljust(cw), style=FAINT)
+                continue
+            mid = lo + 4 if total >= hi else total - 0.01
+            colour = next((c for top_, c in segs if top_ > mid), segs[-1][1])
+            shade = TEAL_RAMP if colour == ACCENT else GREY_RAMP if colour == MID else None
+            if shade:  # the bars shade from dark at the bottom to bright at the top
+                colour = shade[min(7, 2 + int(row / max(1, height - 1) * 5.99))]
+            ch = "█" if total >= hi else EIGHTHS[max(1, int(round(total - lo)))]
+            out.append((ch * cw)[:max(1, cw - 1)] + (" " if cw > 1 else ""), style=colour)
+        out.append("\n")
+    if start is not None:
+        axis = [" "] * (cw * n)
+        for i in range(n):
+            hr = time.localtime(start + i * 3600).tm_hour
+            if hr % (3 if cw >= 2 else 6) == 0:
+                for j, ch in enumerate(f"{hr:02d}"):
+                    if i * cw + j < len(axis):
+                        axis[i * cw + j] = ch
+        out.append(pad + "".join(axis) + "\n", style=FAINT)
+    return out
+
+
+def lines_of(renderable: Any, width: int) -> int:
+    """How many terminal lines `renderable` takes at `width`."""
+    import io
+
+    from rich.console import Console
+
+    c = Console(width=max(10, width), file=io.StringIO(), color_system=None)
+    return len(c.render_lines(renderable, c.options, pad=False))
 
 
 # ------------------------------------------------------------------ talking to argusd
@@ -185,6 +318,8 @@ class Deck:
         self.data: dict[str, Any] = {}
         self.cpu: deque = deque([0.0] * 30, maxlen=30)
         self.show_problems = False  # `p`: what isn't working, in detail
+        self.activity: dict[str, Any] = {}
+        self._activity_at = -1e9
         feed = Feed(api, "ari.state,ari.listening,step.running", backlog=1)
         feed.subs.append(lambda evs: self.ari.apply(evs, time.monotonic()))
         feed.start()
@@ -195,11 +330,19 @@ class Deck:
             d: dict[str, Any] = {}
             for key, path in (("status", "/status"), ("power", "/power"), ("models", "/models/ollama"),
                               ("ears", "/ari/listener"), ("approvals", "/approvals?state=pending"),
-                              ("schedules", "/schedules"), ("problems", "/problems?hours=24")):
+                              ("schedules", "/schedules"), ("problems", "/problems?hours=24"),
+                              ("running", "/jobs?state=running&limit=6"), ("calls", "/models/calls?limit=80"),
+                              ("game", "/ari/game")):
                 try:
                     d[key] = self.api.get(path)
                 except Exception:  # noqa: BLE001
                     d[key] = None
+            if time.monotonic() - self._activity_at > 30:  # the hour-by-hour chart: every half minute is plenty
+                try:
+                    self.activity = self.api.get("/timeline/activity?hours=24") or {}
+                    self._activity_at = time.monotonic()
+                except Exception:  # noqa: BLE001 - an older argusd
+                    pass
             try:
                 import psutil
 
@@ -211,8 +354,14 @@ class Deck:
             self.data = d
             time.sleep(2)
 
-    def render(self, t: float, width: int = 120) -> Any:
+    def render(self, t: float, width: int = 120, height: int | None = None) -> Any:
+        """The logo and the status; with `height`, the rest of the pane is filled: Ari's last 24 hours as a chart
+        (it grows to fill), what runs now beside the models, and what isn't working beside what comes next."""
         Console, Group, Live, Panel, Table, Text = _rich()
+        self._t = t
+        game = self.data.get("game") or {}
+        if game.get("on") and width >= 46:
+            return self.game_screen(Text, t, width, height, game)
         phase = "off" if self.ari.off else self.ari.phase
         colour = PHASE_COLOUR.get(phase, ACCENT)
         logo = Text()
@@ -223,7 +372,7 @@ class Deck:
                 if width >= 64:  # the eye beside the name, if it fits
                     logo.append(e.ljust(17), style=f"bold {colour}")
                     logo.append("  ")
-                logo.append(w, style=f"bold {TEXT if phase not in ('idle', 'off') else GRADIENT[i]}")
+                logo.append(w, style=f"bold {GRADIENT_ON[i] if phase not in ('idle', 'off') else GRADIENT[i]}")
                 logo.append("\n")
         st = self.data.get("status") or {}
         tag = Text()
@@ -270,10 +419,11 @@ class Deck:
         grid.add_row("machines", mach)
         host = self.data.get("host") or {}
         hl = Text()
-        hl.append(spark(list(self.cpu)), style=ACCENT)
-        hl.append(f"  cpu {self.cpu[-1]:.0f}%", style=TEXT)
+        hl.append_text(gspark(Text, list(self.cpu)[-24:]))  # the cpu over the last minute
+        hl.append(f" cpu {self.cpu[-1]:>3.0f}%  ", style=TEXT)
         if host.get("mem") is not None:
-            hl.append(f"   mem {host['mem']:.0f}%", style=TEXT)
+            hl.append_text(meter(Text, host["mem"] / 100, 14))
+            hl.append(f" mem {host['mem']:.0f}%", style=TEXT)
         if host.get("temp"):
             hl.append(f"   {host['temp']:.0f}°C", style=WARN if host["temp"] > 75 else TEXT)
         grid.add_row("this box", hl)
@@ -291,11 +441,207 @@ class Deck:
             grid.add_row("next", Text(f"{s.get('plugin', '')}·{s.get('workflow', '')} in "
                                       f"{ago(max(0, s['next_run_at'] - time.time()))}", style=TEXT))
         clock = Text(time.strftime("  %H:%M:%S  ·  %A %d %B"), style=f"bold {TEXT}")
-        parts = [logo, tag, Text(""), Panel(grid, border_style=FAINT, padding=(0, 1))]
+        if height:  # the clock goes on the tag line, to leave room for the panels under the status
+            tag.append(time.strftime("   %H:%M:%S · %a %d %b"), style=f"bold {TEXT}")
+        parts = [logo, tag] + ([] if height else [Text("")]) + [card(grid, "status")]
         if self.show_problems and pr.get("problems"):
-            parts.append(Panel(problem_lines(Text, pr["problems"]), title="not working · last 24 h",
-                               title_align="left", border_style=FAINT, padding=(0, 1)))
-        return Group(*parts, clock)
+            parts.append(card(problem_lines(Text, pr["problems"]), "not working · last 24 h", hint="p closes"))
+        if not height:
+            parts.append(clock)
+        if height:
+            parts += self.fill(height - lines_of(Group(*parts), width), width, pr)
+        return Group(*parts)
+
+    # ---- game mode: the whole deck while you play
+
+    GAME_WORD = ["▄▀▀ ▄▀▄ █▄ ▄█ █▀▀   █▄ ▄█ ▄▀▄ █▀▄ █▀▀",
+                 "█ ▄ █▀█ █ ▀ █ █▀▀   █ ▀ █ █ █ █ █ █▀▀",
+                 "▀▀▀ ▀ ▀ ▀   ▀ ▀▀▀   ▀   ▀  ▀  ▀▀  ▀▀▀"]
+    PURPLE = ["#ddd6fe", "#c4b5fd", "#a78bfa", "#8b5cf6", "#7c3aed", "#6d28d9"]
+
+    def game_screen(self, Text: Any, t: float, width: int, height: int | None, g: dict) -> Any:
+        out = Text("\n")
+        for i, line in enumerate(self.GAME_WORD):
+            out.append("  ")
+            for j, ch in enumerate(line):  # a slow shimmer across the word
+                k = int((j / len(line) * 4 + t * 0.8 + i) % len(self.PURPLE))
+                out.append(ch, style=f"bold {self.PURPLE[k]}")
+            out.append("\n")
+        since = g.get("since")
+        out.append("\n  ")
+        out.append(g.get("app") or "game mode", style=f"bold {TEXT}")
+        if since:
+            out.append(f"  ·  on for {ago(max(0, time.time() - float(since)))}", style=MID)
+        out.append(f"  ·  {'by itself' if g.get('by') == 'auto' else 'turned on by you'}\n\n", style=MID)
+        freed, used = g.get("freed_mb"), g.get("used_mb")
+        if freed is not None:
+            total = float(freed) + float(used or 0)
+            out.append("  vram freed  ", style=MID)
+            out.append_text(meter(Text, float(freed) / max(1.0, total), max(12, min(36, width - 40)),
+                                  list(reversed(self.PURPLE))))
+            out.append(f"  {freed / 1024:.1f} GB", style=f"bold {TEXT}")
+            if used is not None:
+                out.append(f"  ·  {used / 1024:.1f} GB still in use", style=DIM)
+            out.append("\n\n")
+        else:
+            out.append("  freeing the GPU…\n\n", style=DIM)
+        rows = [("ari listening", "paused"), ("ari's voice", "stopped"), ("ollama", "stopped")]
+        rows += [(m, "unloaded") for m in (g.get("unloaded") or [])[:4]]
+        for name, st in rows:
+            out.append("  ◌ ", style=self.PURPLE[4])
+            out.append(f"{name[:24]:<26}", style=DIM)
+            out.append(f"{st}\n", style=self.PURPLE[2])
+        still = g.get("still") or []
+        if still:
+            out.append("\n  still on the GPU  ", style=MID)
+            out.append(", ".join(still[:5]) + "\n", style=TEXT)
+        lines = len(out.plain.splitlines()) + 2
+        if height and freed is not None and height - lines >= 5:  # the GPU's memory, big: free for the game vs in use
+            total = float(freed) + float(used or 0)
+            cells = max(10, width - 6)
+            free_n = round(float(freed) / max(1.0, total) * cells)
+            tall = min(6, height - lines - 3)
+            out.append("\n")
+            for r in range(tall):
+                out.append("  ")
+                for c in range(cells):
+                    col = self.PURPLE[min(5, 1 + (c * 4) // max(1, free_n) + (r * 2) // max(1, tall))] \
+                        if c < free_n else "#374151"
+                    out.append("█", style=col)
+                out.append("\n")
+            out.append(f"  {'free for the game':<{max(18, free_n - 2)}}", style=self.PURPLE[2])
+            out.append("in use\n", style=DIM)
+        when = "ends a minute after the game closes" if g.get("by") == "auto" else "on until you turn it off"
+        out.append(f"\n  {when} · the island's game key ends it now", style=FAINT)
+        return out
+
+    # ---- the rest of the pane
+
+    def fill(self, room: int, width: int, pr: dict) -> list[Any]:
+        """Panels for the space under the status, so the pane is never half empty."""
+        Console, Group, Live, Panel, Table, Text = _rich()
+        out: list[Any] = []
+        if room < 6:
+            return out
+        chart_min = 6  # the chart's panel at its smallest: totals, 2 rows of bars, the hours
+
+        def pair(a: tuple[str, Any], b: tuple[str, Any], rows: int) -> Any:
+            g = Table.grid(expand=True, padding=(0, 1))
+            g.add_column(ratio=1)
+            g.add_column(ratio=1)
+            for body in (a[1], b[1]):
+                body.no_wrap, body.overflow = True, "ellipsis"
+            g.add_row(*[card(body, title, height=rows + 2) for title, body in (a, b)])
+            return g
+
+        half = max(20, (width - 1) // 2 - 4)
+        spare = room - chart_min
+        rows = 3 if spare < 20 else min(6, 3 + (spare - 20) // 4)
+        lower = []
+        if spare >= rows + 2:
+            lower.append(pair(("now", self.now_text(Text, rows, half)),
+                              ("models · last 80 calls", self.models_text(Text, rows, half)), rows))
+            spare -= rows + 2
+        if spare >= rows + 2 + 2:  # the second row only with room for a taller chart too
+            lower.append(pair(("not working · 24 h", self.problems_text(Text, pr, rows, half)),
+                              ("coming up", self.next_text(Text, rows, half)), rows))
+            spare -= rows + 2
+        chart_h = chart_min + spare - 2  # the chart takes whatever is left (its panel is chart_h + 2 lines)
+        out.append(card(self.chart(Text, chart_h, width - 4), "ari · last 24 h", height=chart_h + 2))
+        return out + lower
+
+    def chart(self, Text: Any, height: int, width: int) -> Any:
+        act = self.activity or {}
+        tot = act.get("total") or {}
+        out = Text()
+        out.append(f"✓ {tot.get('ok', 0)} answered   ", style=ACCENT)
+        out.append(f"✗ {tot.get('failed', 0)} failed   ", style=BAD if tot.get("failed") else DIM)
+        out.append(f"· {tot.get('ignored', 0)} ignored", style=MID)
+        if tot.get("answer_ms") is not None:
+            out.append(f"   ~{tot['answer_ms'] / 1000:.1f}s to answer", style=DIM)
+        out.append(f"   jobs ✓ {tot.get('jobs_ok', 0)}", style=DIM)
+        if tot.get("jobs_failed"):
+            out.append(f" ✗ {tot['jobs_failed']}", style=BAD)
+        out.append("\n")
+        buckets = act.get("ari") or [{} for _ in range(24)]
+        out.append_text(bars(Text, buckets, [("ok", ACCENT), ("failed", BAD), ("ignored", FAINT)], max(1, height - 2),
+                             width, act.get("start")))
+        out.rstrip()
+        return out
+
+    def now_text(self, Text: Any, rows: int, width: int) -> Any:
+        out = Text()
+        running = self.data.get("running") or []
+        now = time.time()
+        spin = SPINNER[int(getattr(self, "_t", 0) * 8) % len(SPINNER)]
+        for j in running[:rows]:
+            out.append(f"{spin} ", style=ACCENT)
+            out.append(f"{j.get('plugin')}·{j.get('workflow')}"[:24].ljust(25), style=TEXT)
+            out.append(f"{ago(max(0, now - float(j.get('created_at') or now)))}".rjust(6), style=MID)
+            who = str(j.get("lease_owner") or "")
+            if who:
+                out.append(f"  {who[:max(0, width - 35)]}", style=DIM)
+            out.append("\n")
+        if not running:
+            out.append("nothing running\n", style=DIM)
+        jobs = ((self.data.get("status") or {}).get("jobs") or {})
+        left = rows - min(len(running), rows) - 1
+        if left >= 0:
+            out.append(f"{jobs.get('queued', 0)} queued · {jobs.get('waiting', 0)} waiting for you", style=DIM)
+        out.rstrip()
+        return out
+
+    def models_text(self, Text: Any, rows: int, width: int) -> Any:
+        calls = ((self.data.get("calls") or {}).get("calls")) or []
+        by: dict[str, list[dict]] = {}
+        for c in calls:
+            by.setdefault(str(c.get("model") or c.get("tier") or "?"), []).append(c)
+        out = Text()
+        if not by:
+            out.append("no model calls yet", style=DIM)
+            return out
+        for name, cs in sorted(by.items(), key=lambda kv: -len(kv[1]))[:rows]:
+            lat = [float(c["latency_ms"]) for c in cs if c.get("latency_ms") is not None]
+            bad = sum(1 for c in cs if c.get("verdict") != "ok")
+            out.append(f"{name[:18]:<19}", style=TEXT)
+            out.append(f"{len(cs):>3}×", style=MID)
+            if lat:
+                out.append(f" {sum(lat) / len(lat) / 1000:4.1f}s ", style=DIM)
+                n = max(4, width - 38)
+                out.append_text(gspark(Text, lat[:n][::-1], max(lat)))
+                out.append(" " * max(0, n - len(lat[:n])))
+            if bad:
+                out.append(f" ✗{bad}", style=WARN)
+            out.append("\n")
+        out.rstrip()
+        return out
+
+    def problems_text(self, Text: Any, pr: dict, rows: int, width: int) -> Any:
+        out = Text()
+        probs = pr.get("problems") or []
+        if not probs:
+            out.append("✓ nothing failed today", style=ACCENT)
+            return out
+        for g in probs[:rows]:
+            out.append(f"×{g.get('count', 1):<3}", style=BAD)
+            out.append(f"{str(g.get('area') or '')[:20]:<21}", style=TEXT)
+            out.append(f"{str(g.get('what') or '')[:max(8, width - 26)]}\n", style=MID)
+        out.rstrip()
+        return out
+
+    def next_text(self, Text: Any, rows: int, width: int) -> Any:
+        out = Text()
+        now = time.time()
+        nxt = sorted([s for s in (self.data.get("schedules") or []) if s.get("enabled") and s.get("next_run_at")],
+                     key=lambda s: s["next_run_at"])
+        if not nxt:
+            out.append("nothing scheduled", style=DIM)
+            return out
+        for s in nxt[:rows]:
+            out.append(f"in {ago(max(0, s['next_run_at'] - now)):<8}", style=ACCENT)
+            out.append(f"{s.get('plugin', '')}·{s.get('workflow', '')}"[:max(8, width - 12)] + "\n", style=TEXT)
+        out.rstrip()
+        return out
 
     def key(self, k: str) -> None:
         if k == "p":
@@ -327,16 +673,25 @@ def _temp(psutil: Any) -> float | None:
 
 
 class AriView:
-    """The conversation with Ari, live: what you said, what Ari answered, and what it's doing right now."""
+    """The conversation with Ari, live. On top, by what Ari is doing:
+    - listening, speaking or idle: a waveform of the PC's microphone (Ari's own voice while it speaks), how English
+      the last thing heard was, and your words typing in as they're heard;
+    - thinking or working: the request as steps (heard → understood → the tools → answer) lighting up as they
+      happen, and the model answering now with its reply arriving.
+    Under it, the conversation."""
 
     def __init__(self, api: Api):
         self.api = api
         self.ari = AriState()
         self.turns: list[dict] = []
+        self.earlier: list[dict] = []  # the conversations before this one, for when this one is short
+        self.live: dict = {}  # GET /live: the voice levels and the model answering now
+        self.trace: dict | None = None  # the request being worked on (its job's steps so far)
         feed = Feed(api, "ari.state,ari.listening,step.running", backlog=1)
         feed.subs.append(lambda evs: self.ari.apply(evs, time.monotonic()))
         feed.start()
         threading.Thread(target=self._poll, daemon=True, name="ari").start()
+        threading.Thread(target=self._poll_live, daemon=True, name="ari-live").start()
 
     def _poll(self) -> None:
         while True:
@@ -344,38 +699,248 @@ class AriView:
                 chats = self.api.get("/ari-chats")
                 if chats:
                     self.turns = (self.api.get(f"/ari/{chats[0]['conv']}") or {}).get("turns") or []
+                    if len(self.turns) < 12 and len(chats) > 1:
+                        earlier: list[dict] = []
+                        for c in chats[1:4]:
+                            earlier = ((self.api.get(f"/ari/{c['conv']}") or {}).get("turns") or []) + earlier
+                        self.earlier = earlier
             except Exception:  # noqa: BLE001
                 pass
             time.sleep(2)
 
-    def render(self, t: float, height: int) -> Any:
+    def busy(self) -> bool:
+        return not self.ari.off and self.ari.phase not in ("idle", "done")
+
+    def _poll_live(self) -> None:
+        n = 0
+        while True:
+            n += 1
+            try:
+                self.live = self.api.get("/live") or {}
+            except Exception:  # noqa: BLE001 - an older argusd
+                self.live = {}
+            job = self.ari.think_job
+            if job and self.ari.phase in ("thinking", "working", "speaking") and n % 3 == 0:
+                try:
+                    self.trace = self.api.get(f"/ari/trace/{urllib.parse.quote(job)}")
+                except Exception:  # noqa: BLE001
+                    pass
+            time.sleep(0.2 if self.busy() else 1.0)
+
+    # ---- the top: voice
+
+    def wave(self, Text: Any, t: float, width: int, rows: int = 2) -> list[Any]:
+        """`rows` rows of bars up from the middle line, and as many of their dimmer reflection under it."""
+        v = (self.live or {}).get("voice") or {}
+        fresh = time.time() - float(v.get("at") or 0) < 3
+        speaking = fresh and v.get("speaking") and v.get("out")
+        levels = list(v.get("out") if speaking else v.get("mic") or []) if fresh else []
+        levels = ([0.0] * max(0, width - len(levels)) + levels)[-width:]
+        colours = ramp("#1f6f66", "#ccfbf1") if speaking else TEAL_RAMP
+        if not fresh or self.ari.off:
+            colours = GREY_RAMP
+        ups = [Text() for _ in range(rows)]
+        downs = [Text() for _ in range(rows)]
+        for x in levels:
+            x = max(0.0, min(1.0, x))
+            h = x * rows * 8  # in eighths of a cell
+            col = colours[min(len(colours) - 1, 1 + int(x * (len(colours) - 1.01)))]
+            dim = blend(col, "#0b0f14", 0.5)
+            for r in range(rows):  # r = 0 next to the middle line
+                a = max(0.0, min(8.0, h - r * 8))
+                if r == 0 and a < 1:
+                    ups[r].append("▁" if fresh else "·", style=LINE)
+                else:
+                    ups[r].append(EIGHTHS[int(a)] if a >= 1 else " ", style=col)
+                downs[r].append("█" if a >= 6 else "▀" if a >= 3 else "▔" if a >= 1 else " ", style=dim)
+        return [*reversed(ups), *downs]
+
+    def gauges(self, Text: Any) -> Any:
+        v = (self.live or {}).get("voice") or {}
+        out = Text()
+        eng = v.get("english")
+        if isinstance(eng, (int, float)):
+            out.append("   English ", style=DIM)
+            out.append(f"{eng:.0%} ", style=TEXT if eng >= 0.5 else WARN)
+            out.append_text(meter(Text, float(eng), 10))
+        mic = v.get("mic") or []
+        if mic and time.time() - float(v.get("at") or 0) < 3:
+            out.append("   level ", style=DIM)
+            out.append_text(meter(Text, max(mic[-6:]), 10, ramp("#134e4a", "#99f6e4")))
+        return out
+
+    # ---- the top: the request as it happens
+
+    @staticmethod
+    def stage_name(what: str, done: bool) -> str:
+        w = what.strip()
+        if w.startswith("decide"):
+            return "understood" if done else "understanding"
+        if w.startswith("tool ") and ": " in w:
+            return w.split(": ", 1)[1].replace("_", " ")
+        if w in ("reply", "answer", "say"):
+            return "answer"
+        return w.replace("_", " ")
+
+    def stages(self) -> list[dict]:
+        """heard ✓, the job's steps (done ✓, failed ✗, running ⠋), then speak (waiting until Ari speaks)."""
+        tr = self.trace or {}
+        out = [{"name": "heard", "state": "done", "sub": ""}]
+        models: dict[str, str] = {}
+        for s in tr.get("steps") or []:
+            if s.get("kind") == "model":
+                what = str(s.get("what") or "")
+                if "(" in what:
+                    models[what.rsplit("(", 1)[1].rstrip(")")] = what.split(" (", 1)[0]
+        for s in tr.get("steps") or []:
+            if s.get("kind") != "step":
+                continue
+            running = s.get("ms") is None and s.get("ok", True)
+            state = "running" if running else "done" if s.get("ok", True) else "failed"
+            what = str(s.get("what") or "")
+            sub = " · ".join(x for x in (models.get(what, ""), f"{s['ms'] / 1000:.1f} s" if s.get("ms") else "") if x)
+            out.append({"name": self.stage_name(what, state == "done"), "state": state, "sub": sub})
+        phase = self.ari.phase
+        if not any(st["state"] == "running" for st in out) and phase in ("thinking", "working"):
+            out.append({"name": "…", "state": "running", "sub": ""})
+        out.append({"name": "speak", "state": "running" if phase == "speaking" else
+                    "done" if phase in ("done", "following") else "wait", "sub": ""})
+        return out
+
+    def pipeline(self, Text: Any, t: float, width: int) -> list[Any]:
+        spin = SPINNER[int(t * 8) % len(SPINNER)]
+        sts = self.stages()
+        icon = {"done": "✓", "failed": "✗", "running": spin, "wait": "○"}
+        colour = {"done": ACCENT, "failed": BAD, "running": TEXT, "wait": LINE}
+
+        def w(st: dict) -> int:
+            return len(f" {icon[st['state']]} {st['name']} ") + 2 + 2
+
+        while len(sts) > 3 and sum(w(x) for x in sts) > width:  # the oldest finished steps go first
+            k = next((i for i, x in enumerate(sts[1:-1], 1) if x["state"] == "done"), 1)
+            sts.pop(k)
+        rows = [Text(), Text(), Text(), Text()]
+        for i, st in enumerate(sts):
+            col, label = colour[st["state"]], f" {icon[st['state']]} {st['name'][:24]} "
+            line = col if st["state"] != "wait" else LINE
+            rows[0].append("╭" + "─" * len(label) + "╮", style=line)
+            rows[1].append("│", style=line)
+            rows[1].append(label, style=f"bold {col}" if st["state"] != "wait" else FAINT)
+            rows[1].append("│", style=line)
+            rows[2].append("╰" + "─" * len(label) + "╯", style=line)
+            rows[3].append(st["sub"][:len(label) + 2].ljust(len(label) + 2), style=DIM)
+            if i < len(sts) - 1:
+                link = "━━" if st["state"] == "done" else "──"
+                rows[0].append("  ")
+                rows[1].append(link, style=TEAL_RAMP[5] if st["state"] == "done" else LINE)
+                rows[2].append("  ")
+                rows[3].append("  ")
+        return rows
+
+    def model_line(self, Text: Any, t: float, width: int) -> list[Any]:
+        """The model answering now (N): which, for what step, how fast, and its reply arriving."""
+        live = self.live or {}
+        m = live.get("model") or {}
+        if not m or time.time() - float(live.get("model_at") or 0) > 20:
+            return []
+        if self.ari.think_job and m.get("job_id") and m.get("job_id") != self.ari.think_job:
+            return []
+        head, body = Text(), Text()
+        state = m.get("state")
+        ms = m.get("ms") or 0
+        if state == "end":
+            ok = m.get("verdict") == "ok"
+            head.append("✓ " if ok else "✗ ", style=ACCENT if ok else BAD)
+        else:
+            head.append(SPINNER[int(t * 8) % len(SPINNER)] + " ", style=ACCENT)
+        head.append(str(m.get("model") or m.get("tier") or "model"), style=f"bold {TEXT}")
+        head.append(f"  {m.get('step') or ''}", style=DIM)
+        if ms:
+            head.append(f"  {ms / 1000:.1f} s", style=MID)
+        text = str(m.get("text") or "")
+        toks = m.get("tokens_out") or (len(text) / 4 if text else 0)
+        if ms and toks:
+            head.append(f"  {toks / max(ms / 1000, 0.05):.0f} tok/s", style=ACCENT)
+        if state == "end" and m.get("verdict") != "ok":
+            head.append(f"  {m.get('verdict')}: {str(m.get('why') or '')[:60]}", style=BAD)
+        if text:
+            room = max(10, width - 4)
+            shown = " ".join(text.split())
+            shown = shown if len(shown) <= room else "…" + shown[-(room - 1):]
+            body.append("  " + shown, style=MID if state == "end" else TEXT)
+            if state != "end":
+                body.append("▍", style=ACCENT if int(t * 2) % 2 else LINE)
+        return [head, body] if text else [head]
+
+    _typed, _typed_at = "", 0.0
+
+    def typed(self, target: str, t: float, per_s: float = 45) -> str:
+        """`target` typing in: what was shown stays, new words appear a few letters a frame."""
+        keep = 0
+        while keep < min(len(self._typed), len(target)) and self._typed[keep] == target[keep]:
+            keep += 1
+        n = min(len(target), keep + max(1, int((t - self._typed_at) * per_s)))
+        self._typed, self._typed_at = target[:n], t
+        return self._typed
+
+    # ---- all of it
+
+    def render(self, t: float, height: int, width: int = 100) -> Any:
         Console, Group, Live, Panel, Table, Text = _rich()
         phase = "off" if self.ari.off else self.ari.phase
         colour = PHASE_COLOUR.get(phase, ACCENT)
         head = Text()
-        head.append(" ARI ", style=f"bold black on {colour}")
-        dots = "·" * (1 + int(t * 3) % 3) if phase in ("thinking", "working") else ""
-        head.append(f"  {phase}{dots}", style=f"bold {colour}")
-        if self.ari.text and phase not in ("idle", "off"):
-            head.append(f"  {self.ari.text[:80]}", style=TEXT)
-        body = Text()
-        for tr in self.turns[-40:]:
-            who = tr.get("role")
-            when = time.strftime("%H:%M", time.localtime(tr.get("created_at") or time.time()))
-            text = tr.get("text") or "…"
-            if who == "you":
-                body.append(f"\n {when}  you ", style=DIM)
-                body.append(f"{text}\n", style=f"bold {TEXT}")
+        spin = SPINNER[int(t * 8) % len(SPINNER)] + " " if phase in ("thinking", "working") else ""
+        head.append_text(chip(Text, f"{spin}{phase}", colour if phase not in ("idle", "off") else LINE,
+                              fg="#0b0f14" if phase not in ("idle", "off") else MID))
+        working = phase in ("thinking", "working")
+        top: list[Any] = []
+        if working:
+            if self.ari.text:
+                head.append(f"  \"{self.ari.text[:max(10, width - 24)]}\"", style=f"bold {TEXT}")
+            if height >= 12:
+                top = [*self.pipeline(Text, t, width), *self.model_line(Text, t, width)]
             else:
-                body.append(f" {when}  ari ", style=ACCENT2)
-                body.append(f"{text}\n", style=ACCENT)
+                top = self.model_line(Text, t, width)
+        else:
+            head.append_text(self.gauges(Text))
+            if height >= 8:
+                top = self.wave(Text, t, width, rows=2 if height >= 14 else 1)
+
+        def turns_text(turns: list[dict], quiet: bool) -> Any:
+            out = Text()
+            for tr in turns[-40:]:
+                who = tr.get("role")
+                when = time.strftime("%H:%M", time.localtime(tr.get("created_at") or time.time()))
+                text = tr.get("text") or "…"
+                if who == "you":
+                    out.append(f"\n {when}  you ", style=FAINT if quiet else DIM)
+                    out.append(f"{text}\n", style=MID if quiet else f"bold {TEXT}")
+                else:
+                    out.append(f" {when}  ari ", style=FAINT if quiet else ACCENT2)
+                    out.append(f"{text}\n", style=DIM if quiet else ACCENT)
+            return out
+
+        body = turns_text(self.turns, quiet=False)
+        if phase in ("listening", "following") and self.ari.text:  # your words as they're heard
+            shown = self.typed(self.ari.text, t)
+            body.append(f"\n {time.strftime('%H:%M')}  you ", style=DIM)
+            body.append(shown, style=f"bold {TEXT}")
+            body.append("▍", style=ACCENT if int(t * 2) % 2 else LINE)
+            body.append("\n")
+        room = height - 1 - len(top) - (1 if top else 0)
+        if self.earlier and len(body.plain.splitlines()) < room:  # room: the earlier talks, quieter
+            older = turns_text(self.earlier, quiet=True)
+            older.append("\n ── now " + "─" * 40 + "\n", style=FAINT)
+            older.append_text(body)
+            body = older
         lines = body.split("\n")
-        keep = max(5, height - 4)
+        keep = max(3, room)
         if len(lines) > keep:  # the newest lines that fit
             body = Text("\n").join(lines[-keep:])
         if not self.api.up and not self.turns:
             body = offline(Text, self.api)
-        return Group(head, body)
+        return Group(head, *top, *([Text("")] if top else []), body)
 
 
 GROUP = {"job.": ACCENT, "step.": "#7dd3fc", "worker.": OK, "ari.": ACCENT2, "approval.": WARN, "file.": "#f0abfc",
@@ -394,6 +959,7 @@ class EventsView:
         self.api = api
         self.rows: deque = deque(maxlen=height)
         self.lanes: dict[str, Any] = {}
+        self.activity: dict[str, Any] = {}
         self.minutes = 60
         feed = Feed(api, None, backlog=60)
         feed.subs.append(self.rows.extend)
@@ -406,6 +972,13 @@ class EventsView:
                 self.lanes = self.api.get(f"/timeline/lanes?minutes={self.minutes}") or {}
             except Exception:  # noqa: BLE001 - an older argusd, or restarting
                 pass
+            n = getattr(self, "_n", 0)
+            self._n = n + 1
+            if n % 6 == 0:
+                try:
+                    self.activity = self.api.get("/timeline/activity?hours=24") or {}
+                except Exception:  # noqa: BLE001
+                    pass
             time.sleep(5)
 
     def key(self, k: str) -> None:
@@ -442,7 +1015,8 @@ class EventsView:
                 label = str(j.get("plugin") or "")
                 for x in range(a, b + 1):
                     k = x - a
-                    ch = label[k] if b - a >= len(label) + 1 and 0 <= k < len(label) else "▬"
+                    ch = (label[k - 1] if b - a >= len(label) + 2 and 1 <= k <= len(label) else
+                          "━" if a == b else "╺" if x == a else "╸" if x == b else "━")
                     cells[x] = (ch, col)
             out.append(f" {str(w.get('worker') or '?')[:name_w]:<{name_w}}", style=MID)
             for ch, col in cells:
@@ -455,13 +1029,24 @@ class EventsView:
     def render(self, t: float, height: int, width: int = 120) -> Any:
         Console, Group, Live, Panel, Table, Text = _rich()
         out = Text()
-        out.append(" TIMELINE ", style=f"bold black on {ACCENT}")
-        out.append(f"  last {self.minutes} min · +/- to zoom\n", style=DIM)
+        out.append_text(chip(Text, f"last {self.minutes} min", LINE, fg=TEXT))
+        out.append("  a lane per machine\n", style=FAINT)
         lanes = self.lane_text(Text, width)
         out.append_text(lanes)
-        used = 2 + len(lanes.plain.splitlines())
+        used = 1 + len(lanes.plain.splitlines())
+        # the jobs of the last 24 hours, hour by hour; it takes the room the events don't need
+        chart_h = max(3, min(10, height - used - len(self.rows) - 3))
+        act = self.activity or {}
+        tot = act.get("total") or {}
         out.append("\n")
-        for e in list(self.rows)[-(max(3, height - used - 2)):]:
+        out.append_text(chip(Text, "jobs · 24 h", LINE, fg=TEXT))
+        out.append(f"  ✓ {tot.get('jobs_ok', 0)}", style=DIM)
+        out.append(f"  ✗ {tot.get('jobs_failed', 0)}\n", style=BAD if tot.get("jobs_failed") else DIM)
+        out.append_text(bars(Text, act.get("jobs") or [{} for _ in range(24)], [("ok", MID), ("failed", BAD)],
+                             chart_h, max(24, width - 2), act.get("start")))
+        used += 2 + chart_h + 1
+        out.append("\n")
+        for e in list(self.rows)[-(max(3, height - used - 1)):]:
             kind = e.get("kind", "")
             col = BAD if kind.endswith((".dead", ".failed", ".offline")) else (
                 ACCENT if kind in ("job.succeeded", "worker.online") else MID)
@@ -585,8 +1170,8 @@ class LogsView:
         mark = {"ok": "✓", "failed": "✗", "stopped": "■", "ignored": "·"}.get(res, "…")
         col = {"ok": ACCENT, "failed": BAD, "stopped": WARN, "ignored": FAINT}.get(res, MID)
         line = Text()
-        line.append("›" if selected else " ", style=ACCENT)
-        line.append(time.strftime("%H:%M:%S ", time.localtime(r.get("at") or 0)), style=FAINT)
+        line.append("▌" if selected else "▏", style=ACCENT if selected else col)
+        line.append(time.strftime("%H:%M:%S ", time.localtime(r.get("at") or 0)), style=MID if selected else FAINT)
         line.append(f"{mark} ", style=col)
         said = str(r.get("text") or "")[:56]
         line.append(f"\"{said}\"", style=DIM if res == "ignored" else f"bold {TEXT}")
@@ -657,11 +1242,11 @@ class LogsView:
     def render(self, t: float, height: int, width: int = 200) -> Any:
         Console, Group, Live, Panel, Table, Text = _rich()
         out = Text()
-        out.append(" LOGS ", style=f"bold black on {ACCENT}")
-        flags = [self.mode] + (["failures"] if self.failures_only else []) + ([f"/{self.search}"] if self.search
-                                                                              else [])
-        out.append(f"  {' · '.join(flags)}", style=TEXT)
-        out.append("   l switch · f failures · / search · ↑↓ Enter trace\n", style=FAINT)
+        out.append_text(chip(Text, self.mode))
+        for flag in (["failures only"] if self.failures_only else []) + ([f"/{self.search}"] if self.search else []):
+            out.append(" ")
+            out.append_text(chip(Text, flag, LINE, fg=TEXT))
+        out.append("   l switch · f failures · / search · ↑↓ ⏎ trace\n", style=FAINT)
         if self.typing is not None:
             out.append(f"  search: {self.typing}▏\n", style=ACCENT)
         room = max(5, height - 3)
@@ -674,17 +1259,34 @@ class LogsView:
                 out.append("  no requests yet" + (" that match" if self.search or self.failures_only else "")
                            + " (Ari's requests show here; l for the raw logs)\n", style=DIM)
             sel = min(self.sel, max(0, len(rows) - 1))
-            for i, r in enumerate(rows[-max(3, room):]):
-                idx_from_newest = len(rows[-max(3, room):]) - 1 - i
+            shown = rows[-max(3, room):]
+            for i, r in enumerate(shown):
+                idx_from_newest = len(shown) - 1 - i
                 line = self.story_line(Text, r, idx_from_newest == sel)
                 line.truncate(max(20, width - 1), overflow="ellipsis")  # one line each, never wrapped
                 out.append_text(line)
                 out.append("\n")
+            spare = room + 1 - max(1, len(shown))  # the header, the requests, the divider, then this
+            if not self.trace and spare >= 3:  # room left: the newest log lines under the requests
+                out.append("╶─ latest log lines " + "─" * max(0, width - 21) + "\n", style=LINE)
+                for line in self.log_texts(Text, spare):
+                    line.truncate(max(20, width - 1), overflow="ellipsis")
+                    out.append_text(line)
+                    out.append("\n")
             if self.trace:
                 out.append_text(tr)
             return out
+        for line in self.log_texts(Text, room):
+            out.append_text(line)
+            out.append("\n")
+        return out
+
+    def log_texts(self, Text: Any, room: int) -> list[Any]:
+        """The newest `room` log lines and model calls, one Text each (filters and search apply)."""
+        lines: list[Any] = []
         n = self.search.lower()
-        for at, item in self.log_lines()[-(room * 2):][-room:]:
+        for at, item in self.log_lines()[-(room * 3):]:
+            out = Text()
             if "call" in item:
                 c = item["call"]
                 if self.failures_only and c.get("verdict") == "ok":
@@ -701,7 +1303,7 @@ class LogsView:
                     out.append(f" {c['latency_ms'] / 1000:.1f}s", style=FAINT)
                 if c.get("reason"):
                     out.append(f"  {str(c['reason'])[:70]}", style=WARN)
-                out.append("\n")
+                lines.append(out)
                 continue
             r = item["log"]
             col, lv = LEVEL.get(str(r.get("level") or "info").lower(), (TEXT, "INF"))
@@ -709,8 +1311,7 @@ class LogsView:
                 continue
             if n and n not in json.dumps(r, default=str).lower():
                 continue
-            ts = str(r.get("ts") or "")
-            out.append(f" {ts[11:19] if len(ts) >= 19 else '        '} ", style=FAINT)
+            out.append(time.strftime(" %H:%M:%S ", time.localtime(at)) if at else "          ", style=FAINT)
             out.append(f"{lv} ", style=f"bold {col if lv != 'INF' else DIM}")
             out.append(f"{str(r.get('source') or '')[:7]:<7} ", style=DIM)
             out.append(f"{str(r.get('logger') or '').replace('argus.', '')[:14]:<14} ", style=FAINT)
@@ -720,8 +1321,8 @@ class LogsView:
             keep += [k for k in extra if k not in keep][: max(0, 4 - len(keep))]
             if keep:
                 out.append("  " + " ".join(f"{k}={extra[k]}" for k in keep)[:100], style=DIM)
-            out.append("\n")
-        return out
+            lines.append(out)
+        return lines[-room:] if room > 0 else []
 
 
 # ------------------------------------------------------------------ running
@@ -771,6 +1372,21 @@ class Keys:
         return out
 
 
+FRAME = {"deck": ("argus", "p problems"), "ari": ("ari", None), "events": ("timeline", "+/- zoom"),
+         "logs": ("logs", "l  f  /  ↑↓  ⏎")}
+
+
+def frame(name: str, view: Any, t: float, width: int, height: int) -> Any:
+    """One pane: the view inside a rounded frame with its name on top and its keys at the bottom."""
+    w, h = max(10, width - 4), max(3, height - 2)
+    if name == "deck":
+        r = view.render(t, w, h)
+    else:
+        r = view.render(t, h, w)
+    title, hint = FRAME[name]
+    return card(r, title, height=height, hint=hint, main=True)
+
+
 def run_view(name: str, api: Api, fps: float = 6) -> int:
     Console, Group, Live, Panel, Table, Text = _rich()
     console = Console()
@@ -787,12 +1403,7 @@ def run_view(name: str, api: Api, fps: float = 6) -> int:
                     except Exception:  # noqa: BLE001 - a key never breaks the view
                         pass
             try:
-                if name == "deck":
-                    r = view.render(t, console.size.width)
-                elif name in ("events", "logs"):
-                    r = view.render(t, console.size.height, console.size.width)
-                else:
-                    r = view.render(t, console.size.height)
+                r = frame(name, view, t, console.size.width, console.size.height)
             except Exception as e:  # noqa: BLE001 - never die on one bad frame
                 r = Text(f"  (view error: {type(e).__name__}: {e})", style=BAD)
             live.update(r, refresh=True)
@@ -804,10 +1415,10 @@ set -g status-style "bg=default,fg=#6b7280"
 set -g status-left "#[bg=#5eead4,fg=#0b0f14,bold] ◉ ARGUS #[default] "
 set -g status-right "#[fg=#9ca3af]%H:%M #[fg=#6b7280]· #h "
 set -g status-left-length 20
-set -g pane-border-style "fg=#1f2937"
-set -g pane-active-border-style "fg=#5eead4"
-set -g pane-border-status top
-set -g pane-border-format " #[fg=#9ca3af]#{pane_title} "
+# each view draws its own rounded frame: tmux's lines between the panes stay almost invisible
+set -g pane-border-style "fg=#161a20"
+set -g pane-active-border-style "fg=#1f6f66"
+set -g pane-border-status off
 # bg=default, not a colour: the terminal's own background shows through (kitty's background_opacity)
 set -g window-style "bg=default"
 set -g window-active-style "bg=default"
@@ -817,8 +1428,8 @@ set -ga terminal-overrides ",*:Tc"
 
 
 def run_all(argv: list[str]) -> int:
-    """All four views in one tmux window: the deck (logo, eye, status) top left, Ari top right, events bottom left
-    and logs bottom right."""
+    """All four views in one tmux window: the deck (logo, eye, status) top left, Ari top right (a short strip), events
+    bottom left and logs bottom right (most of the right side)."""
     if shutil.which("tmux") is None:
         print("tmux isn't installed: sudo pacman -S tmux (or run one view: python -m argus.console deck)")
         return 2
@@ -843,7 +1454,7 @@ def run_all(argv: list[str]) -> int:
     tmux("source-file", str(conf))
     ari = tmux("split-window", "-h", "-t", deck, "-l", "55%", "-P", "-F", "#{pane_id}", cmd("ari"))
     events = tmux("split-window", "-v", "-t", deck, "-l", "42%", "-P", "-F", "#{pane_id}", cmd("events"))
-    logs = tmux("split-window", "-v", "-t", ari, "-l", "42%", "-P", "-F", "#{pane_id}", cmd("logs"))
+    logs = tmux("split-window", "-v", "-t", ari, "-l", "70%", "-P", "-F", "#{pane_id}", cmd("logs"))
     for pane, title in ((deck, "argus  · p problems"), (ari, "ari"), (events, "timeline  · +/- zoom"),
                         (logs, "logs  · l f / ↑↓ Enter")):
         tmux("select-pane", "-t", pane, "-T", title)

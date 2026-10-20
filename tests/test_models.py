@@ -446,3 +446,28 @@ def test_the_call_log_is_pruned_by_age_and_size(tmp_path):
 
     n_age, n_size, left = run(argus.store.write(fill))
     assert n_age == 12 and n_size > 0 and left <= 3 * 1024 * 1024
+
+
+class LiveBoard(LoggingBoard):
+    def __init__(self):
+        super().__init__()
+        self.lives: list[dict] = []
+
+    def live(self, record):
+        self.lives.append(record)
+
+
+def test_the_router_shows_each_answer_as_it_arrives():
+    """With a board that takes it (a worker's), every Ollama answer streams to the console's live view: a start,
+    the text as it grows, and an end with the verdict; the answer itself is the same."""
+    with FakeOllama({"t1": ["not json at all"], "t2": [GOOD]}) as ol:
+        b = LiveBoard()
+        Router(providers(ol), b, chain=["T1", "T2"]).ask("sort", {"f": "lecture"}, schema=Placement)
+        states = [x["state"] for x in b.lives]
+        assert states[0] == "start" and "text" in states and states[-1] == "end"
+        ends = [x for x in b.lives if x["state"] == "end"]
+        assert ends[0]["verdict"] == "rejected" and ends[-1]["verdict"] == "ok" and ends[-1]["model"] == "t2"
+        assert all(r.get("stream") for r in ol.requests)
+    with FakeOllama({"t1": [GOOD]}) as ol:  # a board without it (argusd's own): no streaming, as before
+        Router(providers(ol), LoggingBoard(), chain=["T1"]).ask("sort", {"f": "x"}, schema=Placement)
+        assert not ol.requests[0].get("stream")

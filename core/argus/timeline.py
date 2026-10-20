@@ -312,3 +312,38 @@ def lanes(conn: sqlite3.Connection, now: float, minutes: float = 60) -> dict[str
         for j in v:
             j["workflow"] = names.get(j["job_id"])
     return {"since": since, "now": now, "workers": [{"worker": w, "jobs": v} for w, v in sorted(out.items())]}
+
+
+def activity(conn: sqlite3.Connection, now: float, hours: int = 24) -> dict[str, Any]:
+    """The last `hours` hour by hour, for the console's charts: jobs finished (ok / failed) and what you asked Ari
+    (ok / failed / ignored), plus today's totals and the average answer time. The last bucket is the current hour."""
+    hours = max(1, min(int(hours), 24 * 7))
+    start = (int(now) // 3600 - hours + 1) * 3600
+    jobs = [{"ok": 0, "failed": 0} for _ in range(hours)]
+    ari = [{"ok": 0, "failed": 0, "ignored": 0} for _ in range(hours)]
+
+    def at(t: float) -> int | None:
+        i = int((t - start) // 3600)
+        return i if 0 <= i < hours else None
+
+    for r in conn.execute("SELECT state, finished_at FROM jobs WHERE finished_at >= ?", (start,)):
+        i = at(r["finished_at"])
+        if i is not None and r["state"] in ("succeeded", *FAILED_JOB):
+            jobs[i]["ok" if r["state"] == "succeeded" else "failed"] += 1
+    ms: list[float] = []
+    for s in requests(conn, limit=400, before=None, ignored=True):
+        if s["at"] < start:
+            continue
+        i = at(s["at"])
+        res = s.get("result")
+        key = "ok" if res == "ok" else "ignored" if res == "ignored" else "failed" if res in ("failed", "stopped") \
+            else None
+        if i is not None and key:
+            ari[i][key] += 1
+        took = s.get("answer_ms") if s.get("answer_ms") is not None else s.get("ms")
+        if res == "ok" and took is not None:
+            ms.append(float(took))
+    total = {k: sum(b[k] for b in ari) for k in ("ok", "failed", "ignored")}
+    total.update(jobs_ok=sum(b["ok"] for b in jobs), jobs_failed=sum(b["failed"] for b in jobs),
+                 answer_ms=round(sum(ms) / len(ms)) if ms else None)
+    return {"start": start, "now": now, "hours": hours, "jobs": jobs, "ari": ari, "total": total}
