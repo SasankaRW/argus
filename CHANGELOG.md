@@ -5,6 +5,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Fix, eyes clip maker:** a saved clip no longer ends in a failed job (`ctx.log` is a logger) that retried and asked Claude again; a key never "reuses" its own clip.
 - **Diary:** tell Ari how your day was (in the evening, or bit by bit) and it keeps a diary in Life Hub: each day's entry is written in your voice from everything you said that day (title, entry, highlights, mood, people, places), nothing added (numbers and names are checked against what you said), your words kept with it. Things you say you learned go on to your notes vault. You can also type into Life Hub's diary box (or quick add `diary: …`); Argus takes those every 10 minutes. New plugin `diary` (Ari tools `diary_add`, `diary_read`); `model: claude` (default) or `local`; `vault_copy` also keeps each day in the vault. Life Hub (separate app) shows it on its new Diary page.
 - **Notes vault, easier:** what you tell Ari ("I learned that…") and what you learned in your diary is written up as a clean note (title, gist, bullets) with your words folded under it (`write_spoken`), then filed by itself, asking only when unsure (`filing: auto` is now the default). `model: claude` (default) or `local` picks who writes and files. Typed notes stay as you wrote them. Life Hub shows the vault (tree, search, notes with links) on its new Notes page.
 

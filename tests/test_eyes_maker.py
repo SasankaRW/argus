@@ -40,6 +40,8 @@ def test_claudes_result_is_checked():
     assert mk.parse_result('{"reuse": "code"}', "cursor", names, own=False) == {"reuse": "code"}
     assert mk.parse_result('{"clip": "spotify.py", "about": "music:  bliss\\n"}', "spotify", names, False) == \
         {"clip": "spotify.py", "about": "music: bliss"}
+    with pytest.raises(PermanentError):
+        mk.parse_result('{"reuse": "code"}', "code", names, own=False)  # not itself
     for bad, own in [('{"reuse": "code"}', True),           # youtube, github, gmail: always their own
                      ('{"reuse": "default"}', False), ('{"reuse": "nope"}', False),
                      ('{"clip": "../x.py"}', False), ('{"clip": "render.py"}', False), ("no", False)]:
@@ -82,13 +84,18 @@ class Store(dict):
         self[k] = v
 
 
+class Log:  # like the worker's ctx.log (a logging.Logger)
+    def __init__(self):
+        self.lines = []
+
+    def info(self, msg, extra=None):
+        self.lines.append((msg, extra or {}))
+
+
 class Ctx:
     def __init__(self, **config):
         self.config = {"model": "sonnet", "minutes": 1, "own_clip": ["youtube", "github", "gmail"], **config}
-        self.store, self.logs, self.dry_run = Store(), [], False
-
-    def log(self, msg, **kv):
-        self.logs.append((msg, kv))
+        self.store, self.log, self.dry_run = Store(), Log(), False
 
 
 @pytest.fixture
@@ -130,7 +137,9 @@ def test_a_whole_run_with_a_fake_claude(clips, monkeypatch):
     c = Clip.load(clips / "spotify.eyes")
     assert c.about == "music: sways, bliss" and len(c.neutral) > 50 and 400 < len(c) < 440
     assert ctx.store["runs"]["n"] == 1 and ctx.store["busy"] == {} and ctx.store["history"][-1]["key"] == "spotify"
-    assert "reuse" in prompts[0]
+    assert "reuse" in prompts[0] and ctx.log.lines[-1][0] == "eyes clip"
+    again = mk.run_one(ctx, clips, "spotify")  # a retried job: the clip is there, Claude isn't asked again
+    assert again == {"key": "spotify", "already": True} and len(prompts) == 1
 
 
 def test_reuse_maps_the_key_and_a_bad_clip_gets_one_more_try(clips, monkeypatch):
