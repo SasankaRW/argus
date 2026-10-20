@@ -101,3 +101,16 @@ def test_the_endpoints_and_the_listener_notes(tmp_path):
         assert any(x["result"] == "ignored" and x["text"] == "Hey, I did it." for x in rows)
         assert cl.get("/ari/trace/last")["text"] == "where's my phone"
         assert "headline" in cl.get("/problems") and "workers" in cl.get("/timeline/lanes")
+        assert len(cl.get("/timeline/activity?hours=6")["ari"]) == 6
+
+
+def test_activity_hour_by_hour(tmp_path):
+    a = make(tmp_path)
+    a.open()
+    run(a.store.write(seed))
+    act = run(a.store.read(lambda c: timeline.activity(c, time.time(), 24)))
+    assert len(act["jobs"]) == len(act["ari"]) == 24
+    t = act["total"]
+    assert (t["ok"], t["failed"], t["ignored"]) == (1, 2, 1)
+    assert t["jobs_ok"] == 1 and t["jobs_failed"] == 1 and t["answer_ms"] is not None
+    assert sum(b["failed"] for b in act["ari"][-2:]) == 2  # in the last hour or two (seeded a minute ago)

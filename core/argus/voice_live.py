@@ -848,6 +848,7 @@ class Player:
         self._began = time.perf_counter()
         self._was_busy = False
         self.text = ""
+        self.out_levels: deque = deque(maxlen=64)  # how loud each block Ari played was (rms), for the live view
 
     # --- the sound card's side (called every few ms from its thread)
     def callback(self, outdata, frames, t=None, status=None) -> None:  # noqa: ARG002 - sounddevice's signature
@@ -878,6 +879,7 @@ class Player:
                 else:
                     self._cues.popleft()
         outdata[:, 0] = out
+        self.out_levels.append(float(np.sqrt(np.mean(np.square(out)))) if frames else 0.0)
 
     # --- Ari's side
     @property

@@ -142,6 +142,26 @@ class Router:
         except Exception:  # noqa: BLE001
             pass
 
+    @staticmethod
+    def _live(live: Any, record: dict) -> None:
+        if live is None:
+            return
+        try:
+            live(record)
+        except Exception:  # noqa: BLE001 - only a view
+            pass
+
+    def _streamer(self, live: Any, info: dict, on_text: Any) -> Any:
+        """The text as it arrives: to the caller's on_text (Ari speaking early) and to the live view."""
+        t0 = self.clock()
+
+        def got(text: str) -> None:
+            if on_text is not None:
+                on_text(text)
+            self._live(live, {"state": "text", **info, "text": text[-600:], "ms": round((self.clock() - t0) * 1000)})
+
+        return got
+
     def ask(self, playbook: str, input: Any, *, schema: type[BaseModel] | None = None, check: Check | None = None,
             chain: list[str] | None = None, attempts: int | None = None, images: list[str] | None = None,
             advice: str | None = None, web: bool = False, on_text: Any = None, temperature: float = 0.0) -> Answer:
@@ -188,11 +208,15 @@ class Router:
                     break
                 self.board.event("model.request", self.source, comp, {"tier": tier, "attempt": attempt})
                 t0 = self.clock()
+                live = getattr(self.board, "live", None)  # the console's "model, live" (best effort)
+                info = {"tier": tier, "model": getattr(provider, "model", None), "attempt": attempt,
+                        "prompt_chars": len(system) + sum(len(str(m.get("content") or "")) for m in messages)}
+                self._live(live, {"state": "start", **info})
                 try:
                     extra = {"web": True} if web and getattr(provider, "kind", "") == "claude" else {}
-                    if on_text is not None and tier == tiers[0] and attempt == 1 \
-                            and getattr(provider, "kind", "") == "ollama":
-                        extra["on_text"] = on_text
+                    first = on_text is not None and tier == tiers[0] and attempt == 1
+                    if getattr(provider, "kind", "") == "ollama" and (first or live is not None):
+                        extra["on_text"] = self._streamer(live, info, on_text if first else None)
                     if temperature and getattr(provider, "kind", "") == "ollama":
                         extra["temperature"] = temperature
                     reply = provider.chat(system, messages, json_schema, **extra)
@@ -202,12 +226,18 @@ class Router:
                     kind = "model.timeout" if isinstance(e, ModelTimeout) else "model.error"
                     self.board.event(kind, comp, self.source, {"tier": tier, "error": _clip(str(e), 200)})
                     self._record(tier, provider, attempt, system, messages, "error", reason=str(e), latency_ms=ms)
+                    self._live(live, {"state": "end", **info, "verdict": "error", "why": _clip(str(e), 160),
+                                      "ms": round(ms)})
                     trail.append({"tier": tier, "attempt": attempt, "error": str(e)})
                     break  # an unreachable model won't improve on a retry; move up the chain
                 self.board.report(tier, True, reply.latency_ms, None)
                 value, problem = self._judge(reply.text, input, schema, check)
                 self._record(tier, provider, attempt, system, messages, "ok" if problem is None else "rejected",
                              reply=reply, reason=problem)
+                tin, tout = _tokens(reply.meta)
+                self._live(live, {"state": "end", **info, "verdict": "ok" if problem is None else "rejected",
+                                  "why": _clip(problem, 160) if problem else None, "ms": round(reply.latency_ms),
+                                  "text": reply.text[-600:], "tokens_in": tin, "tokens_out": tout})
                 if problem is None:
                     self.board.event("model.reply", comp, self.source,
                                      {"tier": tier, "attempt": attempt, "ok": True,

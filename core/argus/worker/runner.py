@@ -133,8 +133,8 @@ class _CallLog:
     def _run(self) -> None:
         while True:
             client, job_id, body = self.q.get()
-            try:
-                client.post(f"/jobs/{job_id}/calls", body)
+            try:  # once, briefly: argusd away (or a test's server gone) must not hold up the records behind
+                client.call("POST", f"/jobs/{job_id}/calls", body, timeout=10, retry=False)
             except Exception as e:  # noqa: BLE001 - the log is a nicety
                 log.debug("model call not logged", extra={"error": str(e)[:200]})
             finally:
@@ -142,6 +142,48 @@ class _CallLog:
 
 
 CALL_LOG = _CallLog()
+
+
+class _Live:
+    """A model's answer as it arrives, for the laptop console (argusd keeps only the newest, in memory). Sent from
+    a background thread, at most a few times a second; starts and ends always go, text in between may be skipped."""
+
+    EVERY = 0.3
+
+    def __init__(self) -> None:
+        self.cond = threading.Condition()
+        self.pending: tuple[ArgusClient, dict] | None = None
+        self.must: list[tuple[ArgusClient, dict]] = []
+        self.thread: threading.Thread | None = None
+
+    def put(self, client: ArgusClient, body: dict) -> None:
+        with self.cond:
+            if self.thread is None or not self.thread.is_alive():
+                self.thread = threading.Thread(target=self._run, name="model-live", daemon=True)
+                self.thread.start()
+            if body.get("state") == "text":
+                self.pending = (client, body)
+            else:
+                self.pending = None
+                self.must = [*self.must[-4:], (client, body)]
+            self.cond.notify()
+
+    def _run(self) -> None:
+        while True:
+            with self.cond:
+                while not self.must and self.pending is None:
+                    self.cond.wait()
+                batch = self.must + ([self.pending] if self.pending else [])
+                self.must, self.pending = [], None
+            for client, body in batch:
+                try:
+                    client.call("POST", "/models/live", body, timeout=3, retry=False)
+                except Exception:  # noqa: BLE001 - only a view (an older argusd answers 404)
+                    pass
+            time.sleep(self.EVERY)
+
+
+LIVE = _Live()
 
 
 def outcome(job: dict, result: Any) -> dict:
@@ -193,6 +235,9 @@ class _JobBoard:
 
     def call(self, record: dict) -> None:
         CALL_LOG.put(self.client, self.job_id, {"worker": self.worker, "step": self.ctx._step, **record})
+
+    def live(self, record: dict) -> None:
+        LIVE.put(self.client, {"job_id": self.job_id, "worker": self.worker, "step": self.ctx._step, **record})
 
 
 class _Heartbeat(threading.Thread):

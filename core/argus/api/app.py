@@ -59,6 +59,7 @@ import socket
 import threading
 import time
 import urllib.request
+from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
@@ -1092,6 +1093,49 @@ def create_app(argus: Argus) -> FastAPI:
         dropped = await argus.store.write(fn)
         return {**now, "on": on, "dropped": len(dropped)}
 
+    # -------------------------------------------------------------- live (the laptop console; memory only)
+
+    live_now: dict[str, Any] = {"model": None, "model_at": 0.0,
+                                "voice": {"mic": deque(maxlen=200), "out": deque(maxlen=200), "speaking": False,
+                                          "english": None, "at": 0.0}}
+
+    @app.post("/models/live", dependencies=guarded)
+    async def models_live(body: dict[str, Any]) -> dict:
+        """A model answering right now (from a worker): {state: start | text | end, job_id, step, model, tier,
+        text so far, ms, verdict, tokens}. Only the newest is kept, in memory."""
+        keep = {k: body.get(k) for k in ("state", "job_id", "step", "model", "tier", "attempt", "prompt_chars",
+                                         "text", "ms", "verdict", "why", "tokens_in", "tokens_out", "worker")}
+        if isinstance(keep.get("text"), str):
+            keep["text"] = keep["text"][-600:]
+        prev = live_now["model"] or {}
+        if keep.get("state") == "text" and prev.get("state") == "end" and prev.get("job_id") == keep.get("job_id") \
+                and prev.get("step") == keep.get("step") and prev.get("attempt") == keep.get("attempt"):
+            return {"ok": True}  # a late piece of an answer already finished
+        live_now["model"], live_now["model_at"] = keep, time.time()
+        return {"ok": True}
+
+    @app.post("/ari/live", dependencies=guarded)
+    async def ari_live(body: dict[str, Any]) -> dict:
+        """The PC's listener, a few times a second while something happens: the mic's levels and Ari's voice's
+        (0..1 each), whether Ari is speaking, and how English the last thing heard was."""
+        v = live_now["voice"]
+        for k in ("mic", "out"):
+            v[k].extend(max(0.0, min(1.0, float(x))) for x in (body.get(k) or [])[:60]
+                        if isinstance(x, (int, float)))
+        v["speaking"] = bool(body.get("speaking"))
+        if body.get("english") is not None:
+            v["english"] = body.get("english")
+        v["at"] = time.time()
+        return {"ok": True}
+
+    @app.get("/live", dependencies=guarded)
+    async def live_get() -> dict:
+        """What's happening this second: the voice levels (newest last) and the model answering now."""
+        v = live_now["voice"]
+        return {"now": time.time(), "voice": {"mic": list(v["mic"])[-120:], "out": list(v["out"])[-120:],
+                                              "speaking": v["speaking"], "english": v["english"], "at": v["at"]},
+                "model": live_now["model"], "model_at": live_now["model_at"]}
+
     # -------------------------------------------------------------- game mode (game.py)
 
     game: dict[str, Any] = {"on": False, "by": None, "since": None, "app": "", "freed_mb": None, "unloaded": [],
@@ -1252,6 +1296,11 @@ def create_app(argus: Argus) -> FastAPI:
     async def timeline_lanes(minutes: float = Query(60, gt=0, le=24 * 60)) -> dict:
         """What each machine worked on in the last `minutes`: a lane of jobs per worker (the console's timeline)."""
         return await argus.store.read(lambda c: timeline_mod.lanes(c, time.time(), minutes))
+
+    @app.get("/timeline/activity", dependencies=guarded)
+    async def timeline_activity(hours: int = Query(24, gt=0, le=24 * 7)) -> dict:
+        """Hour by hour: jobs finished (ok / failed) and requests to Ari (ok / failed / ignored), with totals."""
+        return await argus.store.read(lambda c: timeline_mod.activity(c, time.time(), hours))
 
     @app.get("/problems", dependencies=guarded)
     async def problems(hours: float = Query(24, gt=0, le=24 * 14)) -> dict:
