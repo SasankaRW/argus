@@ -133,8 +133,8 @@ class _CallLog:
     def _run(self) -> None:
         while True:
             client, job_id, body = self.q.get()
-            try:
-                client.post(f"/jobs/{job_id}/calls", body)
+            try:  # once, briefly: argusd away (or a test's server gone) must not hold up the records behind
+                client.call("POST", f"/jobs/{job_id}/calls", body, timeout=10, retry=False)
             except Exception as e:  # noqa: BLE001 - the log is a nicety
                 log.debug("model call not logged", extra={"error": str(e)[:200]})
             finally:

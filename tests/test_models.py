@@ -399,7 +399,6 @@ def test_router_logs_every_call_with_prompt_reply_and_verdict():
 
 def test_the_call_log_end_to_end_and_pictures_are_not_kept(tmp_path):
     import argus.worker.demo  # noqa: F401
-    from argus.worker import runner
 
     with FakeOllama({"qwen2.5-coder:7b": [WRONG], "qwen2.5-coder:14b": [GOOD]}) as ol:
         argus = make(tmp_path).open()
@@ -410,8 +409,12 @@ def test_the_call_log_end_to_end_and_pictures_are_not_kept(tmp_path):
             jid = cl.post("/jobs", {"plugin": "demo", "workflow": "classify",
                                     "input": {"filename": "lecture_07.pdf"}})["id"]
             assert w.run_once(wait=2)
-            runner.CALL_LOG.q.join()  # sent in the background
-            calls = cl.get(f"/jobs/{jid}/calls")
+            calls: list = []
+            for _ in range(100):  # sent in the background
+                calls = cl.get(f"/jobs/{jid}/calls")
+                if len(calls) >= 3:
+                    break
+                time.sleep(0.1)
             assert [c["verdict"] for c in calls] == ["rejected", "rejected", "ok"]
             assert calls[0]["plugin"] == "demo" and calls[0]["model"] == "qwen2.5-coder:7b"
             assert calls[-1]["tier"] == "T2" and "Documents" in calls[-1]["reply"] and calls[0]["system"]
