@@ -322,9 +322,35 @@ class Worker:
         except (Unreachable, ApiError) as e:
             log.warning("could not report the Claude login", extra={"error": str(e)})
 
+    GAME_CHECK_SECONDS = 10.0
+    _game_checked = 0.0
+    EXIT_GPU = 75  # "restart me now": the supervisor starts a fresh worker at once (not counted as a crash)
+
+    def exit_now(self, code: int) -> None:  # pragma: no cover - replaced in tests
+        os._exit(code)
+
+    def check_game(self, force: bool = False) -> None:
+        """Game mode (between jobs, every few seconds): Whisper moves to the CPU, and a worker that had put a model
+        on the GPU restarts, because only a fresh process gives the GPU's memory back in full."""
+        if not force and time.monotonic() - self._game_checked < self.GAME_CHECK_SECONDS:
+            return
+        self._game_checked = time.monotonic()
+        try:
+            on = bool((self.client.get("/ari/game") or {}).get("on"))
+        except Exception:  # noqa: BLE001 - an older argusd, or out of reach: leave things as they are
+            return
+        _hear.GAME["on"] = on
+        if on and _hear.on_gpu():
+            log.info("game mode: restarting this worker to give the GPU back", extra={"worker": self.id})
+            _hear.release()
+            for h in logging.getLogger().handlers:
+                h.flush()
+            self.exit_now(self.EXIT_GPU)
+
     def run_once(self, wait: float | None = None) -> bool:
         """Claim and run at most one job. Returns True if a job was run."""
         self.check_claude()
+        self.check_game()
         if self._registered and time.monotonic() - self._registered > self.REGISTER_SECONDS:
             try:  # argusd's argus.yaml may have changed (new models, plugins switched on) without us restarting
                 self.register()

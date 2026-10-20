@@ -103,6 +103,9 @@ def eyes_on() -> bool:
         return False
 
 
+EXIT_RESTART = 75  # a child's "start me again now" (not a crash: no waiting, not counted)
+
+
 class Child:
     def __init__(self, name: str, args: list[str], marker: Path | None = None, stop_file: Path | None = None):
         self.name, self.args, self.marker = name, args, marker
@@ -170,6 +173,11 @@ class Child:
             return
         if self.proc is not None:
             code = self.proc.returncode
+            if code == EXIT_RESTART:  # it asked for a fresh start (a worker giving the GPU back for game mode)
+                log.info("restarting at once, as it asked", extra={"proc": self.name})
+                self.fails, self.next_start, self.proc = 0, 0.0, None
+                self.start()
+                return
             quick = time.monotonic() - self.started < 60
             self.fails = self.fails + 1 if quick else 0
             wait = min(300, 5 * 2 ** min(self.fails, 6))
@@ -185,10 +193,12 @@ class OllamaKeeper:
     falls back to Claude (slow). Started with `ollama serve` only after two missed checks, at most every 5 min,
     and only for an Ollama on this machine."""
 
-    def __init__(self, url: str, start: Any = None, up: Any = None, clock: Any = time.monotonic):
+    def __init__(self, url: str, start: Any = None, up: Any = None, clock: Any = time.monotonic,
+                 paused: Any = None):
         self.url, self.clock = url.rstrip("/"), clock
         self.start = start or self._start
         self.up = up or self._up
+        self.paused = paused or (lambda: False)  # game mode: Ollama is stopped on purpose, leave it
         self.misses, self.started_at = 0, -1e9
 
     def local(self) -> bool:
@@ -217,6 +227,9 @@ class OllamaKeeper:
 
     def check(self) -> None:
         if not self.local():
+            return
+        if self.paused():
+            self.misses = 0
             return
         if self.up():
             self.misses = 0
@@ -259,7 +272,7 @@ def game_watch(url: str, token: str | None, children: list[Child]) -> Any:
     if not any(c.name in ("ari-listen", "ari-voice") for c in children):
         return None
     from . import busy as busy_mod
-    from .game import GameWatch, ollama_unload
+    from .game import GameWatch, gpu_users, ollama_start, ollama_stop, ollama_unload
 
     try:
         from .config import load_config
@@ -271,7 +284,10 @@ def game_watch(url: str, token: str | None, children: list[Child]) -> Any:
         return None
     return GameWatch(lambda: api_call(url, token, "/ari/game"), lambda b: api_call(url, token, "/ari/game", b),
                      children, look=lambda: busy_mod.now(tuple(a.call_apps or ())),
-                     unload=lambda: ollama_unload(ollama), on_after=a.game_on_after_s, off_after=a.game_off_after_s)
+                     unload=lambda: ollama_unload(ollama), on_after=a.game_on_after_s, off_after=a.game_off_after_s,
+                     stop_ollama=ollama_stop if a.game_mode_stop_ollama else None,
+                     start_ollama=(lambda: ollama_start(ollama)) if a.game_mode_stop_ollama else None,
+                     users=gpu_users)
 
 
 LOCK_PORTS = {"main": 8617, "desk": 8618}  # one supervisor per mode on a machine
@@ -327,7 +343,9 @@ def plan(args: argparse.Namespace) -> list[tuple[str, list[str]]]:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="argus-supervisor")
     p.add_argument("--interval", type=float, default=60, help="seconds between checks for new code")
-    p.add_argument("--url", default="http://127.0.0.1:8600")
+    # ARGUS_URL first: on the PC after the move Argus is on the laptop (pc-worker.ps1 sets it), and the
+    # supervisor's own calls (game mode, "is a job running?") must go there, not to a 127.0.0.1 nobody answers
+    p.add_argument("--url", default=os.environ.get("ARGUS_URL") or "http://127.0.0.1:8600")
     p.add_argument("--no-worker", action="store_true", help="argusd only (the laptop, when the PC is the worker)")
     p.add_argument("--no-session", action="store_true",
                    help="the worker is not in your logged-in Windows session (started at boot): no PC-app tools")
@@ -361,7 +379,8 @@ def main(argv: list[str] | None = None) -> int:
         try:
             from .config import load_config
 
-            keeper = OllamaKeeper(os.environ.get("ARGUS_OLLAMA_URL") or load_config(ROOT / "argus.yaml").ollama.url)
+            keeper = OllamaKeeper(os.environ.get("ARGUS_OLLAMA_URL") or load_config(ROOT / "argus.yaml").ollama.url,
+                                  paused=lambda: bool((api_call(args.url, token, "/ari/game") or {}).get("on")))
         except Exception as e:  # noqa: BLE001 - no config here: nothing to keep
             log.info("not watching Ollama", extra={"error": str(e)[:120]})
     try:
