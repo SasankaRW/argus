@@ -27,6 +27,8 @@ A clip is a Python file with three things (copy `examples/default.py` and change
   amused, wow, content), reading mail (reading left to right, a little notice, a nod of content), coding (reading,
   focus, thinking upward, pleased when it works), music (bliss, content, gentle looking around)... Mostly gentle,
   happy or curious feelings. Avoid angry, sad and surprised unless they really fit; use love and squash rarely.
+  `focus` looks cross on this screen: for reading or concentrating use `suspicious` (an even squint) or a
+  calm `neutral` with a track.
 - **Eyes only.** No props, no colour, no text: `clipkit.make` draws only the eyes.
 - Different from the examples: same calm style, but this app's own little story.
 

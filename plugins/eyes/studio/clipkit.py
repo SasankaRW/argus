@@ -42,7 +42,7 @@ SHAPES = {
     "notice": "taller: something caught its eye",
     "wow": "tall and bright: impressed",
     "surprised": "biggest: startled (use rarely)",
-    "focus": "lids pressed in from the top inside corners: concentrating (reads a bit stern)",
+    "focus": "inner lids pressed down: looks cross on the screen (prefer suspicious for reading)",
     "suspicious": "even squint: studying something closely",
     "tired": "heavy lids",
     "sleepy": "almost closed (no blinks)",
