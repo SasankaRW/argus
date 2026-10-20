@@ -1,0 +1,45 @@
+id: diary
+name: Diary
+version: 1.0.0
+kind: workflow
+argus_api: ">=1.0 <2.0"
+description: 'Your diary, kept by Ari: tell Ari how your day was (in the evening, or bit by bit through the day) and it writes the day''s entry in your voice from what you said, nothing added, with your own words kept under it. Each day is one entry in Life Hub (Diary). Things you say you learned also go to your notes vault.'
+runs_on: desktop            # with Life Hub and the notes vault (the PC now)
+
+triggers:
+  - schedule: {workflow: tidy, cron: "*/10 * * * *"}   # what you typed into Life Hub's diary box
+  - manual: {workflow: tidy, label: Take Life Hub's diary notes now}
+
+workflows: [tell, read, tidy]
+
+permissions:
+  files: {read: ["~/Vault/Diary"], write: ["~/Vault/Diary"], edit: ["~/Vault/Diary"], delete: none}
+  models: [T1, T2]            # when the diary is written by the local models
+  claude_calls_per_day: 40    # when it is written by Claude (the default)
+  network: ["config:lifehub_url"]
+  secrets: [LIFEHUB_API_KEY]
+
+config:
+  model: {type: choice, choices: [claude, local], default: claude, label: "Who writes the entries: Claude, or the local models (nothing leaves your machines)"}
+  lifehub_url: {type: text, default: "http://127.0.0.1:8081", label: Life Hub address (where the diary is kept)}
+  vault_copy: {type: bool, default: false, label: "Also keep a copy of each day in your notes vault (Diary/<year>/<date>.md)"}
+  day_starts: {type: int, default: 4, label: "Talk before this hour counts for the day before (4: until 4 am)"}
+
+ari:
+  tools:
+    - name: diary_add
+      description: 'Add to the user''s diary what they tell you about their day: what they did, how it went, how they feel, who they met ("my day was good, I...", "today I went to...", "for my diary: ..."). Pass their words as said. Use "yesterday" when they talk about yesterday.'
+      workflow: tell
+      input:
+        text: {type: string, description: "what the user said about their day, in their words"}
+        day: {type: string, description: '"today" (default), "yesterday" or a date YYYY-MM-DD'}
+      required: [text]
+    - name: diary_read
+      description: 'Read the user''s diary for a day ("what did I do yesterday?", "how was last Sunday?", "read my diary for 2026-10-12").'
+      workflow: read
+      input:
+        day: {type: string, description: '"today", "yesterday", a weekday ("sunday" = the last one) or a date YYYY-MM-DD'}
+      required: [day]
+
+helios:
+  node: {label: Diary, group: assistant}
