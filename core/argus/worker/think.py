@@ -669,6 +669,15 @@ TO_WHOM = re.compile(r"\b(?:message|text|tell|whatsapp|send)\s+(?:a message to\s
 MAIL_FROM = re.compile(_F + r"(?:what does|what did)\s+(?P<who>[\w' -]{2,30}?)\s+(?:say|want|ask|write)\W*$|"
                        + _F + r"(?:read\s+)?(?:the one|the mail|the e-?mail|one)\s+from\s+(?P<who2>[\w' -]{2,30}?)\W*$",
                        re.I)
+OPEN_WHICH = re.compile(_F + r"(?:open|show me|show)\s+(?:the\s+)?(?P<w>[\w' -]{2,30}?)\s+"
+                        r"(?:one|file|pdf|document)\W*$", re.I)
+IS_IT_UP = re.compile(_F + r"(?:is|are)\s+(?:it|they|that|those|the server|the lab)\s+"
+                      r"(?:up|down|running|ok|okay|online|working|fine)\W*$", re.I)
+REPO_AGAIN = re.compile(_F + r"(?:and|what about|how about)\s+(?:the\s+|my\s+)?(?P<name>[\w.-]{1,40})\s+"
+                        r"(?:repo|repository|project)\W*$", re.I)
+_LAB_WORDS = re.compile(r"\b(?:server|servers|home\s?lab|lab|calypso|laptop|docker|services?)\b", re.I)
+_MONTHS = ("january", "february", "march", "april", "may", "june", "july", "august", "september", "october",
+           "november", "december")
 _NOT_PLACE = {"it", "that", "this", "them", "him", "her", "you", "me", "the other one", "the second one", "now",
               "later", "then", "the weekend", "next week"}
 _FUNCTION_WORDS = {"how", "what", "why", "when", "where", "who", "which", "you", "i", "me", "my", "your", "is", "are",
@@ -733,6 +742,23 @@ def follow_on(tools: dict[str, dict], text: str, thread: dict | None,
             return "whatsapp_message", {"to": m.group("to").strip(), "text": args["text"]}
     if "open_file" in tools and th["mentioned"].get("file") and OPEN_IT.match(t):
         return "open_file", {"path": th["mentioned"]["file"]}
+    if "open_file" in tools:
+        paths = _paths_found(history)
+        m, n = OPEN_WHICH.match(t), NTH.match(t)
+        if paths and n and re.match(r"\W*(?:open|show)", t, re.I):  # "open the second one"
+            i = _ORDS[n.group("ord").lower()]
+            if i < len(paths):
+                return "open_file", {"path": paths[i]}
+        if paths and m and not n:  # "open the october one": the file whose name has that word
+            hit = _pick_path(paths, m.group("w"))
+            if hit:
+                return "open_file", {"path": hit}
+    if "lab_status" in tools and IS_IT_UP.match(t) and _LAB_WORDS.search(json.dumps(th, default=str)):
+        return "lab_status", {}
+    if "repo_status" in tools:
+        m = REPO_AGAIN.match(t)
+        if m:
+            return "repo_status", {"name": m.group("name")}
     if name in ("list_issues", "work_summary") and "show_issue" in tools:
         m = NTH.match(t)
         keys = _keys_found(history)
@@ -745,6 +771,50 @@ def follow_on(tools: dict[str, dict], text: str, thread: dict | None,
         if m:
             return "read_email", {"which": "from " + (m.group("who") or m.group("who2")).strip()}
     return None
+
+
+def _paths_found(history: list[dict] | None) -> list[str]:
+    """The file paths in what Ari's last answer found, in order ("path" fields whole, else paths in the text)."""
+    last = next((h for h in reversed(history or []) if h.get("role") in ("ari", "assistant")), None)
+    found = (last or {}).get("found")
+    out: list[str] = []
+
+    def add(p: str) -> None:
+        p = p.strip().rstrip(".,;)]}")
+        if p and p not in out:
+            out.append(p)
+
+    def walk(v: Any) -> None:
+        if isinstance(v, dict):
+            for k, x in v.items():
+                if k in ("path", "file", "full_path") and isinstance(x, str) and re.match(r"[A-Za-z]:[\\/]|~|/", x):
+                    add(x)
+                else:
+                    walk(x)
+        elif isinstance(v, list):
+            for x in v:
+                walk(x)
+        elif isinstance(v, str):  # a clipped result (JSON cut short), or a tool's own sentence
+            named = re.findall(r'"(?:path|file|full_path)"\s*:\s*"((?:[^"\\\\]|\\\\.)+)"', v)
+            for p in named or thread_mod._PATH.findall(v):
+                add(p.replace("\\\\", "\\"))
+
+    walk(found)
+    return out
+
+
+def _pick_path(paths: list[str], words: str) -> str | None:
+    """The one path whose file name has the words ("october" also finds "oct"); None if not exactly one."""
+    want = [w for w in re.findall(r"[a-z0-9]+", words.lower()) if w not in _FUNCTION_WORDS]
+    if not want:
+        return None
+
+    def has(p: str) -> bool:
+        name = re.split(r"[\\/]", p)[-1].lower()
+        return all(w in name or (w in _MONTHS and w[:3] in name) for w in want)
+
+    hits = [p for p in paths if has(p)]
+    return hits[0] if len(hits) == 1 else None
 
 
 def _keys_found(history: list[dict] | None) -> list[str]:
