@@ -24,6 +24,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from .. import thread as thread_mod
 from ..expressive import tidy
 from ..models import EscalationExhausted
 from .workflows import Context, PermanentError, ToolFailed, workflow
@@ -42,6 +43,8 @@ class Step(BaseModel):
     reply: str = Field("", description="the answer to the user, when no tool is needed any more")
     remember: str = Field("", description="with a reply: a lasting fact the user just told you about themselves "
                                           "worth keeping (else empty)")
+    topic: str = Field("", description="with a reply: what the conversation is about now, in a few words "
+                                       "(\"playing music on Spotify\", \"Kaancha's email\")")
 
 
 class Chat(BaseModel):
@@ -127,10 +130,11 @@ TYPING = re.compile(r"^\W*(?:(?:please|can you|could you|will you|go ahead and)\
 SCREEN_TOOLS = {"look_at_screen": SCREEN, "summarise_clipboard": CLIPBOARD, "type_text": TYPING, "press_keys": TYPING}
 
 
-def offered(tools: dict[str, dict], text: str, history: list[dict]) -> dict[str, dict]:
+def offered(tools: dict[str, dict], text: str, history: list[dict], about: str = "") -> dict[str, dict]:
     """The tools worth offering for this message: the screen / clipboard ones only when it's about them (or the
-    chat just was). Fewer tools is also a shorter prompt, so a faster first step."""
-    recent = " ".join(str(h.get("text") or "") for h in history[-2:])
+    chat just was). Fewer tools is also a shorter prompt, so a faster first step. `about` is the thread's words
+    (its topic, app and task), so a follow-up like "louder" keeps the tools of what is going on."""
+    recent = " ".join(str(h.get("text") or "") for h in history[-2:]) + (" " + about if about else "")
     ok = {n: t for n, t in tools.items()
           if n not in SCREEN_TOOLS or SCREEN_TOOLS[n].search(text)
           or (SCREEN_TOOLS[n] is not TYPING and SCREEN_TOOLS[n].search(recent))}  # typing: only when asked now
@@ -182,7 +186,8 @@ def closest(tools: dict[str, dict], text: str, keep: int = 14) -> dict[str, dict
 OPEN_APP = re.compile(r"^\W*(?:please\s+)?(?:open|launch|start)\s+(?:up\s+)?(?:the\s+)?(?P<app>[a-z][\w+ -]{1,28}?)"
                       r"(?:\s+app)?(?:\s+(?:for me|please))?\W*$", re.I)
 NOT_APP = re.compile(r"^(?:a|an|my|some)\b|\b(?:file|folder|document|page|site|website|link|it|that|this|them|routine|"
-                     r"tab|timer|music|playlist|song|recording|backup|job|over|again)\b|[./\\:]", re.I)
+                     r"tab|timer|music|playlist|song|recording|backup|job|over|again|"
+                     r"one|ones|first|second|last)\b|[./\\:]", re.I)  # "open the october one" is a file
 
 
 WHATSAPP = re.compile(r"^\W*(?:please\s+)?(?:(?:send|text|message|whatsapp)\s+)?(?P<to>[A-Z][\w']{1,20})\s+"
@@ -631,6 +636,26 @@ def straight_to(tools: dict[str, dict], text: str) -> tuple[str, dict] | None:
     return None
 
 
+PLAY_THIS = re.compile(_PLEASE + r"(?:play|put on)\s+(?:the song\s+|the album\s+|the playlist\s+|some\s+)?"
+                       r"(?P<q>.+?)(?:,? please)?\W*$", re.I)
+NOT_SONG = re.compile(r"^(?:it|that|this|music|something|anything|again|the music|a song|the next one|the next song|"
+                      r"the last one|the previous one)$", re.I)
+
+
+def follow_on(tools: dict[str, dict], text: str, thread: dict | None) -> tuple[str, dict] | None:
+    """A message that only makes sense in the thread, and then plainly needs one tool: "play Famous" while Spotify
+    is the app in use plays it there."""
+    if not isinstance(thread, dict) or len(text) > 120:
+        return None
+    th = thread_mod.fresh(thread, time.time())
+    if th["app"].lower() == "spotify" and "play_on_spotify" in tools:
+        m = PLAY_THIS.match(text)
+        if m and not NOT_SONG.match(m.group("q").strip()) and not re.search(r"\b(?:on|in)\s+(?:my\s+)?(?:phone|"
+                                                                            r"youtube|chrome|browser)\b", text, re.I):
+            return "play_on_spotify", {"query": m.group("q").strip(" \"'")}
+    return None
+
+
 # Small talk: no tools, no task, just Ari being good company.
 CHATTY = re.compile(r"^\W*(?:hi|hey|hello|hiya|yo|sup|good (?:night|evening|afternoon)|how (?:are|r) (?:you|u)|"
                     r"how'?s (?:it going|your day|life)|what'?s up\W*$|wassup|thanks|thank you|cheers|lol|haha|"
@@ -862,8 +887,13 @@ How to decide:
   add_to_list), money this month (money_this_month), the weather (weather), WhatsApp messages
   (whatsapp_message: open_app is not needed first), the PC (apps, windows, volume, media,
   clipboard).
-- Each message is a new request: never re-offer or redo something from earlier turns (typing, closing, sending)
-  unless this message asks for it again. If you can't make out what they mean, ask them briefly.
+- "thread" is where this conversation stands: its topic, the app in use, the task in progress (and what's still
+  missing), the last thing of each kind mentioned (song, file, person, page, search, mail, ticket) and your open
+  question. Continue the thread when the message fits it: "play Famous" right after opening Spotify is on Spotify,
+  "louder" while music plays is the volume, "the second one" after the mails were listed is that mail, a short
+  answer to your open question fills in what was missing. Start fresh when the message is clearly about something
+  else. Never redo something from earlier turns (typing, closing, sending) unless this message asks for it again.
+  If a detail is still missing, ask for it once, briefly; if you can't make out what they mean, ask briefly.
 - Follow-ups: "it", "that", "again", "the other one", "and tomorrow?" refer to the conversation so far (your last turn's
   "found" holds what your tools returned then). Carry over what was meant (the same file, app, search or
   place) instead of asking again.
@@ -920,11 +950,22 @@ LEARN = {"owner": "ari", "playbook": PLAYBOOK, "fields": ["tool", "args", "need_
 
 @workflow("ari", "think")
 def think(ctx: Context):
+    """Ari's answer to one message, and the conversation's thread after it (argusd hands it back next time)."""
     text = str(ctx.input.get("text") or "").strip()
     if not text:
         raise PermanentError("nothing said")
-    tools = offered({t["name"]: t for t in ctx.input.get("tools") or []}, text, ctx.input.get("history") or [])
-    base = {"message": text, "conversation_so_far": (ctx.input.get("history") or [])[-8:],
+    out = _think(ctx, text)
+    out["thread"] = thread_mod.update(ctx.input.get("thread"), message=text, out=out,
+                                      topic=str(out.pop("topic", "") or ""))
+    return out
+
+
+def _think(ctx: Context, text: str) -> dict[str, Any]:
+    thread = thread_mod.brief(ctx.input.get("thread"))
+    tools = offered({t["name"]: t for t in ctx.input.get("tools") or []}, text, ctx.input.get("history") or [],
+                    thread_mod.words(ctx.input.get("thread")) if thread else "")
+    base = {"message": text, **({"thread": thread} if thread else {}),
+            "conversation_so_far": (ctx.input.get("history") or [])[-8:],
             "you_remember": ctx.input.get("you_remember") or [],
             "now": ctx.input.get("now") or time.strftime("%A %d %B %Y, %H:%M"),
             "situation": situation(text, ctx.input.get("busy")),
@@ -1021,7 +1062,7 @@ def think(ctx: Context):
         except EscalationExhausted:
             pass  # fall through to the usual way
 
-    direct = straight_to(tools, text)
+    direct = straight_to(tools, text) or follow_on(tools, text, ctx.input.get("thread"))
     if direct is not None:  # one flow: open the app / look / read the clipboard right away; that is the reply
         name, args = direct
 
@@ -1141,8 +1182,8 @@ def think(ctx: Context):
         fact = worth_keeping(s.get("remember") or "", base["you_remember"])
         if fact:  # Ari offers to remember it; your yes saves it
             return {"reply": f"{reply} Want me to remember that?".strip(), "used": done, "tier": s.get("tier"),
-                    "pending": {"kind": "remember", "fact": fact}}
-        return {"reply": reply, "used": done, "tier": s.get("tier")}
+                    "pending": {"kind": "remember", "fact": fact}, "topic": s.get("topic") or ""}
+        return {"reply": reply, "used": done, "tier": s.get("tier"), "topic": s.get("topic") or ""}
     return {"reply": _so_far(done), "used": done}
 
 

@@ -77,6 +77,7 @@ from .. import calls as calls_mod
 from .. import daily, guidance, laptop_power, logview, vocab, voice_corpus
 from .. import island as island_mod
 from .. import settings as settings_mod
+from .. import thread as thread_mod
 from .. import timeline as timeline_mod
 from ..approvals import ApprovalClosed, ApprovalError, ApprovalNotFound, BadToken
 from ..config import PRIORITY_INTERACTIVE
@@ -226,6 +227,18 @@ class AriStateIn(BaseModel):
     phase: Literal["idle", "listening", "thinking", "working", "speaking", "done", "following"]
     text: str = Field("", max_length=300)
     by: str = Field("", max_length=40)
+
+
+class ConvScore(BaseModel):
+    """A run of the scripted conversations (python -m argus.ari_eval --conversations)."""
+    at: float | None = None
+    model: str = Field("", max_length=120)
+    right: int = Field(ge=0)
+    of: int = Field(ge=0)
+    steps_right: int = Field(0, ge=0)
+    steps: int = Field(0, ge=0)
+    p50: float = 0.0
+    misses: list[dict[str, Any]] = Field(default_factory=list, max_length=40)
 
 
 class AriListening(BaseModel):
@@ -1042,6 +1055,24 @@ def create_app(argus: Argus) -> FastAPI:
         out.sort(key=lambda x: x["at"] or 0)
         return {"history": out}
 
+    @app.post("/ari/conversations", dependencies=guarded)
+    async def ari_conversations_keep(body: ConvScore) -> dict:
+        """Keep a run of the scripted conversations (does Ari keep the thread?), for the trend in Helios."""
+        data = body.model_dump()
+        data["at"] = data["at"] or time.time()
+        await argus.store.write(lambda c: insert_event(c, time.time(), "ari.conversations", src="ari-eval",
+                                                       dst="helios", data=data))
+        return {"ok": True}
+
+    @app.get("/ari/conversations", dependencies=guarded)
+    async def ari_conversations(limit: int = 30) -> dict:
+        """The conversation runs, oldest first: conversations and steps right, the misses of each."""
+        rows = await argus.store.read(lambda c: read_events(c, 0, limit=max(1, min(limit, 120)),
+                                                            flt=EventFilter.parse("ari.conversations"), newest=True))
+        out = [r["data"] or {} for r in rows]
+        out.sort(key=lambda x: x.get("at") or 0)
+        return {"runs": out}
+
     @app.post("/ari/health", dependencies=guarded)
     async def ari_health_run() -> dict:
         """Check now (takes a few seconds: it asks the model a few questions)."""
@@ -1259,11 +1290,19 @@ def create_app(argus: Argus) -> FastAPI:
         """The listener has Ari's answer: {conv, answer_ms (from when you finished speaking), spoken (or only shown)}
         on Ari's newest turn in that chat."""
         conv = str(body.get("conv") or "")
-        meta = json.dumps({k: body.get(k) for k in ("answer_ms", "spoken", "empty") if k in body})
+        add = {k: body.get(k) for k in ("answer_ms", "spoken", "empty") if k in body}
 
         def fn(c):
-            c.execute("UPDATE ari_turns SET meta = ? WHERE id = (SELECT id FROM ari_turns WHERE conv = ? AND"
-                      " role = 'ari' ORDER BY id DESC LIMIT 1)", (meta, conv))
+            r = c.execute("SELECT id, meta FROM ari_turns WHERE conv = ? AND role = 'ari' ORDER BY id DESC LIMIT 1",
+                          (conv,)).fetchone()
+            if r is None:
+                return
+            try:
+                had = json.loads(r[1]) if r[1] else {}
+            except ValueError:
+                had = {}
+            meta = {**(had if isinstance(had, dict) else {}), **add}  # the thread kept there stays
+            c.execute("UPDATE ari_turns SET meta = ? WHERE id = ?", (json.dumps(meta), r[0]))
         await argus.store.write(fn)
         return {"ok": True}
 
@@ -1330,11 +1369,18 @@ def create_app(argus: Argus) -> FastAPI:
         if q:  # asked something else instead: the question lapses
             await argus.store.write(lambda c: ari_mod.close_question(c, q["turn"]))
 
-        async def reply(text: str, action: str | None = None, pending: dict | None = None) -> dict:
-            tid = await argus.store.write(lambda c: (ari_mod.add_turn(c, conv, "ari", text, action=action,
-                                                                      pending=pending),
-                                                     ari_state(c, "done", text))[0])
-            return {"conv": conv, "turn": tid, "reply": text, "action": action, "pending": pending}
+        async def reply(said: str, action: str | None = None, pending: dict | None = None,
+                        used: list[dict] | None = None) -> dict:
+            def keep(c) -> int:  # the answer, and the thread after it (as Ari's thinking would have left it)
+                after = thread_mod.update(ari_mod.thread(c, conv), message=text,
+                                          out={"reply": said, "used": used or [], "pending": pending})
+                tid = ari_mod.add_turn(c, conv, "ari", said, action=action, pending=pending)
+                c.execute("UPDATE ari_turns SET meta = ? WHERE id = ?", (json.dumps({"thread": after}), tid))
+                ari_state(c, "done", said)
+                return tid
+
+            tid = await argus.store.write(keep)
+            return {"conv": conv, "turn": tid, "reply": said, "action": action, "pending": pending}
 
         if ari_mod.BRIEF.match(text):  # "good morning": the morning brief, spoken
             return await reply(await argus.spoken_brief())
@@ -1342,7 +1388,8 @@ def create_app(argus: Argus) -> FastAPI:
         if wx is not None:  # "how's the weather?", "will it rain tomorrow in Kandy?": Open-Meteo, no model
             said = await argus.weather_say(*wx)
             if said:
-                return await reply(said)
+                return await reply(said, used=[{"tool": "weather", "args": {
+                    **({"place": wx[0]} if wx[0] else {}), **({"tomorrow": True} if wx[1] else {})}}])
         pref = ari_mod.preference_of(text)
         if pref:  # "keep it shorter", "call me Sas": how to talk to you, kept after your yes
             said = pref[len(ari_mod.STYLE):]
@@ -1380,8 +1427,10 @@ def create_app(argus: Argus) -> FastAPI:
         hist = await argus.store.read(lambda c: ari_mod.history(c, conv))
         known = await argus.store.read(lambda c: ari_mod.recall(c, text))
         prefs = await argus.store.read(ari_mod.preferences)
+        thread = await argus.store.read(lambda c: ari_mod.thread(c, conv))
         job_id, _ = await argus.jobs.enqueue(
             "ari", "think", {"text": text, "history": hist[:-1], "now": time.strftime("%A %d %B %Y, %H:%M"),
+                             "thread": thread,
                              "you_remember": known, "their_preferences": prefs,
                              "busy": listener.get("busy") if time.time() - listener["seen"] < 75 else None,
                              "personality": argus.cfg.ari.personality, "call_me": argus.cfg.ari.call_me,
