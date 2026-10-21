@@ -297,6 +297,10 @@ class AriConfig(_Strict):
     # Who Ari is, in a few sentences (empty: the witty companion, worker/think.py PERSONA). Used in every reply.
     personality: str = ""
     call_me: str = ""  # what Ari calls you now and then (e.g. "Sas"); empty: no name
+    # A request with several steps ("find the invoice and open it, then turn the volume down") is planned by Claude
+    # first (text only: the request, where the chat stands and the tools' names; never pictures or private chats);
+    # the local model then does the steps. false: the local model works it out alone.
+    plan_with_claude: bool = True
     keep_warm: bool = True  # keep the first local model loaded in Ollama while the listener runs (fast replies)
     # ...but not while you're away: after this many minutes with no keyboard, mouse or question, the model is let go
     # (GPU memory and power); it is loaded again the moment you're back. 0: always warm.
