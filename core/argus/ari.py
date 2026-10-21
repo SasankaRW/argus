@@ -326,6 +326,22 @@ def history(conn: sqlite3.Connection, conv: str) -> list[dict[str, Any]]:
     return out
 
 
+def thread(conn: sqlite3.Connection, conv: str) -> dict[str, Any] | None:
+    """Where this chat stands (argus.thread): the newest one kept in the last half hour."""
+    rows = conn.execute("SELECT t.meta, j.result FROM ari_turns t LEFT JOIN jobs j ON j.id = t.job_id"
+                        " WHERE t.conv = ? AND t.role = 'ari' AND t.created_at >= ? ORDER BY t.id DESC LIMIT 6",
+                        (conv, time.time() - HISTORY_S)).fetchall()
+    for r in rows:
+        for raw in r:  # argusd's own answers (the weather, ...) keep it on the turn; Ari's thinking in its job
+            try:
+                th = (json.loads(raw) or {}).get("thread") if raw else None
+            except (ValueError, AttributeError):
+                th = None
+            if isinstance(th, dict):
+                return th
+    return None
+
+
 def add_schedule(conn: sqlite3.Connection, now: float, when: When, action: str, *, plugin: str, workflow: str,
                  input: dict, needs: list[str], priority: int, label: str) -> dict[str, Any]:
     sid = "you-" + new_id().lower()[:12]

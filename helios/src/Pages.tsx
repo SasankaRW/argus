@@ -237,6 +237,8 @@ export function SettingsView() {
 }
 
 type HealthRow = { name: string; level: "ok" | "warn" | "bad"; detail: string; fix: string };
+type ConvRun = { at: number; model: string; right: number; of: number; steps_right: number; steps: number; p50: number;
+  misses: { name: string; say: string; got: string; expect: string }[] };
 type Health = { at: number; ok: boolean; problems: number; checks: HealthRow[] };
 
 // Ari's setup, checked: Ollama and its model, web search, the voice, Whisper, the listener, and whether the local
@@ -246,7 +248,11 @@ function AriHealth() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [hist, setHist] = useState<{ at: number; right?: number; total?: number; p50?: number }[]>([]);
-  const loadHist = () => api<{ history: typeof hist }>("/ari/health/history?limit=30").then((r) => setHist(r.history)).catch(() => {});
+  const [convs, setConvs] = useState<ConvRun[]>([]);
+  const loadHist = () => {
+    api<{ history: typeof hist }>("/ari/health/history?limit=30").then((r) => setHist(r.history)).catch(() => {});
+    api<{ runs: ConvRun[] }>("/ari/conversations?limit=14").then((r) => setConvs(r.runs)).catch(() => {});
+  };
   useEffect(() => { api<{ health: Health | null }>("/ari/health").then((r) => setH(r.health)).catch(() => {}); loadHist(); }, []);
   const run = async () => {
     setBusy(true); setErr(null);
@@ -288,6 +294,23 @@ function AriHealth() {
                 <span className="mono">{new Date(x.at * 1000).toLocaleDateString([], { day: "numeric", month: "short" })}</span>
                 <span className="muted">{pct}%</span>
                 <span className="ttabout">{x.right} of {x.total} right · a model step {x.p50?.toFixed(1)} s</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {convs.length > 0 && (
+        <div className="ttrows">
+          <div className="ttsum mono">keeping the thread (scripted conversations)</div>
+          {convs.slice(-8).map((x) => {
+            const pct = Math.round((x.steps_right / (x.steps || 1)) * 100);
+            const miss = x.misses.slice(0, 2).map((m) => `"${m.say}" → ${m.got} (wanted ${m.expect})`).join("; ");
+            return (
+              <div key={x.at} className={`ttrow${pct >= 85 ? "" : " bad"}`}>
+                <i aria-hidden="true">{pct >= 85 ? "✓" : "!"}</i>
+                <span className="mono">{new Date(x.at * 1000).toLocaleDateString([], { day: "numeric", month: "short" })}</span>
+                <span className="muted">{pct}%</span>
+                <span className="ttabout">{x.right} of {x.of} conversations, {x.steps_right} of {x.steps} steps · {x.model}{miss ? ` · missed ${miss}` : ""}</span>
               </div>
             );
           })}

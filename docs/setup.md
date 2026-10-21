@@ -334,6 +334,9 @@ daily cap.
   decision and checks it picks the right tool, with how long the model took; nothing is done for real. Each run is
   kept in `data/ari-eval/` and compared with the last one. Your own cases: `--cases my-cases.yaml`
   (`- {say: "open brave", expect: open_app}`; several allowed: `expect: "weather|web_search"`).
+  `--conversations` runs 30 scripted conversations instead ("open Spotify" → "play Famous" → "louder"): each step
+  must pick the right tool and arguments in the light of the turns before it. The score shows in Helios > Ari >
+  check ari; the conversations are in `core/argus/ari_conversations.py`.
 - **Ari's personality**: a witty friend by default (funny, teases you a bit, has opinions, no slang, no help-desk lines like
   "How can I assist you?"), in small talk and in task replies. Change it in a few sentences of your own, and tell it
   what to call you:
