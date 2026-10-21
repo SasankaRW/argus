@@ -53,6 +53,7 @@ import contextlib
 import dataclasses
 import hmac
 import json
+import logging
 import mimetypes
 import re
 import socket
@@ -80,7 +81,7 @@ from .. import settings as settings_mod
 from .. import thread as thread_mod
 from .. import timeline as timeline_mod
 from ..approvals import ApprovalClosed, ApprovalError, ApprovalNotFound, BadToken
-from ..config import PRIORITY_INTERACTIVE
+from ..config import PRIORITY_BATCH, PRIORITY_INTERACTIVE
 from ..context import Argus
 from ..cron import next_run
 from ..events import EventFilter, insert_event, read_events
@@ -103,6 +104,8 @@ WAKING = "Waking the PC, about a minute"  # Ari's state while no worker with the
 
 mimetypes.add_type("application/manifest+json", ".webmanifest")  # Helios as an installable app (share menu)
 HELIOS_DIR = Path(__file__).resolve().parent.parent / "helios_dist"  # built by helios/ (npm run build)
+
+log = logging.getLogger("argus.api")
 
 
 class _HeliosFiles(StaticFiles):
@@ -1428,20 +1431,79 @@ def create_app(argus: Argus) -> FastAPI:
         known = await argus.store.read(lambda c: ari_mod.recall(c, text))
         prefs = await argus.store.read(ari_mod.preferences)
         thread = await argus.store.read(lambda c: ari_mod.thread(c, conv))
+        now_t = time.time()
+        earlier = await argus.store.read(lambda c: ari_mod.earlier_today(c, conv, now_t))
+        before = await argus.store.read(lambda c: ari_mod.episodes_like(c, text, now_t, not_conv=conv))
         job_id, _ = await argus.jobs.enqueue(
             "ari", "think", {"text": text, "history": hist[:-1], "now": time.strftime("%A %d %B %Y, %H:%M"),
-                             "thread": thread,
+                             "thread": thread, "earlier_today": earlier, "before": before,
                              "you_remember": known, "their_preferences": prefs,
                              "busy": listener.get("busy") if time.time() - listener["seen"] < 75 else None,
                              "personality": argus.cfg.ari.personality, "call_me": argus.cfg.ari.call_me,
                              "tools": [t.brief() for t in tools.all().values() if t.for_ari]},
             needs=list(argus.cfg.models.needs), priority=PRIORITY_INTERACTIVE, source="helios",
             max_attempts=1)  # a reply that failed is said to have failed; trying again minutes later helps no one
+        await remember_in_background(conv)
         # no worker with the models is up (the PC is off): the power manager wakes it; say so instead of hanging
         waking = not await able(argus.cfg.models.needs)
         tid = await argus.store.write(lambda c: (ari_mod.add_turn(c, conv, "ari", None, job_id=job_id),
                                                  ari_state(c, "thinking", WAKING if waking else text, job_id))[0])
         return {"conv": conv, "turn": tid, "job_id": job_id, "reply": None}
+
+    async def remember_in_background(conv: str) -> None:
+        """Ari's memory over time, written by the local model after the answer (never in its way): this chat's
+        turns that fell out of the window into its running summary, and chats that went quiet into episodes."""
+        now = time.time()
+        try:
+            todo = await argus.store.read(lambda c: ari_mod.to_summarize(c, conv, now))
+            if todo:
+                await argus.jobs.enqueue("ari", "summarize", todo, needs=list(argus.cfg.models.needs),
+                                         priority=PRIORITY_BATCH, dedupe_key=f"ari-summary:{conv}", max_attempts=1,
+                                         delay=30, source="ari")
+            for ep in await argus.store.read(lambda c: ari_mod.ended_chats(c, now, limit=2)):
+                await argus.jobs.enqueue("ari", "episode", ep, needs=list(argus.cfg.models.needs),
+                                         priority=PRIORITY_BATCH, dedupe_key=f"ari-episode:{ep['conv']}",
+                                         max_attempts=1, delay=5, source="ari")
+        except Exception as e:  # noqa: BLE001 - memory is a nicety: the answer goes on
+            log.warning("ari memory not queued", extra={"error": str(e)[:200]})
+
+    async def _keep_summary(x: dict) -> dict:
+        await argus.store.write(lambda c: ari_mod.keep_summary(c, str(x["conv"]), str(x["summary"]),
+                                                               int(x.get("upto") or 0)))
+        return {"kept": True}
+
+    async def _keep_episode(x: dict) -> dict:
+        eid = await argus.store.write(lambda c: ari_mod.keep_episode(
+            c, str(x["conv"]), str(x["episode"]), str(x.get("left_open") or ""), float(x.get("started") or 0),
+            float(x.get("ended") or 0)))
+        return {"episode": eid}
+
+    tools.builtin["keep_summary"] = Tool(
+        "keep_summary", "(Ari's memory) keep a chat's running summary",
+        {"conv": {"type": "string"}, "summary": {"type": "string"}, "upto": {"type": "integer"}},
+        ["conv", "summary", "upto"], fn=_keep_summary, for_ari=False, for_mcp=False)
+    tools.builtin["keep_episode"] = Tool(
+        "keep_episode", "(Ari's memory) keep what happened in a finished chat",
+        {"conv": {"type": "string"}, "episode": {"type": "string"}, "left_open": {"type": "string"},
+         "started": {"type": "number"}, "ended": {"type": "number"}},
+        ["conv", "episode"], fn=_keep_episode, for_ari=False, for_mcp=False)
+
+    @app.get("/ari-memory/episodes", dependencies=guarded)
+    async def ari_episodes(limit: int = 50) -> list[dict]:
+        """What happened in past chats (newest first), as Ari remembers them."""
+        def read(c):
+            rows = c.execute("SELECT id, conv, text, left_open, started_at, ended_at FROM ari_episodes"
+                             " ORDER BY ended_at DESC LIMIT ?", (max(1, min(limit, 500)),)).fetchall()
+            return [dict(r) for r in rows]
+        return await argus.store.read(read)
+
+    @app.delete("/ari-memory/episodes/{episode_id}", dependencies=guarded)
+    async def ari_forget_episode(episode_id: int) -> dict:
+        n = await argus.store.write(lambda c: c.execute("DELETE FROM ari_episodes WHERE id = ?",
+                                                        (episode_id,)).rowcount)
+        if not n:
+            raise HTTPException(status_code=404, detail="no such episode")
+        return {"ok": True}
 
     @app.get("/ari-memory", dependencies=guarded)
     async def ari_memory() -> list[dict]:

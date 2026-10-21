@@ -318,7 +318,11 @@ function AriSettings() {
   const [scheds, setScheds] = useState<Schedule[]>([]);
   const [mem, setMem] = useState<{ id: number; fact: string; noted: string }[]>([]);
   const [err, setErr] = useState<string | null>(null);
-  const loadMem = useCallback(() => { api<typeof mem>("/ari-memory").then(setMem).catch(() => {}); }, []);
+  const [eps, setEps] = useState<{ id: number; text: string; left_open: string | null; ended_at: number }[]>([]);
+  const loadMem = useCallback(() => {
+    api<typeof mem>("/ari-memory").then(setMem).catch(() => {});
+    api<typeof eps>("/ari-memory/episodes?limit=30").then(setEps).catch(() => {});
+  }, []);
   const loadScheds = useCallback(() => { api<Schedule[]>("/schedules").then(setScheds).catch(() => {}); }, []);
   useEffect(() => { loadMem(); loadScheds(); }, [loadMem, loadScheds]);
   const mine = scheds.filter((s) => s.owner === "you");
@@ -369,6 +373,18 @@ function AriSettings() {
             <div key={m.id} className="srow">
               <span className="sl">{m.fact}</span><span className="muted mono">{m.noted}</span>
               <button type="button" className="btn" onClick={() => api(`/ari-memory/${m.id}`, { method: "DELETE" }).then(loadMem).catch(() => {})}>forget</button>
+            </div>
+          ))}
+        </div>
+      </section>
+      <section className="panel">
+        <div className="ph"><span className="pt">ari/past chats</span><span className="muted">{eps.length} · what Ari remembers happened (no private chats)</span></div>
+        <div className="ari-sched">
+          {eps.length === 0 ? <div className="tip">Nothing yet. A chat is remembered in 2-3 lines once it has been quiet for 10 minutes.</div> : eps.map((e) => (
+            <div key={e.id} className="srow">
+              <span className="sl">{e.text}{e.left_open ? <span className="muted"> · left open: {e.left_open}</span> : null}</span>
+              <span className="muted mono">{new Date(e.ended_at * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+              <button type="button" className="btn" onClick={() => api(`/ari-memory/episodes/${e.id}`, { method: "DELETE" }).then(loadMem).catch(() => {})}>forget</button>
             </div>
           ))}
         </div>

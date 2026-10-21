@@ -342,6 +342,127 @@ def thread(conn: sqlite3.Connection, conv: str) -> dict[str, Any] | None:
     return None
 
 
+# ------------------------------------------------------------------ memory over time: summaries and episodes
+
+DAY_STARTS_H = 4  # a "day" of chatting runs from 4 am: talk at 1 am still belongs to the evening before
+SUMMARY_AFTER = 4  # turns that fell out of the window before a summary is (re)written
+EPISODE_QUIET_S = 10 * 60  # a chat this quiet has ended: its episode is written
+_PRIVATE_TOOLS = ("look_at_screen", "summarise_clipboard", "check_email", "read_email", "money_this_month")
+
+
+def day_start(now: float) -> float:
+    """When today's chatting started (4 am, or yesterday's 4 am before then)."""
+    t = time.localtime(now)
+    start = time.mktime((t.tm_year, t.tm_mon, t.tm_mday, DAY_STARTS_H, 0, 0, 0, 0, -1))
+    return start if start <= now else start - 86400
+
+
+def private_chat(conn: sqlite3.Connection, conv: str) -> bool:
+    """Something private was used in this chat (the screen, the clipboard, mail, money): nothing of it is kept."""
+    for r in conn.execute("SELECT j.result FROM ari_turns t JOIN jobs j ON j.id = t.job_id WHERE t.conv = ? AND"
+                          " t.role = 'ari'", (conv,)):
+        try:
+            used = (json.loads(r[0]) or {}).get("used") if r[0] else None
+        except (ValueError, AttributeError):
+            used = None
+        if isinstance(used, list) and any(isinstance(u, dict) and (u.get("private") or u.get("tool") in _PRIVATE_TOOLS)
+                                          for u in used):
+            return True
+    return False
+
+
+def summary(conn: sqlite3.Connection, conv: str) -> dict[str, Any] | None:
+    r = conn.execute("SELECT summary, upto, updated_at FROM ari_summaries WHERE conv = ?", (conv,)).fetchone()
+    return {"summary": r[0], "upto": int(r[1]), "at": float(r[2])} if r else None
+
+
+def keep_summary(conn: sqlite3.Connection, conv: str, text: str, upto: int) -> None:
+    conn.execute("INSERT INTO ari_summaries (conv, summary, upto, updated_at) VALUES (?,?,?,?) ON CONFLICT(conv)"
+                 " DO UPDATE SET summary = excluded.summary, upto = excluded.upto, updated_at = excluded.updated_at"
+                 " WHERE excluded.upto >= ari_summaries.upto", (conv, text.strip()[:1200], int(upto), time.time()))
+
+
+def earlier_today(conn: sqlite3.Connection, conv: str, now: float) -> str:
+    """The running summary of this chat's earlier turns today (what the model no longer sees word for word)."""
+    s = summary(conn, conv)
+    return s["summary"] if s and s["at"] >= day_start(now) else ""
+
+
+def to_summarize(conn: sqlite3.Connection, conv: str, now: float) -> dict[str, Any] | None:
+    """Today's turns of this chat that fell out of the model's window (older than the last HISTORY turns, or than
+    HISTORY_S) and aren't in the summary yet, once there are SUMMARY_AFTER of them: {conv, summary, turns, upto}.
+    None for a private chat."""
+    rows = conn.execute("SELECT id, role, text, created_at FROM ari_turns WHERE conv = ? AND created_at >= ? AND"
+                        " text IS NOT NULL ORDER BY id", (conv, day_start(now))).fetchall()
+    seen = rows[-HISTORY:]
+    keep = {r["id"] for r in seen if float(r["created_at"]) >= now - HISTORY_S}
+    old = [r for r in rows if r["id"] not in keep]
+    have = summary(conn, conv)
+    if have and have["at"] < day_start(now):
+        have = None  # yesterday's: start again
+    new = [r for r in old if not have or r["id"] > have["upto"]]
+    if len(new) < SUMMARY_AFTER or private_chat(conn, conv):
+        return None
+    return {"conv": conv, "summary": have["summary"] if have else "", "upto": new[-1]["id"],
+            "turns": [{"who": "you" if r["role"] == "you" else "Ari", "said": str(r["text"])[:400]} for r in new]}
+
+
+def ended_chats(conn: sqlite3.Connection, now: float, limit: int = 3) -> list[dict[str, Any]]:
+    """Chats that went quiet (EPISODE_QUIET_S) in the last two days, with two or more of your turns, and no episode
+    written since their last turn: {conv, turns, started, ended}. Private chats are left out."""
+    rows = conn.execute(
+        "SELECT conv, MIN(created_at) AS started, MAX(created_at) AS ended,"
+        " SUM(role = 'you') AS asked FROM ari_turns WHERE text IS NOT NULL GROUP BY conv"
+        " HAVING ended < ? AND ended >= ? AND asked >= 2 ORDER BY ended DESC LIMIT 20",
+        (now - EPISODE_QUIET_S, now - 2 * 86400)).fetchall()
+    out = []
+    for r in rows:
+        done = conn.execute("SELECT ended_at FROM ari_episodes WHERE conv = ?", (r["conv"],)).fetchone()
+        if done and float(done[0]) >= float(r["ended"]):
+            continue
+        if private_chat(conn, r["conv"]):
+            continue
+        said = conn.execute("SELECT role, text FROM ari_turns WHERE conv = ? AND text IS NOT NULL ORDER BY id"
+                            " LIMIT 40", (r["conv"],)).fetchall()
+        out.append({"conv": r["conv"], "started": float(r["started"]), "ended": float(r["ended"]),
+                    "turns": [{"who": "you" if t["role"] == "you" else "Ari", "said": str(t["text"])[:300]}
+                              for t in said]})
+        if len(out) >= limit:
+            break
+    return out
+
+
+def keep_episode(conn: sqlite3.Connection, conv: str, text: str, left_open: str, started: float,
+                 ended: float) -> int:
+    now = time.time()
+    conn.execute("INSERT INTO ari_episodes (conv, text, left_open, started_at, ended_at, created_at)"
+                 " VALUES (?,?,?,?,?,?) ON CONFLICT(conv) DO UPDATE SET text = excluded.text,"
+                 " left_open = excluded.left_open, ended_at = excluded.ended_at, created_at = excluded.created_at",
+                 (conv, text.strip()[:600], (left_open or "").strip()[:300] or None, started, ended, now))
+    r = conn.execute("SELECT id FROM ari_episodes WHERE conv = ?", (conv,)).fetchone()
+    return int(r[0]) if r else 0
+
+
+def _when(t: float, now: float) -> str:
+    days = int((day_start(now) - day_start(t)) // 86400)
+    day = "today" if days <= 0 else "yesterday" if days == 1 else time.strftime("%A %d %B", time.localtime(t))
+    return f"{day} {time.strftime('%H:%M', time.localtime(t))}"
+
+
+def episodes_like(conn: sqlite3.Connection, query: str, now: float, *, not_conv: str = "", k: int = 2,
+                  days: int = 60) -> list[dict[str, Any]]:
+    """Past chats that share words with `query`, best first: {when, what, left_open}."""
+    words = [w for w in re.findall(r"\w+", query.lower()) if len(w) > 2 and w not in _STOP][:12]
+    if not words:
+        return []
+    q = " OR ".join(f'"{w}"' for w in words)
+    rows = conn.execute("SELECT e.conv, e.text, e.left_open, e.ended_at FROM ari_episodes_fts f JOIN ari_episodes e"
+                        " ON e.id = f.rowid WHERE ari_episodes_fts MATCH ? AND e.conv != ? AND e.ended_at >= ?"
+                        " ORDER BY bm25(ari_episodes_fts) LIMIT ?", (q, not_conv, now - days * 86400, k)).fetchall()
+    return [{"when": _when(float(r["ended_at"]), now), "what": r["text"],
+             **({"left_open": r["left_open"]} if r["left_open"] else {})} for r in rows]
+
+
 def add_schedule(conn: sqlite3.Connection, now: float, when: When, action: str, *, plugin: str, workflow: str,
                  input: dict, needs: list[str], priority: int, label: str) -> dict[str, Any]:
     sid = "you-" + new_id().lower()[:12]
@@ -433,7 +554,7 @@ def search_memory(conn: sqlite3.Connection, query: str, now: float, days: int = 
                                 (now - days * 86400, *[f"%{w}%" for w in words], k)).fetchall()
         said = [{"when": time.strftime("%Y-%m-%d %H:%M", time.localtime(r["created_at"])),
                  "who": "you" if r["role"] == "you" else "Ari", "said": r["text"][:300]} for r in rows]
-    return {"remembered": facts, "said_before": said}
+    return {"remembered": facts, "said_before": said, "past_chats": episodes_like(conn, query, now, k=4, days=days)}
 
 
 def remember(conn: sqlite3.Connection, fact: str) -> int:
