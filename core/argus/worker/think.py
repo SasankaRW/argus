@@ -920,6 +920,8 @@ Talk like a person, not a help desk: never say "as an AI", never "I can't comple
 "anything else I can help with". Short and natural (it is read aloud): 1-3 sentences, no lists, no markdown, no
 emoji. Match their mood (not their slang). React to what they said, share a light opinion or a joke when it fits, and
 sometimes ask something back. Use what you know about them ("you_remember") naturally, without reciting it.
+"earlier_today" and "past_chats" say what you talked about before: use them when it fits ("how did the build go?"),
+never recite them.
 If they tell you a lasting fact about themselves, put it in "remember" as a short sentence.
 Sound like speech, not writing: it's fine to start with "oh", "hmm", "well" or "haha", to
 trail off or correct yourself once in a while ("it was, uh, Tuesday? no, Wednesday"), as people do; don't overdo it.
@@ -1068,6 +1070,9 @@ How to decide:
   answer to your open question fills in what was missing. Start fresh when the message is clearly about something
   else. Never redo something from earlier turns (typing, closing, sending) unless this message asks for it again.
   If a detail is still missing, ask for it once, briefly; if you can't make out what they mean, ask briefly.
+- "earlier_today" sums up this chat before the turns you see; "past_chats" are earlier chats that may matter
+  (when, what happened, what was left open). Use them when the message is about the same thing ("did that work
+  last time?", picking up something left open); otherwise ignore them and never bring them up unasked.
 - Short follow-ups ("and tomorrow?", "what about Colombo?", "and eggs", "make it 15", "send the same to Nimali",
   "the first one") mean the thread's "last_tool" again with that one detail changed: use the tool, never answer
   them from memory.
@@ -1143,8 +1148,12 @@ def _think(ctx: Context, text: str) -> dict[str, Any]:
     thread = thread_mod.brief(ctx.input.get("thread"))
     tools = offered({t["name"]: t for t in ctx.input.get("tools") or []}, text, ctx.input.get("history") or [],
                     thread_mod.words(ctx.input.get("thread")) if thread else "")
+    earlier = str(ctx.input.get("earlier_today") or "").strip()
+    before = [b for b in ctx.input.get("before") or [] if isinstance(b, dict)][:2]
     base = {"message": text, **({"thread": thread} if thread else {}),
+            **({"earlier_today": earlier} if earlier else {}),
             "conversation_so_far": (ctx.input.get("history") or [])[-8:],
+            **({"past_chats": before} if before else {}),
             "you_remember": ctx.input.get("you_remember") or [],
             "now": ctx.input.get("now") or time.strftime("%A %d %B %Y, %H:%M"),
             "situation": situation(text, ctx.input.get("busy")),
@@ -1215,7 +1224,8 @@ def _think(ctx: Context, text: str) -> dict[str, Any]:
 
     if chatty(text):  # small talk: one friendly answer, no tools, on the warm first model (no swap)
         def chat() -> dict:
-            said = {k: base[k] for k in ("message", "conversation_so_far", "you_remember", "now", "situation")}
+            said = {k: base[k] for k in ("message", "earlier_today", "conversation_so_far", "past_chats",
+                                         "you_remember", "now", "situation") if k in base}
             sent = {"n": 0}
 
             def partial(raw: str) -> None:  # finished sentences go out as they arrive: Ari starts talking sooner

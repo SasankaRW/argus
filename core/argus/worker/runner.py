@@ -28,6 +28,7 @@ from . import followup as _followup  # noqa: F401 - the guidance loop: did you f
 from . import health as _health  # noqa: F401 - WSL and Docker on the PC
 from . import hear as _hear  # noqa: F401 - Ari's hearing (Whisper)
 from . import power as _power  # noqa: F401 - the built-in power buttons (sleep, shut down, ...)
+from . import recall as _recall  # noqa: F401 - Ari's memory over time (summaries, episodes)
 from . import review as _review  # noqa: F401 - the guidance loop's nightly review
 from . import selftest as _selftest  # noqa: F401 - Ari's tools, tested (Helios > Settings)
 from . import think as _think  # noqa: F401 - Ari's thinking (tools, then an answer)
