@@ -218,3 +218,38 @@ def test_a_tasks_pictures_are_dropped_when_it_ends(tmp_path):
     assert drop_pictures(c, "J1") == 1
     left = {r[0]: json.loads(r[1]) for r in c.execute("SELECT id, payload FROM approvals")}
     assert left["A1"] == {"summary": ["stuck"]} and left["A2"] == {"summary": ["no picture"]}
+
+
+def test_every_app_step_is_traced_with_why_and_whether_anything_changed(caplog):
+    class Window:
+        sees = False
+
+        def __init__(self):
+            self.text, self.did = "Home", []
+
+        def snapshot(self):
+            return {"url": "window: Spotify", "title": "Spotify", "text": self.text,
+                    "items": [{"n": 1, "role": "edit", "name": "Search"}, {"n": 2, "role": "button", "name": "Play"}]}
+
+        def act(self, step):
+            self.did.append(step)
+            if step["do"] == "type":
+                self.text = "Results for Famous"  # typing changed the screen; the click below changes nothing
+            return {"ok": True}
+
+    w = Window()
+    c = ctx([{"why": "search for the song", "do": "type", "n": 1, "text": "Famous", "enter": True},
+             {"why": "start it", "do": "click", "n": 2},
+             {"why": "it's playing", "do": "done", "answer": "Playing Famous."}])
+    events = []
+    c.progress = lambda kind, data: events.append((kind, dict(data)))
+    with caplog.at_level("INFO", logger="argus.browser"):
+        out = br.run_task(c, w, "play Famous", tag="app")
+    t = out["trace"]
+    assert [x["kind"] for x in t] == ["act", "act", "done"]
+    assert t[0]["do"] == "type" and t[0]["on"] == "Search" and t[0]["detail"] == "Famous" and t[0]["changed"] is True
+    assert t[1]["on"] == "Play" and t[1]["why"] == "start it" and t[1]["changed"] is False
+    assert t[2]["said"] == "Playing Famous."
+    assert [k for k, _ in events] == ["plugin.app.step", "plugin.app.step"]
+    assert "app step 2: click Play (no change)" in caplog.text
+    assert br.fingerprint(w.snapshot()) == br.fingerprint(w.snapshot())

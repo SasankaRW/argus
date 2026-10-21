@@ -21,6 +21,13 @@ function summary(j: Job): string {
   if ("would_move" in r) return `dry-run: ${n("would_move")} would move${n("skipped") ? `, ${n("skipped")} skipped` : ""}`;
   if ("moved" in r) return `${n("moved")} moved${n("skipped") ? `, ${n("skipped")} skipped` : ""}`;
   if ("back_to" in r) return `put back: ${String(r.back_to).split(/[\\/]/).pop()}`;
+  if (Array.isArray(r.trace)) {  // an app or browser task: how many steps, how many did nothing, how it ended
+    const t = r.trace as { kind: string; worked?: boolean; changed?: boolean | null }[];
+    const acts = t.filter((x) => x.kind === "act");
+    const idle = acts.filter((x) => !x.worked || x.changed === false).length;
+    const end = typeof r.answer === "string" ? r.answer : typeof r.problem === "string" ? r.problem : "";
+    return `${acts.length} steps${idle ? `, ${idle} did nothing` : ""}${end ? ` · ${end}` : ""}`;
+  }
   if (typeof r.say === "string") return r.say;  // a tool's own sentence (watchers, the tools test)
   if (typeof r.answer === "string") return r.answer;
   const show = (v: unknown) => Array.isArray(v) ? String(v.length) : v && typeof v === "object" ? "…" : String(v);

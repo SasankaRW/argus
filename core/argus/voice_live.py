@@ -287,6 +287,38 @@ class Turns:
 
 # ------------------------------------------------------------------ what was said, in a conversation
 
+# "okay, give me a moment", "one sec", "hold on": at the end of what you said (or all of it), after a pause mark
+HOLD = re.compile(r"^(?P<before>(?:.*?[.,!?…]\s*)?)(?:(?:ok(?:ay)?|so|um+|uh+)[\s,]+)*"
+                  r"(?:give me a (?:moment|sec(?:ond)?|minute|bit)|one (?:sec(?:ond)?|moment|minute)|"
+                  r"just a (?:sec(?:ond)?|moment|minute)|hold on|"
+                  r"wait(?: a (?:sec(?:ond)?|moment|minute|bit))?|let me think)\W*$", re.I)
+# Ari's answer asks you something open (not a yes/no "Shall I?", which comes as `pending`)
+_ASKS = re.compile(r"\?\s*(?:\[\w+\]\s*)?$")
+
+
+def asks_you(reply: str) -> bool:
+    """Ari's answer ends with a question to you ("How was your day?")."""
+    return bool(_ASKS.search(reply.strip()))
+
+
+_MISHEARD_WAKE = re.compile(r"^\W*(?:(?:uh|um|so|oh|okay|ok)[\s,.]+)?(?:hey|hi|hay|ok|okay)[\s,.]+(?P<name>[\w'-]+)"
+                            r"[\s,.!?]*", re.I)
+_NOT_A_NAME = set(("can could would will what what's whats how how's where when who why is are do does did i"
+                   " i'm you please the open play close turn set tell show find check read send text call start"
+                   " stop put give make let's lets there so and listen look").split())
+
+
+def misheard_wake_rest(text: str) -> str | None:
+    """The quick look heard "Hey Ari" but the full listen wrote "Hey, Yachty, open Spotify": what comes after the
+    greeting and the misheard name ("" when that was all). "Hey, can you ..." keeps "can you ..." (no name there)."""
+    m = _MISHEARD_WAKE.match(text)
+    if not m:
+        return None
+    if m.group("name").lower() in _NOT_A_NAME:
+        return text[m.start("name"):].strip()
+    return text[m.end():].strip()
+
+
 BYE = re.compile(r"^\W*(?:(?:ok(?:ay)?|thanks?|thank you|cheers)[\s,]*(?:ari)?[\s,.!]*)?(?:that'?s all|that is all|"
                  r"bye|good ?bye|see you|that'?ll be all|nothing else|i'?m done|stop listening)\b|"
                  r"^\W*(?:thanks?|thank you)(?:[\s,]+ari)?\W*$", re.I)
@@ -455,7 +487,14 @@ class Talk:
     # language is not for Ari, however Whisper writes it down (see not_for_ari).
     # Whisper writes it down. Stricter for words said without "Hey Ari" after an answer.
     language: Callable[[Any], Any] | None = None
+    # "Give me a moment", "one sec": Ari keeps listening this long for the rest, and joins it to what came before
+    hold_s: float = 45.0
+    # After Ari asked you something ("How was your day?"), your answer may be long: a turn can last this long
+    long_turn_s: float = 45.0
     _awaiting: bool = False  # Ari asked something ("Shall I?"), or Talk / "Hey Ari" alone: the next words are ours
+    _held_text: str = ""  # what you said before "give me a moment"
+    _hold_until: float = 0.0
+    _turn_s: float = 0.0  # Turns.max_turn_s as it was set (a long answer raises it for one turn)
     _live_at: float = 0.0
     _live_busy: bool = False
     _live_text: str = ""
@@ -537,6 +576,8 @@ class Talk:
         self._live_text = ""
         barged, self.paused_for_barge = self.paused_for_barge, False
         self.last_heard = {}
+        self._restore_turn_length()
+        woke = False  # "Hey Ari" was heard at the start (by the quick look)
         if not (barged or self.in_conversation) and self.transcribe_wake is not None:
             head = (self.transcribe_wake(audio[: 3 * RATE]) or "").strip()  # quick look: was it "Hey Ari …"?
             second = False
@@ -553,6 +594,7 @@ class Talk:
                     log.info("ignored: no wake phrase", extra={"text": head[:80]})
                 return None
             self.last_heard = {"second_listen": True} if second else {}
+            woke = True
         lang: dict = {}
         if self.language is not None:
             following = self.in_conversation and not barged and not self._awaiting
@@ -579,6 +621,8 @@ class Talk:
         if not text:
             return None
         rest = self.wake_rest(text)
+        if rest is None and woke:
+            rest = misheard_wake_rest(text)  # the quick look heard "Hey Ari", the full listen "Hey, Yachty"
         if rest is None and not (self.in_conversation or barged or self.transcribe_wake is not None):
             return None  # not for Ari
         if rest is None and not barged and self.in_conversation and not self._awaiting and not self.follow_ok(text):
@@ -594,6 +638,21 @@ class Talk:
             self._following = True  # waiting for the command: plain "listening", not the follow-up ring
             self._keep_talking()
             return "wake"
+        hold = HOLD.match(command)
+        if hold:  # "My day was... okay, give me a moment": keep listening for the rest, say nothing yet
+            before = hold.group("before").strip()  # "My day was...", "In the morning,": kept as said
+            self._held_text = f"{self._held_text} {before}".strip()
+            self._hold_until = self.clock() + self.hold_s
+            self.in_talk_until = max(self.in_talk_until, self._hold_until)
+            self._awaiting = True
+            self._following = True
+            self.report("listening")
+            log.info("holding on for the rest", extra={"so_far": self._held_text[:80]})
+            return "hold"
+        if self._held_text:
+            command = f"{self._held_text} {command}".strip()
+            self._held_text = ""
+        self._hold_until = 0.0
         if BYE.match(command):
             self.in_talk_until = 0.0
             self.player.say(["Okay."])
@@ -670,6 +729,9 @@ class Talk:
             self._flush()
             if ans.get("pending"):
                 self._awaiting = True  # "Shall I?": a plain yes / no is for Ari
+            elif asks_you(reply):  # "How was your day?": your answer is for Ari, however long
+                self._awaiting = True
+                self._long_turn()
             self._keep_talking()
 
     def _speak(self, command: str, reply: str, streamed: dict, late: bool) -> None:
@@ -714,6 +776,15 @@ class Talk:
     def _keep_talking(self) -> None:
         self.in_talk_until = self.clock() + self.idle_s + 30.0  # the reply's own length is added by tick()
 
+    def _long_turn(self) -> None:
+        if not self._turn_s:
+            self._turn_s = self.turns.max_turn_s
+        self.turns.max_turn_s = max(self._turn_s, self.long_turn_s)
+
+    def _restore_turn_length(self) -> None:
+        if self._turn_s:
+            self.turns.max_turn_s, self._turn_s = self._turn_s, 0.0
+
     def tick(self) -> None:
         """Call often: the quiet clock only runs once Ari has finished talking; at the end, back to waiting."""
         now = self.clock()
@@ -727,6 +798,14 @@ class Talk:
             if self.in_talk_until:
                 self.in_talk_until = max(self.in_talk_until, now + self.idle_s)
             return
+        if self._hold_until:
+            if now < self._hold_until:
+                return  # "give me a moment": still listening
+            self._hold_until = 0.0
+            if self._held_text:
+                log.info("nothing more after \"give me a moment\"", extra={"dropped": self._held_text[:80]})
+                self._held_text = ""
+            self.in_talk_until = min(self.in_talk_until, now)
         if self.in_talk_until and self.in_talk_until > now + self.idle_s:
             self.in_talk_until = now + self.idle_s
         if self.in_talk_until and not self._following:  # answered: still listening, no "Hey Ari" needed
@@ -776,24 +855,40 @@ class PlaybackGuard:
 
     With headphones nothing comes back: the coupling learns ~0 and everything you say gets through."""
 
+    OWN_TAIL_S = 0.5  # the speakers still carry Ari's last word this long after it stopped
+
     def __init__(self, margin: float = 2.2, quiet: float = 0.006, window_s: float = 0.4, hold_s: float = 1.5,
-                 clock: Callable[[], float] = time.monotonic):
+                 clock: Callable[[], float] = time.monotonic, own: Callable[[], bool] | None = None):
         self.margin, self.quiet, self.window_s, self.hold_s, self.clock = margin, quiet, window_s, hold_s, clock
+        self.own = own  # is Ari itself speaking now? (its voice is not "the PC playing something")
         self._played: deque = deque()  # (time, rms) of the speakers, the last window_s
         self._ratios: deque = deque(maxlen=300)  # mic / speakers while something plays (about 10 s)
         self._loud_at = -1e9
+        self._other_at = -1e9  # the last time the speakers played something that wasn't Ari
+        self._own_at = -1e9
 
     def played(self, rms: float) -> None:
         now = self.clock()
+        if self.own is not None and self.own():
+            self._own_at = now
         self._played.append((now, rms))
         while self._played and now - self._played[0][0] > self.window_s:
             self._played.popleft()
         if rms > self.quiet:
             self._loud_at = now
+            if now - self._own_at > self.OWN_TAIL_S:
+                self._other_at = now
 
     @property
     def active(self) -> bool:
+        """The speakers played something just now (Ari included): its echo in the mic is not you."""
         return self.clock() - self._loud_at < self.hold_s
+
+    @property
+    def others(self) -> bool:
+        """The PC is playing something other than Ari (a video, music, a call): then only a clear "Hey Ari" counts.
+        Ari's own voice doesn't count, or what you say right after its answer would be thrown away."""
+        return self.clock() - self._other_at < self.hold_s
 
     def coupling(self) -> float:
         if len(self._ratios) < 20:

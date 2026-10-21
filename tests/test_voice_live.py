@@ -459,3 +459,77 @@ def test_not_for_ari_only_drops_clear_cases():
     assert vl.not_for_ari(lang(0.34, "si", 0.41), following=False) is None
     assert vl.not_for_ari(lang(0.1, "en", 0.1), following=True) is None  # English first: ours
     assert vl.not_for_ari(vl.as_lang(0.05), following=False) is None  # an older check (a share only): never drops
+
+
+def test_an_open_question_takes_a_long_answer_even_while_the_pc_plays_sound():
+    story = " ".join(["In the morning I had no work and in the evening I did a build and then"] * 3)
+    heard = ["Hey Ari, how was your day", story]
+    clock, p, asked = Clock(), FakePlayer(), []
+
+    def ask(q):
+        asked.append(q)
+        return {"reply": "Mine was fine. How was yours?"} if len(asked) == 1 else {"reply": "Sounds busy."}
+
+    talk = vl.Talk(turns=vl.Turns(), transcribe=lambda a: heard.pop(0), wake_rest=wake_rest, ask=ask, player=p,
+                   clock=clock, follow_ok=lambda text: False)  # long, and the speakers were busy
+    speak(talk)
+    assert talk.turns.max_turn_s == talk.long_turn_s  # the answer to "How was yours?" may be long
+    p.busy = False
+    talk.tick()
+    speak(talk)
+    assert asked == ["how was your day", story]
+    assert talk.turns.max_turn_s == 15.0  # back to normal after that turn
+
+
+def test_give_me_a_moment_keeps_listening_and_joins_the_rest():
+    talk, p, asked, heard, clock = make(heard=["Hey Ari, note this", "My day was... okay, give me a moment.",
+                                               "In the morning, one sec.", "I had no work"])
+    speak(talk)
+    p.busy = False
+    talk.tick()
+    speak(talk)
+    speak(talk)
+    assert asked == ["note this"]  # nothing asked while you gather your thoughts
+    clock.t += 30  # longer than the usual 20 s of quiet: still listening
+    talk.tick()
+    assert talk.in_conversation
+    speak(talk)
+    assert asked[-1] == "My day was... In the morning, I had no work"
+
+
+def test_a_hold_with_nothing_after_it_lapses():
+    talk, p, asked, heard, clock = make(heard=["Hey Ari, hi", "one sec"])
+    speak(talk)
+    p.busy = False
+    talk.tick()
+    speak(talk)
+    clock.t += talk.hold_s + 1
+    talk.tick()
+    assert not talk.in_conversation and asked == ["hi"]
+
+
+def test_a_misheard_name_after_the_wake_phrase_is_dropped():
+    talk, p, asked, heard, clock = make(heard=["Hey, Yachty, open Spotify"])
+    talk.transcribe_wake = lambda a: "Hey Ari, open Spotify"  # the quick look heard it right, the full listen not
+    speak(talk)
+    assert asked == ["open Spotify"]
+    talk2, p2, asked2, _, _ = make(heard=["Hey, Yachty"])
+    talk2.transcribe_wake = lambda a: "Hey Ari."
+    assert speak(talk2)[-1] == "wake" and asked2 == []  # just "Hey Ari": listening
+    assert vl.misheard_wake_rest("Hey, can you hear me") == "can you hear me"
+    assert vl.misheard_wake_rest("what's up") is None
+
+
+def test_the_playback_guard_tells_aris_own_voice_from_a_video():
+    t = [0.0]
+    ari = {"on": True}
+    g = vl.PlaybackGuard(clock=lambda: t[0], own=lambda: ari["on"])
+    for _ in range(20):
+        g.played(0.2)
+        t[0] += 0.03
+    assert g.active and not g.others  # Ari talking: its echo is filtered, but you may answer right after
+    ari["on"] = False
+    t[0] += 0.6
+    assert not g.others
+    g.played(0.2)  # a video starts
+    assert g.others

@@ -160,3 +160,51 @@ def test_argusd_answers_keep_the_thread_too_and_the_listener_note_keeps_it(tmp_p
         meta = json.loads(row[0])
         assert meta["answer_ms"] == 900 and isinstance(meta["thread"], dict)
         assert argus.store.read_sync(lambda c: ari_mod.thread(c, r["conv"]))["at"] > 0
+
+
+def _after(tool, args, said="Done.", result=None, private=False):
+    u = {"tool": tool, "args": args, **({"result": result} if result is not None else {}),
+         **({"private": True} if private else {})}
+    return th.update(None, message="x", out={"reply": said, "used": [u]})
+
+
+def test_short_follow_ups_repeat_the_last_tool_with_the_one_change():
+    tools = {n: {} for n in ("weather", "add_to_list", "phone_timer", "whatsapp_message", "open_file", "show_issue",
+                             "read_email")}
+    w = _after("weather", {"place": "Kandy"})
+    assert w["last"] == {"tool": "weather", "args": {"place": "Kandy"}}
+    assert follow_on(tools, "and tomorrow?", w) == ("weather", {"place": "Kandy", "tomorrow": True})
+    assert follow_on(tools, "what about Colombo", w) == ("weather", {"place": "Colombo"})
+    assert follow_on(tools, "and how are you?", w) is None and follow_on(tools, "what about the backup", w) is None
+    shop = _after("add_to_list", {"text": "milk"})
+    assert follow_on(tools, "and eggs", shop) == ("add_to_list", {"text": "eggs"})
+    assert follow_on(tools, "and you?", shop) is None
+    assert follow_on(tools, "make it 15", _after("phone_timer", {"minutes": 10})) == ("phone_timer", {"minutes": 15})
+    wa = _after("whatsapp_message", {"to": "Kaancha", "text": "on my way"})
+    again = ("whatsapp_message", {"to": "Nimali", "text": "on my way"})
+    assert follow_on(tools, "send the same to Nimali", wa) == again
+    cv = _after("search_everything", {"query": "cv"}, result=[{"path": "C:/Users/Sas/Documents/CV.pdf"}])
+    assert follow_on(tools, "open it", cv) == ("open_file", {"path": "C:/Users/Sas/Documents/CV.pdf"})
+    issues = _after("list_issues", {})
+    history = [{"role": "ari", "text": "Two open.", "found": [{"tool": "list_issues",
+                                                                "result": [{"key": "ACME-7"}, {"key": "ACME-9"}]}]}]
+    assert follow_on(tools, "show me the first one", issues, history) == ("show_issue", {"key": "ACME-7"})
+    assert follow_on(tools, "the last one", issues, history) == ("show_issue", {"key": "ACME-9"})
+    mail = _after("check_email", {}, private=True)
+    assert mail["last"] == {"tool": "check_email", "args": {}}
+    assert follow_on(tools, "what does Kaancha say", mail) == ("read_email", {"which": "from Kaancha"})
+
+
+def test_the_words_ari_asked_for_go_to_the_message():
+    t = th.update(None, message="message Kaancha on WhatsApp", out={"reply": "What should I say to Kaancha?",
+                                                                     "used": []})
+    assert follow_on({"whatsapp_message": {}}, "tell her I'm running late", t) == (
+        "whatsapp_message", {"to": "Kaancha", "text": "I'm running late"})
+
+
+def test_reading_list_and_watches_need_no_model():
+    from argus.worker.think import straight_to
+
+    tools = {"reading_list": {}, "list_watches": {}}
+    assert straight_to(tools, "what's on my reading list") == ("reading_list", {})
+    assert straight_to(tools, "what am I watching?") == ("list_watches", {})

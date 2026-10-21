@@ -133,7 +133,7 @@ CONVERSATIONS: list[dict[str, Any]] = [
     {"name": "repos: today, then argus", "steps": [
         S("any changes in my repos today", "what_changed_today|repo_status", {},
           "Three commits in argus, none elsewhere.", result={"argus": 3}),
-        S("what state is argus in", "repo_status", {"name": "argus"}, "Argus is clean, on main.")]},
+        S("and the argus repo?", "repo_status", {"name": "argus"}, "Argus is clean, on main.")]},
     {"name": "small talk, a task, small talk", "steps": [
         S("how are you", "chat", {}, "Doing great, just keeping your PC company."),
         S("open spotify", "open_app", {"name": "spotify"}, "Opening Spotify."),
