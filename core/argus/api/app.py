@@ -1440,6 +1440,7 @@ def create_app(argus: Argus) -> FastAPI:
                              "you_remember": known, "their_preferences": prefs,
                              "busy": listener.get("busy") if time.time() - listener["seen"] < 75 else None,
                              "personality": argus.cfg.ari.personality, "call_me": argus.cfg.ari.call_me,
+                             "plan_with_claude": argus.cfg.ari.plan_with_claude,
                              "tools": [t.brief() for t in tools.all().values() if t.for_ari]},
             needs=list(argus.cfg.models.needs), priority=PRIORITY_INTERACTIVE, source="helios",
             max_attempts=1)  # a reply that failed is said to have failed; trying again minutes later helps no one

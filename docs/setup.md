@@ -339,6 +339,11 @@ daily cap.
   `--conversations` runs 30 scripted conversations instead ("open Spotify" → "play Famous" → "louder"): each step
   must pick the right tool and arguments in the light of the turns before it. The score shows in Helios > Ari >
   check ari; the conversations are in `core/argus/ari_conversations.py`.
+- **How Ari picks tools**: with many tools it offers the model the ones that fit the message by meaning (the
+  local embedding model: `ollama pull nomic-embed-text`; without it, by shared words), plus those of the app in use.
+  A request with several steps ("find the invoice and open it, then turn the volume down") is planned by Claude
+  first, from the text only (the request, where the chat stands and the tools' names; never pictures or private
+  chats), and the local model does the steps. `ari.plan_with_claude: false` leaves it to the local model.
 - **Ari's personality**: a witty friend by default (funny, teases you a bit, has opinions, no slang, no help-desk lines like
   "How can I assist you?"), in small talk and in task replies. Change it in a few sentences of your own, and tell it
   what to call you:

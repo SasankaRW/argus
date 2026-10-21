@@ -25,6 +25,7 @@ class FakeOllama:
     def __init__(self, replies: dict[str, list]):
         self.replies = {k: list(v) for k, v in replies.items()}
         self.requests: list[dict] = []
+        self.embeds: list[dict] = []  # /api/embed calls (kept apart: tests count the model's chats)
         outer = self
 
         class H(BaseHTTPRequestHandler):
@@ -50,7 +51,7 @@ class FakeOllama:
 
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-                outer.requests.append(body)
+                (outer.embeds if self.path == "/api/embed" else outer.requests).append(body)
                 model = body.get("model")
                 if model not in outer.replies:
                     self._send(404, {"error": f"model '{model}' not found"})

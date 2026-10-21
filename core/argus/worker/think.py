@@ -17,6 +17,7 @@ A tool marked "asks first" (closing apps, typing, changing files) is not run: Ar
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import time
@@ -53,6 +54,37 @@ class Chat(BaseModel):
                                       "serious")
     reply: str = Field("", description="what you say")
     remember: str = Field("", description="a lasting fact the user just told you about themselves (else empty)")
+
+
+class PlanStep(BaseModel):
+    tool: str = Field(description="a tool name from the list")
+    args: dict[str, Any] = Field(default_factory=dict, description="its arguments; from an earlier step's result: "
+                                                                   "say so in words")
+    why: str = Field("", description="a few words: what this step is for")
+
+
+class Plan(BaseModel):
+    steps: list[PlanStep] = Field(default_factory=list, description="in order, at most 5; none when one tool or "
+                                                                    "no tool is enough")
+
+
+PLAN = """You plan a request for Ari, an assistant that does things on the user's own PC with tools. You get the
+request, where the conversation stands ("thread", may be missing) and the tools (name: what it does: its
+arguments). Write the steps that do it: each one tool with its arguments, in order, at most 5. Where an argument
+depends on an earlier step's result, describe it in words ("the path found in step 1"). Use only tools from the list
+and never invent details the user didn't give (leave that argument out). If one tool does it, or it needs no tool,
+return no steps. Answer with JSON only."""
+
+# Several things to do in one message: "find the invoice and open it", "open spotify, then play Famous"
+MULTI = re.compile(r"\b(?:and then|then|after that|afterwards|once (?:that'?s|it'?s) done|and also)\b", re.I)
+
+
+def multi_step(text: str) -> bool:
+    """A request with several steps (worth a plan): "then"/"after that", or two or more things to do."""
+    words = text.split()
+    if len(words) < 6 or len(words) > 80:
+        return False
+    return bool(MULTI.search(text)) or len(set(m.lower() for m in TASKY.findall(text))) >= 2
 
 
 _REPLY_AT = re.compile(r'"reply"\s*:\s*"')
@@ -130,7 +162,45 @@ TYPING = re.compile(r"^\W*(?:(?:please|can you|could you|will you|go ahead and)\
 SCREEN_TOOLS = {"look_at_screen": SCREEN, "summarise_clipboard": CLIPBOARD, "type_text": TYPING, "press_keys": TYPING}
 
 
-def offered(tools: dict[str, dict], text: str, history: list[dict], about: str = "") -> dict[str, dict]:
+_NO_EMBED = {"until": 0.0}
+_TOOL_VECS: dict[str, list[float]] = {}  # a tool's meaning, kept while the worker runs (key: its name and words)
+
+
+def _cos(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b, strict=False))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(y * y for y in b) ** 0.5
+    return dot / (na * nb) if na and nb else 0.0
+
+
+def meaning(embed: Any, tools: dict[str, dict], text: str) -> dict[str, float] | None:
+    """How close each tool is to the message by meaning (cosine), with the local embedding model; None without it
+    (then tools are picked by shared words only). Only with many tools: a few are all offered anyway."""
+    if len(tools) <= MANY or embed is None or time.monotonic() < _NO_EMBED["until"]:
+        return None
+
+    def key(n: str, t: dict) -> str:
+        return hashlib.sha1(f"{n}\n{t.get('does') or t.get('description') or ''}".encode()).hexdigest()
+
+    keys = {n: key(n, t) for n, t in tools.items()}
+    missing = [n for n in tools if keys[n] not in _TOOL_VECS]
+    if missing:
+        docs = [f"search_document: {n.replace('_', ' ')}: {tools[n].get('does') or tools[n].get('description') or ''}"
+                for n in missing]
+        vecs = embed(docs)
+        if not vecs or len(vecs) != len(missing):
+            _NO_EMBED["until"] = time.monotonic() + 600  # not pulled or Ollama away: words only for 10 minutes
+            return None
+        for n, v in zip(missing, vecs, strict=True):
+            _TOOL_VECS[keys[n]] = v
+    q = embed([f"search_query: {text}"])
+    if not q:
+        return None
+    return {n: round(_cos(q[0], _TOOL_VECS[keys[n]]), 4) for n in tools}
+
+
+def offered(tools: dict[str, dict], text: str, history: list[dict], about: str = "",
+            sims: dict[str, float] | None = None) -> dict[str, dict]:
     """The tools worth offering for this message: the screen / clipboard ones only when it's about them (or the
     chat just was). Fewer tools is also a shorter prompt, so a faster first step. `about` is the thread's words
     (its topic, app and task), so a follow-up like "louder" keeps the tools of what is going on."""
@@ -138,7 +208,7 @@ def offered(tools: dict[str, dict], text: str, history: list[dict], about: str =
     ok = {n: t for n, t in tools.items()
           if n not in SCREEN_TOOLS or SCREEN_TOOLS[n].search(text)
           or (SCREEN_TOOLS[n] is not TYPING and SCREEN_TOOLS[n].search(recent))}  # typing: only when asked now
-    return closest(ok, f"{text} {recent}") if len(ok) > MANY else ok
+    return closest(ok, f"{text} {recent}", sims=sims, app=about) if len(ok) > MANY else ok
 
 
 PC_ONLY = {"set_volume", "media_control", "open_app", "close_app", "list_apps", "take_screenshot", "lock_pc",
@@ -165,9 +235,16 @@ def _words(x: str) -> set[str]:
     return out
 
 
-def closest(tools: dict[str, dict], text: str, keep: int = 14) -> dict[str, dict]:
-    """The tools whose name or description share the most words with the message (and the last two turns), plus a
-    few that are always useful. A message about the phone gets the phone's tools, not the PC's."""
+MEANING_WEIGHT = 12.0  # a cosine of 0.6 counts like 2 shared words in a name, so meaning leads and words break ties
+APP_TOOLS = 4  # with an app in use (the thread), up to this many of its own tools are always offered
+
+
+def closest(tools: dict[str, dict], text: str, keep: int = 14, sims: dict[str, float] | None = None,
+            app: str = "") -> dict[str, dict]:
+    """The tools that fit the message best, plus a few that are always useful. By meaning (`sims`, from the local
+    embedding model) and by shared words with the message and the last two turns; without `sims`, words only. A
+    message about the phone gets the phone's tools, not the PC's. `app`: the thread's words; the tools of the app in
+    use (its name in theirs, e.g. Spotify) are always among them."""
     want = _words(text)
     phone = "phone" in want
 
@@ -176,10 +253,17 @@ def closest(tools: dict[str, dict], text: str, keep: int = 14) -> dict[str, dict
         sc = 3 * len(want & name) + len(want & desc)
         if phone and n.startswith("phone_"):
             sc += 2
+        if sims and n in sims:
+            sc += MEANING_WEIGHT * max(0.0, sims[n] - 0.3)  # below 0.3 it's noise for these models
         return sc
 
     ranked = sorted(((score(n, t), n) for n, t in tools.items()), key=lambda x: -x[0])
     pick = {n for sc, n in ranked[:keep] if sc > 0}  # nothing fits by its words: the always-useful few only
+    apps = [w for w in _words(app) if len(w) > 3] if app else []
+    if apps:
+        own = [n for _, n in ranked if any(w in n.lower() or w in str(tools[n].get("does") or "").lower()
+                                           for w in apps)]
+        pick |= set(own[:APP_TOOLS])
     return {n: t for n, t in tools.items() if n in pick or n in ALWAYS}
 
 
@@ -1073,6 +1157,8 @@ How to decide:
 - "earlier_today" sums up this chat before the turns you see; "past_chats" are earlier chats that may matter
   (when, what happened, what was left open). Use them when the message is about the same thing ("did that work
   last time?", picking up something left open); otherwise ignore them and never bring them up unasked.
+- "plan": the steps worked out for this request. Follow them in order, one tool per step, filling arguments from
+  the earlier results; skip a step that is no longer needed; reply once they're done (say what you did).
 - Short follow-ups ("and tomorrow?", "what about Colombo?", "and eggs", "make it 15", "send the same to Nimali",
   "the first one") mean the thread's "last_tool" again with that one detail changed: use the tool, never answer
   them from memory.
@@ -1146,8 +1232,10 @@ def think(ctx: Context):
 
 def _think(ctx: Context, text: str) -> dict[str, Any]:
     thread = thread_mod.brief(ctx.input.get("thread"))
-    tools = offered({t["name"]: t for t in ctx.input.get("tools") or []}, text, ctx.input.get("history") or [],
-                    thread_mod.words(ctx.input.get("thread")) if thread else "")
+    about = thread_mod.words(ctx.input.get("thread")) if thread else ""
+    every = {t["name"]: t for t in ctx.input.get("tools") or []}
+    sims = meaning(getattr(ctx, "embed", None), every, f"{text} {about}".strip())
+    tools = offered(every, text, ctx.input.get("history") or [], about, sims)
     earlier = str(ctx.input.get("earlier_today") or "").strip()
     before = [b for b in ctx.input.get("before") or [] if isinstance(b, dict)][:2]
     base = {"message": text, **({"thread": thread} if thread else {}),
@@ -1290,9 +1378,34 @@ def _think(ctx: Context, text: str) -> dict[str, Any]:
             return {"reply": spoken(str(res["answer"])), "used": [got]}
         done.append(got)  # it failed or said nothing useful: let the model take it from here
 
+    plan: list[dict[str, Any]] = []
+    if ctx.input.get("plan_with_claude", True) and multi_step(text) and not private():
+        def make_plan() -> dict:
+            brief = {"request": text, **({"thread": thread} if thread else {}),
+                     "tools": [f"{n}: {t.get('does') or ''}" + (f" ({', '.join(t.get('args') or {})})"
+                                                                 if t.get("args") else "") for n, t in tools.items()]}
+
+            def ok(p: Plan, _inp) -> str | None:
+                bad = [st.tool for st in p.steps if st.tool not in tools]
+                if bad:
+                    return f"{', '.join(bad[:3])} {'is' if len(bad) == 1 else 'are'} not in the tools list"
+                return "at most 5 steps" if len(p.steps) > 5 else None
+
+            p = ctx.claude(PLAN, json.dumps(brief, ensure_ascii=False), schema=Plan, check=ok)
+            return {"steps": [st.model_dump() for st in p.steps]}
+
+        try:
+            plan = ctx.step("plan", make_plan)["steps"]
+        except Exception:  # noqa: BLE001 - no Claude (away, over budget): the local model works it out alone
+            plan = []
+        if len(plan) < 2:
+            plan = []  # one step: nothing to plan
+
     for i in range(MAX_STEPS):
         def decide(i=i) -> dict:
             task = {**base, "results_so_far": done} if done else dict(base)
+            if plan:
+                task["plan"] = plan
             task["situation"] = situation(text, ctx.input.get("busy"), done)
             if i == MAX_STEPS - 1:
                 task["last_step"] = True

@@ -94,7 +94,7 @@ def first_pick(text: str, tools: list[dict], decide: Any, now: str = "", info: d
     stands (as argusd would hand them to Ari)."""
     from . import thread as thread_mod
     from .ari import weather_ask
-    from .worker.think import PHONE_VOLUME, chatty, follow_on, offered, quick_math, situation, straight_to
+    from .worker.think import PHONE_VOLUME, chatty, follow_on, meaning, offered, quick_math, situation, straight_to
 
     if quick_math(text) or (PHONE_VOLUME.search(text) and "phone_volume" not in {t["name"] for t in tools}):
         return "reply", {}, 0.0
@@ -104,7 +104,9 @@ def first_pick(text: str, tools: list[dict], decide: Any, now: str = "", info: d
     if wx is not None and any(t["name"] == "weather" for t in tools):  # argusd answers these itself, no model
         return "weather", {**({"place": wx[0]} if wx[0] else {}), **({"tomorrow": True} if wx[1] else {})}, 0.0
     brief = thread_mod.brief(thread) if thread else {}
-    have = offered({t["name"]: t for t in tools}, text, history or [], thread_mod.words(thread) if brief else "")
+    about = thread_mod.words(thread) if brief else ""
+    every = {t["name"]: t for t in tools}
+    have = offered(every, text, history or [], about, meaning(EMBED["fn"], every, f"{text} {about}".strip()))
     direct = straight_to(have, text) or follow_on(have, text, thread, history)
     if direct is not None:
         return direct[0], direct[1], 0.0
@@ -122,6 +124,24 @@ def first_pick(text: str, tools: list[dict], decide: Any, now: str = "", info: d
     if step.get("tool"):
         return str(step["tool"]), step.get("args") if isinstance(step.get("args"), dict) else {}, took
     return ("web" if step.get("need_web") else "reply"), {}, took
+
+
+EMBED: dict[str, Any] = {"fn": None}  # texts -> vectors (the local embedding model), as Ari picks tools by meaning
+
+
+def ollama_embedder(url: str, model: str = "nomic-embed-text") -> Any:
+    """The local embedding model as a function, or None when it isn't there (then tools are picked by words)."""
+    from .models.providers import OllamaProvider
+
+    p = OllamaProvider(url, model)
+
+    def embed(texts: list[str]) -> list[list[float]] | None:
+        try:
+            return p.embed(texts, model)
+        except Exception:  # noqa: BLE001 - not pulled: words only
+            return None
+
+    return embed if embed(["test"]) else None
 
 
 def ollama_decider(url: str, model: str, num_ctx: int = 8192) -> Any:
@@ -287,6 +307,9 @@ def main(argv: list[str] | None = None) -> int:
     except OSError as e:
         print(f"Argus isn't answering at {a.url} ({e}): start it first (dev.ps1 up).", file=sys.stderr)
         return 2
+    EMBED["fn"] = ollama_embedder(cfg.ollama.url)
+    print("tools by meaning (nomic-embed-text)" if EMBED["fn"] else "tools by words (ollama pull nomic-embed-text "
+          "for meaning)")
     keep = cfg.db_path.parent / "ari-eval"
     keep.mkdir(parents=True, exist_ok=True)
     if a.conversations:
