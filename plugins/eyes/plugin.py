@@ -137,7 +137,7 @@ def parse_result(text: str, key: str, names: set[str], own: bool) -> dict:
         name = str(r["reuse"]).strip().removesuffix(".eyes")
         if own:
             raise PermanentError(f"{key} must get its own clip, not reuse {name}")
-        if name in ("default", "new") or name not in names:
+        if name in ("default", "new", key) or name not in names:
             raise PermanentError(f"reuse {name!r}: no such clip to reuse")
         return {"reuse": name}
     clip = str(r.get("clip") or "")
@@ -281,7 +281,7 @@ def make_clip(ctx: Context, clips: Path, key: str, note: str = "") -> dict:
             tmp.replace(clips / f"{key}.eyes")
             return {"key": key, "clip": f"{key}.eyes", "about": res["about"], "seconds": chk["seconds"],
                     "attempts": attempt, "studio": str(work), "minutes": round((time.monotonic() - started) / 60, 1)}
-        ctx.log("clip failed the checks", key=key, attempt=attempt, problems=problems)
+        ctx.log.info("eyes clip failed the checks", extra={"key": key, "attempt": attempt, "problems": problems})
     raise PermanentError(f"the {key} clip still fails the checks: " + "; ".join(problems)[:300])
 
 
@@ -297,7 +297,9 @@ def record(ctx: Context, key: str, outcome: dict) -> None:
     ctx.store.set("history", history + [{"at": time.strftime("%Y-%m-%d %H:%M"), **outcome}])
 
 
-def run_one(ctx: Context, clips: Path, key: str, note: str = "") -> dict:
+def run_one(ctx: Context, clips: Path, key: str, note: str = "", remake: bool = False) -> dict:
+    if not remake and ((clips / f"{key}.eyes").exists() or key in read_json(clips / "map.json")):
+        return {"key": key, "already": True}  # a retried job whose clip was saved before it stopped
     ctx.store.set("busy", {"key": key, "at": time.time()})
     try:
         out = make_clip(ctx, clips, key, note)
@@ -306,7 +308,7 @@ def run_one(ctx: Context, clips: Path, key: str, note: str = "") -> dict:
     finally:
         ctx.store.set("busy", {})
     record(ctx, key, out)
-    ctx.log("eyes clip", **{k: v for k, v in out.items() if k != "studio"})
+    ctx.log.info("eyes clip", extra={k: v for k, v in out.items() if k != "studio"})
     return out
 
 
@@ -356,7 +358,7 @@ def make(ctx: Context):
     if key in mapping:  # remaking: its own clip from now on
         mapping.pop(key)
         write_json(clips / "map.json", mapping)
-    return run_one(ctx, clips, key, str(ctx.input.get("note") or ""))
+    return run_one(ctx, clips, key, str(ctx.input.get("note") or ""), remake=True)
 
 
 @workflow(PLUGIN, "status")
