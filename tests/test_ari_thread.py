@@ -208,3 +208,21 @@ def test_reading_list_and_watches_need_no_model():
     tools = {"reading_list": {}, "list_watches": {}}
     assert straight_to(tools, "what's on my reading list") == ("reading_list", {})
     assert straight_to(tools, "what am I watching?") == ("list_watches", {})
+
+
+def test_the_last_three_follow_ups():
+    tools = {n: {} for n in ("open_file", "lab_status", "repo_status")}
+    found = [{"tool": "search_everything", "result": [{"path": "C:/Users/Sas/Downloads/invoice-sept.pdf"},
+                                                      {"path": "C:/Users/Sas/Downloads/invoice-oct.pdf"}]}]
+    history = [{"role": "ari", "text": "Two invoices.", "found": found}]
+    t = _after("search_everything", {"query": "invoice"})
+    assert follow_on(tools, "open the october one", t, history) == (
+        "open_file", {"path": "C:/Users/Sas/Downloads/invoice-oct.pdf"})
+    assert follow_on(tools, "open the second one", t, history) == (
+        "open_file", {"path": "C:/Users/Sas/Downloads/invoice-oct.pdf"})
+    assert follow_on(tools, "open the invoice one", t, history) is None  # both match: the model asks which
+    notes = _after("find_notes", {"query": "server"})
+    assert follow_on(tools, "is it up?", notes) == ("lab_status", {})
+    assert follow_on(tools, "is it up?", _after("find_notes", {"query": "recipes"})) is None
+    assert follow_on(tools, "and the argus repo?", _after("what_changed_today", {})) == (
+        "repo_status", {"name": "argus"})
