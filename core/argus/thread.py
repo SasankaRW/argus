@@ -59,7 +59,8 @@ PROMISE = re.compile(r"\bI(?:'ll| will)\s+((?:remind|tell|let you know|check|pin
 
 
 def empty() -> dict[str, Any]:
-    return {"topic": "", "app": "", "task": None, "mentioned": {}, "question": "", "promises": [], "at": 0.0}
+    return {"topic": "", "app": "", "task": None, "mentioned": {}, "question": "", "promises": [], "last": None,
+            "at": 0.0}
 
 
 def fresh(th: dict | None, now: float) -> dict[str, Any]:
@@ -129,6 +130,11 @@ def update(prev: dict | None, *, message: str, out: dict | None, now: float | No
             th["mentioned"]["mail"] = "the list just read out (by number: 1 is the newest)"
         if _TOPIC.get(name):
             said_topic = _TOPIC[name]
+    if ok:  # the last tool that worked, with its arguments (a private tool's stay out): "and tomorrow?" repeats it
+        u = ok[-1]
+        args = u.get("args") if isinstance(u.get("args"), dict) and not u.get("private") else {}
+        th["last"] = {"tool": str(u["tool"]), "args": {k: v if isinstance(v, (bool, int, float)) else _clip(v)
+                                                        for k, v in args.items() if v not in (None, "")}}
     if topic.strip():
         said_topic = _clip(topic, 60)
     if said_topic:
@@ -176,6 +182,8 @@ def brief(th: dict | None, now: float | None = None) -> dict[str, Any]:
             out["task"] = task
     if t["mentioned"]:
         out["mentioned"] = t["mentioned"]
+    if t.get("last"):
+        out["last_tool"] = t["last"]
     if t["question"]:
         out["your_open_question"] = t["question"]
     if t["promises"]:

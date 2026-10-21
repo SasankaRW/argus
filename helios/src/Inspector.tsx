@@ -564,6 +564,34 @@ function Changes({ id, plugin, tick, onSelect }: { id: string; plugin: string; t
   );
 }
 
+type TraceStep = { kind: string; step: number; do?: string; on?: string; role?: string; detail?: string; why?: string;
+  where?: string; worked?: boolean; changed?: boolean | null; error?: string; said?: string };
+
+// An app or browser task, step by step: what Ari did, on what, why, and whether the screen changed.
+function AppSteps({ trace }: { trace: TraceStep[] }) {
+  return (
+    <>
+      <div className="sect">What Ari did in the app</div>
+      <div className="steps">
+        {trace.map((t, i) => {
+          const how = t.kind !== "act" ? t.kind : !t.worked ? "failed" : t.changed === false ? "no change" : "ok";
+          return (
+            <div key={i} className="step">
+              <span className={`sdot ${how === "failed" ? "bad" : how === "no change" ? "warn" : "ok"}`} />
+              <span className="mono">{t.step}. {t.kind === "act" ? `${t.do} ${t.on || t.detail || ""}` : t.kind}</span>
+              <span className="muted mono">{how}{t.where ? ` · ${t.where}` : ""}</span>
+              {(t.why || t.said || (t.kind === "act" && t.detail && t.on)) && (
+                <div className="muted">{t.why ? `why: ${t.why}` : ""}{t.detail && t.on ? ` · "${t.detail}"` : ""}{t.said ? ` ${t.said}` : ""}</div>
+              )}
+              {t.error && <div className="err mono">{t.error}</div>}
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
 function JobPanel({ id, events, onSelect }: { id: string; events: ArgusEvent[]; onSelect: (s: Selection) => void }) {
   const [job, setJob] = useState<Job | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -605,6 +633,9 @@ function JobPanel({ id, events, onSelect }: { id: string; events: ArgusEvent[]; 
         ) : <div className="tip">No steps recorded.</div>}
         {job.error && (<><div className="sect">Error</div><pre className="code bad">{job.error}</pre></>)}
         <Changes id={id} plugin={job.plugin} tick={lastSeq + events.filter((e) => e.kind.startsWith("job.")).length} onSelect={onSelect} />
+        {Array.isArray((job.result as { trace?: unknown } | null)?.trace) && (
+          <AppSteps trace={(job.result as { trace: TraceStep[] }).trace} />
+        )}
         <ModelAnswers id={id} tick={job.state === "succeeded" ? 1 : 0} />
         <JobCalls id={id} tick={job.state === "succeeded" ? 1 : 0} />
         {job.result !== null && job.result !== undefined && (<><div className="sect">Result</div><pre className="code">{pretty(job.result)}</pre></>)}

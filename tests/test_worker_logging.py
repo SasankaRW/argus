@@ -25,3 +25,7 @@ def test_a_job_log_line_says_what_happened():
     assert outcome({"plugin": "workstation"}, {"done": False, "problem": "Spotify is open on your desktop"}) == {
         "problem": "Spotify is open on your desktop"}
     assert outcome({"plugin": "x"}, None) == {}
+    app = {"done": True, "answer": "Playing.", "trace": [{"kind": "act", "worked": True, "changed": True},
+                                                        {"kind": "act", "worked": True, "changed": False},
+                                                        {"kind": "done"}]}
+    assert outcome({"plugin": "workstation"}, app)["steps"] == "2 steps, 1 did nothing"

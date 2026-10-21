@@ -347,16 +347,18 @@ def whisper(name: str, names: bool = True) -> Callable[[object], str]:
     (writing down a request); off for the wake check. A transcript that only reads those names back (Whisper on
     noise) comes back empty."""
     from . import vocab
-    from .worker.hear import model
+    from .worker.hear import model, on_gpu_now
 
     m = model(name)
     lock = threading.Lock()
+    # writing down a request on the GPU: a beam of 5 (a few more words right for ~0.1 s); the wake check stays quick
+    beam = 5 if names and on_gpu_now(name) else 1
 
     def run(audio) -> str:
         words = list(VOCAB.get("words") or [])
         hot = vocab.hotwords(words) if names and words else None
         with lock:
-            segs, _ = m.transcribe(audio, language="en", beam_size=1, vad_filter=False,  # type: ignore[attr-defined]
+            segs, _ = m.transcribe(audio, language="en", beam_size=beam, vad_filter=False,  # type: ignore[attr-defined]
                                    condition_on_previous_text=False, without_timestamps=True, hotwords=hot)
             text = " ".join(s.text.strip() for s in segs if not made_up(s)).strip()
         if vocab.echo(text, words + list(vocab.BUILTIN)):
@@ -402,7 +404,8 @@ FOLLOW_MAX_WORDS = 25
 
 def follow_ok(text: str) -> bool:
     """Something said without "Hey Ari" right after an answer: for Ari unless the PC is playing sound (the voices in
-    a video or a call) or it is a long stream of words (the TV, someone else talking)."""
+    a video or a call; not Ari's own voice) or it is a long stream of words (the TV, someone else talking). After
+    Ari asked you something, this isn't asked: your answer is for Ari however long it is."""
     return not STRICT["on"] and len(text.split()) <= FOLLOW_MAX_WORDS
 
 
@@ -547,7 +550,7 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device,
                       speaking=lambda: player.busy, out_levels=drained,
                       english=lambda: talk.last_heard.get("english", talk.last_heard.get("accepted")))
     threading.Thread(target=live.run, daemon=True, name="ari-live").start()
-    guard = vl.PlaybackGuard() if cfg.ari.playback_guard else None
+    guard = vl.PlaybackGuard(own=lambda: player.busy) if cfg.ari.playback_guard else None
     if guard is not None:
         threading.Thread(target=loopback, args=(guard,), daemon=True, name="ari-loopback").start()
     wake_word = WakeWord.load(cfg, talk)
@@ -583,7 +586,7 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device,
             if not gate(frame, player.busy and not talk.paused_for_barge):
                 voice = 0.0
             if guard is not None:
-                STRICT["on"] = guard.active
+                STRICT["on"] = guard.others  # something else plays (not Ari's own voice): only a clear "Hey Ari"
                 if guard.explains(rms):  # the PC's own sound coming back (a video, music, Ari): not you
                     voice = 0.0
             if wake_word is not None:

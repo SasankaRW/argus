@@ -25,6 +25,11 @@ def on_gpu() -> bool:
     return bool(_on_gpu)
 
 
+def on_gpu_now(name: str) -> bool:
+    """Is this model loaded on the GPU (not the CPU, not in game mode)?"""
+    return name in _on_gpu and not GAME["on"]
+
+
 def release() -> None:
     """Drop the loaded models (the next request loads again, on the CPU while game mode is on)."""
     with _lock:

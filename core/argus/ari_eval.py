@@ -105,7 +105,7 @@ def first_pick(text: str, tools: list[dict], decide: Any, now: str = "", info: d
         return "weather", {**({"place": wx[0]} if wx[0] else {}), **({"tomorrow": True} if wx[1] else {})}, 0.0
     brief = thread_mod.brief(thread) if thread else {}
     have = offered({t["name"]: t for t in tools}, text, history or [], thread_mod.words(thread) if brief else "")
-    direct = straight_to(have, text) or follow_on(have, text, thread)
+    direct = straight_to(have, text) or follow_on(have, text, thread, history)
     if direct is not None:
         return direct[0], direct[1], 0.0
     t0 = time.perf_counter()

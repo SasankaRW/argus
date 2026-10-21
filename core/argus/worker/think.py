@@ -221,6 +221,11 @@ STATUS_TOOLS = (  # (tool, anchored phrase): read-only, no arguments, so the mod
                               r"(?:home\s?lab|lab|server)\s+(?:status|health)\W*$|" + _PLEASE + r"(?:is|how'?s)\s+"
                               r"(?:the\s+|my\s+)?(?:home\s?lab|lab|server)\s+(?:ok|okay|fine|up|healthy|doing)\W*$",
                               re.I)),
+    ("reading_list", re.compile(_PLEASE + r"(?:(?:what'?s|what is|show me|show|read me|read)\s+)?(?:on\s+|in\s+)?"
+                                r"(?:my\s+|the\s+)?reading list\W*$", re.I)),
+    ("list_watches", re.compile(_PLEASE + r"(?:(?:what|which)\s+(?:pages?\s+|sites?\s+)?(?:am i|are you)\s+"
+                                r"(?:watching|keeping an eye on)|(?:list|show)(?: me)?\s+(?:my\s+|the\s+)?watch(?:es|"
+                                r"ed pages))\W*$", re.I)),
     ("list_routines", re.compile(_PLEASE + r"(?:(?:what|which|list|show me|show)\s+(?:are\s+)?)?(?:all\s+)?"
                                  r"(?:my\s+|the\s+)?routines(?:\s+do i have)?\W*$", re.I)),
     ("money_this_month", re.compile(_PLEASE + r"(?:(?:how much|what)\s+)?(?:can i|safe to|do i have to|have i)?\s*"
@@ -642,18 +647,117 @@ NOT_SONG = re.compile(r"^(?:it|that|this|music|something|anything|again|the musi
                       r"the last one|the previous one)$", re.I)
 
 
-def follow_on(tools: dict[str, dict], text: str, thread: dict | None) -> tuple[str, dict] | None:
+_F = r"^\W*(?:(?:ok(?:ay)?|so|and|oh|um)[\s,]+)?"
+WHEN_AGAIN = re.compile(_F + r"(?:and|what about|how about)\s+(?:for\s+)?(?P<when>tomorrow|today|tonight)\W*$", re.I)
+PLACE_AGAIN = re.compile(_F + r"(?:and|what about|how about)\s+(?:in\s+|at\s+|for\s+)?(?P<place>[a-z][\w .'-]{1,30}?)"
+                         r"\W*$", re.I)
+ALSO = re.compile(r"^\W*(?:and|also|plus)\s+(?:some\s+|a\s+|an\s+)?(?P<x>[\w .,'&-]{1,40}?)(?:\s+too|\s+as well)?\W*$",
+                  re.I)
+MAKE_IT = re.compile(_F + r"(?:make it|change it to|set it to|actually)\s+(?P<n>\d{1,3})(?:\s*(?:min(?:ute)?s?))?\W*$",
+                     re.I)
+SAME_TO = re.compile(_F + r"(?:send|say|text|tell)\s+(?:the same(?: thing| message)?|that|it|this)(?: too)?\s+to\s+"
+                     r"(?P<to>[\w' -]{1,30}?)(?: too| as well)?\W*$", re.I)
+OPEN_IT = re.compile(_F + r"(?:open|show me|show)\s+(?:it|that|that file|the file|this one|that one)\W*$", re.I)
+NTH = re.compile(_F + r"(?:show(?: me)?|open|read|what'?s|what is|tell me about)?\s*(?:the\s+)?(?P<ord>first|second|"
+                 r"third|fourth|fifth|last|1st|2nd|3rd|4th|5th)(?:\s+(?:one|issue|ticket))?\W*$", re.I)
+SAY_WHAT = re.compile(r"\bwhat (?:should|do you want me to|shall|would you like me to) (?:i )?(?:say|write|tell|send)",
+                      re.I)
+TELL_TEXT = re.compile(r"^\W*(?:(?:just|ok(?:ay)?|um)[\s,]+)?(?:tell (?:her|him|them)\s+(?:that\s+)?|"
+                       r"say\s+(?:that\s+)?|that\s+)", re.I)
+TO_WHOM = re.compile(r"\b(?:message|text|tell|whatsapp|send)\s+(?:a message to\s+|to\s+)?(?P<to>[A-Za-z][\w'-]{1,30})",
+                     re.I)
+MAIL_FROM = re.compile(_F + r"(?:what does|what did)\s+(?P<who>[\w' -]{2,30}?)\s+(?:say|want|ask|write)\W*$|"
+                       + _F + r"(?:read\s+)?(?:the one|the mail|the e-?mail|one)\s+from\s+(?P<who2>[\w' -]{2,30}?)\W*$",
+                       re.I)
+_NOT_PLACE = {"it", "that", "this", "them", "him", "her", "you", "me", "the other one", "the second one", "now",
+              "later", "then", "the weekend", "next week"}
+_FUNCTION_WORDS = {"how", "what", "why", "when", "where", "who", "which", "you", "i", "me", "my", "your", "is", "are",
+                   "do", "does", "did", "can", "could", "will", "would", "the", "it", "that", "this", "them", "we",
+                   "they", "he", "she", "him", "her", "us", "then", "so", "not", "no", "yes", "too"}
+
+
+def _just_a_thing(x: str, most: int = 3) -> bool:
+    """A place or an item, not a question or a sentence ("Colombo", "eggs", not "how are you", "the backup")."""
+    words = re.findall(r"[\w']+", x.lower())
+    return 0 < len(words) <= most and not any(w in _FUNCTION_WORDS for w in words)
+
+
+_ORDS = {"first": 0, "1st": 0, "second": 1, "2nd": 1, "third": 2, "3rd": 2, "fourth": 3, "4th": 3, "fifth": 4,
+         "5th": 4, "last": -1}
+
+
+def follow_on(tools: dict[str, dict], text: str, thread: dict | None,
+              history: list[dict] | None = None) -> tuple[str, dict] | None:
     """A message that only makes sense in the thread, and then plainly needs one tool: "play Famous" while Spotify
-    is the app in use plays it there."""
-    if not isinstance(thread, dict) or len(text) > 120:
+    is the app in use, "and tomorrow?" after the weather, "and eggs" after adding milk, "make it 15" after a timer,
+    "send the same to Nimali", "open it" after a file was found, "the first one" after a list of tickets, and the
+    words Ari asked for ("tell her I'm late" after "What should I say to Kaancha?")."""
+    if not isinstance(thread, dict) or len(text) > 160:
         return None
     th = thread_mod.fresh(thread, time.time())
+    t = text.strip()
     if th["app"].lower() == "spotify" and "play_on_spotify" in tools:
-        m = PLAY_THIS.match(text)
+        m = PLAY_THIS.match(t)
         if m and not NOT_SONG.match(m.group("q").strip()) and not re.search(r"\b(?:on|in)\s+(?:my\s+)?(?:phone|"
-                                                                            r"youtube|chrome|browser)\b", text, re.I):
+                                                                            r"youtube|chrome|browser)\b", t, re.I):
             return "play_on_spotify", {"query": m.group("q").strip(" \"'")}
+    task = th.get("task") or {}
+    if th.get("question") and SAY_WHAT.search(th["question"]) and "whatsapp_message" in tools:
+        to = TO_WHOM.search(str(task.get("goal") or ""))
+        words = TELL_TEXT.sub("", t).strip(" \"'")
+        if to and words and re.search(r"whatsapp|message|text", str(task.get("goal") or ""), re.I):
+            return "whatsapp_message", {"to": to.group("to"), "text": words}
+    last = th.get("last") or {}
+    name, args = str(last.get("tool") or ""), dict(last.get("args") or {})
+    if name == "weather" and "weather" in tools:
+        m = WHEN_AGAIN.match(t)
+        if m:
+            args.pop("tomorrow", None)
+            return "weather", {**args, **({"tomorrow": True} if m.group("when").lower() == "tomorrow" else {})}
+        m = PLACE_AGAIN.match(t)
+        if m and m.group("place").strip().lower() not in _NOT_PLACE and _just_a_thing(m.group("place")):
+            place = m.group("place").strip()
+            keep = {k: v for k, v in args.items() if k != "place"}
+            return "weather", {**keep, "place": place[:1].upper() + place[1:]}
+    if name == "add_to_list" and "add_to_list" in tools:
+        m = ALSO.match(t)
+        if m and _just_a_thing(m.group("x"), 4):
+            return "add_to_list", {**({"list": args["list"]} if args.get("list") else {}), "text": m.group("x").strip()}
+    if name == "phone_timer" and "phone_timer" in tools:
+        m = MAKE_IT.match(t)
+        if m:
+            return "phone_timer", {**args, "minutes": int(m.group("n"))}
+    if name == "whatsapp_message" and "whatsapp_message" in tools and args.get("text"):
+        m = SAME_TO.match(t)
+        if m:
+            return "whatsapp_message", {"to": m.group("to").strip(), "text": args["text"]}
+    if "open_file" in tools and th["mentioned"].get("file") and OPEN_IT.match(t):
+        return "open_file", {"path": th["mentioned"]["file"]}
+    if name in ("list_issues", "work_summary") and "show_issue" in tools:
+        m = NTH.match(t)
+        keys = _keys_found(history)
+        if m and keys:
+            i = _ORDS[m.group("ord").lower()]
+            if i < len(keys):
+                return "show_issue", {"key": keys[i]}
+    if (name in ("check_email", "read_email") or "mail" in th["mentioned"]) and "read_email" in tools:
+        m = MAIL_FROM.match(t)
+        if m:
+            return "read_email", {"which": "from " + (m.group("who") or m.group("who2")).strip()}
     return None
+
+
+def _keys_found(history: list[dict] | None) -> list[str]:
+    """The ticket keys (ACME-7) in what Ari's last answer found, in order."""
+    last = next((h for h in reversed(history or []) if h.get("role") in ("ari", "assistant")), None)
+    found = (last or {}).get("found")
+    if not found:
+        return []
+    keys: list[str] = []
+    for k in re.findall(r"\b[A-Z][A-Z0-9]{1,9}-\d{1,6}\b", json.dumps(found, default=str)):
+        if k not in keys:
+            keys.append(k)
+    return keys
 
 
 # Small talk: no tools, no task, just Ari being good company.
@@ -894,6 +998,9 @@ How to decide:
   answer to your open question fills in what was missing. Start fresh when the message is clearly about something
   else. Never redo something from earlier turns (typing, closing, sending) unless this message asks for it again.
   If a detail is still missing, ask for it once, briefly; if you can't make out what they mean, ask briefly.
+- Short follow-ups ("and tomorrow?", "what about Colombo?", "and eggs", "make it 15", "send the same to Nimali",
+  "the first one") mean the thread's "last_tool" again with that one detail changed: use the tool, never answer
+  them from memory.
 - Follow-ups: "it", "that", "again", "the other one", "and tomorrow?" refer to the conversation so far (your last turn's
   "found" holds what your tools returned then). Carry over what was meant (the same file, app, search or
   place) instead of asking again.
@@ -939,6 +1046,8 @@ def spoken(text: str, limit: int = 600) -> str:
 
 
 def _clip(v: Any, n: int = 1500) -> Any:
+    if isinstance(v, dict) and isinstance(v.get("trace"), list):  # an app task's step by step stays on its own job
+        v = {**{k: x for k, x in v.items() if k != "trace"}, "steps": len(v["trace"])}
     s = json.dumps(v, ensure_ascii=False, default=str)
     return v if len(s) <= n else s[:n] + "…"
 
@@ -1062,7 +1171,7 @@ def _think(ctx: Context, text: str) -> dict[str, Any]:
         except EscalationExhausted:
             pass  # fall through to the usual way
 
-    direct = straight_to(tools, text) or follow_on(tools, text, ctx.input.get("thread"))
+    direct = straight_to(tools, text) or follow_on(tools, text, ctx.input.get("thread"), ctx.input.get("history"))
     if direct is not None:  # one flow: open the app / look / read the clipboard right away; that is the reply
         name, args = direct
 

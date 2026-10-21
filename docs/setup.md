@@ -321,7 +321,9 @@ daily cap.
   (`ari.talk_idle_s`); talk over Ari to interrupt (it pauses at once; if it was only "mm-hm" or its own voice
   coming back, it carries on); "thanks Ari" or "that's all" ends it. While the PC is playing sound (a video,
   music, a call) or when it hears a long stream of words, "Hey Ari" is needed again, so the voices in a video
-  aren't taken as questions. After Ari asks "Shall I?", a plain yes or no always counts. Ari knows when you've
+  aren't taken as questions (Ari's own voice doesn't count as the PC playing). After Ari asks "Shall I?", a plain
+  yes or no always counts; after any other question ("How was your day?"), your answer counts however long it is.
+  "Give me a moment" or "one sec" keeps Ari listening for the rest (45 s). Ari knows when you've
   finished a sentence rather than just paused (Smart Turn, an 8 MB model taken once from PyPI and checked; Silero
   VAD from faster-whisper). Answers are spoken a sentence at a time, with a soft pulse while Ari thinks.
   Headphones make interrupting easiest; with speakers, Ari learns how loud its own echo is.

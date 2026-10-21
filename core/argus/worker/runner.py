@@ -208,6 +208,11 @@ def outcome(job: dict, result: Any) -> dict:
             out["problem"] = f"{u.get('tool')}: {str(bad).splitlines()[0][:140]}"
     if tools:
         out["tools"] = ", ".join(tools)
+    trace = result.get("trace")
+    if isinstance(trace, list) and trace:  # an app or browser task: how many steps, how many did nothing
+        acts = [t for t in trace if isinstance(t, dict) and t.get("kind") == "act"]
+        idle = sum(1 for t in acts if not t.get("worked") or t.get("changed") is False)
+        out["steps"] = f"{len(acts)} steps" + (f", {idle} did nothing" if idle else "")
     if result.get("done") is False and "problem" not in out:
         out["problem"] = str(result.get("problem") or "not done")[:160]
     if result.get("tier"):
