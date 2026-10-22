@@ -350,6 +350,10 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 - **screenshot-renamer plugin:** new screenshots get names like "2026-09-28 cashly login bug.png". Text on screen (Tesseract) goes to T1; otherwise the vision model V1 (qwen2.5vl:7b) looks at the picture. Names are checked in code; only default names are touched; Undo in Helios.
 - Models: `ctx.llm(..., images=[...])` sends pictures to a vision tier; tiers outside the chain (like V1) can be listed in a manifest.
 - New `plugins` extra (send2trash, Pillow, pytesseract), installed by dev.ps1.
+- **Fix, `merge local` failing with "Access is denied" on every test:** `dev.ps1 test` and `merge local` now give pytest a fresh scratch folder of their own each run (`%TEMP%\argus-pytest-*`, old ones cleared after a day), instead of `%TEMP%\pytest-of-<you>`, which a run as another account can leave locked.
+- **Diary: your edits stay:** you can now change a day's entry in Life Hub (title, text, mood, highlights, people, places, tags) and move it to another day. When you tell Ari more about that day later, it keeps your title and text word for word and only adds the new part (an answer that rewrites your text is refused); your lists stay too.
+
+
 ## 0.7.0 (2026-09-29)
 
 - **Helios Runs page:** every job, newest first, filtered by plugin and state, with a one-line summary; click one for its details.
