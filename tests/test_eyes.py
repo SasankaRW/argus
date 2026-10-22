@@ -266,6 +266,7 @@ def test_the_screen_never_raises():
 def test_the_supervisor_runs_the_eyes_only_when_on(monkeypatch):
     monkeypatch.setattr(supervisor, "ari_on", lambda what: False)
     monkeypatch.setattr(supervisor, "expressive_on", lambda: False)
+    monkeypatch.setattr(supervisor, "workstation_where", lambda: "desktop")  # not this PC's argus.yaml
     args = argparse.Namespace(no_worker=False, no_session=False, no_argusd=False, desk_only=False)
     monkeypatch.setattr(supervisor, "eyes_on", lambda: True)
     assert [n for n, _ in supervisor.plan(args)] == ["argusd", "eyes", "worker"]
