@@ -24,8 +24,10 @@ import argparse
 import ctypes
 import logging
 import os
+import subprocess
 import sys
 import time
+from pathlib import Path
 
 log = logging.getLogger("argus.child_session")
 
@@ -83,9 +85,41 @@ def in_child_session(env: dict | None = None) -> bool:
         return False
 
 
+ROOT = Path(__file__).resolve().parents[2]
+WINDOW_EXE = ROOT / "data" / "workstation" / "ArgusWorkstation.exe"  # built by scripts/workstation-setup.ps1 install
+
+
+def rdp_allowed() -> bool | None:  # pragma: no cover - Windows only
+    """Are Remote Desktop connections allowed? A child session is one to this PC itself, so it needs them (the
+    firewall still decides whether other machines can). None off Windows or when it can't be read."""
+    if os.name != "nt":
+        return None
+    try:
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Terminal Server") as k:
+            return int(winreg.QueryValueEx(k, "fDenyTSConnections")[0]) == 0
+    except OSError:
+        return None
+
+
 def host(width: int = 1280, height: int = 800, title: str = "Ari's Workstation") -> int:  # pragma: no cover
-    """Show the child session in a window: the Remote Desktop ActiveX control with ConnectToChildSession, connected
-    to this PC. Windows signs it in by itself (no password). Runs until the window is closed."""
+    """Show the child session in a window, until it is closed: ArgusWorkstation.exe (the Remote Desktop control
+    hosted by WinForms, scripts/workstation/ArgusWorkstation.cs), else the control in a Tk window (comtypes)."""
+    if rdp_allowed() is False:
+        log.error("Remote Desktop connections are off, and a child session is one: run "
+                  "scripts\\workstation-setup.ps1 install as administrator again")
+        return 2
+    if WINDOW_EXE.exists():
+        log.info("opening Ari's Workstation", extra={"exe": str(WINDOW_EXE)})
+        return subprocess.call([str(WINDOW_EXE), "--log", str(ROOT / "logs" / "workstation-window.log"),
+                                "--size", f"{width}x{height}"])
+    log.warning("ArgusWorkstation.exe isn't built (scripts\\workstation-setup.ps1 install builds it): "
+                "trying the Tk window")
+    return _host_tk(width, height, title)
+
+
+def _host_tk(width: int, height: int, title: str) -> int:  # pragma: no cover - Windows only
     import tkinter as tk
 
     import comtypes  # type: ignore[import-not-found]
@@ -166,12 +200,12 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - Windows on
     p.add_argument("what", choices=["status", "enable", "host"])
     p.add_argument("--log-file", default="logs/workstation-host.log")
     a = p.parse_args(argv)
-    from pathlib import Path
-
     setup_logging("INFO", Path(a.log_file))
     if a.what == "status":
+        rdp = {True: "yes", False: "no (run workstation-setup.ps1 install again)", None: "unknown"}[rdp_allowed()]
         print(f"child sessions: {'on' if enabled() else 'off'}; in one now: {in_child_session()}; "
               f"child session id: {child_id()}")
+        print(f"Remote Desktop allowed: {rdp}; window built: {'yes' if WINDOW_EXE.exists() else 'no'}")
         return 0
     if a.what == "enable":
         if not enable():
