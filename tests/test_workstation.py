@@ -288,14 +288,15 @@ def test_spotify_without_the_app_uses_the_web_player(monkeypatch):
 # ---- an app that lists its controls only after the first look (Spotify, Discord, VS Code: Chromium)
 
 class LateUia:
-    def __init__(self, counts):
+    def __init__(self, counts, unnamed=False):
         self.counts = list(counts)
         self.looks = 0
+        self.unnamed = unnamed
 
     def snapshot(self):
         self.looks += 1
         n = self.counts.pop(0) if len(self.counts) > 1 else self.counts[0]
-        return {"items": [{"n": i} for i in range(n)]}
+        return {"items": [{"n": i, "name": "" if self.unnamed else f"button {i}"} for i in range(n)]}
 
 
 def test_an_app_that_lists_its_controls_late_is_looked_at_again(monkeypatch):
@@ -314,6 +315,15 @@ def test_an_app_with_no_controls_goes_to_the_picture_after_four_looks(monkeypatc
     made = []
     c.vision_for = lambda hwnd, uia: made.append((hwnd, uia)) or "pictured"
     assert ws.pick_surface(c, 5) == "pictured" and u.looks == 4 and made == [(5, u)]
+
+
+def test_mostly_nameless_controls_or_always_look_go_to_the_picture(monkeypatch):
+    for u, cfg in ((LateUia([12], unnamed=True), {}), (LateUia([12]), {"always_look": True})):
+        monkeypatch.setattr(ws, "surface_for", lambda c, h, u=u: u)
+        c = ctx(FakeDesk([]))
+        c.config = cfg
+        c.vision_for = lambda hwnd, uia: "pictured"
+        assert ws.pick_surface(c, 5) == "pictured"
 
 
 def test_spotify_open_on_your_desktop_is_brought_over_and_played(monkeypatch):

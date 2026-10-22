@@ -580,21 +580,31 @@ def mouse_around(desk: Desk, hwnd: int, sleep: Callable[[float], None] = time.sl
     return around
 
 
+def mostly_unnamed(items: list[dict]) -> bool:
+    """Most of what UI Automation lists has no name (Chromium apps): the picture tells more than the list."""
+    if len(items) < 5:
+        return False
+    return sum(1 for i in items if not str(i.get("name") or "").strip()) / len(items) > 0.4
+
+
 def pick_surface(ctx: Context, hwnd: int) -> Any:
     """The ladder for an app: its controls through UI Automation when it lists them (3 or more), else its picture
     with numbered boxes for the vision model (clicks as window messages)."""
     uia = surface_for(ctx, hwnd)
     sleep = getattr(ctx, "sleep", None) or time.sleep
     enough = False
+    items: list[dict] = []
     try:
         for tries in range(4):  # Chromium apps (Spotify, Discord, Teams, VS Code) build their controls on the first
-            enough = len(uia.snapshot()["items"]) >= 3  # look: the first answer is nearly empty, so look again
+            items = uia.snapshot()["items"]  # look: the first answer is nearly empty, so look again
+            enough = len(items) >= 3
             if enough or tries == 3:
                 break
             sleep(1.5)
     except Exception:  # noqa: BLE001 - no UI Automation at all
         enough, uia = False, None
-    if enough:
+    look = str((getattr(ctx, "config", None) or {}).get("always_look")).lower() in ("true", "1", "yes")
+    if enough and not look and not mostly_unnamed(items):
         return uia
     made = getattr(ctx, "vision_for", None)
     if made is not None:

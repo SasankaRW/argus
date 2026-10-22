@@ -19,6 +19,15 @@ config:
   browser: {type: choice, choices: [chrome, edge], default: chrome, label: Ari's browser}
   spotify: {type: choice, choices: [app, web], default: app, label: "Play Spotify in the app or on the web (Ari's browser)"}
   search_url: {type: text, default: "https://www.google.com/search?q={q}", label: "Search address ({q} is the search)"}
+  always_look:
+    type: bool
+    default: false
+    label: "Look at the window's picture on every step (the vision model), not only when an app lists no buttons"
+  vision_coords:
+    type: choice
+    choices: [pixels, thousand]
+    default: pixels
+    label: "How the vision model (V1) gives click points: pixels (qwen2.5vl) or 0-1000 (Qwen3-VL, GUI-Owl)"
   never_touch:
     type: list
     default: [directfn, 1password, bitwarden, keepass, lastpass, dashlane, keeper, credential manager]

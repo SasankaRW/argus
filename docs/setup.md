@@ -348,6 +348,10 @@ daily cap.
   for your Windows password (kept encrypted for your user; `ArgusWorkstation.exe --forget`). Limits (Windows'):
   one child session at a time, your startup apps start in it too, some apps refuse to run twice, the clipboard is
   shared. `workstation-setup.ps1 remove` and `workstation: desktop` go back.
+- **Ari's eyes in apps (the vision model, V1)**: find the best one on your own apps:
+  `python -m argus.vision_test shots/ --capture 20` (switch between your apps while it collects), then
+  `ollama pull qwen3-vl:8b` and `python -m argus.vision_test shots/ --preset`. It prints which to put in
+  `models.tiers.V1`; for Qwen3-VL or GUI-Owl also set the Workstation plugin's `vision_coords: thousand`.
 - **How Ari picks tools**: with many tools it offers the model the ones that fit the message by meaning (the
   local embedding model: `ollama pull nomic-embed-text`; without it, by shared words), plus those of the app in use.
   A request with several steps ("find the invoice and open it, then turn the volume down") is planned by Claude
