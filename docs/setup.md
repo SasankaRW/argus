@@ -339,6 +339,12 @@ daily cap.
   `--conversations` runs 30 scripted conversations instead ("open Spotify" → "play Famous" → "louder"): each step
   must pick the right tool and arguments in the light of the turns before it. The score shows in Helios > Ari >
   check ari; the conversations are in `core/argus/ari_conversations.py`.
+- **Ari's Workstation in its own session** (Windows 10/11 Pro): as administrator
+  `.\scripts\workstation-setup.ps1 install https://<laptop>.<tailnet>.ts.net`, then `ari: {workstation: child}` in
+  argus.yaml and `.\scripts\pc-worker.ps1 restart`. An "Ari's Workstation" window holds Ari's own Windows session
+  (`python -m argus.child_session status` says if it's on); Ari's app and browser tasks run in there and never touch
+  your windows. Limits (Windows'): one child session at a time, your startup apps start in it too, some apps refuse
+  to run twice, the clipboard is shared. `workstation-setup.ps1 remove` and `workstation: desktop` go back.
 - **How Ari picks tools**: with many tools it offers the model the ones that fit the message by meaning (the
   local embedding model: `ollama pull nomic-embed-text`; without it, by shared words), plus those of the app in use.
   A request with several steps ("find the invoice and open it, then turn the volume down") is planned by Claude

@@ -355,6 +355,44 @@ class WindowsDesk:  # pragma: no cover - Windows only
         target.go()
 
 
+class ChildDesk(WindowsDesk):  # pragma: no cover - Windows only
+    """Inside Ari's child session (ari.workstation: child): the whole screen is the Workstation. No virtual
+    desktops, nothing of yours in here, so windows can come to the front and the real mouse is Ari's own."""
+
+    single = True  # one desktop, Ari's own: no going over and back
+
+    def __init__(self, state: dict):  # noqa: D107 - no pyvda needed here
+        if not WIN:
+            raise PermanentError("Ari's Workstation works on Windows only")
+        import ctypes
+
+        self.state, self.u, self.ct = state, ctypes.windll.user32, ctypes
+
+    def current(self) -> str:
+        return "child"
+
+    def workstation(self) -> str:
+        return "child"
+
+    def desktop_of(self, hwnd: int) -> str | None:
+        return "child"
+
+    def move(self, hwnd: int, desk: str) -> None:
+        return None
+
+    def show_quietly(self, hwnd: int) -> None:
+        self.bring_front(hwnd)
+
+    def go(self, desk: str) -> None:
+        return None
+
+
+def in_child() -> bool:
+    from argus.child_session import in_child_session
+
+    return in_child_session()
+
+
 def start_menu_app(name: str) -> dict | None:  # pragma: no cover - Windows only
     """{name, id} of an installed app, matched like the Start menu (Get-StartApps)."""
     import difflib
@@ -385,7 +423,7 @@ def desk_for(ctx: Context) -> Desk:
     if made is not None:
         return made
     state = dict(ctx.store.get("workstation", {}) or {}) if ctx.store is not None else {}
-    d = WindowsDesk(state)
+    d = ChildDesk(state) if in_child() else WindowsDesk(state)
 
     def keep() -> None:
         if ctx.store is not None and state:
@@ -518,7 +556,15 @@ def surface_for(ctx: Context, hwnd: int) -> Any:
 
 def mouse_around(desk: Desk, hwnd: int, sleep: Callable[[float], None] = time.sleep) -> Callable[[Callable], None]:
     """For the real mouse: show the Workstation with that window in front, do the one click, go back to the desktop
-    you were on."""
+    you were on. In Ari's child session the screen is Ari's own: the window comes to the front and that's all."""
+    if getattr(desk, "single", False):
+        def direct(click: Callable[[], None]) -> None:
+            desk.bring_front(hwnd)
+            sleep(0.2)
+            click()
+
+        return direct
+
     def around(click: Callable[[], None]) -> None:
         here, ws = desk.current(), desk.workstation()
         desk.go(ws)
@@ -592,8 +638,11 @@ def in_app(ctx: Context):
     if not got["hwnd"]:
         return {"done": False, "problem": got["problem"]}
     surface = pick_surface(ctx, got["hwnd"])
+    desk = desk_for(ctx)
     if hasattr(surface, "around"):
-        surface.around = mouse_around(desk_for(ctx), got["hwnd"])
+        surface.around = mouse_around(desk, got["hwnd"])
+    if getattr(desk, "single", False):
+        surface.idle_seconds = lambda: 1e9  # Ari's own session: the mouse is never yours, no need to ask
     out = run_task(ctx, surface, goal, tag="app",
                    allow=("click", "type", "select", "press", "scroll", "mouse", "done", "ask"))
     if out.get("handover"):
@@ -804,6 +853,9 @@ def _which(ctx: Context, desk: Desk, name: str, default: str) -> Win | None:
 def give(ctx: Context):
     """"Move that window to me": to the desktop you're on now, in front."""
     name = str(ctx.input.get("name") or "").strip()
+    if getattr(desk_for(ctx), "single", False):
+        return {"done": False, "problem": "my workstation is its own Windows session now, so its windows can't move "
+                                          "to your desktop; it's in the \"Ari's Workstation\" window"}
 
     def go() -> dict:
         desk = desk_for(ctx)
@@ -826,6 +878,9 @@ def give(ctx: Context):
 def take(ctx: Context):
     """"Take this": your window (by name, else the one in front) goes to the Workstation."""
     name = str(ctx.input.get("name") or "").strip()
+    if getattr(desk_for(ctx), "single", False):
+        return {"done": False, "problem": "my workstation is its own Windows session now, so I can't take your "
+                                          "windows; I can open the same thing in there instead"}
 
     def go() -> dict:
         desk = desk_for(ctx)

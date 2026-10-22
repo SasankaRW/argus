@@ -14,6 +14,7 @@ def _eyes_off(monkeypatch):
     """The robot eyes follow argus.yaml on this PC: off here, so the plans below don't depend on it
     (tests/test_eyes.py checks them on and off)."""
     monkeypatch.setattr(supervisor, "eyes_on", lambda: False)
+    monkeypatch.setattr(supervisor, "workstation_where", lambda: "desktop")
 
 
 def names(monkeypatch, listen=True, popup=True, voice=False, **flags):
@@ -47,7 +48,8 @@ def test_the_desk_worker_has_its_own_id_and_only_the_session(monkeypatch):
     (name, argv), = supervisor.plan(args)
     assert argv[argv.index("--id") + 1] == "desktop-sas-pc"
     caps = [argv[i + 1] for i, a in enumerate(argv) if a == "--cap"]
-    assert sorted(caps) == ["desktop", "session"]  # the PC tools need both; the GPU stays with the boot worker
+    # the PC tools need desktop + session; the Workstation (a virtual desktop here); the GPU stays with the boot one
+    assert sorted(caps) == ["desktop", "session", "workstation"]
 
 
 def test_a_second_supervisor_in_the_same_mode_stops(monkeypatch):
@@ -74,3 +76,30 @@ def test_the_expressive_voice_runs_in_its_own_python(monkeypatch):
     monkeypatch.setattr(supervisor, "load_ari", lambda: AriConfig(voice_clip="data/voices/me.wav"))
     argv = dict(supervisor.plan(args))["ari-voice"]
     assert argv[argv.index("--clip") + 1] == "data/voices/me.wav"
+
+
+def test_the_child_session_runs_only_the_workstations_worker(monkeypatch):
+    monkeypatch.setattr(supervisor.socket, "gethostname", lambda: "SAS-PC")
+    args = argparse.Namespace(no_worker=False, no_session=False, no_argusd=False, desk_only=True, child=True)
+    (name, argv), = supervisor.plan(args)
+    caps = [argv[i + 1] for i, a in enumerate(argv) if a == "--cap"]
+    assert name == "workstation" and sorted(caps) == ["childsession", "workstation"]  # no "Hey Ari", no island
+    assert argv[argv.index("--id") + 1] == "workstation-sas-pc"
+    assert len(set(supervisor.LOCK_PORTS.values())) == 3
+
+
+def test_with_the_child_session_on_the_desk_holds_its_window(monkeypatch):
+    monkeypatch.setattr(supervisor, "workstation_where", lambda: "child")
+    assert names(monkeypatch, desk_only=True) == ["desktop", "ari-listen", "ari-popup", "workstation-host"]
+
+
+def test_in_a_child_session_is_found_or_told():
+    from argus.child_session import in_child_session
+
+    assert in_child_session({"ARGUS_CHILD_SESSION": "1"}) is True
+    assert in_child_session({"ARGUS_CHILD_SESSION": "0"}) is False
+
+
+def test_the_startup_entry_does_nothing_in_your_own_session(monkeypatch):
+    monkeypatch.setenv("ARGUS_CHILD_SESSION", "0")
+    assert supervisor.main(["--no-argusd", "--only-in-child"]) == 0
