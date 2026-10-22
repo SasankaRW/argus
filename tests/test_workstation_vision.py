@@ -159,9 +159,9 @@ class Flaky(Seen):
         return b"JPEG"
 
 
-def test_stuck_twice_ari_asks_you_with_a_picture_and_keeps_your_hint():
+def test_stuck_three_times_ari_asks_you_with_a_picture_and_keeps_your_hint():
     s = Flaky([{"n": 1, "role": "button", "name": "Gear"}])
-    c = ctx([{"do": "click", "n": 1}, {"do": "click", "n": 1}, {"do": "done", "answer": "ok"}])
+    c = ctx([{"do": "click", "n": 1}] * br.STUCK_AFTER + [{"do": "done", "answer": "ok"}])
     asked = []
     c.ask_me = lambda title, fields, **k: asked.append((title, k.get("image"))) or {"answer": "it's under Tools"}
     c.job_id = "J9"
@@ -253,3 +253,63 @@ def test_every_app_step_is_traced_with_why_and_whether_anything_changed(caplog):
     assert [k for k, _ in events] == ["plugin.app.step", "plugin.app.step"]
     assert "app step 2: click Play (no change)" in caplog.text
     assert br.fingerprint(w.snapshot()) == br.fingerprint(w.snapshot())
+
+
+def test_look_act_check_plan_nothing_changed_and_done_only_when_seen():
+    class Still(Seen):  # clicks "work" but the window never changes
+        sees = False
+
+        def snapshot(self):
+            return {"url": "window: Spotify", "title": "Spotify", "text": "Home", "items": self.items}
+
+    s = Still([{"n": 1, "role": "button", "name": "Play"}])
+    c = ctx([{"plan": ["search the song", "play it"], "do": "click", "n": 1},
+             {"do": "click", "n": 1}, {"do": "click", "n": 1},
+             {"do": "done", "answer": "ok", "seen": "Home"}])
+    c.ask_me = lambda *a, **k: {"answer": "try Ctrl+L"}
+    c.job_id, c.tool = "J1", lambda *a: {}
+    out = br.run_task(c, s, "play Famous on Spotify")
+    assert out["done"]
+    asked = [t for t in c.asked if isinstance(t, dict)]
+    assert asked[1]["your_plan"] == ["search the song", "play it"]
+    assert asked[0]["app_notes"][0].startswith("Ctrl+L opens search")  # keys first
+    assert any(t["kind"] == "plan" for t in out["trace"])
+    assert [t.get("changed") for t in out["trace"] if t["kind"] == "act"] == [False, False, False]
+    # three clicks that changed nothing: Ari asked you before going on
+    assert asked[-1]["user_answers"] == [{"question": "I'm stuck: what next?", "answer": "try Ctrl+L"}]
+
+
+def test_done_must_be_on_the_screen():
+    page = {"title": "Spotify", "text": "Now playing: Famous - Kanye West", "items": [{"name": "Pause"}]}
+    assert br.on_screen("Famous", page) and br.on_screen("now playing famous", page)
+    assert not br.on_screen("Shape of You", page)
+    s = Seen([{"n": 1, "role": "button", "name": "OK"}])
+    c = ctx([{"do": "done", "answer": "Playing.", "seen": "Shape of You"}])
+    try:
+        br.run_task(c, s, "play Shape of You")
+        raise RuntimeError("the check should have refused it")
+    except AssertionError as e:  # the scripted model's "done" is refused: it isn't on the screen
+        assert "isn't on the screen" in str(e)
+
+
+def test_a_vision_model_that_answers_in_thousandths_clicks_the_right_pixel():
+    s = Seen([{"n": 1, "role": "button", "name": "OK"}])  # a 400 x 300 picture
+    c = ctx([{"do": "click", "x": 500, "y": 500}, {"do": "done", "answer": "ok"}])
+    c.config["vision_coords"] = "thousand"
+    br.run_task(c, s, "press the gear icon")
+    assert (s.did[0]["x"], s.did[0]["y"]) == (200, 150)
+    assert c.asked[0]["click_points"].startswith("x and y from 0 to 1000")
+
+
+def test_test_cases_come_from_a_windows_named_controls():
+    items = [{"n": 1, "role": "Button", "name": "Search"}, {"n": 2, "role": "Text", "name": "Hello"},
+             {"n": 3, "role": "Edit", "name": ""}, {"n": 4, "role": "Button", "name": "Play"},
+             {"n": 5, "role": "Button", "name": "search"}]
+    boxes = {1: (110, 60, 210, 90), 2: (0, 0, 50, 20), 4: (300, 400, 340, 440), 5: (0, 0, 40, 40)}
+    got = vision_test.cases_from("a.png", items, boxes, rect=(100, 50, 900, 650), scale=0.5)
+    assert got == [{"image": "a.png", "goal": 'the "Search" button', "box": [5, 5, 55, 20]},
+                   {"image": "a.png", "goal": 'the "Play" button', "box": [100, 175, 120, 195]}]
+    many = [{"n": i, "role": "Button", "name": f"b{i}"} for i in range(20)]
+    assert len(vision_test.cases_from("a.png", many, {i: (100, 50, 200, 100) for i in range(20)}, (100, 50, 900, 650),
+                                      1.0)) == 5
+    assert vision_test.PRESET[1].endswith("@thousand")
