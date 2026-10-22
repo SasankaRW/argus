@@ -113,8 +113,16 @@ class Tools:
             raise ToolError(f"plugin {tool.plugin} is not loaded")
         return await self.argus.jobs.enqueue(
             tool.plugin, tool.workflow, {**args, **({"_parent": parent} if parent else {})},
-            needs=p.manifest.job_needs(), priority=PRIORITY_INTERACTIVE, source="ari",
+            needs=await self.needs_now(p.manifest.job_needs()), priority=PRIORITY_INTERACTIVE, source="ari",
             dedupe_key=f"tool:{key}" if key else None)
+
+    async def needs_now(self, needs: list[str]) -> list[str]:
+        """A Workstation job goes to Ari's child session while its worker is online (its own session: your windows
+        are never touched); otherwise to the desktop worker's virtual desktop."""
+        if "workstation" in needs and any(w["state"] == "online" and "childsession" in w["capabilities"]
+                                          for w in await self.argus.registry.workers()):
+            return sorted({*needs, "childsession"})
+        return needs
 
     async def nobody_for(self, tool: Tool) -> str | None:
         """Why no online worker can run this tool's job right now, or None when one can."""

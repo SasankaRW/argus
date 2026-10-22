@@ -90,6 +90,16 @@ def listen_on() -> bool:
     return ari_on("listen")
 
 
+def workstation_where() -> str:
+    """ari.workstation in argus.yaml: "desktop" (a virtual desktop) or "child" (Ari's own Windows session)."""
+    try:
+        from .config import load_config
+
+        return str(load_config(ROOT / "argus.yaml").ari.workstation)
+    except Exception:
+        return "desktop"
+
+
 EYES_STOP = "logs/eyes.stop"  # the eyes end between frames when this appears (Child.stop)
 
 
@@ -290,7 +300,7 @@ def game_watch(url: str, token: str | None, children: list[Child]) -> Any:
                      users=gpu_users)
 
 
-LOCK_PORTS = {"main": 8617, "desk": 8618}  # one supervisor per mode on a machine
+LOCK_PORTS = {"main": 8617, "desk": 8618, "child": 8616}  # one supervisor per mode on a machine
 
 
 def only_one(port: int):
@@ -312,12 +322,16 @@ def plan(args: argparse.Namespace) -> list[tuple[str, list[str]]]:
 
     "Hey Ari" and the island belong to the PC you sit at: the machine with a worker in your session. They talk to
     Argus over ARGUS_URL, so they stay on the PC when Argus itself moves to the laptop."""
+    host = (socket.gethostname() or "pc").lower()  # as the boot-time worker names itself: worker-<host>
+    if getattr(args, "child", False):  # inside Ari's child session: only the Workstation's own worker
+        return [("workstation", ["-m", "argus.worker.cli", "--cap", "workstation", "--cap", "childsession", "--id",
+                                 f"workstation-{host}", "--no-demo", "--log-file", "logs/workstation.log"])]
     if args.desk_only:  # at logon on the PC after the move; the boot-time worker (--no-session) does the GPU work
-        host = (socket.gethostname() or "pc").lower()  # as the boot-time worker names itself: worker-<host>
-        # desktop + session: the PC tools (open apps, volume, windows, keys, the screen, Ari's Workstation) need
-        # both; with "session" alone no worker could take them and Ari waited on them for ever
-        out = [("desktop", ["-m", "argus.worker.cli", "--cap", "desktop", "--cap", "session", "--id",
-                            f"desktop-{host}", "--log-file", "logs/desktop.log"])]
+        # desktop + session: the PC tools (open apps, volume, windows, keys, the screen) need both; with "session"
+        # alone no worker could take them and Ari waited on them for ever. "workstation": Ari's Workstation as a
+        # virtual desktop here (argusd prefers the child session's worker while it is online)
+        out = [("desktop", ["-m", "argus.worker.cli", "--cap", "desktop", "--cap", "session", "--cap", "workstation",
+                            "--id", f"desktop-{host}", "--log-file", "logs/desktop.log"])]
         desk = True
     else:
         out = [] if args.no_argusd else [("argusd", ["-m", "argus"])]
@@ -332,10 +346,13 @@ def plan(args: argparse.Namespace) -> list[tuple[str, list[str]]]:
                                   *(["--host", "0.0.0.0"] if a.expressive_share else [])]))  # noqa: S104
     if desk and ari_on("popup"):  # Ari's island at the top of the screen
         out.append(("ari-popup", ["-m", "argus.ari_popup"]))
+    if desk and workstation_where() == "child":  # the window that holds Ari's child session (its own worker in there)
+        out.append(("workstation-host", ["-m", "argus.child_session", "host"]))
     if desk and eyes_on():  # the robot eyes on the cooler's screen (tiny: plain Python and pyusb)
         out.append(("eyes", ["-m", "argus.eyes", "run", "--log-file", "logs/eyes.log", "--stop-file", EYES_STOP]))
     if not args.no_worker and not args.desk_only:
-        caps = ["--cap", "desktop", "--cap", "gpu"] + ([] if args.no_session else ["--cap", "session"])
+        caps = ["--cap", "desktop", "--cap", "gpu"] + ([] if args.no_session else ["--cap", "session", "--cap",
+                                                                                 "workstation"])
         out.append(("worker", ["-m", "argus.worker.cli", *caps, "--log-file", "logs/worker.log"]))
     return out
 
@@ -354,12 +371,24 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--desk-only", action="store_true",
                    help="your logged-in session only (the PC after the move, started at logon): Ari's PC tools, "
                         "\"Hey Ari\" and the island; Argus and the GPU worker run elsewhere")
+    p.add_argument("--child", action="store_true",
+                   help="inside Ari's child session: only the Workstation's worker (found by itself at sign-in)")
+    p.add_argument("--only-in-child", action="store_true",
+                   help="the Startup-folder entry (scripts/workstation-setup.ps1): in Ari's child session run its "
+                        "worker; in your own session do nothing")
     args = p.parse_args(argv)
-    lock = only_one(LOCK_PORTS["desk" if args.desk_only else "main"])
+    if not args.child and (args.only_in_child or args.desk_only or not args.no_session):
+        from .child_session import in_child_session
+
+        args.child = in_child_session()  # sign-in in the child session starts us there too: be its worker only
+    if args.only_in_child and not args.child:
+        return 0  # your own session: the desk supervisor (logon task) has it
+    lock = only_one(LOCK_PORTS["child" if args.child else "desk" if args.desk_only else "main"])
     if lock is None:  # a second start (the task at boot and a manual start, `dev.ps1 up` twice): two workers
         print("argus-supervisor is already running here in this mode.", file=sys.stderr)
         return 0
-    setup_logging("INFO", ROOT / "logs" / ("supervisor-desk.log" if args.desk_only else "supervisor.log"))
+    setup_logging("INFO", ROOT / "logs" / ("supervisor-child.log" if args.child else "supervisor-desk.log"
+                                           if args.desk_only else "supervisor.log"))
     env = parse_env_file(ROOT / ".env")
     token = os.environ.get("ARGUS_WORKER_TOKEN") or env.get("ARGUS_WORKER_TOKEN")
 
@@ -372,10 +401,10 @@ def main(argv: list[str] | None = None) -> int:
         time.sleep(2)  # argusd first
     changed_at: float | None = None
     last_look = time.monotonic()
-    games = game_watch(args.url, token, children)
+    games = None if args.child else game_watch(args.url, token, children)
     game_at = 0.0
     keeper = None
-    if not args.desk_only and not args.no_worker:  # the PC with the GPU worker: Ollama must be up
+    if not args.desk_only and not args.no_worker and not args.child:  # the PC with the GPU worker: Ollama must be up
         try:
             from .config import load_config
 
@@ -409,7 +438,7 @@ def main(argv: list[str] | None = None) -> int:
                         log.info("new code; waiting for running jobs", extra={"commit": now_commit[:10]})
                     else:
                         log.info("new code; restarting", extra={"from": commit[:10], "to": now_commit[:10]})
-                        if deps_hash() != deps and not args.desk_only:  # the boot supervisor updates packages
+                        if deps_hash() != deps and not (args.desk_only or args.child):  # the boot one updates them
                             log.info("dependencies changed; updating packages")
                             try:
                                 r = subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-e",

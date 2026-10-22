@@ -522,7 +522,8 @@ def create_app(argus: Argus) -> FastAPI:
     @app.post("/jobs", status_code=201, dependencies=guarded)
     async def submit(body: SubmitJob) -> dict:
         job_id, created = await argus.jobs.enqueue(
-            body.plugin, body.workflow, body.input, needs=[*body.needs, *argus.plugin_host.needs_for(body.plugin)],
+            body.plugin, body.workflow, body.input,
+            needs=await tools.needs_now([*body.needs, *argus.plugin_host.needs_for(body.plugin)]),
             priority=body.priority,
             dedupe_key=body.dedupe_key, max_attempts=body.max_attempts, delay=body.delay,
             model_group=body.model, window=body.window,

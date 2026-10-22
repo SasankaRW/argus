@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import logging
 import sys
@@ -237,7 +238,7 @@ def test_the_manifest_loads(tmp_path):
     assert {t.name for t in m.ari.tools} == {"search_in_browser", "browse_on_workstation", "open_on_workstation",
                                             "move_window_to_me", "take_window", "workstation_windows",
                                             "do_in_browser", "play_on_spotify", "do_in_app", "fill_form"}
-    assert m.job_needs() == ["desktop", "session"]
+    assert m.job_needs() == ["workstation"]  # the desktop worker, or the worker in Ari's child session
 
 
 # ---- "play X on Spotify": the Spotify app first (you're signed in there), Ari's browser only without the app
@@ -336,3 +337,31 @@ def test_spotify_questions_to_you_run_inside_a_real_step(monkeypatch):
     c = ctx(d, {"query": "Famous"})
     c.step = lambda name, fn, *a, **k: (steps.append(name), fn(*a, **k))[1]
     assert ws.spotify(c)["done"] and "spotify ask 1" in steps
+
+
+# ---- Ari's Workstation as its own Windows session (ari.workstation: child)
+
+def test_workstation_jobs_go_to_the_child_session_while_its_worker_is_online():
+    from argus.tools import Tools
+
+    class Reg:
+        def __init__(self, workers):
+            self.w = workers
+
+        async def workers(self):
+            return self.w
+
+    t = Tools.__new__(Tools)
+    t.argus = type("A", (), {"registry": Reg([{"state": "online", "capabilities": ["workstation", "childsession"]}])})()
+    assert asyncio.run(t.needs_now(["workstation"])) == ["childsession", "workstation"]
+    assert asyncio.run(t.needs_now(["desktop", "session"])) == ["desktop", "session"]  # PC tools: your desktop
+    t.argus.registry = Reg([{"state": "offline", "capabilities": ["workstation", "childsession"]}])
+    assert asyncio.run(t.needs_now(["workstation"])) == ["workstation"]  # it's away: the virtual desktop, as before
+
+
+def test_in_the_child_session_the_mouse_needs_no_trip_to_another_desktop():
+    did = []
+    desk = SimpleNamespace(single=True, bring_front=lambda h: did.append(("front", h)),
+                           go=lambda d: did.append(("go", d)), current=lambda: "x", workstation=lambda: "y")
+    ws.mouse_around(desk, 42, sleep=lambda s: None)(lambda: did.append("click"))
+    assert did == [("front", 42), "click"]  # no going over and back

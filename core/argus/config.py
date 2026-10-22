@@ -301,6 +301,10 @@ class AriConfig(_Strict):
     # first (text only: the request, where the chat stands and the tools' names; never pictures or private chats);
     # the local model then does the steps. false: the local model works it out alone.
     plan_with_claude: bool = True
+    # Where Ari's Workstation is: "desktop" (a Windows virtual desktop in your session; apps can pull you over to
+    # it) or "child" (a separate Windows session in a window, Windows 10/11 Pro: python -m argus.child_session
+    # enable, once as administrator; then it never touches your windows).
+    workstation: Literal["desktop", "child"] = "desktop"
     keep_warm: bool = True  # keep the first local model loaded in Ollama while the listener runs (fast replies)
     # ...but not while you're away: after this many minutes with no keyboard, mouse or question, the model is let go
     # (GPU memory and power); it is loaded again the moment you're back. 0: always warm.

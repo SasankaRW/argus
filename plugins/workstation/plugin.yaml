@@ -4,8 +4,10 @@ version: 1.0.0
 kind: workflow
 argus_api: ">=1.0 <2.0"
 description: Ari works on its own Windows virtual desktop, "Ari's Workstation" - searches, does tasks on websites, plays Spotify and opens apps there, and hands windows to you.
-runs_on: desktop
-needs: [session]          # your logged-in Windows session: the virtual desktops are yours
+runs_on: any
+# A worker that offers "workstation": your desktop worker (the Workstation is a virtual desktop in your session), or
+# the worker inside Ari's child session (ari.workstation: child), which argusd prefers while it is online.
+needs: [workstation]
 
 workflows: [search, browse, do, spotify, in_app, fill, open_app, give, take, status]
 
