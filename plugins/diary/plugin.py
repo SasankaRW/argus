@@ -106,18 +106,24 @@ warm, not flowery.
 - "mood": one of great, good, okay, low, rough: how the day felt, from what they said.
 - "people" and "places": the ones they mentioned, as they said them. "tags": up to 4 short lowercase topics.
 - "learned": things they said they learned or found out (each a short sentence, as a note to keep), else empty.
+- "your_edited_entry", when there: the user changed this day's entry themselves. Keep their title and their text
+  word for word, and only add what's new in what they said since (a short paragraph at the end); keep their mood
+  unless the new part clearly changes it.
 Answer in JSON only."""
 
 NUM = re.compile(r"\d+(?:[.,:]\d+)?")
 
 
-def entry_check(said: str):
+def entry_check(said: str, edited: dict | None = None):
     heard = said.lower()
     numbers = set(NUM.findall(said))
+    kept = " ".join(str((edited or {}).get("entry") or "").split())
 
     def check(e: Entry, _inp: Any) -> str | None:
         if not e.entry.strip() or not e.title.strip():
             return "the entry and the title can't be empty"
+        if kept and kept[:200] not in " ".join(e.entry.split()):
+            return "keep the user's own edited text word for word (from \"your_edited_entry\"); only add after it"
         if len(e.entry) > 4000:
             return "the entry is too long: at most 4 short paragraphs"
         extra = [n for n in NUM.findall(e.entry + " " + e.title) if n not in numbers]
@@ -132,12 +138,15 @@ def entry_check(said: str):
     return check
 
 
-def write(ctx: Context, day: dt.date, said: list[dict]) -> Entry:
+def write(ctx: Context, day: dt.date, said: list[dict], edited: dict | None = None) -> Entry:
     """The entry from everything said about `day`, by the chosen writer (Claude by default; local on its own or
-    when Claude can't)."""
+    when Claude can't). `edited`: the entry as you changed it in Life Hub: your text is kept and only added to."""
     text = "\n".join(f"{s.get('at', '')}  {s.get('text', '')}" for s in said)
-    task = {"day": day.isoformat(), "weekday": WEEKDAYS[day.weekday()].title(), "said": text[-12000:]}
-    check = entry_check(text)
+    task: dict[str, Any] = {"day": day.isoformat(), "weekday": WEEKDAYS[day.weekday()].title(), "said": text[-12000:]}
+    if edited:
+        task["your_edited_entry"] = {"title": edited.get("title") or "", "entry": edited.get("entry") or ""}
+    check = entry_check(text + ("\n" + str(edited.get("title") or "") + "\n" + str(edited.get("entry") or "")
+                                if edited else ""), edited)
     if (ctx.config.get("model") or "claude") == "claude":
         try:
             return ctx.claude(WRITE, task, schema=Entry, check=check)
@@ -146,6 +155,9 @@ def write(ctx: Context, day: dt.date, said: list[dict]) -> Entry:
     try:
         return ctx.llm(WRITE, task, schema=Entry, check=check, tiers=ctx.local_tiers(), claude_last=False)
     except EscalationExhausted:  # still something: your words, as said
+        if edited:  # your edited entry, and the new thing said under it
+            return Entry(title=str(edited.get("title") or "My day"), mood=edited.get("mood") or "okay",
+                         entry=f"{str(edited.get('entry') or '').rstrip()}\n\n{said[-1]['text']}".strip())
         first = said[0]["text"] if said else ""
         return Entry(title=" ".join(first.split()[:6]) or "My day",
                      entry="\n\n".join(s["text"] for s in said), mood="okay")
@@ -176,7 +188,12 @@ def as_markdown(day: dt.date, e: dict) -> str:
 def tell_one(ctx: Context, text: str, day: dt.date, at: str, sfx: str = "") -> dict:
     old = ctx.step(f"load{sfx}", call, ctx, "GET", f"/api/diary/{day.isoformat()}", missing_ok=True) or {}
     said = [*(old.get("said") or []), {"at": at, "text": text}]
-    e = ctx.step(f"write{sfx}", lambda: write(ctx, day, said).model_dump())
+    edited = old if old.get("edited_at") else None  # you changed it in Life Hub: your text stays
+    e = ctx.step(f"write{sfx}", lambda: write(ctx, day, said, edited).model_dump())
+    if edited:  # your title, and what you listed, stay too
+        e["title"] = edited.get("title") or e["title"]
+        for k in ("highlights", "people", "places", "tags"):
+            e[k] = [*(edited.get(k) or []), *e[k]]
     entry = {"title": " ".join(e["title"].split())[:80], "entry": e["entry"].strip(),
              "highlights": clean(e["highlights"], 5), "mood": e["mood"] if e["mood"] in MOODS else "okay",
              "people": clean(e["people"], 10, 40), "places": clean(e["places"], 10, 40),

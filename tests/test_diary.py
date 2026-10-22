@@ -170,3 +170,27 @@ def test_claude_writes_it_by_default_and_life_hub_typing_is_taken(tmp_path, monk
         assert lh["diary"][day]["title"] == "Login bug and the gym" and lh["diary"][day]["model"] == "T3"
         assert SAID in (tmp_path / "claude_stdin.txt").read_text(encoding="utf-8")
         assert not ol.requests  # Claude wrote it: nothing asked of the local models
+
+
+def test_an_entry_you_edited_keeps_your_text_and_only_gets_the_new_part(tmp_path, monkeypatch):
+    base, lh = fake_lifehub()
+    argus, _vault = setup(tmp_path, monkeypatch, base)
+    day = dy.which_day("today", dt.datetime.now()).isoformat()
+    mine = "A slow morning. Fixed the login bug after lunch."
+    lh["diary"][day] = {"day": day, "title": "Slow start", "entry": mine, "mood": "okay", "highlights": ["login bug"],
+                        "people": [], "places": [], "tags": ["work"], "said": [{"at": "13:00", "text": "fixed the bug"}],
+                        "edited_at": "2026-10-22T14:00:00Z"}
+    rewritten = {**ENTRY, "title": "Films", "entry": "I watched a film in the evening.", "people": [], "places": [],
+                 "learned": []}
+    kept = {**rewritten, "entry": mine + "\n\nIn the evening I watched a film."}
+    with FakeOllama({MODEL: [rewritten, kept]}) as ol, Server(argus.open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        r = run(cl, w, "tell", text="in the evening I watched a film")
+        assert r["state"] == "succeeded", r["error"]
+        e = lh["diary"][day]
+        assert e["entry"].startswith(mine) and e["entry"].endswith("watched a film.")  # the rewrite was refused
+        assert e["title"] == "Slow start" and e["highlights"][0] == "login bug"  # your title and list stay
+        sent = json.loads(ol.requests[0]["messages"][1]["content"])
+        assert sent["your_edited_entry"]["entry"] == mine

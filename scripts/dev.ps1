@@ -182,6 +182,16 @@ function Token {
 
 function Current-Branch { (git rev-parse --abbrev-ref HEAD).Trim() }
 
+# The tests' scratch folder: a fresh one of ours each run. pytest's own (%TEMP%\pytest-of-<you>) can be left behind
+# by a run as another account (a scheduled task, an admin shell) and then refuses every test with "Access is denied".
+function Test-Temp {
+    $T = Join-Path $env:TEMP ("argus-pytest-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
+    Get-ChildItem $env:TEMP -Directory -Filter "argus-pytest-*" -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-1) } |
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    return $T
+}
+
 switch ($Command) {
     "up" {
         Need-Venv
@@ -286,7 +296,7 @@ switch ($Command) {
         Ensure-Hooks
         Write-Host "Setup done. Next: .\scripts\dev.ps1 test"
     }
-    "test"  { Need-Venv; & $Py -m pytest -q }
+    "test"  { Need-Venv; & $Py -m pytest -q --basetemp (Test-Temp) }
     "lint"  { Need-Venv; & $Py -m ruff check core tests scripts }
     "check" { Need-Venv; & $Py -m argus --check }
     "run"   { Need-Venv; & $Py -m argus }
@@ -454,7 +464,7 @@ switch ($Command) {
             Write-Host "CI here instead of GitHub: lint, every test, the Helios build ..." -ForegroundColor Yellow
             & $Py -m ruff check core tests scripts
             if ($LASTEXITCODE -ne 0) { throw "Lint failed: not merged" }
-            & $Py -m pytest -q -p no:cacheprovider
+            & $Py -m pytest -q -p no:cacheprovider --basetemp (Test-Temp)
             if ($LASTEXITCODE -ne 0) { throw "Tests failed: not merged" }
             if (Get-Command npm -ErrorAction SilentlyContinue) {
                 Push-Location (Join-Path $Root "helios")
