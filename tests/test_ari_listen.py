@@ -110,3 +110,23 @@ def test_accepted_share_adds_the_accepted_languages():
     assert accepted_share(probs, ["en"]) == 0.2
     assert abs(accepted_share(probs, ["en", "si"]) - 0.9) < 1e-9
     assert accepted_share({}, ["en"]) == 0.0
+
+
+def test_the_trained_model_is_used_once_argus_answers_later():
+    from argus.ari_listen import CommandModel
+
+    made = []
+    cmd = CommandModel("small.en", lambda a: "small", lambda name: made.append(name) or (lambda a: name),
+                       start=lambda f: f())
+    assert cmd(b"x") == "small"
+    cmd.use("small.en")
+    assert made == []  # the one in use: nothing to load
+    cmd.use("data/models/whisper-mine")  # Helios says: the model trained on your voice
+    assert cmd(b"x") == "data/models/whisper-mine" and made == ["data/models/whisper-mine"]
+
+    def broken(name):
+        raise OSError("no such model")
+
+    cmd2 = CommandModel("small.en", lambda a: "small", broken, start=lambda f: f())
+    cmd2.use("nope")
+    assert cmd2(b"x") == "small" and cmd2.loading == ""  # keeps the one it has
