@@ -178,8 +178,8 @@ def test_an_entry_you_edited_keeps_your_text_and_only_gets_the_new_part(tmp_path
     day = dy.which_day("today", dt.datetime.now()).isoformat()
     mine = "A slow morning. Fixed the login bug after lunch."
     lh["diary"][day] = {"day": day, "title": "Slow start", "entry": mine, "mood": "okay", "highlights": ["login bug"],
-                        "people": [], "places": [], "tags": ["work"], "said": [{"at": "13:00", "text": "fixed the bug"}],
-                        "edited_at": "2026-10-22T14:00:00Z"}
+                        "people": [], "places": [], "tags": ["work"],
+                        "said": [{"at": "13:00", "text": "fixed the bug"}], "edited_at": "2026-10-22T14:00:00Z"}
     rewritten = {**ENTRY, "title": "Films", "entry": "I watched a film in the evening.", "people": [], "places": [],
                  "learned": []}
     kept = {**rewritten, "entry": mine + "\n\nIn the evening I watched a film."}
