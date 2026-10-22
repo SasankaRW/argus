@@ -21,6 +21,7 @@ import os
 import signal
 import sys
 import threading
+import time
 from pathlib import Path
 
 from .. import __version__
@@ -30,6 +31,22 @@ from .client import ArgusClient, Unreachable
 from .runner import Worker, fast_lane
 
 log = logging.getLogger("argus.worker")
+
+
+def register_patiently(worker, wait_s: float = 600, every_s: float = 15, sleep=time.sleep,
+                       clock=time.monotonic) -> None:
+    """Register, waiting while Argus can't be reached yet (at boot the PC can't resolve the laptop's Tailscale name
+    for a minute or two): instead of exiting and being started again by the supervisor, try every `every_s`."""
+    end = clock() + wait_s
+    while True:
+        try:
+            worker.register()
+            return
+        except Unreachable as e:
+            if clock() >= end:
+                raise
+            log.info("Argus isn't reachable yet; trying again shortly", extra={"error": str(e)[:160]})
+            sleep(every_s)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -88,6 +105,7 @@ def main(argv: list[str] | None = None) -> int:
             worker.register()
             worker.run_once(wait=0)
         else:
+            register_patiently(worker)  # at boot Argus's name (Tailscale) takes a minute or two to resolve
             if not args.no_fast_lane:  # Ari and Ask Argus never wait behind a long job
                 worker.register()
                 lane = fast_lane(worker)

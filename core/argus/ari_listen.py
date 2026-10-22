@@ -409,8 +409,38 @@ def follow_ok(text: str) -> bool:
     return not STRICT["on"] and len(text.split()) <= FOLLOW_MAX_WORDS
 
 
+class CommandModel:
+    """The Whisper that writes down a request, swappable while Ari listens: the trained model named in Helios can
+    only be known once Argus answers, which at boot can take a minute or two (Tailscale's names)."""
+
+    def __init__(self, name: str, t: Callable, make: Callable[[str], Callable], start: Callable | None = None):
+        self.name, self.t, self.make, self.loading = name, t, make, ""
+        self.start = start or (lambda f: threading.Thread(target=f, daemon=True, name="whisper-load").start())
+
+    def __call__(self, audio):
+        return self.t(audio)
+
+    def use(self, name: str) -> None:
+        """Load `name` in the background and switch to it when ready (nothing if it's the one in use)."""
+        if not name or name == self.name or name == self.loading:
+            return
+        self.loading = name
+
+        def load() -> None:
+            try:
+                t = self.make(name)
+                self.name, self.t = name, t
+                log.info("command model ready", extra={"model": name})
+            except Exception as e:  # noqa: BLE001 - keep the one we have
+                log.warning("command model not loaded", extra={"model": name, "error": str(e)[:160]})
+            finally:
+                self.loading = ""
+
+        self.start(load)
+
+
 def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device,
-         lang_t: Callable | None = None) -> int:
+         lang_t: Callable | None = None, on_vocab: Callable[[], None] | None = None) -> int:
     """Talking with Ari: "Hey Ari", then back and forth for a few seconds (voice_live.py says how)."""
     import numpy as np
     import sounddevice as sd  # type: ignore[import-not-found]
@@ -528,9 +558,11 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device,
         while True:
             if time.monotonic() - last > 30:
                 client.here()
-                if time.monotonic() - voc_at[0] > 600:
+                if time.monotonic() - voc_at[0] > (600 if VOCAB else 30):  # not had it yet: ask again soon
                     client.vocabulary()
                     voc_at[0] = time.monotonic()
+                    if VOCAB and on_vocab is not None:
+                        on_vocab()
                 last = time.monotonic()
             check_busy(client, cfg=cfg)
             player.poll()
@@ -838,23 +870,16 @@ def main(argv: list[str] | None = None) -> int:
     client.state("starting", "Ari is starting…")  # the island says so until Ari can hear
     wake_t = whisper(cfg.ari.listen_wake_model, names=False)  # "is this Hey Ari?": not nudged towards "Ari"
     small_cmd = whisper(cfg.ari.listen_wake_model)
-    heard_with = str(VOCAB.get("whisper_model") or cfg.ari.whisper_model)  # Helios > Settings (a trained model)
-    cmd_t = small_cmd
-    if heard_with != cfg.ari.listen_wake_model:
-        # the bigger model loads in the background (~40 s): Ari listens at once, with the small one until then
-        big: dict = {"t": None}
+    cmd = CommandModel(cfg.ari.listen_wake_model, small_cmd, whisper)
+    # Helios > Settings (a model trained on your voice) when Argus answered; argus.yaml's otherwise. The bigger model
+    # loads in the background (~40 s): Ari listens at once, with the small one until then.
+    cmd.use(str(VOCAB.get("whisper_model") or cfg.ari.whisper_model))
 
-        def load_big() -> None:
-            try:
-                big["t"] = whisper(heard_with)
-                log.info("command model ready", extra={"model": heard_with})
-            except Exception as e:  # noqa: BLE001 - keep the small one
-                log.warning("command model not loaded", extra={"model": heard_with, "error": str(e)[:160]})
+    def cmd_t(audio):
+        return cmd(audio)
 
-        threading.Thread(target=load_big, daemon=True, name="whisper-load").start()
-
-        def cmd_t(audio):  # type: ignore[misc]
-            return (big["t"] or small_cmd)(audio)
+    def on_vocab() -> None:  # Argus answered later (at boot it often can't be reached yet): its model after all
+        cmd.use(str(VOCAB.get("whisper_model") or cfg.ari.whisper_model))
     device = int(args.device) if args.device and args.device.isdigit() else args.device
     lang_t = None
     accept = [str(x).strip().lower() for x in (cfg.ari.languages or []) if str(x).strip()]
@@ -863,7 +888,7 @@ def main(argv: list[str] | None = None) -> int:
             lang_t = language_check(str(cfg.ari.language_model), accept)
         except Exception as e:  # noqa: BLE001 - no language check: Ari still listens, as before
             log.warning("no language check", extra={"model": cfg.ari.language_model, "error": str(e)[:160]})
-    return live(cfg, client, wake_t, cmd_t, device, lang_t)
+    return live(cfg, client, wake_t, cmd_t, device, lang_t, on_vocab=on_vocab)
 
 
 if __name__ == "__main__":
