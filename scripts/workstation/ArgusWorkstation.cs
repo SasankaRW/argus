@@ -5,19 +5,23 @@
 // ari.workstation is "child") and starts it again if it closes.
 //
 //   ArgusWorkstation.exe [--log <file>] [--size 1280x800]
-//   ArgusWorkstation.exe --forget          forget the saved Windows password
 //
-// It connects the Remote Desktop control to this PC with ConnectToChildSession. Windows usually signs the child
-// session in by itself. When it doesn't (a Microsoft account signed in with a PIN, for example), the window asks once
-// for your Windows password and keeps it encrypted for your Windows user only (DPAPI) in
-// %LOCALAPPDATA%\Argus\workstation.cred: never in the repo, never sent anywhere but this PC's own sign-in.
+// It connects the Remote Desktop control to this PC with ConnectToChildSession, and Windows signs the child session
+// in with your own sign-in. It never asks for, keeps or types a password or PIN.
+//
+// Your account must never be locked out by it: every sign-in that fails counts as a wrong password for Windows. So it
+// never tries while your session is locked (Windows can't sign Ari in then), waits 2 minutes after a failed try, and
+// makes at most 3 failed tries an hour, counted across restarts in %LOCALAPPDATA%\Argus\workstation-tries.txt
+// (Windows locks an account after 10 by default). After that it waits, saying so in the title, until you unlock the
+// PC or click Connect now (each allows one more try).
 using System;
+using System.Collections.Generic;
 using System.Drawing;
+using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
-using System.Security.Cryptography;
-using System.Text;
 using System.Windows.Forms;
+using Microsoft.Win32;
 
 [ComImport, Guid("302D8188-0052-4807-806A-362B628F9AC5"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 interface IMsRdpExtendedSettings
@@ -36,12 +40,20 @@ class RdpControl : AxHost
 static class Workstation
 {
     const string Title = "Ari's Workstation";
+    const int MaxFailedPerHour = 3;
+    const double AfterFailS = 120, AfterDropS = 30;
     static string logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "workstation.log");
-    static readonly string credPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Argus", "workstation.cred");
+    static readonly string triesPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Argus", "workstation-tries.txt");
+    static bool lockedByEvent;
 
     [DllImport("wtsapi32.dll")]
     static extern bool WTSIsChildSessionsEnabled(out bool enabled);
+    [DllImport("wtsapi32.dll")]
+    static extern bool WTSQuerySessionInformationW(IntPtr server, int sessionId, int infoClass, out IntPtr buffer,
+                                                   out int bytes);
+    [DllImport("wtsapi32.dll")]
+    static extern void WTSFreeMemory(IntPtr memory);
 
     static void Log(string msg)
     {
@@ -49,43 +61,55 @@ static class Workstation
         catch { }
     }
 
-    static string LoadPassword()
+    // Is your session locked? Windows' session flags (WTSSessionInfoEx: 0 locked, 1 unlocked), and the lock and
+    // unlock events seen since the window opened. Either one saying locked is enough.
+    static bool Locked()
     {
+        if (lockedByEvent) return true;
+        IntPtr buf;
+        int bytes;
+        const int WTSSessionInfoEx = 25, WTS_CURRENT_SESSION = -1;
+        if (!WTSQuerySessionInformationW(IntPtr.Zero, WTS_CURRENT_SESSION, WTSSessionInfoEx, out buf, out bytes))
+            return false;
         try
         {
-            if (File.Exists(credPath))
-                return Encoding.UTF8.GetString(ProtectedData.Unprotect(File.ReadAllBytes(credPath), null,
-                                                                       DataProtectionScope.CurrentUser));
+            // WTSINFOEXW: Level (4 bytes), padding to 8, then WTSINFOEX_LEVEL1_W: SessionId, SessionState, SessionFlags
+            return bytes >= 20 && Marshal.ReadInt32(buf, 0) == 1 && Marshal.ReadInt32(buf, 16) == 0;
         }
-        catch (Exception e) { Log("couldn't read the saved password: " + e.Message); }
-        return null;
+        finally { WTSFreeMemory(buf); }
     }
 
-    static void SavePassword(string pw)
+    // Failed tries in the last hour, kept across restarts of this window.
+    static List<DateTime> FailedTries()
     {
+        var out_ = new List<DateTime>();
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(credPath));
-            File.WriteAllBytes(credPath, ProtectedData.Protect(Encoding.UTF8.GetBytes(pw), null,
-                                                                DataProtectionScope.CurrentUser));
+            if (File.Exists(triesPath))
+                foreach (var line in File.ReadAllLines(triesPath))
+                {
+                    DateTime t;
+                    if (DateTime.TryParse(line, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out t) &&
+                        DateTime.UtcNow - t < TimeSpan.FromHours(1))
+                        out_.Add(t);
+                }
         }
-        catch (Exception e) { Log("couldn't save the password: " + e.Message); }
+        catch (Exception e) { Log("couldn't read the failed tries: " + e.Message); }
+        return out_;
     }
 
-    static string AskPassword(string account)
+    static void NoteFailedTry()
     {
-        var d = new Form { Text = Title + ": sign in once", Width = 460, Height = 200, StartPosition = FormStartPosition.CenterScreen,
-                           FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false, TopMost = true };
-        var text = new Label { Left = 12, Top = 12, Width = 420, Height = 48,
-                               Text = "Windows didn't sign Ari's session in by itself. Your Windows password for " + account +
-                                      " (kept encrypted for your Windows user only, on this PC):" };
-        var box = new TextBox { Left = 12, Top = 66, Width = 420, UseSystemPasswordChar = true };
-        var ok = new Button { Text = "Sign in", Left = 252, Top = 104, Width = 86, DialogResult = DialogResult.OK };
-        var no = new Button { Text = "Cancel", Left = 346, Top = 104, Width = 86, DialogResult = DialogResult.Cancel };
-        d.Controls.AddRange(new Control[] { text, box, ok, no });
-        d.AcceptButton = ok;
-        d.CancelButton = no;
-        return d.ShowDialog() == DialogResult.OK && box.Text.Length > 0 ? box.Text : null;
+        var tries = FailedTries();
+        tries.Add(DateTime.UtcNow);
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(triesPath));
+            var lines = new List<string>();
+            foreach (var t in tries) lines.Add(t.ToString("o", CultureInfo.InvariantCulture));
+            File.WriteAllLines(triesPath, lines.ToArray());
+        }
+        catch (Exception e) { Log("couldn't keep the failed try: " + e.Message); }
     }
 
     [STAThread]
@@ -101,12 +125,6 @@ static class Workstation
                 int.TryParse(wh[0], out width);
                 if (wh.Length > 1) int.TryParse(wh[1], out height);
             }
-            else if (args[i] == "--forget")
-            {
-                try { File.Delete(credPath); } catch { }
-                Console.WriteLine("Forgot the saved password.");
-                return 0;
-            }
         }
         bool on;
         if (!WTSIsChildSessionsEnabled(out on) || !on)
@@ -116,27 +134,43 @@ static class Workstation
         }
 
         Application.EnableVisualStyles();
-        string account = Environment.MachineName + "\\" + Environment.UserName;
-        string pw = LoadPassword();
-        bool asked = false;
-
         var form = new Form { Text = Title, ClientSize = new Size(width, height) };
         var rdp = new RdpControl { Dock = DockStyle.Fill };
+        var menu = new MenuStrip { Dock = DockStyle.Top };
+        var again = new ToolStripMenuItem("Connect now");
+        menu.Items.Add(again);
         form.Controls.Add(rdp);
+        form.Controls.Add(menu);
+        form.MainMenuStrip = menu;
+        rdp.BringToFront();  // the menu takes the top, the session the rest
         form.Show();
         rdp.CreateControl();
         dynamic ocx = rdp.Ocx;
+
+        int last = -1;
+        bool trying = false, upThisTry = false, waitingForYou = false, oneMore = false, seenBusy = false;
+        DateTime nextTry = DateTime.Now, tryStarted = DateTime.Now, connectedAt = DateTime.Now;
+        string why = "";
+
+        SystemEvents.SessionSwitch += (s, e) =>
+        {
+            if (e.Reason == SessionSwitchReason.SessionLock) { lockedByEvent = true; Log("your session locked: no tries until it's unlocked"); }
+            if (e.Reason == SessionSwitchReason.SessionUnlock)
+            {
+                lockedByEvent = false;
+                waitingForYou = false;  // you're back: one more try is fine
+                oneMore = true;
+                nextTry = DateTime.Now.AddSeconds(5);
+                Log("your session unlocked");
+            }
+        };
+        again.Click += (s, e) => { waitingForYou = false; oneMore = true; nextTry = DateTime.Now; };
 
         Action connect = () =>
         {
             try
             {
                 ocx.Server = "localhost";
-                if (pw != null)
-                {
-                    ocx.UserName = account;
-                    ocx.AdvancedSettings2.ClearTextPassword = pw;
-                }
                 ocx.DesktopWidth = width;
                 ocx.DesktopHeight = height;
                 try { ocx.AdvancedSettings2.SmartSizing = true; } catch { }
@@ -144,17 +178,21 @@ static class Workstation
                 try { ocx.AdvancedSettings7.EnableCredSspSupport = true; } catch { }
                 object yes = true;
                 ((IMsRdpExtendedSettings)rdp.Ocx).put_Property("ConnectToChildSession", ref yes);
-                Log("connecting" + (pw != null ? " as " + account : " (Windows signs in by itself)"));
+                Log("connecting (Windows signs Ari in with your own sign-in)");
+                trying = true;
+                upThisTry = false;
+                seenBusy = false;
+                tryStarted = DateTime.Now;
                 ocx.Connect();
             }
-            catch (Exception e) { Log("couldn't connect: " + e.Message); }
+            catch (Exception e)
+            {
+                trying = false;
+                nextTry = DateTime.Now.AddSeconds(AfterFailS);
+                Log("couldn't connect: " + e.Message);
+            }
         };
 
-        // The control connects in the background: watch its state, connect again when it drops, and ask for the
-        // password once if Windows can't sign the session in by itself.
-        int last = -1, failures = 0;
-        bool upThisTry = false;
-        DateTime lastTry = DateTime.Now;
         var timer = new Timer { Interval = 2000 };
         timer.Tick += delegate
         {
@@ -164,30 +202,41 @@ static class Workstation
             if (state != last)
             {
                 Log("state " + (state == 1 ? "connected" : state == 2 ? "connecting" : "not connected"));
-                form.Text = state == 1 ? Title : Title + (state == 2 ? " (connecting...)" : " (not connected)");
-                if (state == 1) { upThisTry = true; failures = 0; }
-                if (state == 0 && last != -1 && !upThisTry) failures++;
+                if (state == 1) { upThisTry = true; connectedAt = DateTime.Now; }
                 last = state;
             }
-            if (state != 0) return;
-            double wait = failures >= 6 ? 60 : 5;  // keeps failing: once a minute
-            if ((DateTime.Now - lastTry).TotalSeconds < wait) return;
-            if (failures >= 2 && pw == null && !asked)
+            // A try has ended when the control is back to "not connected" after showing "connecting" or "connected", or
+            // 15 s after it started without showing either (a quick failure between two looks still counts as failed).
+            if (trying && state == 0 && (seenBusy || (DateTime.Now - tryStarted).TotalSeconds > 15))
             {
-                asked = true;
-                pw = AskPassword(account);
-                if (pw != null) { SavePassword(pw); failures = 0; }
+                trying = false;
+                // "Connected" is only the connection: a sign-in that then fails drops it within about 30 s. Up for
+                // 2 minutes or more means Ari was in and it dropped later: try again soon, it doesn't count.
+                if (upThisTry && (DateTime.Now - connectedAt).TotalSeconds >= 120) nextTry = DateTime.Now.AddSeconds(AfterDropS);
+                else
+                {
+                    NoteFailedTry();  // the sign-in failed: Windows counts it
+                    nextTry = DateTime.Now.AddSeconds(AfterFailS);
+                    Log("the sign-in failed (" + FailedTries().Count + " in the last hour, at most " + MaxFailedPerHour + ")");
+                }
             }
-            else if (failures == 4 && pw != null)
+            if (trying && state != 0) seenBusy = true;
+            if (trying) { form.Text = state == 1 ? Title : Title + " (connecting...)"; return; }
+            if (state != 0) { form.Text = Title; return; }  // connected (a try that already counted as up)
+
+            if (Locked()) why = "your PC is locked";
+            else if (waitingForYou) why = "Windows didn't sign Ari in; Connect now tries again";
+            else if (!oneMore && FailedTries().Count >= MaxFailedPerHour)
             {
-                Log("still can't sign in with the saved password: run ArgusWorkstation.exe --forget and try again");
+                why = "Windows didn't sign Ari in; Connect now tries again";
+                if (!waitingForYou) Log("stopped: " + MaxFailedPerHour + " failed sign-ins in the last hour");
+                waitingForYou = true;
             }
-            lastTry = DateTime.Now;
-            upThisTry = false;
-            connect();
+            else if (DateTime.Now < nextTry) why = "trying again soon";
+            else { why = ""; oneMore = false; connect(); }
+            form.Text = Title + " (not connected" + (why != "" ? ": " + why : "") + ")";
         };
         timer.Start();
-        connect();
         Application.Run(form);
         return 0;
     }

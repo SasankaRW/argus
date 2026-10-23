@@ -344,8 +344,9 @@ daily cap.
   argus.yaml and `.\scripts\pc-worker.ps1 restart`. An "Ari's Workstation" window holds Ari's own Windows session
   (`python -m argus.child_session status` says if it's on); Ari's app and browser tasks run in there and never touch
   your windows. Install also allows Remote Desktop to the PC itself and builds the window
-  (`data\workstation\ArgusWorkstation.exe`); if Windows can't sign Ari's session in by itself, the window asks once
-  for your Windows password (kept encrypted for your user; `ArgusWorkstation.exe --forget`). Limits (Windows'):
+  (`data\workstation\ArgusWorkstation.exe`). Windows signs Ari's session in with your own sign-in (no password or PIN
+  is kept); a failed sign-in counts as a wrong password, so the window never tries while your PC is locked and makes
+  at most 3 failed tries an hour, then waits for "Connect now" (log: `logs/workstation-window.log`). Limits (Windows'):
   one child session at a time, your startup apps start in it too, some apps refuse to run twice, the clipboard is
   shared. `workstation-setup.ps1 remove` and `workstation: desktop` go back.
 - **Ari's eyes in apps (the vision model, V1)**: find the best one on your own apps:
