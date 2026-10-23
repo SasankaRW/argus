@@ -25,7 +25,8 @@ def test_health_and_version(tmp_path):
         assert body["status"] == "ok" and body["version"] == __version__
         assert body["database"]["schema_version"] >= 1
         assert body["watchdog"]["alive"] is True
-        assert client.get("/version").json()["version"] == __version__
+        v = client.get("/version").json()
+        assert v["version"] == __version__ and "commit" in v
 
 
 def test_home_page(tmp_path):
