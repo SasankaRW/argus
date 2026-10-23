@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, ArgusEvent } from "./api";
 import { ago, shortId } from "./format";
 import type { Selection } from "./MapView";
+import { Empty, Skeleton } from "./kit";
 
 export type QItem = { id: string; plugin: string; workflow: string; state: string; priority: number; attempt: number;
   max_attempts: number; created_at: number; updated_at: number; needs: string[]; model: string | null; window: string | null;
@@ -62,37 +63,41 @@ export function QueueView({ events, onSelect }: { events: ArgusEvent[]; onSelect
     try { await api(`/jobs/${id}/cancel`, { method: "POST", body: JSON.stringify({ reason: "cancelled in Helios" }) }); }
     finally { setBusy(null); }
   };
-  if (!q) return <section className="panel queue"><div className="tip" style={{ padding: 18 }}>Loading…</div></section>;
-  const row = (j: QItem, right: React.ReactNode, sub: string, cls = "") => (
-    <div key={j.id} className={`qrow ${cls}`}>
+  if (!q) return <div className="lanes">{[0, 1, 2].map((i) => <Skeleton key={i} rows={3} />)}</div>;
+  const card = (j: QItem, right: React.ReactNode, sub: string, cls = "") => (
+    <div key={j.id} className={`qcard ${cls}`}>
       <button type="button" className="qmain" onClick={() => onSelect({ type: "job", id: j.id })}>
         <span className="w mono">{j.plugin}.<b>{j.workflow}</b></span>
         <span className="sub">{sub}</span>
       </button>
-      <span className="pill mono">{prio(j.priority)}</span>
-      {right}
+      <div className="qmeta">
+        <span className="pill mono">{prio(j.priority)}</span>
+        {right}
+      </div>
     </div>
   );
-  return (
-    <section className="panel queue" aria-label="Queue">
-      <div className="ph">
-        <span className="pt">Queue</span>
-        <span className="muted">{q.running.length} running · {q.queued.length} queued · {q.waiting.length} waiting for you
-          {q.gpu_model ? ` · GPU: ${q.gpu_model}` : ""} · {q.workers_online} worker{q.workers_online === 1 ? "" : "s"} online</span>
-      </div>
-      <div className="qbody">
-        <div className="sect">Running</div>
-        {q.running.length === 0 && <div className="tip">Nothing running.</div>}
-        {q.running.map((j) => row(j, <span className="t mono">{elapsed(j.since)}</span>,
-          `${j.worker ?? "?"}${j.step ? ` · ${j.step}` : ""}${j.attempt > 1 ? ` · try ${j.attempt}` : ""}`, "on"))}
-        {q.waiting.length > 0 && <div className="sect">Waiting for you</div>}
-        {q.waiting.map((j) => row(j, <span className="t mono">{ago(j.updated_at)}</span>, `waits for ${waitText(j)}`, "wait"))}
-        <div className="sect">Up next</div>
-        {q.queued.length === 0 && <div className="tip">The queue is empty.</div>}
-        {q.queued.map((j) => row(j,
-          <button type="button" className="btn" disabled={busy === j.id} onClick={() => cancel(j.id)}>Cancel</button>,
-          `#${j.position} · ${whyText(j)} · queued ${ago(j.created_at)} · ${shortId(j.id)}`, j.why === "next" ? "next" : ""))}
-      </div>
+  const lane = (title: string, cls: string, n: number, body: React.ReactNode, empty: string) => (
+    <section className={`panel lane ${cls}`} aria-label={title}>
+      <div className="lane-h"><i /><span>{title}</span><b className="mono">{n}</b></div>
+      <div className="lane-b">{n === 0 ? <Empty title={empty} /> : body}</div>
     </section>
+  );
+  return (
+    <div className="queuepage fillp">
+      <div className="chips">
+        <span className="chipx"><i className="flow" />GPU <b>{q.gpu_model ?? "idle"}</b></span>
+        <span className="chipx"><i className="ok" /><b>{q.workers_online}</b> worker{q.workers_online === 1 ? "" : "s"} online</span>
+      </div>
+      <div className="lanes">
+        {lane("Running", "lane-run", q.running.length, q.running.map((j) => card(j,
+          <span className="t mono">{elapsed(j.since)}</span>,
+          `${j.worker ?? "?"}${j.step ? ` · ${j.step}` : ""}${j.attempt > 1 ? ` · try ${j.attempt}` : ""}`, "on")), "Nothing running")}
+        {lane("Waiting for you", "wait", q.waiting.length, q.waiting.map((j) => card(j,
+          <span className="t mono">{ago(j.updated_at)}</span>, `waits for ${waitText(j)}`, "wait")), "Nothing waiting")}
+        {lane("Up next", "next", q.queued.length, q.queued.map((j) => card(j,
+          <button type="button" className="btn mini" disabled={busy === j.id} onClick={() => cancel(j.id)}>Cancel</button>,
+          `#${j.position} · ${whyText(j)} · queued ${ago(j.created_at)} · ${shortId(j.id)}`, j.why === "next" ? "next" : "")), "The queue is empty")}
+      </div>
+    </div>
   );
 }

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, ArgusEvent } from "./api";
 import { ApprovalCard } from "./Inspector";
 import { CallLog } from "./Calls";
+import { Empty, Skeleton } from "./kit";
 
 function ago(t: number) {
   const s = Date.now() / 1000 - t;
@@ -35,22 +36,22 @@ export function NotificationsView({ events }: { events: ArgusEvent[] }) {
   const ph = d?.phone;
   return (
     <section className="panel inboxp" aria-label="Notifications">
-      <div className="ph">
-        <span className="pt">notifications</span>
-        <span className="muted">
+      <div className="toolbar">
+        <div className="seg" role="group" aria-label="Show">
+          {["all", "important", "waiting", "delivered"].map((k) => (
+            <button key={k} type="button" aria-pressed={only === k} onClick={() => setOnly(k)}>{k}</button>
+          ))}
+        </div>
+        <span className="count">
           {ph?.connected ? `phone connected${ph.device ? ` · ${ph.device}` : ""}` : ph?.last_seen ? `phone last seen ${ago(ph.last_seen)} ago` : "phone not connected yet"}
           {waiting ? ` · ${waiting} waiting for it` : ""}
         </span>
-        <div className="tools seg-f">
-          {["all", "important", "waiting", "delivered"].map((k) => (
-            <button key={k} type="button" className="btn" aria-pressed={only === k} onClick={() => setOnly(k)}>{k}</button>
-          ))}
-          <button type="button" className="btn" onClick={test}>send test</button>
-        </div>
+        <div className="tools"><button type="button" className="btn" onClick={test}>Send a test</button></div>
       </div>
       <div className="ibody">
         {msg && <div className="empty-note">$ {msg}</div>}
-        {d && items.length === 0 && <div className="empty-note">$ nothing here yet. Approvals, failures and reminders show up here and on the phone.</div>}
+        {!d && <Skeleton rows={4} />}
+        {d && items.length === 0 && <Empty title="Nothing here yet" hint="Approvals, failures and reminders show up here and on the phone." />}
         {items.map((n) => (
           <div key={n.id} className="irow">
             <div className="irow-h">
@@ -77,13 +78,7 @@ type InboxItem = { kind: "approval" | "lesson" | "question"; id: string | number
   text?: string; chat?: string | null; evals?: { before?: Score; after?: Score } | null; at: number };
 export type InboxData = { items: InboxItem[]; counts: Record<string, number> };
 
-// How many things wait for you (the nav badge), refreshed when approvals, lessons or Ari change.
-export function useInboxCount(events: ArgusEvent[]): number {
-  const [n, setN] = useState(0);
-  const last = events.filter((e) => /^(approval|ari|lesson|guidance)\./.test(e.kind)).map((e) => e.seq).pop() ?? 0;
-  useEffect(() => { api<InboxData>("/inbox").then((d) => setN(d.items.length)).catch(() => {}); }, [last]);
-  return n;
-}
+export { useInboxCount } from "./inboxCount";
 
 export function InboxView({ events, onOpenChat }: { events: ArgusEvent[]; onOpenChat: (conv: string) => void }) {
   const [d, setD] = useState<InboxData | null>(null);
@@ -101,19 +96,19 @@ export function InboxView({ events, onOpenChat }: { events: ArgusEvent[]; onOpen
   const label: Record<string, string> = { approval: "approvals", lesson: "lessons", question: "ari asks" };
   return (
     <section className="panel inboxp" aria-label="Inbox">
-      <div className="ph">
-        <span className="pt">inbox</span>
-        <span className="muted">{d ? (d.items.length ? `${d.items.length} waiting for you` : "nothing waits for you") : "…"}</span>
-        <div className="tools seg-f">
+      <div className="toolbar">
+        <div className="seg" role="group" aria-label="Show">
           {["all", "approval", "lesson", "question"].map((k) => (
-            <button key={k} type="button" className="btn" aria-pressed={only === k} onClick={() => setOnly(k)}>
-              {k === "all" ? "all" : label[k]}{k !== "all" && d?.counts[k] ? ` ${d.counts[k]}` : ""}
+            <button key={k} type="button" aria-pressed={only === k} onClick={() => setOnly(k)}>
+              {k === "all" ? "all" : label[k]}{k !== "all" && d?.counts[k] ? <span className="segn">{d.counts[k]}</span> : null}
             </button>
           ))}
         </div>
+        <span className="count">{d ? (d.items.length ? `${d.items.length} waiting for you` : "nothing waits for you") : "…"}</span>
       </div>
       <div className="ibody">
-        {d && items.length === 0 && <div className="empty-note">$ nothing here. Argus asks when it needs you.</div>}
+        {!d && <Skeleton rows={4} />}
+        {d && items.length === 0 && <Empty title="All clear" hint="Argus asks when it needs you." />}
         {items.map((i) => {
           const key = `${i.kind}:${i.id}`;
           return (
@@ -196,9 +191,8 @@ export function SettingsView() {
   return (
     <div className="setp">
       <section className="panel">
-        <div className="ph">
-          <span className="pt">settings</span>
-          <span className="muted">argus.yaml is the base; what you change here wins, and is kept</span>
+        <div className="toolbar sticky">
+          <span className="count" style={{ marginLeft: 0 }}>argus.yaml is the base; what you change here wins, and is kept</span>
           <div className="tools">
             {saved && <span className="ok mono">saved ✓</span>}
             <button type="button" className="btn" disabled={!dirty} onClick={() => setDraft({})}>undo</button>
@@ -206,6 +200,7 @@ export function SettingsView() {
           </div>
         </div>
         {err && <div className="tip bad setp-err">{err}</div>}
+        {!rows && !err && <Skeleton rows={6} />}
         <div className="setgrid">
           {Object.entries(groups).map(([g, list]) => (
             <div key={g} className="setgroup">

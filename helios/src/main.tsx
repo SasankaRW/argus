@@ -5,12 +5,13 @@ import "@fontsource/geist-mono/latin-400.css";
 import "@fontsource/geist-mono/latin-500.css";
 import "@xyflow/react/dist/style.css";
 import "./styles.css";
+import "./kit.css";
 
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { adoptTokenFromUrl } from "./api";
 import { App } from "./App";
-import { currentConv } from "./AriView";
+import { currentConv } from "./conv";
 
 adoptTokenFromUrl();
 // Opened from the phone app's shortcuts: /helios/?app=1&mic=1#ari = Talk to Ari (the mic starts in the current chat).

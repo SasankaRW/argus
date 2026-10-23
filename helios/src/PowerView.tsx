@@ -202,14 +202,19 @@ export function GameControls({ events }: { events: ArgusEvent[] }) {
 }
 
 export function PowerView({ events, onSelect }: { events: ArgusEvent[]; onSelect: (s: Selection) => void }) {
-  return (
-    <section className="panel powerpage" aria-label="Power">
-      <div className="ph"><span className="pt">Power</span><span className="muted">the PC and the laptop: wake, sleep, restart, shut down</span></div>
-      <div className="qbody"><PowerControls events={events} onSelect={onSelect} /></div>
-      <div className="qbody"><div className="sect">The laptop</div><LaptopControls events={events} /></div>
-      <div className="qbody"><div className="sect">Game mode</div><GameControls events={events} /></div>
-      <div className="qbody"><div className="sect">Your phone</div><FindPhone /></div>
+  const card = (title: string, sub: string, body: React.ReactNode, cls = "") => (
+    <section className={`panel dcard ${cls}`} aria-label={title}>
+      <div className="toolbar"><span className="tlabel">{title}</span><span className="count">{sub}</span></div>
+      <div className="dcard-b">{body}</div>
     </section>
+  );
+  return (
+    <div className="devgrid">
+      {card("Desktop PC", "wake, sleep, restart, shut down", <PowerControls events={events} onSelect={onSelect} />, "wide")}
+      {card("Laptop", "the Argus server", <LaptopControls events={events} />)}
+      {card("Game mode", "free the GPU for a game", <GameControls events={events} />)}
+      {card("Your phone", "find it", <FindPhone />)}
+    </div>
   );
 }
 

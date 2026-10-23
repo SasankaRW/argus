@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { api, ArgusEvent, Job } from "./api";
 import { ago, shortId, tone } from "./format";
 import type { Selection } from "./MapView";
+import { Empty } from "./kit";
 
-const STATES = ["", "running", "queued", "waiting", "succeeded", "retry", "dead", "cancelled"];
+const STATES: [string, string][] = [["", "All"], ["running", "Running"], ["queued", "Queued"], ["waiting", "Waiting"], ["succeeded", "Done"], ["retry", "Retry"], ["dead", "Failed"], ["cancelled", "Cancelled"]];
 const PAGE = 100;
 
 function took(j: Job): string {
@@ -73,23 +74,26 @@ export function RunsView({ events, selected, onSelect }: { events: ArgusEvent[];
 
   const names = Array.from(new Set([...plugins, ...(jobs ?? []).map((j) => j.plugin)])).sort();
   return (
-    <section className="panel runs" aria-label="Runs">
-      <div className="ph">
-        <span className="pt">Runs</span>
+    <section className="panel runs fillp" aria-label="Runs">
+      <div className="toolbar">
+        <div className="seg" role="group" aria-label="State">
+          {STATES.map(([v, l]) => <button key={v} type="button" aria-pressed={state === v} onClick={() => setState(v)}>{l}</button>)}
+        </div>
         <select value={plugin} onChange={(e) => setPlugin(e.target.value)} aria-label="Plugin">
           <option value="">All plugins</option>
           {names.map((p) => <option key={p} value={p}>{p}</option>)}
         </select>
-        <select value={state} onChange={(e) => setState(e.target.value)} aria-label="State">
-          {STATES.map((s) => <option key={s} value={s}>{s || "Any state"}</option>)}
-        </select>
-        <span className="muted">{jobs ? `${jobs.length}${more ? "+" : ""} runs` : "loading…"}</span>
+        <span className="count mono">{jobs ? `${jobs.length}${more ? "+" : ""} runs` : "loading…"}</span>
       </div>
-      {err && <div className="tip bad" style={{ padding: "0 18px" }}>{err}</div>}
+      {err && <div className="tip bad" style={{ padding: "8px 18px" }}>{err}</div>}
+      <div className="thead run" aria-hidden="true">
+        <span>when</span><span>run</span><span>state</span><span>result</span><span>took</span><span className="hide-sm">id</span>
+      </div>
       <div className="runlist">
-        {jobs?.length === 0 && <div className="tip" style={{ padding: "8px 18px" }}>No runs match.</div>}
+        {jobs === null && Array.from({ length: 8 }, (_, i) => <div key={i} className="skel-row" />)}
+        {jobs?.length === 0 && <Empty title="No runs match" hint="Try another state or plugin." />}
         {jobs?.map((j) => (
-          <button key={j.id} type="button" className="run" aria-current={selected === j.id ? "true" : undefined}
+          <button key={j.id} type="button" className={`run st-${tone("job." + j.state) || "idle"}`} aria-current={selected === j.id ? "true" : undefined}
             onClick={() => onSelect({ type: "job", id: j.id })}>
             <span className="t mono">{ago(j.created_at)}</span>
             <span className="w mono">{j.plugin}.<b>{j.workflow}</b></span>
@@ -99,7 +103,7 @@ export function RunsView({ events, selected, onSelect }: { events: ArgusEvent[];
             <span className="t mono hide-sm">{shortId(j.id)}</span>
           </button>
         ))}
-        {more && <button type="button" className="btn" style={{ margin: "6px 12px" }} onClick={older}>Older runs</button>}
+        {more && <button type="button" className="btn more" onClick={older}>Older runs</button>}
       </div>
     </section>
   );

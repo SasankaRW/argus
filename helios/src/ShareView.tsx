@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Empty, Skeleton } from "./kit";
 import { api, getToken } from "./api";
 
 type Target = { plugin: string; name: string; workflow: string; label: string; accepts: string[] };
@@ -34,6 +35,7 @@ async function clearShared() {
 export function ShareView({ onJob, onDone }: { onJob: (id: string) => void; onDone: () => void }) {
   const [targets, setTargets] = useState<Target[] | null>(null);
   const [items, setItems] = useState<Item[]>([]);
+  const [drag, setDrag] = useState(false);
   const [title, setTitle] = useState("");
   const [url, setUrl] = useState("");
   const [text, setText] = useState("");
@@ -111,51 +113,62 @@ export function ShareView({ onJob, onDone }: { onJob: (id: string) => void; onDo
   }
 
   return (
-    <section className="panel share" aria-label="Share">
-      <div className="ph"><span className="pt">Share</span>
-        <span className="muted">{fromPhone ? "from your phone's share menu" : "send files, a link or text to Argus"}</span>
-      </div>
-      <div className="share-body">
-        <div className="share-items">
-          {items.map((i, n) => (
-            <div key={n} className="sitem">
-              {i.preview ? <img src={i.preview} alt="" /> : <div className="ficon mono">{(i.name.split(".").pop() ?? "").slice(0, 4).toUpperCase()}</div>}
-              <div className="sinfo"><span className="mono">{i.name}</span><span className="muted">{kb(i.size)}</span></div>
-              <button type="button" className="btn" onClick={() => setItems(items.filter((_, k) => k !== n))} aria-label={`Remove ${i.name}`}>×</button>
-            </div>
-          ))}
-          <label className="btn addfiles">
-            + Add files
+    <div className="sharegrid">
+      <section className="panel" aria-label="What to send">
+        <div className="toolbar"><span className="tlabel">Compose</span>
+          <span className="count">{fromPhone ? "from your phone's share menu" : "files, a link or text"}</span></div>
+        <div className="share-body">
+          <label className={`dropzone${drag ? " over" : ""}`}
+            onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)}
+            onDrop={(e) => { e.preventDefault(); setDrag(false); addFiles(e.dataTransfer.files); }}>
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 15V3M7 8l5-5 5 5M5 13v6h14v-6" /></svg>
+            <b>Drop files here</b><span>or click to pick them</span>
             <input type="file" multiple hidden onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
           </label>
+          {items.length > 0 && (
+            <div className="share-items">
+              {items.map((i, n) => (
+                <div key={n} className="sitem">
+                  {i.preview ? <img src={i.preview} alt="" /> : <div className="ficon mono">{(i.name.split(".").pop() ?? "").slice(0, 4).toUpperCase()}</div>}
+                  <div className="sinfo"><span className="mono">{i.name}</span><span className="muted">{kb(i.size)}</span></div>
+                  <button type="button" className="btn mini" onClick={() => setItems(items.filter((_, k) => k !== n))} aria-label={`Remove ${i.name}`}>×</button>
+                </div>
+              ))}
+            </div>
+          )}
+          <label className="fld"><span>Link</span><input type="url" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://" /></label>
+          <label className="fld"><span>Title</span><input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="optional" /></label>
+          <label className="fld"><span>Text</span><textarea rows={4} value={text} onChange={(e) => setText(e.target.value)} placeholder="optional" /></label>
+          <label className="fld"><span>Note</span><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="optional, for you or the plugin" /></label>
         </div>
-        <label className="fld"><span>Link</span><input type="url" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://" /></label>
-        <label className="fld"><span>Title</span><input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="optional" /></label>
-        <label className="fld"><span>Text</span><textarea rows={3} value={text} onChange={(e) => setText(e.target.value)} placeholder="optional" /></label>
-        <label className="fld"><span>Note</span><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="optional, for you or the plugin" /></label>
-
-        <div className="sect">Send to</div>
-        {targets === null && <div className="tip">Loading…</div>}
-        {targets && fits.length === 0 && (
-          <div className="tip">{kinds.size ? "No plugin takes this kind of item yet." : "Add a file, a link or some text."}</div>
-        )}
-        <div className="targets">
-          {fits.map((t) => {
-            const id = `${t.plugin}.${t.workflow}`;
-            return (
-              <label key={id} className={`target${chosen && id === `${chosen.plugin}.${chosen.workflow}` ? " on" : ""}`}>
-                <input type="radio" name="target" checked={!!chosen && id === `${chosen.plugin}.${chosen.workflow}`} onChange={() => setPick(id)} />
-                <span><b>{t.label}</b><span className="muted"> · {t.name}</span></span>
-              </label>
-            );
-          })}
+      </section>
+      <section className="panel sendto" aria-label="Send to">
+        <div className="toolbar"><span className="tlabel">Send to</span><span className="count">{fits.length} fit</span></div>
+        <div className="share-body">
+          {targets === null && <Skeleton rows={3} />}
+          {targets && fits.length === 0 && (
+            <Empty title={kinds.size ? "No plugin takes this yet" : "Nothing to send yet"} hint={kinds.size ? undefined : "Add a file, a link or some text."} />
+          )}
+          <div className="targets">
+            {fits.map((t) => {
+              const id = `${t.plugin}.${t.workflow}`;
+              const on = !!chosen && id === `${chosen.plugin}.${chosen.workflow}`;
+              return (
+                <label key={id} className={`target${on ? " on" : ""}`}>
+                  <input type="radio" name="target" checked={on} onChange={() => setPick(id)} />
+                  <span className="tg-t"><b>{t.label}</b><span className="muted">{t.name}</span></span>
+                  <span className="tg-k mono">{t.accepts.join(" · ")}</span>
+                </label>
+              );
+            })}
+          </div>
+          {err && <div className="tip bad">{err}</div>}
+          <div className="appr-actions">
+            {(fromPhone || items.length > 0) && <button type="button" className="btn" disabled={busy} onClick={reset}>Discard</button>}
+            <button type="button" className="btn primary-btn" disabled={busy || !chosen} onClick={send}>{busy ? "Sending…" : chosen ? `Send to ${chosen.label}` : "Send"}</button>
+          </div>
         </div>
-        {err && <div className="tip bad">{err}</div>}
-        <div className="appr-actions">
-          <button type="button" className="btn primary-btn" disabled={busy || !chosen} onClick={send}>{busy ? "Sending…" : "Send"}</button>
-          {(fromPhone || items.length > 0) && <button type="button" className="btn" disabled={busy} onClick={reset}>Discard</button>}
-        </div>
-      </div>
-    </section>
+      </section>
+    </div>
   );
 }
