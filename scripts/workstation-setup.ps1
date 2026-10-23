@@ -61,7 +61,7 @@ switch ($Command) {
         if (Test-Path $Link) { Remove-Item $Link -Force }
         Write-Host "[ok] removed the Startup entry. Set ari.workstation: desktop in argus.yaml and restart."
         Write-Host "(Child sessions and Remote Desktop stay allowed in Windows; turn Remote Desktop off in Settings > System if you don't use it.)"
-        Write-Host "The saved Windows password, if the window asked for one: data\workstation\ArgusWorkstation.exe --forget"
+        Get-Process ArgusWorkstation -ErrorAction SilentlyContinue | Stop-Process -Force
     }
     default { throw "install, status or remove" }
 }

@@ -14,8 +14,11 @@ second desktop worker. While that worker is online, argusd sends the Workstation
 to your desktop worker as before (the virtual desktop).
 
 Limits (Windows'): one child session at a time; apps set to start with Windows start in it too; some apps refuse to
-run twice (Ari's Chrome has its own profile, so it is fine); the clipboard is shared. A smart-card sign-in asks for a
-password in the window.
+run twice (Ari's Chrome has its own profile, so it is fine); the clipboard is shared.
+
+Windows signs the child session in with your own sign-in; a failed sign-in counts as a wrong password, so the window
+(scripts/workstation/ArgusWorkstation.cs) never tries while your session is locked and makes at most 3 failed tries an
+hour (Windows locks an account after 10).
 """
 
 from __future__ import annotations
