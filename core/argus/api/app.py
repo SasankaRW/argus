@@ -386,6 +386,9 @@ def job_json(job: Job, steps: list[Step] | None = None) -> dict[str, Any]:
 
 
 def create_app(argus: Argus) -> FastAPI:
+    from ..supervisor import head
+
+    commit = head()  # the code this argusd runs: ship.ps1 waits for the laptop to report the merged commit
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await argus.start()
@@ -515,7 +518,7 @@ def create_app(argus: Argus) -> FastAPI:
 
     @app.get("/version")
     async def version() -> dict:
-        return {"version": argus.version, "schema_version": argus.store.schema_version}
+        return {"version": argus.version, "schema_version": argus.store.schema_version, "commit": commit}
 
     # -------------------------------------------------------------- jobs (apps, Helios)
 
