@@ -1,27 +1,37 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { api, setToken, Status } from "./api";
-import { AriHome, AriView, currentConv } from "./AriView";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { api, setToken } from "./api";
+import { currentConv } from "./conv";
 import { AskBox } from "./AskBox";
 import { EventsPanel } from "./EventsPanel";
 import { uptime } from "./format";
 import { Inspector } from "./Inspector";
 import { useArgus } from "./live";
 import { FitPad, mainParts, MapView, mergeEdges, Selection } from "./MapView";
-import { LogsView } from "./LogsView";
 import { MapFull } from "./MapFull";
 import { CommandLayer, Layout, LayoutSwitch, loadLayout, saveLayout } from "./Desk";
 import { PhoneHeader, PhoneHome, PhoneMore, PhoneOffline, PhoneTab, PhoneTabs } from "./Phone";
 import { Sheet } from "./Sheet";
-import { InboxView, ModelsView, NotificationsView, SettingsView, useInboxCount } from "./Pages";
-import { PluginsView } from "./PluginsView";
-import { PowerView } from "./PowerView";
-import { QueueView } from "./QueueView";
-import { RulesView } from "./RulesView";
-import { RunsView } from "./RunsView";
-import { ShareView } from "./ShareView";
-import { VoiceTrain } from "./VoiceTrain";
+import { useInboxCount } from "./inboxCount";
 import { pref, setPref, setVoiceStatus, VoiceStatus, WakeListener } from "./voice";
 import { ariFromEvents, ariSet, ariTell, earsPaused, loadEars } from "./ariState";
+import { PageBoundary, PageHead, pageMeta, Skeleton, usePauseWhenHidden, Vitals } from "./kit";
+import { Palette, PaletteItem } from "./Palette";
+
+// Pages load when first opened, so the first paint stays small.
+const AriHome = lazy(() => import("./AriView").then((m) => ({ default: m.AriHome })));
+const AriView = lazy(() => import("./AriView").then((m) => ({ default: m.AriView })));
+const InboxView = lazy(() => import("./Pages").then((m) => ({ default: m.InboxView })));
+const ModelsView = lazy(() => import("./Pages").then((m) => ({ default: m.ModelsView })));
+const NotificationsView = lazy(() => import("./Pages").then((m) => ({ default: m.NotificationsView })));
+const SettingsView = lazy(() => import("./Pages").then((m) => ({ default: m.SettingsView })));
+const LogsView = lazy(() => import("./LogsView").then((m) => ({ default: m.LogsView })));
+const PluginsView = lazy(() => import("./PluginsView").then((m) => ({ default: m.PluginsView })));
+const PowerView = lazy(() => import("./PowerView").then((m) => ({ default: m.PowerView })));
+const QueueView = lazy(() => import("./QueueView").then((m) => ({ default: m.QueueView })));
+const RulesView = lazy(() => import("./RulesView").then((m) => ({ default: m.RulesView })));
+const RunsView = lazy(() => import("./RunsView").then((m) => ({ default: m.RunsView })));
+const ShareView = lazy(() => import("./ShareView").then((m) => ({ default: m.ShareView })));
+const VoiceTrain = lazy(() => import("./VoiceTrain").then((m) => ({ default: m.VoiceTrain })));
 
 const CMD_PAD: FitPad = { top: "340px", right: "40px", bottom: "150px", left: "40px" };  // below the corner cards, above the command bar
 
@@ -48,21 +58,23 @@ function Icon({ d }: { d: string }) {
   );
 }
 
-// The Argus mark in small: the iris (a gradient ring and a bright pupil); the app icon is the same.
-function Logo() {
+// The Argus mark in small: a cyan-to-violet ring, a hexagonal iris and a bright pupil (the app icon is the same).
+export function Logo({ size = 22 }: { size?: number }) {
   return (
-    <svg width="22" height="22" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true" className="logo">
       <defs>
         <linearGradient id="lg-ring" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#ffb547" /><stop offset=".5" stopColor="#ff7a59" /><stop offset="1" stopColor="#4cc2ff" />
+          <stop offset="0" stopColor="#4cc2ff" /><stop offset=".55" stopColor="#7f9cff" /><stop offset="1" stopColor="#a78bfa" />
         </linearGradient>
-        <radialGradient id="lg-pupil" cx="40%" cy="35%" r="70%">
-          <stop offset="0" stopColor="#ffffff" /><stop offset=".5" stopColor="#b9f0ff" /><stop offset="1" stopColor="#4cc2ff" />
+        <radialGradient id="lg-pupil" cx="35%" cy="30%" r="75%">
+          <stop offset="0" stopColor="#ffffff" /><stop offset=".45" stopColor="#bfeaff" /><stop offset="1" stopColor="#4cc2ff" />
         </radialGradient>
       </defs>
-      <circle cx="16" cy="16" r="11.5" stroke="url(#lg-ring)" strokeWidth="4" />
-      <circle cx="18" cy="14.2" r="3.4" fill="#4cc2ff" opacity=".35" />
-      <circle cx="18" cy="14.2" r="2.6" fill="url(#lg-pupil)" />
+      <circle cx="16" cy="16" r="12" stroke="url(#lg-ring)" strokeWidth="2.6" />
+      <path d="M16 9.4l5.7 3.3v6.6L16 22.6l-5.7-3.3v-6.6z" fill="#141d33" stroke="rgba(160,200,255,.45)" strokeWidth=".8" />
+      <circle cx="16" cy="16" r="3.6" fill="#05080d" />
+      <circle cx="16.8" cy="15.2" r="2.2" fill="url(#lg-pupil)" />
+      <circle cx="25.2" cy="8.3" r="1.4" fill="#e9f6ff" />
     </svg>
   );
 }
@@ -84,44 +96,6 @@ function Clock() {
   const [t, setT] = useState(new Date());
   useEffect(() => { const i = window.setInterval(() => setT(new Date()), 1000); return () => window.clearInterval(i); }, []);
   return <b>{t.toLocaleTimeString([], { hour12: false })}</b>;
-}
-
-function Kpis({ status, hud = false }: { status: Status | null; hud?: boolean }) {
-  const j = status?.jobs ?? {};
-  const running = (j.leased ?? 0) + (j.running ?? 0);
-  const queued = (j.queued ?? 0) + (j.retry ?? 0);
-  const online = status?.workers.filter((w) => w.state === "online").length ?? 0;
-  const tiles: [string, string | number, string, string][] = [
-    ["run", running, queued ? `${queued} queued` : "queue empty", running ? "var(--flow)" : "var(--tx3)"],
-    ["wait", j.waiting ?? 0, "waiting for approval or a resume", (j.waiting ?? 0) ? "var(--amber)" : "var(--tx3)"],
-    ["ok", j.succeeded ?? 0, "succeeded, all time", "var(--ok)"],
-    ["dead", j.dead ?? 0, "failed after retries", (j.dead ?? 0) ? "var(--bad)" : "var(--tx3)"],
-    ["workers", status ? `${online}/${status.workers.length}` : "…", status ? `${status.workers.length - online} offline` : "", online ? "var(--ok)" : "var(--bad)"],
-  ];
-  return (
-    <section className={`kstrip${hud ? " float" : ""}`} aria-label="Jobs">
-      {tiles.map(([l, v, s, c]) => (
-        <div key={l} className="kc" title={s}>
-          <span className="kl"><span className="dot" style={{ background: c }} />{l}</span>
-          <Num v={v} color={c === "var(--tx3)" ? undefined : c} />
-          {!hud && <span className="ks">{s}</span>}
-        </div>
-      ))}
-    </section>
-  );
-}
-
-// A KPI value that flashes once when it changes.
-function Num({ v, color }: { v: string | number; color?: string }) {
-  const ref = useRef<HTMLElement>(null);
-  const prev = useRef(v);
-  useEffect(() => {
-    if (prev.current === v) return;
-    prev.current = v;
-    const el = ref.current;
-    if (el) { el.classList.remove("bump"); void el.offsetWidth; el.classList.add("bump"); }
-  }, [v]);
-  return <b ref={ref} className="mono" style={{ color }}>{v}</b>;
 }
 
 // Claude today: calls used of the daily cap, and whether the CLI is logged in (checked by the workers).
@@ -181,6 +155,13 @@ export function App() {
     return () => window.removeEventListener("hashchange", on);
   }, []);
   const narrow = useNarrow();
+  usePauseWhenHidden();
+  const [pal, setPal] = useState(false);
+  useEffect(() => {  // Ctrl/Cmd+K opens the palette from anywhere
+    const on = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setPal((v) => !v); } };
+    window.addEventListener("keydown", on);
+    return () => window.removeEventListener("keydown", on);
+  }, []);
   const waiting = useInboxCount(a.events);
   const [full, setFull] = useState(() => { try { return localStorage.getItem("helios.full") === "1"; } catch { return false; } });
   const setFullView = (v: boolean) => { setFull(v); try { localStorage.setItem("helios.full", v ? "1" : "0"); } catch { /* private */ } };
@@ -195,6 +176,15 @@ export function App() {
     setView(v); history.replaceState(null, "", v === "map" ? location.pathname : `#${v}`);
   };
   const askAri = (text: string) => { try { sessionStorage.setItem("ari.command", text); } catch { /* private */ } go("ari"); };
+  const items = useMemo<PaletteItem[]>(() => [
+    ...NAV.map((n) => ({ id: `go-${n.id}`, group: "go to", label: n.label, hint: n.id === "map" ? "home" : `#${n.id}`, run: () => go(n.id) })),
+    { id: "go-voice", group: "go to", label: "Voice training", hint: "#voice", run: () => go("voice") },
+    { id: "lay-tiles", group: "layout", label: "Home: map + tiles", run: () => { setLayout("desk"); go("map"); } },
+    { id: "lay-command", group: "layout", label: "Home: command bar", run: () => { setLayout("command" as Layout); go("map"); } },
+    { id: "ask", group: "ari", label: "Talk to Ari", hint: "open the current chat", run: () => go("ari") },
+    { id: "phone", group: "view", label: "Phone view", run: () => setFullView(false) },
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], []);
   const viewRef = useRef(view);
   viewRef.current = view;
   const [heard, setHeard] = useState<string | null>(null);
@@ -295,6 +285,7 @@ export function App() {
         <PhoneHeader status={st} live={a.conn === "live"} />
         {a.phase === "down" && <PhoneOffline onRetry={() => a.reconnect()} />}
         <main key={view} className="pmain2">
+          <Suspense fallback={<Skeleton rows={4} />}>
           {proot === "ari" ? (view.includes("/")
             ? <AriView conv={view.split("/")[1]} onBack={() => go("ari")} onNew={(c) => go(`ari/${c}`)} onSelect={setSel} onView={open} />
             : <AriHome onOpen={(c) => go(`ari/${c}`)} />)
@@ -315,6 +306,7 @@ export function App() {
           : proot === "more" ? <PhoneMore onOpen={open} onFull={() => setFullView(true)} />
           : <PhoneHome status={st} events={a.events} onSelect={setSel} onOpen={open} onInbox={() => go("inbox")}
               onAri={(mic) => { if (mic) { try { sessionStorage.setItem("ari.mic", "1"); } catch { /* private */ } } go("ari"); }} />}
+          </Suspense>
         </main>
         <PhoneTabs tab={tab} onTab={(t) => (t === "map" ? setBigMap(true) : go(t === "home" ? "map" : t === "plug" ? "plugins" : t))} />
         {sel && a.map && (
@@ -329,8 +321,8 @@ export function App() {
   }
   const root = view.split("/")[0];
   const main = a.map ? mainParts(a.map, [], {}).map : null;
-  const withKpis = ["queue", "runs", "power"].includes(root);
-  const withDock = !["logs", "share", "plugins", "rules", "map"].includes(root);
+  const meta = pageMeta(view);
+  const withDock = root !== "map";
   const cmd = root === "map" && layout === "command";
   const tools = (
     <>
@@ -383,6 +375,7 @@ export function App() {
           <Logo /><span className="who mono"><span className="tg">sas@argus</span><span className="dim">:~{root === "map" ? "" : `/${root}`}$</span></span>
         </div>
         <AskBox onSelect={setSel} onView={(v) => go(v)} />
+        <button type="button" className="cmdk" onClick={() => setPal(true)} title="Command palette"><span className="lbl">jump to</span><kbd>Ctrl K</kbd></button>
         {narrow && <button type="button" className="btn phone-back" onClick={() => setFullView(false)}>phone view</button>}
         <div className="status mono">
           <span className={`seg-s ${a.phase === "down" ? "bad" : ok ? "ok" : "warn"}`}>
@@ -415,8 +408,11 @@ export function App() {
       </nav>}
 
       <main>
-        <div key={root === "ari" ? view : root} className={`page${root === "map" ? " stagepage" : ""}`}>
-        {withKpis && <Kpis status={st} />}
+        <Vitals status={st} />
+        <div key={root === "ari" ? view : root} className={`page${root === "map" ? " stagepage" : ""}${["runs", "logs", "queue"].includes(root) ? " fill" : ""}`}>
+        {meta && <PageHead meta={meta} live={a.conn === "live"} />}
+        <PageBoundary name={root}>
+        <Suspense fallback={<Skeleton />}>
         {view.startsWith("rules/") ? <RulesView plugin={decodeURIComponent(view.slice(6))} onBack={() => history.back()} />
         : root === "plugins" ? (
           <PluginsView selected={view.includes("/") ? decodeURIComponent(view.split("/")[1]) : null}
@@ -440,7 +436,7 @@ export function App() {
               </aside>
             </div>
           )        ) : (
-        <div className={`mid${sel ? "" : " one"}`}>
+        <div className="mid one">
           {view === "ari" ? (
             <AriHome onOpen={(c) => go(`ari/${c}`)} />
           ) : root === "ari" ? (
@@ -452,12 +448,19 @@ export function App() {
           ) : (
             <RunsView events={a.events} selected={sel?.type === "job" ? sel.id : null} onSelect={setSel} />
           )}
-          {a.map && sel && <Inspector sel={sel} map={a.map} status={st} events={a.events} onSelect={setSel} onClose={() => setSel(null)} />}
+          {a.map && sel && (
+            <aside className="drawer page-drawer" aria-label="Details">
+              <Inspector sel={sel} map={a.map} status={st} events={a.events} onSelect={setSel} onClose={() => setSel(null)} />
+            </aside>
+          )}
         </div>
         )}
+        </Suspense>
+        </PageBoundary>
         </div>
         {withDock && <EventsPanel events={a.events} conn={a.conn} onSelect={setSel} />}
       </main>
+      <Palette items={items} open={pal} onClose={() => setPal(false)} />
       {mapFull}
       {heardBadge}
     </div>

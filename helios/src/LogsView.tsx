@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
+import { Empty } from "./kit";
 
 type Entry = { source: string; ts: string | null; level: string; logger: string | null; msg: string; extra: Record<string, unknown> };
 type Source = { name: string; size: number; modified: number };
@@ -86,9 +87,8 @@ export function LogsView() {
   }, [lines]);
 
   return (
-    <section className="panel logs" aria-label="Logs">
-      <div className="ph">
-        <span className="pt">Logs</span>
+    <section className="panel logs fillp" aria-label="Logs">
+      <div className="toolbar">
         <div className="seg" role="group" aria-label="Source">
           <button type="button" aria-pressed={pick === "all"} onClick={() => setPick("all")}>All</button>
           {sources.map((s) => (
@@ -101,6 +101,7 @@ export function LogsView() {
           {LEVELS.map(([id, l]) => <button key={id} type="button" aria-pressed={level === id} onClick={() => setLevel(id)}>{l}</button>)}
         </div>
         <input className="search" type="search" placeholder="Search" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search logs" />
+        <span className="count mono">{shown.length} lines</span>
         <div className="tools">
           <button type="button" className="btn" aria-pressed={paused} onClick={() => setPaused(!paused)}>{paused ? "Resume" : "Pause"}</button>
           <button type="button" className="btn" onClick={() => setLines([])}>Clear</button>
@@ -110,7 +111,7 @@ export function LogsView() {
         const el = e.currentTarget;
         stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
       }}>
-        {shown.length === 0 && <div className="tip" style={{ padding: "8px 10px" }}>{sources.length ? "Nothing matches." : "No logs yet. Start Argus with dev.ps1 up."}</div>}
+        {shown.length === 0 && <Empty title={sources.length ? "Nothing matches" : "No logs yet"} hint={sources.length ? "Change the source, level or search." : "Start Argus with dev.ps1 up."} />}
         {shown.map(({ e, i }) => {
           const ex = extraText(e);
           const exc = e.extra.exc ? String(e.extra.exc) : null;

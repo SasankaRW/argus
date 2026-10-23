@@ -17,7 +17,7 @@ const FILTERS: [string, string, (k: string) => boolean][] = [
 // The event stream as a terminal pane docked at the bottom (tail -f); folds to one line, remembered per browser.
 export function EventsPanel({ events, conn, onSelect }: { events: ArgusEvent[]; conn: string; onSelect: (s: Selection) => void }) {
   const [f, setF] = useState("all");
-  const [open, setOpen] = useState(() => { try { return localStorage.getItem("helios.dock") !== "0"; } catch { return true; } });
+  const [open, setOpen] = useState(() => { try { return localStorage.getItem("helios.dock") === "1"; } catch { return false; } });
   const toggle = () => { setOpen(!open); try { localStorage.setItem("helios.dock", open ? "0" : "1"); } catch { /* private */ } };
   const rows = useMemo(() => {
     const test = FILTERS.find((x) => x[0] === f)![2];

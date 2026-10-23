@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Empty } from "./kit";
+import { newConv } from "./conv";
 import { api, getToken } from "./api";
 import type { Selection } from "./MapView";
 import { powerAri, useAri, useEars } from "./ariState";
@@ -16,14 +18,7 @@ type Schedule = { id: string; plugin: string; workflow: string; cron: string; en
 
 type Chat = { conv: string; turns: number; started: number; updated: number; title: string | null; last: string | null };
 
-export function newConv() { return Math.random().toString(36).slice(2, 12); }
-// The chat you had open last: "Hey Ari" and questions from other screens continue it.
-export function currentConv(): string {
-  try { const c = localStorage.getItem("ari.conv"); if (c) return c; } catch { /* private */ }
-  const c = newConv();
-  try { localStorage.setItem("ari.conv", c); } catch { /* private */ }
-  return c;
-}
+export { currentConv, newConv } from "./conv";
 function when(t: number | null) {
   if (!t) return "—";
   const d = new Date(t * 1000);
@@ -61,10 +56,10 @@ export function AriHome({ onOpen }: { onOpen: (conv: string) => void }) {
   return (
     <div className="ari-home">
       <section className="panel" aria-label="Chats">
-        <div className="ph">
-          <span className="pt">ari</span>
-          <span className="muted">{chats ? `${chats.length} chat${chats.length === 1 ? "" : "s"}` : "…"}</span>
-          <div className="tools">
+        <div className="toolbar">
+          <span className="tlabel">Chats</span>
+          <span className="count" style={{ marginLeft: 0 }}>{chats ? `${chats.length}` : "…"}</span>
+          <div className="tools" style={{ marginLeft: "auto" }}>
             <input className="chat-find" value={find} onChange={(e) => setFind(e.target.value)} placeholder="find a chat…" aria-label="Find a chat" />
             <button type="button" className="primary chat-new" onClick={() => start()}>+ new chat</button>
           </div>
@@ -74,7 +69,8 @@ export function AriHome({ onOpen }: { onOpen: (conv: string) => void }) {
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ask ari something new…" aria-label="Start a new chat" />
         </form>
         <div className="chat-list">
-          {chats && chats.length === 0 && <div className="tip">No chats yet. Ask Ari something above.</div>}
+          {!chats && <div className="skel-row" />}
+          {chats && chats.length === 0 && <Empty title="No chats yet" hint="Ask Ari something above." />}
           {shown.map((c) => (
             <div key={c.conv} className="chat-row">
               <button type="button" className="chat-open" onClick={() => onOpen(c.conv)}>
