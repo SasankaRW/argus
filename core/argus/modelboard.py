@@ -29,6 +29,46 @@ CLAUDE_BUDGET = "claude_calls"
 
 
 LOGGED_OUT = re.compile(r"/login|not logged in|log ?in again|invalid api key|authenticat|oauth token", re.I)
+# Claude's own limits ("You've hit your session limit · resets 2:30am (Asia/Colombo)", "usage limit reached|<epoch>")
+LIMIT = re.compile(r"(session|usage|weekly|5-hour|daily) limit|limit (reached|hit)", re.I)
+RESETS_AT = re.compile(r"resets?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?"
+                       r"(?:\s*\(([A-Za-z_]+/[A-Za-z_/+-]+)\))?", re.I)
+RESETS_EPOCH = re.compile(r"limit reached\|(\d{10})")
+LIMIT_UNKNOWN_S = 3600  # a limit with no time we can read: try again in an hour
+
+
+def limit_reset(error: str, now: float) -> float | None:
+    """When a Claude limit in this error lifts (epoch seconds), or None when the error isn't a limit."""
+    if not error or not LIMIT.search(error):
+        return None
+    m = RESETS_EPOCH.search(error)
+    if m and int(m.group(1)) > now:
+        return float(m.group(1))
+    m = RESETS_AT.search(error)
+    if not m:
+        return now + LIMIT_UNKNOWN_S
+    hour, minute, ampm, zone = int(m.group(1)), int(m.group(2) or 0), (m.group(3) or "").lower(), m.group(4)
+    if ampm == "pm" and hour < 12:
+        hour += 12
+    if ampm == "am" and hour == 12:
+        hour = 0
+    if hour > 23 or minute > 59:
+        return now + LIMIT_UNKNOWN_S
+    import datetime as dt
+
+    tz = None
+    if zone:
+        try:
+            from zoneinfo import ZoneInfo
+
+            tz = ZoneInfo(zone)
+        except Exception:  # noqa: BLE001 - an unknown zone: this machine's own time
+            tz = None
+    here = dt.datetime.fromtimestamp(now, tz) if tz else dt.datetime.fromtimestamp(now).astimezone()
+    at = here.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if at.timestamp() <= now:
+        at += dt.timedelta(days=1)
+    return at.timestamp()
 
 
 def component_id(tier: str) -> str:
@@ -187,12 +227,18 @@ class ModelBoard:
                     (latency_ms, now, tier),
                 )
             else:
-                if self.cfg.models.tiers[tier].provider == "claude" and LOGGED_OUT.search(error or ""):
+                claude = self.cfg.models.tiers[tier].provider == "claude"
+                if claude and LOGGED_OUT.search(error or ""):
                     self._auth(conn, now, False, None, (error or "")[:300])
+                # Claude says it's out of its session/usage limit until a time: rest until then (one failed
+                # call, not one every few minutes from every scheduled job), then a trial call as usual
+                reset = limit_reset(error or "", now) if claude else None
+                if reset is not None:
+                    reset = min(reset + 60, now + 7 * 86400)
                 fails = row["consecutive_failures"] + 1
-                trip = row["state"] == "half_open" or fails >= m.breaker_failures
+                trip = row["state"] == "half_open" or fails >= m.breaker_failures or reset is not None
                 state = "open" if trip else row["state"]
-                until = now + m.breaker_open_seconds if trip else row["opened_until"]
+                until = (reset or now + m.breaker_open_seconds) if trip else row["opened_until"]
                 conn.execute(
                     "UPDATE model_state SET state = ?, consecutive_failures = ?, opened_until = ?, last_error = ?,"
                     " calls = calls + 1, failures = failures + 1, last_latency_ms = ?, updated_at = ? WHERE tier = ?",
@@ -201,7 +247,7 @@ class ModelBoard:
                 if trip:
                     insert_event(conn, now, "model.breaker_opened", job_id=job_id, src=component_id(tier),
                                  data={"tier": tier, "failures": fails, "error": (error or "")[:200],
-                                       "seconds": m.breaker_open_seconds})
+                                       "seconds": round(until - now), "limit": reset is not None})
             return dict(conn.execute("SELECT * FROM model_state WHERE tier = ?", (tier,)).fetchone())
 
         return await self.store.write(fn)
