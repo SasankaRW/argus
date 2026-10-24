@@ -135,6 +135,8 @@ class GameWatch:
         self.stop_ollama, self.start_ollama, self.users, self.keep_every = stop_ollama, start_ollama, users, keep_every
         self.kept_at = 0.0
         self.warned_at = -1e9
+        self.unreachable_since: float | None = None
+        self.quiet_for = 180.0  # out of reach this long before it's worth a warning
         self.children = [c for c in children if c.name in FREES]
         self.on_after, self.off_after, self.clock, self.sleep = on_after, off_after, clock, sleep
         self.game_since: float | None = None
@@ -144,10 +146,15 @@ class GameWatch:
     def tick(self) -> None:
         st = self.get()
         if st is None:  # Argus out of reach: leave things as they are (and say so, now and then)
-            if self.clock() - self.warned_at > 600:
-                self.warned_at = self.clock()
+            now = self.clock()
+            if self.unreachable_since is None:
+                self.unreachable_since = now
+            # only when it lasts: right after the PC starts, Tailscale takes a minute or two to come up
+            if now - self.unreachable_since >= self.quiet_for and now - self.warned_at > 600:
+                self.warned_at = now
                 log.warning("game mode: can't reach Argus (/ari/game), so nothing is freed or started")
             return
+        self.unreachable_since = None
         on, by = bool(st.get("on")), st.get("by")
         if st.get("auto", True):
             kind, app = self.look()

@@ -256,5 +256,11 @@ def test_game_watch_says_when_argus_is_out_of_reach(caplog):
                   clock=lambda: t[0], sleep=lambda s: None)
     with caplog.at_level("WARNING", logger="argus.game"):
         w.tick()
+        t[0] = 60.0
+        w.tick()  # the first minutes after the PC starts (Tailscale coming up): quiet
+        assert not any("can't reach Argus" in r.message for r in caplog.records)
+        t[0] = 200.0
         w.tick()
-    assert sum("can't reach Argus" in r.message for r in caplog.records) == 1
+        t[0] = 260.0
+        w.tick()
+    assert sum("can't reach Argus" in r.message for r in caplog.records) == 1  # once it lasts, and not every tick
