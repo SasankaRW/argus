@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import logging
 import time
@@ -85,18 +86,43 @@ class ArgusClient:
             time.sleep(delays[attempt])
         raise AssertionError("unreachable")  # pragma: no cover
 
-    def get_bytes(self, path: str, timeout: float = 60.0) -> bytes:
-        """A file from argusd (e.g. something shared from the phone)."""
-        req = urllib.request.Request(self.url + path, method="GET")
-        if self.token:
-            req.add_header("Authorization", f"Bearer {self.token}")
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return resp.read()
-        except urllib.error.HTTPError as e:
-            raise ApiError(e.code, e.read().decode(errors="replace")[:300]) from None
-        except (urllib.error.URLError, OSError) as e:
-            raise Unreachable(f"{self.url}{path}: {e}") from e
+    def get_bytes(self, path: str, timeout: float = 60.0, tries: int = 4) -> bytes:
+        """A file from argusd (e.g. something shared from the phone, or a backup). A download cut off partway (Tailscale
+        can drop a long transfer) carries on from where it stopped (a Range request) instead of failing the job."""
+        got = bytearray()
+        total: int | None = None
+        for attempt in range(tries):
+            req = urllib.request.Request(self.url + path, method="GET")
+            if self.token:
+                req.add_header("Authorization", f"Bearer {self.token}")
+            if got:
+                req.add_header("Range", f"bytes={len(got)}-")
+            try:
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    if got and resp.status != 206:  # the server sent it all again: start over
+                        got.clear()
+                    if total is None:
+                        rng = resp.headers.get("Content-Range") or ""
+                        size = rng.rpartition("/")[2] if rng else resp.headers.get("Content-Length")
+                        total = int(size) if size and size.isdigit() else None
+                    while True:
+                        chunk = resp.read(1 << 20)
+                        if not chunk:
+                            break
+                        got.extend(chunk)
+                if total is None or len(got) >= total:
+                    return bytes(got)
+            except urllib.error.HTTPError as e:
+                raise ApiError(e.code, e.read().decode(errors="replace")[:300]) from None
+            except (http.client.HTTPException, urllib.error.URLError, OSError) as e:
+                cut = isinstance(e, (http.client.IncompleteRead, http.client.RemoteDisconnected, ConnectionResetError,
+                                      ConnectionAbortedError))
+                if not got and not cut and total is None:  # never got going: argusd is out of reach
+                    raise Unreachable(f"{self.url}{path}: {e}") from e
+                log.info("download cut off; going on", extra={"path": path, "have": len(got), "of": total,
+                                                               "error": str(e)})
+            time.sleep(min(2 * (attempt + 1), 8))
+        raise Unreachable(f"{self.url}{path}: cut off {tries} times ({len(got)} of {total} bytes)")
 
     def post(self, path: str, body: Any = None, **kw) -> Any:
         return self.call("POST", path, body if body is not None else {}, **kw)[1]
