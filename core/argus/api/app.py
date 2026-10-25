@@ -96,6 +96,7 @@ from ..tools import Tool, ToolError, Tools
 from ..triggers import BadSignature, TriggerError, UnknownTrigger
 from ..voice import Expressive
 from ..voice_samples import Samples
+from ..weather import CODES as weather_codes
 from ..worker import think as think_mod
 from . import approval_page, mcp
 from .home import HOME_HTML
@@ -710,12 +711,31 @@ def create_app(argus: Argus) -> FastAPI:
     @app.put("/island", dependencies=guarded)
     async def island_put(body: dict[str, Any]) -> dict:
         actions = {c["action"] for c in await island_choices()}
+        if "keys" not in body:  # an older Helios: keep the keys you set
+            body = {**body, "keys": (await argus.store.read(island_mod.load)).get("keys")}
         try:
             cfg = island_mod.check(body, actions)
         except island_mod.IslandError as e:
             raise HTTPException(status_code=422, detail=str(e)) from None
         await argus.store.write(lambda c: island_mod.save(c, cfg))
         return await island_get()
+
+    @app.get("/island/weather", dependencies=guarded)
+    async def island_weather() -> dict:
+        """Today's weather for the island's calendar page (brief.weather's town); {} when no town is set or the
+        forecast can't be reached. Kept for an hour, like the brief's."""
+        place = argus.cfg.brief.weather.strip()
+        if not place:
+            return {}
+        try:
+            w = await asyncio.wait_for(asyncio.to_thread(argus.weather.day, place, 0), 15)
+        except Exception:  # noqa: BLE001 - no connection: the page goes without it
+            return {}
+        if not w:
+            return {}
+        code = w.get("code")
+        return {"place": w.get("place"), "now": w.get("now"), "low": w.get("low"), "high": w.get("high"),
+                "rain": w.get("rain"), "sky": weather_codes.get(int(code), "") if code is not None else ""}
 
     @app.post("/island/run", dependencies=guarded)
     async def island_run(body: AskDo) -> dict:

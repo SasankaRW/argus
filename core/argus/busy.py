@@ -55,11 +55,16 @@ def detail(mic_apps: list[str], front: dict | None,
 
 
 def mic_apps() -> list[str]:  # pragma: no cover - Windows registry
+    return capability_apps("microphone")
+
+
+def capability_apps(kind: str) -> list[str]:  # pragma: no cover - Windows registry
+    """The apps using the microphone or the camera ("webcam") right now, as Windows' privacy settings list them."""
     if sys.platform != "win32":
         return []
     import winreg
 
-    root = r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone"
+    root = rf"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\{kind}"
     out: list[str] = []
 
     def scan(path: str) -> None:
