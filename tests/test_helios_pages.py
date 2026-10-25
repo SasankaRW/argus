@@ -88,7 +88,7 @@ def test_island_widgets_and_shortcuts(tmp_path, monkeypatch):
                                          "shortcuts": [{"label": "Queue", "action": "show:queue"},
                                                        {"label": "Docs", "action": "url:https://example.com"}]})[1]
         assert [w["id"] for w in got["widgets"]][:2] == ["shortcuts", "clock"] and not got["widgets"][1]["on"]
-        assert len(got["widgets"]) == 6  # the rest are kept, in their usual order
+        assert len(got["widgets"]) == 10  # the rest are kept, in their usual order
         assert [s["label"] for s in cl.get("/island")["shortcuts"]] == ["Queue", "Docs"]
         assert cl.post("/island/run", {"action": "url:https://example.com"}) == {"open": "https://example.com"}
         assert cl.post("/island/run", {"action": "show:queue"}) == {"view": "queue"}

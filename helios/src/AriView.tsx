@@ -392,20 +392,22 @@ function AriSettings() {
 type IslandW = { id: string; on: boolean };
 type IslandS = { label: string; action: string };
 type IslandData = { widgets: IslandW[]; shortcuts: IslandS[]; widget_labels: Record<string, string>;
-  choices: { action: string; label: string; group: string }[]; max_shortcuts: number };
+  choices: { action: string; label: string; group: string }[]; max_shortcuts: number; keys?: Record<string, string> };
+const ISLAND_KEYS: [string, string][] = [["ask", "Type to Ari"], ["hide", "Hide / show the island"]];
 
 // What Ari's island on the PC shows when you click it: widgets (on/off, order) and your shortcuts.
 function IslandSettings() {
   const [d, setD] = useState<IslandData | null>(null);
   const [w, setW] = useState<IslandW[]>([]);
   const [sc, setSc] = useState<IslandS[]>([]);
+  const [keys, setKeys] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState<string | null>(null);
   const load = useCallback(() => {
-    api<IslandData>("/island").then((x) => { setD(x); setW(x.widgets); setSc(x.shortcuts); }).catch(() => {});
+    api<IslandData>("/island").then((x) => { setD(x); setW(x.widgets); setSc(x.shortcuts); setKeys(x.keys ?? {}); }).catch(() => {});
   }, []);
   useEffect(load, [load]);
   if (!d) return null;
-  const dirty = JSON.stringify({ w, sc }) !== JSON.stringify({ w: d.widgets, sc: d.shortcuts });
+  const dirty = JSON.stringify({ w, sc, keys }) !== JSON.stringify({ w: d.widgets, sc: d.shortcuts, keys: d.keys ?? {} });
   const move = <T,>(list: T[], i: number, by: number) => {
     const n = [...list];
     const k = i + by;
@@ -416,8 +418,8 @@ function IslandSettings() {
   const save = async () => {
     setMsg(null);
     try {
-      const x = await api<IslandData>("/island", { method: "PUT", body: JSON.stringify({ widgets: w, shortcuts: sc }) });
-      setD(x); setW(x.widgets); setSc(x.shortcuts); setMsg("saved ✓");
+      const x = await api<IslandData>("/island", { method: "PUT", body: JSON.stringify({ widgets: w, shortcuts: sc, keys }) });
+      setD(x); setW(x.widgets); setSc(x.shortcuts); setKeys(x.keys ?? {}); setMsg("saved ✓");
       setTimeout(() => setMsg(null), 2000);
     } catch (e) { setMsg(e instanceof Error ? e.message : String(e)); }
   };
@@ -459,12 +461,21 @@ function IslandSettings() {
             </div>
           );
         })}
+        <div className="sect">keys <span className="muted">anywhere on the PC; empty turns one off; the island picks them up when it restarts</span></div>
+        {ISLAND_KEYS.map(([id, label]) => (
+          <div key={id} className="isl-set-row">
+            <span>{label}</span>
+            <span className="grow" />
+            <input value={keys[id] ?? ""} aria-label={label} placeholder="off" className="mono"
+              onChange={(e) => setKeys({ ...keys, [id]: e.target.value })} />
+          </div>
+        ))}
         <div className="isl-set-foot">
           <button type="button" className="btn" disabled={sc.length >= d.max_shortcuts}
             onClick={() => setSc([...sc, { label: "New shortcut", action: "show:inbox" }])}>+ shortcut</button>
           <span className="grow" />
           {msg && <span className={msg.endsWith("✓") ? "ok mono" : "bad"}>{msg}</span>}
-          <button type="button" className="btn" disabled={!dirty} onClick={() => { setW(d.widgets); setSc(d.shortcuts); }}>undo</button>
+          <button type="button" className="btn" disabled={!dirty} onClick={() => { setW(d.widgets); setSc(d.shortcuts); setKeys(d.keys ?? {}); }}>undo</button>
           <button type="button" className="primary" disabled={!dirty} onClick={save}>save</button>
         </div>
       </div>
