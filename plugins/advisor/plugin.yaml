@@ -3,18 +3,24 @@ name: Money advisor
 version: 1.0.0
 kind: workflow
 argus_api: ">=1.0 <2.0"
-description: 'Words and web for Life Hub''s finance advisor: plain-language advice from the numbers Life Hub works out from Cashly (local models, or Claude with totals only, as you pick in Life Hub), cheaper options for wishlist items (SearXNG), and last month''s PDF report on the 1st.'
+description: 'Words and web for Life Hub''s finance advisor: plain-language advice from the numbers Life Hub works out from Cashly (local models, or Claude with totals only, as you pick in Life Hub), cheaper options and price watches for wishlist items, weekly FD and T-bill rates, a Sunday money review on the phone, and last month''s PDF report on the 1st.'
 runs_on: any
 
 triggers:
   - schedule: {workflow: monthly, cron: "0 9 1 * *"}   # 9 am on the 1st: last month's report
   - manual: {workflow: monthly, label: Make last month's money report now}
+  - schedule: {workflow: prices, cron: "41 */6 * * *"}   # wishlist links: watched for price drops, prices to Life Hub
+  - manual: {workflow: prices, label: Check wishlist prices now}
+  - schedule: {workflow: rates, cron: "30 8 * * 1"}      # Monday morning: FD, T-bill and inflation rates
+  - schedule: {workflow: weekly, cron: "30 19 * * 0"}    # Sunday evening: the week's money review to the phone
+  - manual: {workflow: weekly, label: Send this week's money review now}
+  - manual: {workflow: rates, label: Look up interest rates now}
 
-workflows: [advise, alternatives, monthly]
+workflows: [advise, alternatives, monthly, prices, rates, weekly]
 
 permissions:
   files: {read: [], write: [], delete: none}
-  models: [T1, T2]              # advice and picking alternatives (local)
+  models: [T1, T2]              # advice, picking alternatives, reading rates (local)
   claude_calls_per_day: 15      # only when Life Hub asks for Claude (monthly review, big purchases, or you chose it)
   network: ["config:lifehub_url"]
   secrets: [LIFEHUB_API_KEY]

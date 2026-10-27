@@ -45,3 +45,20 @@ def test_alternatives_only_from_search_results():
     assert "not one of the search results" in check(made_up_link, None)
     made_up_price = good.model_copy(update={"options": [ad.Option(name="x", price="Rs 55,000", link="https://daraz.lk/xm4")]})
     assert "isn't in the search results" in check(made_up_price, None)
+
+
+def test_watchers_prices_are_read():
+    assert ad.shown_price("Rs 95,000") == (95000.0, "LKR")
+    assert ad.shown_price("$1,299.99") == (1299.99, "USD")
+    assert ad.shown_price("LKR 42,500") == (42500.0, "LKR")
+    assert ad.shown_price("not a price") is None
+
+
+def test_rates_only_from_search_results():
+    found = [{"title": "FD rates October", "url": "https://x.lk/fd", "snippet": "12 month FD 8.50% p.a."},
+             {"title": "T-bill auction", "url": "https://cbsl.lk/tb", "snippet": "364-day yield 9.12 per cent"}]
+    check = ad.rates_check(found)
+    assert check(ad.Rates(fd_12m=8.5, tbill_364=9.12, sources=["https://x.lk/fd"]), None) is None
+    assert "isn't written" in check(ad.Rates(fd_12m=7.25), None)
+    assert "sources" in check(ad.Rates(fd_12m=8.5, sources=["https://made.up"]), None)
+    assert "no rate" in check(ad.Rates(), None)
