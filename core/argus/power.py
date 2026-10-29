@@ -76,7 +76,23 @@ def lan_broadcasts() -> list[tuple[str, str]]:  # pragma: no cover - asks the sy
 
 WAKE_HINT = ("The PC didn't come online. On the PC: the network card's \"Wake on Magic Packet\" on, Windows Fast "
              "Startup off, a cable (not Wi-Fi); in the BIOS: Power On By PCI-E on, ErP off. "
-             "dev.ps1 wol-check looks at the Windows side.")
+             "dev.ps1 wol-check looks at the Windows side. Laptop on Wi-Fi: set power.pc_ip and run "
+             "deploy/linux/pc-wake-setup.sh once, so the packet goes straight to the PC.")
+
+
+def neighbour_of(ip: str) -> dict[str, Any] | None:  # pragma: no cover - asks the system
+    """What this machine knows about `ip` on the home network (`ip -j neigh`): {mac, state, dev}, or None."""
+    if not sys.platform.startswith("linux"):
+        return None
+    try:
+        p = subprocess.run(["ip", "-j", "neigh", "show", ip], capture_output=True, text=True, timeout=5)
+        rows = json.loads(p.stdout or "[]")
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    for r in rows:
+        if r.get("lladdr"):
+            return {"mac": str(r["lladdr"]).upper(), "state": " ".join(r.get("state") or []), "dev": r.get("dev")}
+    return None
 
 
 class PowerError(Exception):
@@ -98,6 +114,7 @@ class PowerManager:
         self.held = False
         self.jobs = None  # JobStore, set by Argus: the shutdown is a job for the PC's worker
         self.find_lans: Callable[[], list[tuple[str, str]]] = lan_broadcasts
+        self.neighbour: Callable[[str], dict[str, Any] | None] = neighbour_of
         self.wake_check: dict[str, Any] | None = None  # the last wake: {at, to, result: waiting|online|no_answer}
 
     def _pc_work(self, conn: sqlite3.Connection) -> tuple[int, int]:
@@ -242,6 +259,9 @@ class PowerManager:
         targets: list[tuple[str | None, str]] = [(None, self.cfg.power.wol_broadcast)]
         if self.cfg.power.wol_broadcast == "255.255.255.255":  # the default: also each card's own network
             targets += [(local, bcast) for local, bcast in self.find_lans()]
+        direct = self.cfg.power.pc_ip
+        if direct:  # straight to the PC's card (needs it in the neighbour table while the PC is off)
+            targets.append((None, direct))
         sent: list[str] = []
         errors: list[str] = []
         for local, addr in targets:
@@ -260,8 +280,14 @@ class PowerManager:
         now = self.clock()
         self.last_wake = now
         self.wake_check = {"at": now, "to": sent, "result": "waiting"}
-        log.info("wake-on-lan sent", extra={"mac": mac, "to": sent, "errors": errors})
-        return {"sent": True, "mac": mac, "to": sent}
+        extra: dict[str, Any] = {}
+        if direct:  # did the direct packet have the PC's card to go to? (the laptop forgets it while the PC is off)
+            n = self.neighbour(direct)
+            known = bool(n and n["mac"] == mac and "PERMANENT" in n["state"])
+            extra["direct"] = "kept" if known else "not kept: run deploy/linux/pc-wake-setup.sh once (as root)"
+            self.wake_check["direct"] = extra["direct"]
+        log.info("wake-on-lan sent", extra={"mac": mac, "to": sent, "errors": errors, **extra})
+        return {"sent": True, "mac": mac, "to": sent, **extra}
 
     def status(self) -> dict[str, Any]:
         return {"mode": self.cfg.power.mode, "state": self.state, "idle_since": self.idle_since,
