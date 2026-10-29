@@ -474,3 +474,36 @@ def test_the_router_shows_each_answer_as_it_arrives():
     with FakeOllama({"t1": [GOOD]}) as ol:  # a board without it (argusd's own): no streaming, as before
         Router(providers(ol), LoggingBoard(), chain=["T1"]).ask("sort", {"f": "x"}, schema=Placement)
         assert not ol.requests[0].get("stream")
+
+
+def test_a_claude_limit_rests_the_tier_until_it_resets(store, clock):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from argus.modelboard import limit_reset
+
+    colombo = ZoneInfo("Asia/Colombo")
+    now = datetime(2026, 10, 24, 1, 10, tzinfo=colombo).timestamp()
+    err = "claude reported an error: You've hit your session limit · resets 2:30am (Asia/Colombo)"
+    assert limit_reset(err, now) == datetime(2026, 10, 24, 2, 30, tzinfo=colombo).timestamp()
+    later = datetime(2026, 10, 24, 3, 0, tzinfo=colombo).timestamp()  # past 2:30: tomorrow's
+    assert limit_reset(err, later) == datetime(2026, 10, 25, 2, 30, tzinfo=colombo).timestamp()
+    assert limit_reset("Claude AI usage limit reached|1792900000", 1792800000) == 1792900000
+    assert limit_reset("usage limit reached, try later", now) == now + 3600
+    assert limit_reset("timeout", now) is None and limit_reset("", now) is None
+
+    clock.now = now
+    mb = board(store, clock)
+
+    async def scenario():
+        await mb.register()
+        assert (await mb.permit("T3")).allowed
+        await mb.report("T3", False, error=err)
+        p = await mb.permit("T3")  # one failure is enough: resting until 2:31
+        assert not p.allowed and p.reason == "breaker open" and p.retry_after == 81 * 60
+        await mb.report("T1", False, error="You've hit your session limit · resets 2:30am")  # not Claude: as usual
+        assert (await mb.permit("T1")).allowed
+        clock.advance(81 * 60 + 1)
+        assert (await mb.permit("T3")).allowed  # reset: a trial call
+
+    run(scenario())
