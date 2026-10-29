@@ -251,6 +251,10 @@ class PowerConfig(_Strict):
     # laptop; sleep / shut down / restart run on the PC's worker.
     pc_mac: str | None = None  # the PC's wired network card, e.g. 04:7C:16:AB:CD:EF (ipconfig /all)
     wol_broadcast: str = "255.255.255.255"
+    # The PC's own address on the home network (e.g. 192.168.8.192; keep it fixed in the router). The wake packet
+    # also goes straight to it: many routers don't pass a broadcast from Wi-Fi to their wired ports, but do pass this.
+    # On the laptop, deploy/linux/pc-wake-setup.sh (once, as root) keeps the PC's card known even while it's off.
+    pc_ip: str | None = None
     wol_port: int = Field(9, ge=1, le=65535)
     shutdown_delay_seconds: int = Field(60, ge=0, le=3600)  # time to cancel a shutdown or restart
     warn_minutes: float = Field(5, ge=0, le=120)  # real mode: phone warning this long before an automatic shutdown
@@ -265,6 +269,18 @@ class PowerConfig(_Strict):
         if len(h) != 12:
             raise ValueError(f"pc_mac {v!r} is not a MAC address like 04:7C:16:AB:CD:EF")
         return ":".join(h[i:i + 2] for i in range(0, 12, 2)).upper()
+
+    @field_validator("pc_ip")
+    @classmethod
+    def _ip(cls, v: str | None) -> str | None:
+        if v is None or not str(v).strip():
+            return None
+        import ipaddress
+
+        try:
+            return str(ipaddress.IPv4Address(str(v).strip()))
+        except ValueError:
+            raise ValueError(f"pc_ip {v!r} is not an address like 192.168.8.192") from None
 
 
 class PluginsConfig(_Strict):

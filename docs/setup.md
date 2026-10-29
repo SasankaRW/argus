@@ -500,6 +500,14 @@ minutes. If not, run `.\scripts\dev.ps1 wol-check` on the PC: it shows the MAC f
 network card may wake the PC and Fast Startup is off (`wol-check fix` turns those on, as administrator). In the
 BIOS: Power On By PCI-E (Wake on LAN) on, ErP off. Wi-Fi can't be woken: the PC needs a cable.
 
+**The laptop is on Wi-Fi?** Many home routers don't pass a broadcast from Wi-Fi to their wired ports, so the PC never
+sees it ("the PC didn't wake" every time, while the PC is fine). Set `power.pc_ip` to the PC's address (keep it fixed
+in the router: a DHCP reservation) and run `sudo bash /opt/argus/deploy/linux/pc-wake-setup.sh` once on the laptop.
+The packet then also goes straight to the PC's card, which routers do pass; the setup keeps the PC's card known to
+the laptop while the PC is off (a permanent neighbour entry, set again whenever the laptop's network comes up). The
+wake check (`GET /power`, and the "wake-on-lan sent" log line) says `direct: kept` when that's in place. A cable
+from the laptop to the router works too.
+
 ## Laptop power buttons
 
 Helios > Power > **The laptop**: **Restart Argus**, **Restart** and **Shut down** (both a minute ahead, with

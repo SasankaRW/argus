@@ -26,6 +26,7 @@ power:
   idle_minutes: 20
   warn_minutes: 5
   pc_mac:                  # the PC's wired card (ipconfig /all), e.g. 04:7C:16:AB:CD:EF
+  pc_ip:                   # the PC's address (laptop on Wi-Fi: also run deploy/linux/pc-wake-setup.sh once)
   wol_broadcast: 255.255.255.255
 
 backup:
