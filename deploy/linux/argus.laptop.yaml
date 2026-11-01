@@ -26,7 +26,6 @@ power:
   idle_minutes: 20
   warn_minutes: 5
   pc_mac:                  # the PC's wired card (ipconfig /all), e.g. 04:7C:16:AB:CD:EF
-  pc_ip:                   # the PC's address (laptop on Wi-Fi: also run deploy/linux/pc-wake-setup.sh once)
   wol_broadcast: 255.255.255.255
 
 backup:
@@ -42,7 +41,7 @@ plugins:
   live: [downloads-organizer, screenshot-renamer]
   # A plugin whose address is 127.0.0.1 must run where that service is (its jobs could otherwise land on either
   # machine). argusd --check warns about the ones that need this.
-  runs_on: {web: desktop, lifehub: desktop, tracker: laptop}   # SearXNG and Life Hub on the PC, Tracker here
+  runs_on: {web: desktop, lifehub: desktop, advisor: desktop, tracker: laptop}   # SearXNG, Life Hub and the advisor (which calls Life Hub) on the PC, Tracker here
   config:
     tracker: {url: "http://127.0.0.1:8282"}
 

@@ -72,6 +72,48 @@ def test_what_counts():
     assert wt.verdict(c, wt.read(page, c)) == "Keyboard changed: Back in stock"
 
 
+# Trimmed from jeyabookcentre.com/item/64632-dune-1 (2026-11-01): the ISBN sits on the line above the price,
+# the old price is struck through after it, and "Add to cart" is still on the page while it's out of stock.
+BOOK = """<html><body><h1>Dune</h1><dl>
+<div><dt>ISBN</dt><dd>9780441172719</dd></div><div><dt>EAN13</dt><dd>9780441172719</dd></div></dl>
+<div><span>LKR %s</span> <s>LKR 4,995.00</s> <span>Save 20 %%</span></div>
+<p>%s</p><button>Add to cart</button>
+<h2>You may also like</h2><p>Children of Dune</p><p>LKR 2,500.00</p><p>In stock</p></body></html>"""
+
+
+def book(price: str = "3,996.00", stock: str = "Out of stock") -> str:
+    return BOOK % (price, stock)
+
+
+def test_a_book_page_price_is_not_its_isbn():
+    w = {"name": "Dune", "kind": "price", "below": None, "part": ""}
+    now = wt.read(book(), w)
+    assert (now["price"], now["cur"]) == (3996.0, "LKR")
+    assert wt.text_price("ISBN 9780441172719\nLKR 3,996.00") == (3996.0, "LKR")
+    assert wt.text_price("EAN13 9780441172719 LKR") is None  # a barcode is never a price
+    assert wt.text_price("Rs 1,250\n2 LKR") == (1250.0, "Rs")  # number and currency must share a line
+
+
+def test_in_stock_or_not():
+    w = {"name": "Dune", "kind": "price", "below": None, "part": ""}
+    assert wt.read(book(), w)["stock"] == "out"  # "Out of stock" wins over the Add to cart button
+    assert wt.read(book(stock="In stock"), w)["stock"] == "in"
+    assert wt.read(shop("289,000"), w)["stock"] == "in"
+    ld = ('<script type="application/ld+json">{"@type": "Product", "offers": {"price": "10",'
+          ' "availability": "https://schema.org/OutOfStock"}}</script>')
+    assert wt.structured_stock(ld) == "out"
+    assert wt.structured_stock('<meta property="og:availability" content="instock">') == "in"
+    assert wt.structured_stock("<p>nothing</p>") is None
+
+    w["last"] = wt.read(book(), w)
+    assert wt.verdict(w, wt.read(book(), w)) is None
+    assert wt.verdict(w, wt.read(book(stock="In stock"), w)) == "Dune is back in stock at LKR 3,996."
+    w["last"] = wt.read(book(stock="In stock"), w)
+    assert wt.verdict(w, wt.read(book(), w)) == "Dune is out of stock now."
+    assert wt.verdict(w, wt.read(book(price="3,500.00", stock="In stock"), w)) == \
+        "Dune dropped to LKR 3,500 (was LKR 3,996)."
+
+
 def test_a_name_that_turns_local_on_connect_is_refused(monkeypatch):
     """DNS rebinding: the name checks out as public, but the connection lands on this machine."""
     page = Page()
@@ -135,7 +177,8 @@ def test_watch_by_talking_then_the_check_tells_the_phone(tmp_path, monkeypatch):
             return j
 
         added = call("add", url=page.url, kind="price", below=280000, name="RTX 5080")["result"]
-        assert added["say"] == "Watching RTX 5080: it's LKR 289,000 now; I'll tell you when it's under LKR 280,000."
+        assert added["say"] == ("Watching RTX 5080: it's LKR 289,000 now (in stock); "
+                                "I'll tell you when it's under LKR 280,000.")
         bad = call("add", url=page.url, kind="price", part="mouse")
         assert bad["state"] == "dead" and "mouse" in bad["error"]
         page.body = shop("279,000")
@@ -152,3 +195,17 @@ def test_watch_by_talking_then_the_check_tells_the_phone(tmp_path, monkeypatch):
         assert shared["say"] == "Watching Keyboard deal: it's Rs 12,500 now; I'll tell you when it's under Rs 13,000."
         assert call("remove", name="keyboard deal")["result"] == {"stopped": "Keyboard deal"}
         assert call("list")["result"]["watches"] == []
+
+
+def test_a_misread_price_is_not_a_sale():
+    w = {"name": "Dune", "kind": "price", "below": None, "part": "",
+         "last": {"found": True, "price": 9780441172719.0, "cur": "LKR"}}  # what the old reader took from the ISBN
+    assert wt.verdict(w, wt.read(book(stock="Out of stock"), w)) is None  # no "dropped to LKR 3,996" alert
+
+
+def test_a_shop_that_hides_the_price_when_sold_out():
+    page = "<html><body><h1>Dune</h1><p>Sold out</p><button>Notify me</button><p>Rs 2,000 bookmark</p></body></html>"
+    narrowed = wt.read(page, {"name": "Dune", "kind": "price", "part": "Dune"})
+    assert narrowed["stock"] == "out"
+    whole = wt.read("<html><body><p>Sold out</p></body></html>", {"name": "x", "kind": "price", "part": ""})
+    assert "stock" not in whole and "price" not in whole  # a whole page without a price says nothing about stock

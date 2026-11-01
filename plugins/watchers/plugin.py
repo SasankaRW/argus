@@ -69,13 +69,16 @@ def narrow(text: str, part: str) -> str | None:
 
 
 _CUR = r"(?:rs\.?|lkr|usd|us\$|\$|€|eur|£|gbp|₹|inr)"
-_NUM = r"\d{1,3}(?:[,\s]\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?"
-PRICE = re.compile(rf"(?P<cur>{_CUR})\s?(?P<n>{_NUM})|(?P<n2>{_NUM})\s?(?P<cur2>{_CUR})(?![a-z])", re.I)
+_NUM = r"\d{1,3}(?:[,  ]\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?"
+# Number and currency on the same line only: "EAN13 9780441172719" above "LKR 3,996.00" is not a price.
+PRICE = re.compile(rf"(?P<cur>{_CUR})[  ]?(?P<n>{_NUM})|(?P<n2>{_NUM})[  ]?(?P<cur2>{_CUR})(?![a-z])",
+                   re.I)
+LONG_CODE = re.compile(r"\d{10,}")  # an ISBN, barcode or phone number, never a price
 
 
 def _num(s: str) -> float | None:
     try:
-        return float(re.sub(r"[,\s]", "", s))
+        return float(re.sub(r"[,\s ]", "", s))
     except ValueError:
         return None
 
@@ -109,11 +112,80 @@ def structured_price(markup: str) -> tuple[float, str] | None:
     return None
 
 
-def text_price(text: str) -> tuple[float, str] | None:
+def _text_price_match(text: str) -> tuple[float, str, re.Match] | None:
     for m in PRICE.finditer(text):
-        n = _num(m.group("n") or m.group("n2"))
+        raw = m.group("n") or m.group("n2")
+        if LONG_CODE.fullmatch(raw.split(".")[0]):
+            continue
+        n = _num(raw)
         if n:
-            return n, (m.group("cur") or m.group("cur2") or "").strip()
+            return n, (m.group("cur") or m.group("cur2") or "").strip(), m
+    return None
+
+
+def text_price(text: str) -> tuple[float, str] | None:
+    found = _text_price_match(text)
+    return (found[0], found[1]) if found else None
+
+
+# ------------------------------------------------------------------ in stock or not
+
+_LD_STOCK = {"instock": "in", "instoreonly": "in", "onlineonly": "in", "limitedavailability": "in",
+             "preorder": "in", "presale": "in", "backorder": "in",
+             "outofstock": "out", "soldout": "out", "discontinued": "out"}
+_OUT_WORDS = re.compile(r"out of stock|sold out|currently unavailable|unavailable|not available|no stock|"
+                        r"temporarily out|notify me when", re.I)
+_IN_WORDS = re.compile(r"in stock|add to (?:cart|basket|bag)|buy now|available now|ready to ship", re.I)
+MISREAD = 100  # a price this many times higher or lower than the last is a misread, not a sale
+STOCK_AFTER = 200  # characters after the price that still describe that product
+STOCK_BEFORE = 60
+
+
+def structured_stock(markup: str) -> str | None:
+    """'in' or 'out' from the page's own product data (JSON-LD offers.availability, og:availability)."""
+    for block in re.findall(r"<script[^>]+application/ld\+json[^>]*>(.*?)</script>", markup, re.S | re.I):
+        try:
+            data = json.loads(block.strip())
+        except ValueError:
+            continue
+        stack = [data]
+        while stack:
+            d = stack.pop()
+            if isinstance(d, list):
+                stack.extend(d)
+            elif isinstance(d, dict):
+                offers = d.get("offers")
+                for o in offers if isinstance(offers, list) else [offers] if offers else []:
+                    if isinstance(o, dict) and o.get("availability"):
+                        key = str(o["availability"]).rsplit("/", 1)[-1].lower()
+                        if key in _LD_STOCK:
+                            return _LD_STOCK[key]
+                stack.extend(v for v in d.values() if isinstance(v, (dict, list)))
+    m = re.search(r'<meta[^>]+(?:property|name)=["\'](?:og|product):availability["\'][^>]*content=["\']([^"\']+)',
+                  markup, re.I)
+    if m:
+        v = m.group(1).lower().replace(" ", "").replace("_", "")
+        if v in ("instock", "available", "preorder", "pending"):
+            return "in"
+        if v in ("oos", "outofstock", "soldout", "discontinued"):
+            return "out"
+    return None
+
+
+def text_stock(text: str, near: re.Match | None, narrowed: bool = False) -> str | None:
+    """'in' or 'out' from the words right around the price (a whole page also lists other products).
+    "Out of stock" wins over an "Add to cart" button that's still on the page. Without a price, only a watch
+    narrowed to its product ("part") is read, from the product's name on."""
+    if near is None:
+        if not narrowed:
+            return None
+        window = text[:STOCK_BEFORE + STOCK_AFTER]
+    else:
+        window = text[max(0, near.start() - STOCK_BEFORE):near.end() + STOCK_AFTER]
+    if _OUT_WORDS.search(window):
+        return "out"
+    if _IN_WORDS.search(window):
+        return "in"
     return None
 
 
@@ -139,17 +211,27 @@ def fmt(price: float, cur: str) -> str:
 
 
 def read(markup: str, w: dict[str, Any]) -> dict[str, Any]:
-    """What a watch sees on the page now: {text, hash, price?, found}."""
+    """What a watch sees on the page now: {text, hash, price?, cur?, stock?, found}. stock is "in" or "out"."""
     text = narrow(page_text(markup), w.get("part") or "")
     if text is None:
         return {"found": False}
     out: dict[str, Any] = {"found": True, "text": text[:4000],
                            "hash": hashlib.sha256(text.encode()).hexdigest()[:16]}
     if w["kind"] == "price":
-        p = (None if w.get("part") else structured_price(markup)) or text_price(text)
+        whole_page = not w.get("part")
+        found = _text_price_match(text)
+        p = (structured_price(markup) if whole_page else None) or (found[:2] if found else None)
         if p:
             out["price"], out["cur"] = p
+        near = found[2] if found else None
+        stock = (structured_stock(markup) if whole_page else None) or text_stock(text, near, narrowed=not whole_page)
+        if stock:
+            out["stock"] = stock
     return out
+
+
+def stock_words(stock: str | None) -> str:
+    return {"in": "in stock", "out": "out of stock"}.get(stock or "", "")
 
 
 def what_changed(old: str, new: str) -> str:
@@ -166,9 +248,17 @@ def verdict(w: dict[str, Any], now: dict[str, Any]) -> str | None:
         return None
     if w["kind"] == "price":
         p, before = now.get("price"), last.get("price")
+        cur = now.get("cur") or last.get("cur") or ""
+        stock, was = now.get("stock"), last.get("stock")
+        at = f" at {fmt(p, cur)}" if p is not None else ""
+        if stock == "in" and was == "out":
+            return f"{w['name']} is back in stock{at}."
+        if stock == "out" and was == "in":
+            return f"{w['name']} is out of stock now."
         if p is None:
             return None
-        cur = now.get("cur") or last.get("cur") or ""
+        if before and not before / MISREAD < p < before * MISREAD:
+            return None  # a hundredfold jump is a misread (or the old one was): start again from this price
         below = w.get("below")
         if below is not None and p <= below and (before is None or before > below):
             return f"{w['name']} is {fmt(p, cur)}, under your {fmt(below, cur)}."
@@ -229,7 +319,7 @@ def add(ctx: Context):
         now = read(fetch(ctx, url), w)
         if not now["found"]:
             raise PermanentError(f"couldn't find \"{part}\" on that page")
-        if kind == "price" and "price" not in now:
+        if kind == "price" and "price" not in now and "stock" not in now:  # stock alone: back-in-stock news
             raise PermanentError("couldn't find a price on that page (name the product with \"part\")")
         return now
 
@@ -243,11 +333,18 @@ def add(ctx: Context):
         ctx.store.set("watches", all_)
         say = f"Watching {w['name']}"
         if kind == "price":
-            say += f": it's {fmt(now['price'], now.get('cur', ''))} now"
+            if "price" in now:
+                say += f": it's {fmt(now['price'], now.get('cur', ''))} now"
+                if now.get("stock"):
+                    say += f" ({stock_words(now['stock'])})"
+            else:
+                say += f": no price shown, {stock_words(now['stock'])}"
             say += f"; I'll tell you when it's under {fmt(below, now.get('cur', ''))}." if below is not None \
                 else "; I'll tell you when it drops."
         else:
             say += "; I'll tell you when it changes."
+        if kind == "price" and now.get("stock") == "out":
+            say += " I'll also tell you when it's back in stock."
         return {"watching": w["name"], "say": say}
 
     return ctx.step("keep", keep)
@@ -264,6 +361,8 @@ def list_(ctx: Context):
                 row["price"] = fmt(last["price"], last.get("cur", ""))
                 if w.get("below") is not None:
                     row["tell_under"] = fmt(w["below"], last.get("cur", ""))
+            if w["kind"] == "price" and last.get("stock"):
+                row["stock"] = last["stock"]
             row["changed"] = time.strftime("%d %b %H:%M", time.localtime(w["changed_at"])) if w.get("changed_at") \
                 else "not since added"
             if w.get("problem"):
@@ -314,6 +413,8 @@ def check(ctx: Context):
                 before = w.get("last") or {}
                 if w["kind"] == "price" and "price" not in now and "price" in before:
                     now = {**now, "price": before["price"], "cur": before.get("cur", "")}  # a read without a price
+                if w["kind"] == "price" and "stock" not in now and "stock" in before:
+                    now = {**now, "stock": before["stock"]}  # a read that didn't say: keep what we knew
                 w["last"] = now
                 if msg:
                     w["changed_at"] = time.time()

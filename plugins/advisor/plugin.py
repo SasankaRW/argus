@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import json
 import re
+import time
+import urllib.parse
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -33,7 +35,7 @@ NUM = re.compile(r"(?<![\w.])(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?")
 
 # ------------------------------------------------------------------ Life Hub
 
-def call(ctx: Context, method: str, path: str, body: Any = None) -> Any:
+def call(ctx: Context, method: str, path: str, body: Any = None, missing_ok: bool = False) -> Any:
     base = str(ctx.config.get("lifehub_url") or "http://127.0.0.1:8081").rstrip("/")
     key = ctx.secrets.get("LIFEHUB_API_KEY")
     if not key:
@@ -45,6 +47,8 @@ def call(ctx: Context, method: str, path: str, body: Any = None) -> Any:
         raise PermanentError(f"Life Hub isn't answering at {base}") from None
     if status in (401, 403):
         raise PermanentError("Life Hub refused the key: LIFEHUB_API_KEY must equal API_KEY in lifehub/.env")
+    if status == 404 and missing_ok:
+        return None
     if status >= 400:
         try:
             detail = json.loads(raw).get("detail")
@@ -235,44 +239,100 @@ def current_watches(ctx: Context, label: str) -> dict[str, dict]:
     return {w["url"]: w for w in res.get("watches", [])}
 
 
-def watch_name(item: dict) -> str:
-    return f"Wishlist: {item.get('name', '')}"[:60]
+WATCH_PREFIX = "Wishlist: "
+
+
+def shop_of(url: str) -> str:
+    return (urllib.parse.urlparse(url).hostname or url).removeprefix("www.")
+
+
+def watch_name(link: dict) -> str:
+    """One watch per page, so its name must be too: the main link keeps the plain name (older watches use it),
+    other shops add theirs: "Wishlist: Dune book · sarasavi.lk"."""
+    base = f"{WATCH_PREFIX}{link.get('name', '')}"
+    if link.get("main", True):
+        return base[:60]
+    shop = link.get("shop") or shop_of(link["url"])
+    return f"{base[:57 - len(shop)]} · {shop}"[:60]
+
+
+def shop_links(ctx: Context) -> list[dict]:
+    """Every shop page of every wishlist item not bought: {uid, name, url, main, shop}. From Life Hub's links list,
+    or (a Life Hub from before links) each item's own link."""
+    links = call(ctx, "GET", "/api/advisor/links", missing_ok=True)
+    if links is None:
+        links = [{"uid": i["uid"], "name": i["name"], "url": i["url"], "main": True, "item_price": i.get("price")}
+                 for i in call(ctx, "GET", "/api/items?list=wishlist") or []
+                 if i.get("url") and i.get("status") != "bought" and i.get("uid")]
+    seen, out = set(), []
+    for link in links:
+        if link.get("url") and link.get("uid") and link["url"] not in seen:
+            seen.add(link["url"])
+            out.append({**link, "shop": link.get("shop") or shop_of(link["url"])})
+    return out
+
+
+def in_stock(watch: dict) -> bool | None:
+    return {"in": True, "out": False}.get(str(watch.get("stock") or ""))
+
+
+RETRY_UNWATCHABLE = 24 * 3600  # a page that couldn't be watched (no price, the watch limit, a hiccup): try daily
+MISREAD = 100
+
+
+def believable(price: float, link: dict) -> bool:
+    """A price 100 times off the item's own is a misread (an ISBN, a barcode), not news for Life Hub."""
+    own = link.get("item_price")
+    return not own or own / MISREAD < price < own * MISREAD
 
 
 @workflow(PLUGIN, "prices")
 def prices(ctx: Context):
-    items = ctx.step("wishlist", lambda: [i for i in (call(ctx, "GET", "/api/items?list=wishlist") or [])
-                                          if i.get("url") and i.get("status") != "bought" and i.get("uid")])
-    if not items:
-        return {"items": 0, "say": "No wishlist items with a link to watch."}
+    links = ctx.step("wishlist", lambda: shop_links(ctx))
     watched = current_watches(ctx, "watches")
-    skip: dict = ctx.store.get("unwatchable") or {}
 
+    # A link you removed in Life Hub (or an item you bought): stop watching its page
+    wanted = {link["url"] for link in links}
+    gone = [w["name"] for url, w in watched.items() if url not in wanted and w["name"].startswith(WATCH_PREFIX)]
+    for n, name in enumerate(gone):
+        ctx.step(f"stop {n}", lambda name=name: None if ctx.dry_run else ctx.tool("stop_watching", {"name": name}))
+    if not links:
+        return {"items": 0, "stopped": gone, "say": "No wishlist items with a link to watch."}
+
+    now = time.time()
+    old = ctx.store.get("unwatchable_at")
+    skip: dict[str, float] = {u: t for u, t in (old or {}).items() if now - t < RETRY_UNWATCHABLE}
     added, failed = [], []
-    for i in items:
-        if i["url"] in watched or skip.get(i["uid"]) == i["url"]:
+    for n, link in enumerate(links):
+        if link["url"] in watched or link["url"] in skip:
             continue
         try:
-            ctx.step(f"watch {i['uid']}", lambda i=i: ctx.tool("watch_page", {"url": i["url"], "kind": "price",
-                                                                            "name": watch_name(i)}))
-            added.append(i["name"])
-        except ToolFailed as e:  # no price on that page: don't try it every run
-            skip[i["uid"]] = i["url"]
-            failed.append(f"{i['name']}: {str(e)[:120]}")
+            ctx.step(f"watch {n}", lambda link=link: ctx.tool(
+                "watch_page", {"url": link["url"], "kind": "price", "name": watch_name(link)}))
+            added.append(watch_name(link).removeprefix(WATCH_PREFIX))
+        except ToolFailed as e:  # no price on that page: not every run, but again tomorrow
+            skip[link["url"]] = now
+            failed.append(f"{link['name']} ({link['shop']}): {str(e)[:120]}")
     if added:
         watched = current_watches(ctx, "watches again")
-    ctx.store.set("unwatchable", skip)
+    ctx.store.set("unwatchable_at", skip)
 
     sent = []
-    for i in items:
-        p = shown_price((watched.get(i["url"]) or {}).get("price", ""))
-        if not p:
+    for n, link in enumerate(links):
+        w = watched.get(link["url"]) or {}
+        p, stock = shown_price(w.get("price", "")), in_stock(w)
+        if p and not believable(p[0], link):
+            p = None
+        if not p and stock is None:
             continue
-        price, cur = p
-        ctx.step(f"price {i['uid']}", lambda i=i, price=price, cur=cur: None if ctx.dry_run else call(
-            ctx, "POST", "/api/advisor/prices", {"uid": i["uid"], "price": price, "currency": cur, "source": "watch"}))
-        sent.append({"item": i["name"], "price": price, "currency": cur})
-    return {"items": len(items), "watching_new": added, "no_price_found": failed, "prices": sent}
+        body = {"uid": link["uid"], "currency": p[1] if p else None, "price": p[0] if p else None,
+                "in_stock": stock, "url": link["url"], "source": f"watch:{link['shop']}"[:60]}
+        ctx.step(f"price {n}", lambda body=body: None if ctx.dry_run else
+                 call(ctx, "POST", "/api/advisor/prices", body))
+        sent.append({"item": link["name"], "shop": link["shop"], "price": body["price"], "currency": body["currency"],
+                     "in_stock": stock})
+    return {"items": len({link["uid"] for link in links}), "links": len(links), "watching_new": added,
+            "no_price_found": failed, "stopped": gone, "prices": sent}
 
 
 # ------------------------------------------------------------------ interest rates (weekly)
