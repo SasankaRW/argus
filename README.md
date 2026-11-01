@@ -12,7 +12,7 @@ Design documents (versions tracked in the Argus Docs Index):
 ## Status
 
 The version is in `VERSION`; what changed is in `CHANGELOG.md`. Core steps done: C1 skeleton, C2 store, C3 jobs, C4 workers,
-C5 live events, C6 Helios live map, C7 models and escalation, C8 approvals, outbox and ntfy, C9 scheduler,
+C5 live events, C6 Helios live map, C7 models and escalation, C8 approvals and outbox, C9 scheduler,
 triggers and dispatcher.
 
 ## Run it on Windows (PC, development)
@@ -46,9 +46,8 @@ core/argus/        the argusd package
   models/          Ollama and Claude providers, tier router (checks, escalation), doctor
   modelboard.py    circuit breakers and the daily Claude budget, shared by all workers
   approvals.py     approvals: signed one-time phone tokens, reminders, expiry
-  outbox.py        messages that leave Argus (ntfy), sent exactly once with retries
+  outbox.py        messages that leave Argus (phone app), sent exactly once with retries
   presence.py      phone on Tailscale: push waiting approvals when it comes back
-  relay.py         optional: approval buttons through an ntfy reply topic
   registry.py      workers, components and edges (the Helios map)
   events.py        event log, edges, live stream hub, retention
   tail.py          argus-events: live events in the terminal

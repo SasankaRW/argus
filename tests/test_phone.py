@@ -30,9 +30,8 @@ def test_home_away_offline():
 
 def test_ari_finds_and_rings_the_phone(tmp_path, monkeypatch):
     a = make(tmp_path, monkeypatch)
-    y = (tmp_path / "argus.yaml").read_text() + "approvals:\n  phone: pixel-8a\nntfy:\n  url: http://127.0.0.1:9\n"
+    y = (tmp_path / "argus.yaml").read_text() + "approvals:\n  phone: pixel-8a\n"
     (tmp_path / "argus.yaml").write_text(y)
-    monkeypatch.setenv("NTFY_TOPIC", "argus-test-topic")
     from argus.config import load_config
     from argus.context import Argus
 
