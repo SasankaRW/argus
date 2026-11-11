@@ -51,6 +51,20 @@ def test_the_entry_may_only_use_what_was_said():
     assert "empty" in check(dy.Entry(), None)
 
 
+def test_times_written_differently_are_still_what_was_said():
+    # typed "7 .30" and "11.30": the entry writes them as times, which is fine; a new number still isn't
+    check = dy.entry_check("21:15  i woke up around like 7 .30 am. we checked out at around 11.30, home at 5 pm")
+    e = dy.Entry(title="Second day of the trip", entry="I woke up at 7:30 am, checked out at 11.30 and was home by 5.")
+    assert check(e, None) is None
+    assert check(e.model_copy(update={"entry": "I woke up at 7.30 and checked out at 11:30."}), None) is None
+    assert "numbers" in check(e.model_copy(update={"entry": "I woke up at 7:45."}), None)
+    assert "numbers" in check(e.model_copy(update={"entry": "We drove 120 km."}), None)
+    # parts of a time aren't numbers on their own, and the time it was said isn't something said
+    assert "numbers" in check(e.model_copy(update={"entry": "We drove 15 km."}), None)
+    assert "numbers" in check(e.model_copy(update={"entry": "We drove 30 km."}), None)
+    assert "numbers" in check(e.model_copy(update={"entry": "I went to bed at 21:15."}), None)
+
+
 def fake_lifehub():
     state = {"diary": {}, "items": [], "deleted": [], "posted": []}
 
