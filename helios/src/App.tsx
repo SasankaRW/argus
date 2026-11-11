@@ -275,16 +275,17 @@ export function App() {
 
   const st = a.status;
   const ok = st?.status === "ok" && a.conn === "live";
-  if (phone) {  // the phone: terminal widgets (Phone.tsx), a floating tab bar, details in a bottom sheet
+  if (phone) {  // the phone: the kit one-handed (Phone.tsx), a floating tab bar, details in a bottom sheet
     const proot = view.split("/")[0];
     const tab: PhoneTab = proot === "map" ? "home" : proot === "ari" ? "ari" : proot === "plugins" ? "plug" : "more";
     const open = (v: string) => go(v);
     return (
       <div className="phone2">
-        <div className="glow g1" aria-hidden="true" /><div className="glow g2" aria-hidden="true" />
-        <PhoneHeader status={st} live={a.conn === "live"} />
+        <PhoneHeader status={st} live={a.conn === "live"} view={view} waiting={waiting} onInbox={() => go("inbox")} onHome={() => go("map")} />
         {a.phase === "down" && <PhoneOffline onRetry={() => a.reconnect()} />}
+        {proot === "map" && <Vitals status={st} />}
         <main key={view} className="pmain2">
+          <PageBoundary name={proot}>
           <Suspense fallback={<Skeleton rows={4} />}>
           {proot === "ari" ? (view.includes("/")
             ? <AriView conv={view.split("/")[1]} onBack={() => go("ari")} onNew={(c) => go(`ari/${c}`)} onSelect={setSel} onView={open} />
@@ -307,6 +308,7 @@ export function App() {
           : <PhoneHome status={st} events={a.events} onSelect={setSel} onOpen={open} onInbox={() => go("inbox")}
               onAri={(mic) => { if (mic) { try { sessionStorage.setItem("ari.mic", "1"); } catch { /* private */ } } go("ari"); }} />}
           </Suspense>
+          </PageBoundary>
         </main>
         <PhoneTabs tab={tab} onTab={(t) => (t === "map" ? setBigMap(true) : go(t === "home" ? "map" : t === "plug" ? "plugins" : t))} />
         {sel && a.map && (
