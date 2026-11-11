@@ -92,3 +92,21 @@ def money(ctx: Context):
                 "days_in_month": month.get("days_in_month"), "payday": m.get("payday")}
 
     return ctx.step("money", go)
+
+
+@workflow(PLUGIN, "advice")
+def advice(ctx: Context):
+    """Life Hub's advisor answers common questions from its numbers; for the rest it hands back the totals."""
+    question = " ".join(str(ctx.input.get("question") or "").split())[:500]
+    if not question:
+        raise PermanentError("ask what?")
+
+    def go():
+        r = call(ctx, "POST", "/api/advisor/ask", {"question": question, "facts_only": True}) or {}
+        if r.get("answer"):
+            return {"answer": r["answer"], "why": r.get("why") or "", "risks": r.get("risks") or []}
+        return {"facts": r.get("facts") or {},
+                "note": "Answer from these facts only (Sri Lankan rupees); don't make up amounts."}
+
+    return ctx.step("ask", go)
+

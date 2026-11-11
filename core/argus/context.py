@@ -455,7 +455,7 @@ class Argus:
         """ctx.notify(): queue a phone message for a job the worker holds. The key makes a retried step's
         message a no-op. Returns True if it was queued now."""
 
-        quiet = self.cfg.notify.quiet and self.cfg.ntfy.quiet and self.cfg.summary.enabled and \
+        quiet = self.cfg.notify.quiet and self.cfg.summary.enabled and \
             int(message.get("priority") or 3) <= 3  # 1 min, 2 low, 3 default, 4 high, 5 urgent
 
         def fn(conn) -> bool:

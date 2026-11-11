@@ -9,7 +9,12 @@ Argus's event stream (a light poll):
   done     the answer, two lines, then it folds back
   click    it opens down: the time, Talk (the PC's "Hey Ari" listener starts listening), how Argus is doing, what
            waits for you, the next job, your shortcuts (set up in Helios > Ari > island). Clicking anywhere else
-           folds it again.
+           folds it again. Scroll on it to flip pages: what's playing (play / pause / next), the PC's load (CPU,
+           memory, GPU, disk, network), this month with today's weather.
+  dots     an orange dot on the lip while an app uses the mic, a green one for the camera (Argus's own listener
+           doesn't count); hover says which app, or the song that's playing
+  keys     Ctrl+Alt+Space: a box to type to Ari; Ctrl+Alt+D: hide the island / bring it back (Helios > Ari >
+           island to change them)
 It runs on the machine with your desktop session (the PC), also after Argus itself moves to the laptop: set
 ARGUS_URL to the laptop's address.
 """
@@ -30,6 +35,19 @@ import webbrowser
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from .island_live import (
+    Hardware,
+    Media,
+    clock,
+    level,
+    listen_hotkeys,
+    month_grid,
+    position_now,
+    privacy,
+    rate,
+    weekday_letters,
+)
 
 # ------------------------------------------------------------------ sizes (logical px)
 
@@ -187,12 +205,36 @@ class AriState:
 STOPPABLE = ("thinking", "working", "speaking")  # while Ari is doing any of these, the island has a Stop key
 
 
-def target_size(mode: str, text: str, hover: bool, details_h: float) -> tuple[float, float]:
+def target_size(mode: str, text: str, hover: bool, details_h: float, hover_text: str = "") -> tuple[float, float]:
     if mode == "details":
         return DETAILS_W, min(MAX_H, details_h)
     if mode in ("active", "done"):  # one look for both: Ari's answer stays in the same pill it spoke from
         return max(220, min(MAX_W, (100 if mode == "active" else 50) + len(text) * 7.0)), 36
+    if hover and hover_text:  # the song that's playing, or which app has the mic: wide enough to read
+        return max(HOVER[0], min(330, 44 + len(hover_text) * 6.4)), HOVER[1]
     return HOVER if hover else IDLE
+
+
+PAGE_IDS = ("media", "system", "calendar")  # pages of the opened island after Ari's own (island.PAGES_IDS)
+
+
+def pages_of(widgets: list[dict]) -> list[str]:
+    """The opened island's pages, in the order set in Helios: Ari's first, then the ones turned on."""
+    return ["ari"] + [w["id"] for w in widgets if w.get("on") and w.get("id") in PAGE_IDS]
+
+
+def hover_label(game: bool, off: bool, priv: dict, media: dict | None) -> str:
+    """What the island says on hover: who has the mic or camera first, then the song, else just "ari"."""
+    if game:
+        return "a r i · game mode"
+    if off:
+        return "a r i · off"
+    used = [("mic", a) for a in priv.get("mic") or []] + [("camera", a) for a in priv.get("camera") or []]
+    if used:
+        return " · ".join(f"{k}: {a}" for k, a in used[:2])
+    if media and media.get("playing") and media.get("title"):
+        return "♪ " + media["title"] + (f" — {media['artist']}" if media.get("artist") else "")
+    return "a r i"
 
 
 def icon_for(action: str) -> str:
@@ -273,15 +315,18 @@ class Info:
     next: dict | None = None
     last: str | None = None
     widgets: list[dict] = field(default_factory=lambda: [{"id": w, "on": True} for w in
-                                                        ("clock", "status", "inbox", "next", "shortcuts")])
+                                                        ("clock", "status", "inbox", "next", "shortcuts",
+                                                         "media", "system", "calendar", "privacy")])
     shortcuts: list[dict] = field(default_factory=list)
+    keys: dict[str, str] = field(default_factory=lambda: {"ask": "ctrl+alt+space", "hide": "ctrl+alt+d"})
 
 
 def fetch_info(api: Api) -> Info:
     info = Info()
     for path, fn in (
         ("/island", lambda r: (setattr(info, "widgets", r.get("widgets") or info.widgets),
-                               setattr(info, "shortcuts", r.get("shortcuts") or []))),
+                               setattr(info, "shortcuts", r.get("shortcuts") or []),
+                               setattr(info, "keys", r.get("keys") or info.keys))),
         ("/status", lambda r: setattr(info, "status", r)),
         ("/inbox", lambda r: setattr(info, "waiting", len(r.get("items") or []))),
         ("/schedules", lambda r: setattr(info, "next", next_schedule(r or []))),
@@ -314,6 +359,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
     p.add_argument("--text", default="", help=argparse.SUPPRESS)
     p.add_argument("--details", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--hover", action="store_true", help=argparse.SUPPRESS)
+    p.add_argument("--page", default="ari", help=argparse.SUPPRESS)  # with --details: media, system, calendar
+    p.add_argument("--ask", action="store_true", help=argparse.SUPPRESS)  # the type-to-Ari box
     args = p.parse_args(argv)
     token = os.environ.get("ARGUS_WORKER_TOKEN") or parse_env_file(Path(".env")).get("ARGUS_WORKER_TOKEN")
     try:
@@ -354,8 +401,56 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
         flash = Signal(str)
         ask = Signal(dict)
         answered = Signal(str)
+        live = Signal(str, object)  # what the PC itself says: media, hw, priv, weather
+        hotkey = Signal(str)
+        keys = Signal(dict)
 
     bus = Bus()
+
+    class Live:
+        """Reads the PC for the island on its own thread, only what is on show (Island.want): the mic/camera dots
+        every 2 s, what's playing every second, the load every 1.5 s, the weather every half hour."""
+
+        EVERY = {"priv": 2.0, "media": 1.0, "hw": 1.5, "weather": 1800.0}
+
+        def __init__(self) -> None:
+            self.media = Media()
+            self.hw = Hardware()
+            self.last: dict[str, float] = {}
+            self.wake = threading.Event()
+
+        def poke(self, kind: str) -> None:
+            """Read this now (after a click on play, say)."""
+            self.last.pop(kind, None)
+            self.wake.set()
+
+        def read(self, kind: str) -> Any:
+            if kind == "priv":
+                return privacy() if sys.platform == "win32" else {"mic": [], "camera": []}
+            if kind == "media":
+                return self.media.read()
+            if kind == "hw":
+                return self.hw.read()
+            return api.call("GET", "/island/weather")
+
+        def run(self) -> None:
+            while True:
+                want = set(getattr(island, "want", set()))
+                now = time.monotonic()
+                for kind in want:
+                    if now - self.last.get(kind, -1e9) < self.EVERY[kind]:
+                        continue
+                    self.last[kind] = now
+                    try:
+                        data = self.read(kind)
+                    except Exception:  # noqa: BLE001 - try again in a minute (Argus restarting, say)
+                        self.last[kind] = now - self.EVERY[kind] + 60
+                        continue
+                    bus.live.emit(kind, data)
+                self.wake.wait(0.5)
+                self.wake.clear()
+
+    live = Live()
 
     def font(families: list[str], px: float, weight: int = 400) -> QFont:
         f = QFont()
@@ -373,6 +468,11 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
     F_LABEL = font(MONO, 11)
     F_CLOCK = font(DISPLAY, 21, 400)
     F_CHIP = font(SANS, 11.5, 500)
+    F_TITLE = font(SANS, 14, 600)
+    F_TINY = font(MONO, 10)
+    F_DAY = font(SANS, 11.5)
+    BAR = {"ok": "#34d399", "warm": "#f5a524", "hot": "#ef6a6a"}
+    RIGHT_MID = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
 
     class Island(QWidget):
         def __init__(self) -> None:
@@ -413,6 +513,19 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             bus.events.connect(self.on_events)
             bus.info.connect(self.on_info)
             bus.flash.connect(self.on_flash)
+            bus.live.connect(self.on_live)
+            self.page = 0
+            self.wheel_acc, self.wheel_at = 0.0, 0.0
+            self.media: dict | None = None
+            self.art: Any = None  # the album art (QImage) and its colour
+            self.art_tone = QColor("#4cc2ff")
+            self.art_key: Any = None
+            self.hw: dict = {}
+            self.priv: dict = {"mic": [], "camera": []}
+            self.weather: dict = {}
+            self.weather_at = 0.0
+            self.tick = QTimer(self, interval=500)  # the media page's position moves on its own
+            self.tick.timeout.connect(self.update)
             self.place()
             self.set_mask()
 
@@ -428,12 +541,40 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
         def shown_text(self) -> str:
             return self.ari.text or ("say what you need" if self.ari.phase == "listening" else "")
 
+        def hover_text(self) -> str:
+            label = hover_label(self.ari.game, self.ari.off, self.priv, self.media)
+            return "" if label == "a r i" else label
+
+        def pages(self) -> list[str]:
+            return pages_of(self.info.widgets)
+
+        def page_id(self) -> str:
+            ps = self.pages()
+            self.page = max(0, min(self.page, len(ps) - 1))
+            return ps[self.page]
+
+        def wants(self) -> set[str]:
+            """What the sampler thread should read now (nothing while the island is hidden)."""
+            if not self.isVisible():
+                return set()
+            out = set()
+            if any(w.get("id") == "privacy" and w.get("on") for w in self.info.widgets):
+                out.add("priv")
+            if self.details:
+                pid = self.page_id()
+                out |= {"media": {"media"}, "system": {"hw"}, "calendar": {"weather"}}.get(pid, set())
+            elif self.hover and self.mode() == "idle":
+                out.add("media")
+            return out
+
         def target(self) -> tuple[float, float]:
             label = WORDS.get(self.ari.phase, "")
-            return target_size(self.mode(), f"{label}  {self.shown_text()}", self.hover, self.details_h)
+            return target_size(self.mode(), f"{label}  {self.shown_text()}", self.hover, self.details_h,
+                               self.hover_text())
 
         def kick(self) -> None:
             """Something changed: animate to the new size (the timer stops by itself once it settles)."""
+            self.want = self.wants()
             self.set_mask()
             if not self.anim.isActive():
                 self.last_frame = time.monotonic()
@@ -477,6 +618,35 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 QTimer.singleShot(2600, lambda: self.on_flash(""))
             self.update()
 
+        def on_live(self, kind: str, data: Any) -> None:
+            if kind == "media":
+                self.media = data
+                key = (data or {}).get("art") and hash(data["art"])
+                if key != self.art_key:
+                    self.art_key = key
+                    self.art = None
+                    if data and data.get("art"):
+                        img = QImage.fromData(data["art"])
+                        if not img.isNull():
+                            self.art = img
+                            c = img.scaled(1, 1, Qt.AspectRatioMode.IgnoreAspectRatio,
+                                           Qt.TransformationMode.SmoothTransformation).pixelColor(0, 0)
+                            h, sat, v, _a = c.getHsvF()
+                            self.art_tone = QColor.fromHsvF(max(0.0, h), max(0.45, sat), max(0.75, v))
+                        else:
+                            self.art_tone = QColor("#4cc2ff")
+                    else:
+                        self.art_tone = QColor("#4cc2ff")
+            elif kind == "hw":
+                self.hw = data or {}
+            elif kind == "priv":
+                if data == self.priv:
+                    return
+                self.priv = data
+            elif kind == "weather":
+                self.weather = data or {}
+            self.kick()
+
         def load_info(self) -> None:
             threading.Thread(target=lambda: bus.info.emit(fetch_info(api)), daemon=True).start()
 
@@ -486,13 +656,14 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             self.refresh.start()
             self.clock.start()
             self.away.start()
+            self.tick.start()
             self.kick()
 
         def close_details(self) -> None:
             if not self.details:
                 return
             self.details = False
-            for t in (self.refresh, self.clock, self.away, self.leave):
+            for t in (self.refresh, self.clock, self.away, self.leave, self.tick):
                 t.stop()
             self.kick()
 
@@ -598,15 +769,29 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             body = QRectF(r.x() + shoulder_w(self.spring.h), 0, self.spring.w, self.spring.h)
             self.buttons = []
             if mode == "idle":
+                mic, cam = bool(self.priv.get("mic")), bool(self.priv.get("camera"))
                 if self.hover and self.spring.h > 16:
-                    qp.setPen(QColor("#f5a524" if self.ari.game else "#ef6a6a" if self.ari.off else "#5d6670"))
-                    qp.setFont(F_LABEL)
-                    qp.drawText(body, Qt.AlignmentFlag.AlignCenter, "a r i · game mode" if self.ari.game
-                                else "a r i · off" if self.ari.off else "a r i")
-                elif self.ari.off:  # a small dot on the lip: Ari is off (amber: game mode)
-                    qp.setPen(Qt.PenStyle.NoPen)
-                    qp.setBrush(QColor("#f5a524" if self.ari.game else "#ef6a6a"))
-                    qp.drawEllipse(QPointF(body.center().x(), body.center().y()), 2.2, 2.2)
+                    label = hover_label(self.ari.game, self.ari.off, self.priv, self.media)
+                    used = label.startswith(("mic:", "camera:"))
+                    qp.setPen(QColor("#f5a524" if self.ari.game else "#ef6a6a" if self.ari.off else
+                                     "#fb923c" if used and mic else "#4ade80" if used else
+                                     "#c4c8ce" if label.startswith("♪") else "#5d6670"))
+                    qp.setFont(F_LABEL if label.startswith("a r i") or used else F_SMALL)
+                    fm = QFontMetrics(qp.font())
+                    qp.drawText(body.adjusted(12, 0, -12, 0), Qt.AlignmentFlag.AlignCenter,
+                                fm.elidedText(label, Qt.TextElideMode.ElideRight, int(body.width() - 24)))
+                else:
+                    if self.ari.off:  # a small dot on the lip: Ari is off (amber: game mode)
+                        qp.setPen(Qt.PenStyle.NoPen)
+                        qp.setBrush(QColor("#f5a524" if self.ari.game else "#ef6a6a"))
+                        qp.drawEllipse(QPointF(body.center().x(), body.center().y()), 2.2, 2.2)
+                    # privacy: orange while an app has the mic, green while one has the camera (still dots: no
+                    # redraws while you sit in a call)
+                    dots = [c for c, on in (("#fb923c", mic), ("#4ade80", cam)) if on]
+                    for i, col in enumerate(dots):
+                        qp.setPen(Qt.PenStyle.NoPen)
+                        qp.setBrush(QColor(col))
+                        qp.drawEllipse(QPointF(body.right() - 10 - i * 8, body.center().y()), 2.3, 2.3)
             elif mode in ("active", "done") and self.spring.h > 24:
                 self.draw_active(qp, body, tone, mode)
             elif mode == "details":
@@ -710,13 +895,63 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             self.buttons.append((rect.adjusted(-4, -4, 4, 4), "stop"))  # a bit larger to hit
 
         def draw_details(self, qp: Any, body: Any) -> None:
-            info = self.info
-            on = {w["id"] for w in info.widgets if w.get("on")}
-            order = [w["id"] for w in info.widgets if w.get("on")]
             fade = max(0.0, min(1.0, (self.spring.h - 70) / 40))
             qp.setOpacity(fade)
             x0, x1 = body.x() + 16, body.right() - 16
             y = body.y() + 12
+            pid = self.page_id()
+            if pid == "media":
+                y = self.draw_media(qp, x0, x1, y)
+            elif pid == "system":
+                y = self.draw_system(qp, x0, x1, y)
+            elif pid == "calendar":
+                y = self.draw_calendar(qp, x0, x1, y)
+            else:
+                y = self.draw_ari(qp, x0, x1, y)
+            if self.flash_text:
+                qp.setFont(F_SMALL)
+                qp.setPen(QColor("#39ff9c"))
+                qp.drawText(QRectF(x0, y + 2, x1 - x0, 18), Qt.AlignmentFlag.AlignLeft, self.flash_text)
+                y += 22
+            y = self.draw_dots(qp, body, y)
+            qp.setOpacity(1)
+            h = y - body.y() + 6
+            if abs(h - self.details_h) > 1:
+                self.details_h = h
+                QTimer.singleShot(0, self.kick)
+
+        def draw_dots(self, qp: Any, body: Any, y: float) -> float:
+            """Which page is on show, as dots under it (click one, or scroll, to flip)."""
+            n = len(self.pages())
+            if n < 2:
+                return y
+            gap = 12
+            cx0 = body.center().x() - gap * (n - 1) / 2
+            for i in range(n):
+                c = QPointF(cx0 + i * gap, y + 6)
+                on = i == self.page
+                qp.setPen(Qt.PenStyle.NoPen)
+                qp.setBrush(QColor("#e4e6e8" if on else "#3a3f46" if self.hot != f"page:{i}" else "#6f7680"))
+                if on:
+                    qp.drawRoundedRect(QRectF(c.x() - 5, c.y() - 2.5, 10, 5), 2.5, 2.5)
+                else:
+                    qp.drawEllipse(c, 2.5, 2.5)
+                self.buttons.append((QRectF(c.x() - 6, c.y() - 7, 12, 14), f"page:{i}"))
+            return y + 14
+
+        def page_head(self, qp: Any, x0: float, x1: float, y: float, title: str) -> float:
+            """A quiet header for the extra pages: the page's name on the left, the time on the right."""
+            qp.setFont(F_LABEL)
+            qp.setPen(QColor("#6f7680"))
+            qp.drawText(QRectF(x0, y, 200, 18), Qt.AlignmentFlag.AlignVCenter, title)
+            qp.drawText(QRectF(x1 - 80, y, 80, 18), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                        time.strftime("%H:%M"))
+            return y + 24
+
+        def draw_ari(self, qp: Any, x0: float, x1: float, y: float) -> float:
+            info = self.info
+            on = {w["id"] for w in info.widgets if w.get("on")}
+            order = [w["id"] for w in info.widgets if w.get("on")]
             # header: the time and date on the left; Talk (a round mic key) and "···" (Helios) on the right
             talk = QRectF(x1 - 30, y, 30, 30)
             more = QRectF(talk.x() - 36, y, 30, 30)
@@ -803,16 +1038,198 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                     self.chip(qp, QRectF(cx, y, cw, 26), "sc:" + sc["action"], label)
                     cx += cw + 6
                 y += 32
-            if self.flash_text:
+            return y
+
+        def draw_media(self, qp: Any, x0: float, x1: float, y: float) -> float:
+            """What's playing: the cover, title and artist, where it is in the song, and back / play / next."""
+            m = self.media or {}
+            y = self.page_head(qp, x0, x1, y, "now playing" + (f" · {m['app'].lower()}" if m.get("app") else ""))
+            art = QRectF(x0, y, 64, 64)
+            clip = QPainterPath()
+            clip.addRoundedRect(art, 10, 10)
+            qp.save()
+            qp.setClipPath(clip, Qt.ClipOperation.IntersectClip)
+            if self.art is not None:
+                qp.drawImage(art, self.art)
+            else:
+                qp.fillRect(art, QColor("#15171a"))
+                qp.setPen(QColor("#3a3f46"))
+                qp.setFont(font(SANS, 26))
+                qp.drawText(art, Qt.AlignmentFlag.AlignCenter, "♪")
+            qp.restore()
+            tx = x0 + 78
+            if m.get("title"):
+                qp.setFont(F_TITLE)
+                qp.setPen(QColor("#f4f5f6"))
+                qp.drawText(QRectF(tx, y + 6, x1 - tx, 20), Qt.AlignmentFlag.AlignVCenter,
+                            QFontMetrics(F_TITLE).elidedText(m["title"], Qt.TextElideMode.ElideRight, int(x1 - tx)))
                 qp.setFont(F_SMALL)
-                qp.setPen(QColor("#39ff9c"))
-                qp.drawText(QRectF(x0, y + 2, x1 - x0, 18), Qt.AlignmentFlag.AlignLeft, self.flash_text)
-                y += 22
-            qp.setOpacity(1)
-            h = y - body.y() + 6
-            if abs(h - self.details_h) > 1:
-                self.details_h = h
-                QTimer.singleShot(0, self.kick)
+                qp.setPen(QColor("#9aa1aa"))
+                who = " · ".join(x for x in (m.get("artist"), m.get("album")) if x)
+                qp.drawText(QRectF(tx, y + 28, x1 - tx, 18), Qt.AlignmentFlag.AlignVCenter,
+                            QFontMetrics(F_SMALL).elidedText(who, Qt.TextElideMode.ElideRight, int(x1 - tx)))
+                qp.setFont(F_TINY)
+                qp.setPen(QColor(self.art_tone) if m.get("playing") else QColor("#6f7680"))
+                qp.drawText(QRectF(tx, y + 46, x1 - tx, 16), Qt.AlignmentFlag.AlignVCenter,
+                            "playing" if m.get("playing") else "paused" if m.get("paused") else "")
+            else:
+                qp.setFont(F_TEXT)
+                qp.setPen(QColor("#9aa1aa"))
+                qp.drawText(QRectF(tx, y, x1 - tx, 64), Qt.AlignmentFlag.AlignVCenter,
+                            "Nothing playing" if self.media is not None or sys.platform == "win32" else "No media here")
+            y += 76
+            pos = position_now(m.get("pos"), m.get("end"), m.get("updated"), bool(m.get("playing")))
+            end = m.get("end")
+            if pos is not None and end:  # the song's progress, in the cover's colour
+                bar = QRectF(x0, y + 4, x1 - x0, 4)
+                qp.setPen(Qt.PenStyle.NoPen)
+                qp.setBrush(QColor(255, 255, 255, 22))
+                qp.drawRoundedRect(bar, 2, 2)
+                qp.setBrush(self.art_tone)
+                qp.drawRoundedRect(QRectF(bar.x(), bar.y(), bar.width() * max(0.0, min(1.0, pos / end)), 4), 2, 2)
+                qp.setFont(F_TINY)
+                qp.setPen(QColor("#6f7680"))
+                qp.drawText(QRectF(x0, y + 10, 80, 14), Qt.AlignmentFlag.AlignLeft, clock(pos))
+                qp.drawText(QRectF(x1 - 80, y + 10, 80, 14), Qt.AlignmentFlag.AlignRight, clock(end))
+                y += 28
+            # back / play-pause / next
+            cx = (x0 + x1) / 2
+            for key, dx, big in (("media:previous", -52, False), ("media:play_pause", 0, True),
+                                 ("media:next", 52, False)):
+                r = 19 if big else 15
+                rect = QRectF(cx + dx - r, y + 2 + (19 - r), 2 * r, 2 * r)
+                self.media_key(qp, rect, key, playing=bool(m.get("playing")))
+            return y + 46
+
+        def media_key(self, qp: Any, rect: Any, key: str, playing: bool) -> None:
+            hot = self.hot == key
+            big = key == "media:play_pause"
+            qp.setPen(QPen(QColor(255, 255, 255, 26 if hot else 14), 1))
+            qp.setBrush(QColor("#f4f5f6" if big and hot else "#e4e6e8" if big else "#1c1e22" if hot else "#141518"))
+            qp.drawEllipse(rect.adjusted(0.5, 0.5, -0.5, -0.5))
+            c = rect.center()
+            ink = QColor("#0b0b0c" if big else "#e4e6e8" if hot else "#c4c8ce")
+            qp.setPen(Qt.PenStyle.NoPen)
+            qp.setBrush(ink)
+            act = key.split(":", 1)[1]
+            if act == "play_pause" and playing:  # pause: two bars
+                qp.drawRoundedRect(QRectF(c.x() - 5, c.y() - 6, 3.6, 12), 1, 1)
+                qp.drawRoundedRect(QRectF(c.x() + 1.4, c.y() - 6, 3.6, 12), 1, 1)
+            elif act == "play_pause":  # play: a triangle
+                tri = QPainterPath()
+                tri.moveTo(c.x() - 4, c.y() - 6.5)
+                tri.lineTo(c.x() + 6.5, c.y())
+                tri.lineTo(c.x() - 4, c.y() + 6.5)
+                tri.closeSubpath()
+                qp.drawPath(tri)
+            else:  # previous / next: a triangle and a bar
+                d = 1 if act == "next" else -1
+                tri = QPainterPath()
+                tri.moveTo(c.x() - 4 * d, c.y() - 5)
+                tri.lineTo(c.x() + 3 * d, c.y())
+                tri.lineTo(c.x() - 4 * d, c.y() + 5)
+                tri.closeSubpath()
+                qp.drawPath(tri)
+                qp.drawRect(QRectF(c.x() + 3 * d - (1.6 if d > 0 else 0), c.y() - 5, 1.6, 10))
+            self.buttons.append((rect.adjusted(-3, -3, 3, 3), key))
+
+        def draw_system(self, qp: Any, x0: float, x1: float, y: float) -> float:
+            """The PC's load: a bar per part, amber past 75 %, red past 90 %."""
+            hw = self.hw
+            y = self.page_head(qp, x0, x1, y, "system")
+            rows: list[tuple[str, str, float | None]] = []
+            if "cpu" in hw:
+                rows.append(("CPU", f"{hw['cpu']:.0f}%", hw["cpu"]))
+            if "ram" in hw:
+                rows.append(("Memory", f"{hw['ram_used']:.1f} / {hw['ram_total']:.0f} GB", hw["ram"]))
+            g = hw.get("gpu")
+            if g:
+                temp = f" · {g['temp']:.0f}°" if g.get("temp") is not None else ""
+                rows.append(("GPU", f"{g['util']:.0f}%{temp}", g["util"]))
+                rows.append(("Video memory", f"{g['mem_used']:.1f} / {g['mem_total']:.0f} GB", g.get("mem")))
+            if "disk" in hw:
+                rows.append(("Disk", f"{hw['disk_free']:.0f} GB free", hw["disk"]))
+            if not rows:
+                qp.setFont(F_TEXT)
+                qp.setPen(QColor("#9aa1aa"))
+                qp.drawText(QRectF(x0, y, x1 - x0, 30), Qt.AlignmentFlag.AlignVCenter, "Reading…")
+                return y + 34
+            for label, value, pct in rows:
+                qp.setFont(F_SMALL)
+                qp.setPen(QColor("#c4c8ce"))
+                qp.drawText(QRectF(x0, y, 140, 16), Qt.AlignmentFlag.AlignVCenter, label)
+                qp.setFont(F_TINY)
+                qp.setPen(QColor("#9aa1aa"))
+                qp.drawText(QRectF(x1 - 160, y, 160, 16), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                            value)
+                bar = QRectF(x0, y + 19, x1 - x0, 4)
+                qp.setPen(Qt.PenStyle.NoPen)
+                qp.setBrush(QColor(255, 255, 255, 18))
+                qp.drawRoundedRect(bar, 2, 2)
+                if pct is not None:
+                    qp.setBrush(QColor(BAR[level(pct)]))
+                    qp.drawRoundedRect(QRectF(bar.x(), bar.y(), bar.width() * max(0.02, min(1.0, pct / 100)), 4),
+                                       2, 2)
+                y += 31
+            if "down" in hw:
+                qp.setFont(F_SMALL)
+                qp.setPen(QColor("#c4c8ce"))
+                qp.drawText(QRectF(x0, y, 100, 18), Qt.AlignmentFlag.AlignVCenter, "Network")
+                qp.setFont(F_TINY)
+                qp.setPen(QColor("#9aa1aa"))
+                qp.drawText(QRectF(x1 - 200, y, 200, 18), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                            f"↓ {rate(hw['down'])}   ↑ {rate(hw['up'])}")
+                y += 24
+            return y + 2
+
+        def draw_calendar(self, qp: Any, x0: float, x1: float, y: float) -> float:
+            """This month, today marked; today's weather (Helios > Settings > weather town) above it."""
+            now = time.localtime()
+            qp.setFont(F_TITLE)
+            qp.setPen(QColor("#f4f5f6"))
+            qp.drawText(QRectF(x0, y, 200, 24), Qt.AlignmentFlag.AlignVCenter, time.strftime("%B %Y", now))
+            w = self.weather
+            if w.get("place"):
+                temp = f"{round(w['now'])}°" if w.get("now") is not None else ""
+                qp.setFont(F_TITLE)
+                tw = QFontMetrics(F_TITLE).horizontalAdvance(temp)
+                qp.drawText(QRectF(x1 - tw - 2, y, tw + 2, 24), Qt.AlignmentFlag.AlignVCenter, temp)
+                qp.setFont(F_SMALL)
+                qp.setPen(QColor("#9aa1aa"))
+                line = ", ".join(x for x in (
+                    w.get("sky"), f"{round(w['low'])}–{round(w['high'])}°" if w.get("low") is not None else "",
+                    f"{round(w['rain'])}% rain" if (w.get("rain") or 0) >= 30 else "") if x)
+                qp.drawText(QRectF(x0, y + 24, x1 - x0, 18), RIGHT_MID,
+                            QFontMetrics(F_SMALL).elidedText(f"{w['place']} · {line}", Qt.TextElideMode.ElideRight,
+                                                              int(x1 - x0)))
+            else:
+                qp.setFont(F_SMALL)
+                qp.setPen(QColor("#5d6670"))
+                qp.drawText(QRectF(x0, y + 24, x1 - x0, 18), RIGHT_MID,
+                            "weather: set your town in Helios > Settings")
+            y += 50
+            first = 0  # Monday, as Sri Lanka's calendars do
+            cw = (x1 - x0) / 7
+            qp.setFont(F_TINY)
+            qp.setPen(QColor("#5d6670"))
+            for i, d in enumerate(weekday_letters(first)):
+                qp.drawText(QRectF(x0 + i * cw, y, cw, 14), Qt.AlignmentFlag.AlignCenter, d)
+            y += 18
+            for week in month_grid(now.tm_year, now.tm_mon, first):
+                for i, d in enumerate(week):
+                    if not d:
+                        continue
+                    cell = QRectF(x0 + i * cw, y, cw, 22)
+                    today = d == now.tm_mday
+                    if today:
+                        qp.setPen(Qt.PenStyle.NoPen)
+                        qp.setBrush(QColor("#4cc2ff"))
+                        qp.drawEllipse(cell.center(), 10.5, 10.5)
+                    qp.setFont(F_DAY)
+                    qp.setPen(QColor("#0b0b0c" if today else "#6f7680" if i >= 5 else "#d4d7dc"))
+                    qp.drawText(cell, Qt.AlignmentFlag.AlignCenter, str(d))
+                y += 24
+            return y + 4
 
         def line(self, qp: Any, x0: float, x1: float, y: float, dot: str, text: str, right: str,
                  hot: bool = False) -> float:
@@ -1022,6 +1439,57 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 self.close_details()
             elif key.startswith("sc:"):
                 self.shortcut(key[3:])
+            elif key.startswith("page:"):
+                self.flip(int(key[5:]) - self.page)
+            elif key.startswith("media:"):
+                self.media_do(key[6:])
+
+        def wheelEvent(self, e: Any) -> None:  # noqa: N802
+            """Scroll on the opened island to flip its pages (a mouse notch or a touchpad swipe, one page at a
+            time)."""
+            if not self.details:
+                return
+            now = time.monotonic()
+            if now - self.wheel_at > 0.4:
+                self.wheel_acc = 0.0
+            self.wheel_acc += e.angleDelta().y() or -e.angleDelta().x()
+            if abs(self.wheel_acc) >= 100 and now - self.wheel_at > 0.22:
+                self.flip(-1 if self.wheel_acc > 0 else 1)
+                self.wheel_acc, self.wheel_at = 0.0, now
+            e.accept()
+
+        def flip(self, step: int) -> None:
+            n = len(self.pages())
+            new = max(0, min(n - 1, self.page + step))
+            if new != self.page:
+                self.page = new
+                self.leave.stop()
+                self.kick()
+
+        def media_do(self, action: str) -> None:
+            if self.media and action == "play_pause":  # show it at once; the next read confirms
+                self.media = {**self.media, "playing": not self.media.get("playing"),
+                              "paused": bool(self.media.get("playing")),
+                              "pos": position_now(self.media.get("pos"), self.media.get("end"),
+                                                  self.media.get("updated"), bool(self.media.get("playing"))),
+                              "updated": time.time()}
+                self.update()
+
+            def go() -> None:
+                live.media.control(action)
+                time.sleep(0.35)
+                live.poke("media")
+            threading.Thread(target=go, daemon=True).start()
+
+        def toggle_hidden(self) -> None:
+            """Ctrl+Alt+D: the island goes away (nothing runs while it's hidden) or comes back."""
+            if self.isVisible():
+                self.close_details()
+                self.hide()
+            else:
+                self.show()
+                self.place()
+            self.kick()
 
         def stop_ari(self) -> None:
             """Stop: Ari goes quiet at once and the answer it was working on is dropped."""
@@ -1219,15 +1687,123 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             if self.parts.get("approval") == aid:
                 self.hide()
 
+    class QuickAsk(QWidget):
+        """Ctrl+Alt+Space: a box under the island to type to Ari. Enter sends it (the island shows Ari thinking and
+        the answer, as when you speak), Esc or a click elsewhere closes it. What you copied is one click away."""
+
+        STYLE = ("QWidget#quick{background:#0b0c0e;border:1px solid #2a2f36;border-radius:16px}"
+                 "QLineEdit{background:transparent;color:#f1f2f3;border:none;font-size:15px;padding:4px 2px}"
+                 "QPushButton{background:#15181c;color:#9aa1aa;border:1px solid #23272d;border-radius:10px;"
+                 "padding:4px 10px;text-align:left;font-size:12px} QPushButton:hover{color:#e4e6e8}"
+                 "QLabel{color:#5d6670;font-size:11px}")
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
+                                | Qt.WindowType.Tool)
+            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)  # round corners, nothing behind them
+            self.setStyleSheet(self.STYLE)
+            outer = QVBoxLayout(self)
+            outer.setContentsMargins(0, 0, 0, 0)
+            frame = QWidget()
+            frame.setObjectName("quick")
+            frame.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+            outer.addWidget(frame)
+            box = QVBoxLayout(frame)
+            box.setContentsMargins(16, 10, 16, 10)
+            box.setSpacing(6)
+            self.edit = QLineEdit()
+            self.edit.setPlaceholderText("Ask Ari…")
+            self.edit.returnPressed.connect(self.send)
+            box.addWidget(self.edit)
+            self.copied = QPushButton()
+            self.copied.clicked.connect(self.use_copied)
+            box.addWidget(self.copied)
+            self.hint = QLabel("Enter to send · Esc to close")
+            box.addWidget(self.hint)
+            self.setFixedWidth(460)
+
+        def open(self) -> None:
+            text = (QApplication.clipboard().text() or "").strip()
+            self.clip = " ".join(text.split())[:900] if 0 < len(text) < 2000 else ""
+            self.copied.setVisible(bool(self.clip))
+            if self.clip:
+                fm = QFontMetrics(self.copied.font())
+                self.copied.setText(fm.elidedText(f"What you copied: “{self.clip}”", Qt.TextElideMode.ElideRight, 400))
+            self.edit.clear()
+            self.adjustSize()
+            g = QApplication.primaryScreen().geometry()
+            self.move(g.x() + (g.width() - self.width()) // 2, g.y() + 46)
+            self.show()
+            self.raise_()
+            self.activateWindow()
+            if sys.platform == "win32":  # the key press lets this window take the keyboard
+                import ctypes
+
+                ctypes.windll.user32.SetForegroundWindow(int(self.winId()))
+            self.edit.setFocus()
+
+        def use_copied(self) -> None:
+            cur = self.edit.text().strip()
+            self.edit.setText(f"{cur} {self.clip}".strip() if cur else self.clip)
+            self.edit.setFocus()
+
+        def send(self) -> None:
+            text = self.edit.text().strip()[:1000]
+            self.hide()
+            if not text:
+                return
+
+            def go() -> None:
+                try:
+                    api.call("POST", "/ari", {"text": text, "source": "island"}, timeout=60)
+                except Exception:  # noqa: BLE001
+                    bus.flash.emit("Couldn't reach Argus")
+            threading.Thread(target=go, daemon=True).start()
+
+        def keyPressEvent(self, e: Any) -> None:  # noqa: N802
+            if e.key() == Qt.Key.Key_Escape:
+                self.hide()
+            else:
+                super().keyPressEvent(e)
+
+        def changeEvent(self, e: Any) -> None:  # noqa: N802 - a click elsewhere closes it
+            from PySide6.QtCore import QEvent  # type: ignore[import-not-found]
+
+            if e.type() == QEvent.Type.ActivationChange and not self.isActiveWindow() and self.isVisible():
+                QTimer.singleShot(150, lambda: None if self.isActiveWindow() else self.hide())
+            super().changeEvent(e)
+
     app = QApplication(sys.argv[:1])
     app.setQuitOnLastWindowClosed(False)
     island = Island()
     island.asker = AskBox()  # kept alive with the island
+    quick = QuickAsk()
+    if args.preview and args.ask:
+        QApplication.clipboard().setText("the router keeps dropping the 5 GHz band every evening")
+        quick.open()
+        quick.grab().save(args.preview)
+        return 0
     if args.preview:
         island.ari.phase, island.ari.text = args.phase, args.text
         island.hover = args.hover
+        if args.hover and args.text.startswith("♪"):
+            island.media = {"title": args.text[2:], "artist": "M83", "playing": True}
+        elif args.hover and args.text == "mic":
+            island.priv = {"mic": ["Discord"], "camera": []}
+        elif args.text == "dots":
+            island.priv = {"mic": ["Discord"], "camera": ["WindowsCamera"]}
         if args.details:
             island.details = True
+            island.page = max(0, pages_of(island.info.widgets).index(args.page)
+                              if args.page in pages_of(island.info.widgets) else 0)
+            island.media = {"title": "Midnight City", "artist": "M83", "album": "Hurry Up, We're Dreaming",
+                            "app": "Spotify", "playing": True, "pos": 97.0, "end": 243.0, "updated": None}
+            island.hw = {"cpu": 23.0, "ram": 78.0, "ram_used": 24.9, "ram_total": 32, "disk": 93.0,
+                         "disk_free": 61, "down": 2_400_000, "up": 180_000,
+                         "gpu": {"util": 41.0, "mem_used": 7.4, "mem_total": 12, "mem": 62.0, "temp": 58.0}}
+            island.weather = {"place": "Colombo", "now": 29.4, "low": 25.1, "high": 31.2, "rain": 80,
+                              "sky": "thunderstorms"}
             island.info = Info(status={"status": "ok", "jobs": {"running": 1, "queued": 2}}, waiting=3,
                                next={"label": "homelab · check", "plugin": "homelab", "workflow": "check",
                                      "next_run_at": time.time() + 1800},
@@ -1242,6 +1818,33 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
         return 0
     island.show()
     app.primaryScreen().geometryChanged.connect(lambda _g: island.place())
+
+    def on_hotkey(name: str) -> None:
+        if name == "hide":
+            island.toggle_hidden()
+        elif name == "ask":
+            quick.hide() if quick.isVisible() else quick.open()
+
+    bus.hotkey.connect(on_hotkey)
+    bus.keys.connect(lambda keys: listen_hotkeys({k: v for k, v in keys.items() if v}, bus.hotkey.emit,
+                                                 lambda n: print(f"island: the {n} key is taken by another app",
+                                                                 file=sys.stderr, flush=True)))
+
+    def first_info() -> None:
+        """The island's settings once at the start (its keys); Argus may still be starting."""
+        while True:
+            try:
+                info = fetch_info(api)
+                if info.status is not None:
+                    bus.info.emit(info)
+                    bus.keys.emit(info.keys)
+                    return
+            except Exception:  # noqa: BLE001
+                pass
+            time.sleep(5)
+
+    threading.Thread(target=first_info, daemon=True, name="island-info").start()
+    threading.Thread(target=live.run, daemon=True, name="island-live").start()
 
     def feed() -> None:
         """Follow Ari: a long poll of the event stream (Argus answers the moment something happens, else after 20 s,

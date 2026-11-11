@@ -152,21 +152,10 @@ class NotifyConfig(_Strict):
     max_attempts: int = Field(8, ge=1, le=50)  # for push senders (webhooks later): then marked failed
 
 
-class NtfyConfig(_Strict):
-    """Old section, no longer used (ntfy was replaced by the phone app). Still accepted so an existing argus.yaml
-    loads; `quiet: false` here still counts."""
-
-    url: str = "https://ntfy.sh"
-    timeout_seconds: float = 10
-    max_attempts: int = 8
-    reply_retry_seconds: float = 5
-    quiet: bool = True
-
-
 class ApprovalsConfig(_Strict):
     # The phone's Approve / Reject buttons are links the app opens against Argus (over Tailscale), or against
-    # public_url when that is set. `buttons` is no longer used ("tailscale" and "ntfy" are accepted, ignored).
-    buttons: Literal["app", "tailscale", "ntfy"] = "app"
+    # public_url when that is set. `buttons` is no longer used ("tailscale" is accepted, ignored).
+    buttons: Literal["app", "tailscale"] = "app"
     public_url: str | None = None  # how the phone reaches Argus, e.g. https://saspc.tail1234.ts.net
     phone: str | None = None  # the phone's Tailscale device name; empty = no "back online" push
     presence_seconds: float = Field(30, ge=5, le=3600)  # how often `tailscale status` is checked
@@ -251,6 +240,10 @@ class PowerConfig(_Strict):
     # laptop; sleep / shut down / restart run on the PC's worker.
     pc_mac: str | None = None  # the PC's wired network card, e.g. 04:7C:16:AB:CD:EF (ipconfig /all)
     wol_broadcast: str = "255.255.255.255"
+    # The PC's own address on the home network (e.g. 192.168.8.192; keep it fixed in the router). The wake packet
+    # also goes straight to it: many routers don't pass a broadcast from Wi-Fi to their wired ports, but do pass this.
+    # On the laptop, deploy/linux/pc-wake-setup.sh (once, as root) keeps the PC's card known even while it's off.
+    pc_ip: str | None = None
     wol_port: int = Field(9, ge=1, le=65535)
     shutdown_delay_seconds: int = Field(60, ge=0, le=3600)  # time to cancel a shutdown or restart
     warn_minutes: float = Field(5, ge=0, le=120)  # real mode: phone warning this long before an automatic shutdown
@@ -265,6 +258,18 @@ class PowerConfig(_Strict):
         if len(h) != 12:
             raise ValueError(f"pc_mac {v!r} is not a MAC address like 04:7C:16:AB:CD:EF")
         return ":".join(h[i:i + 2] for i in range(0, 12, 2)).upper()
+
+    @field_validator("pc_ip")
+    @classmethod
+    def _ip(cls, v: str | None) -> str | None:
+        if v is None or not str(v).strip():
+            return None
+        import ipaddress
+
+        try:
+            return str(ipaddress.IPv4Address(str(v).strip()))
+        except ValueError:
+            raise ValueError(f"pc_ip {v!r} is not an address like 192.168.8.192") from None
 
 
 class PluginsConfig(_Strict):
@@ -452,7 +457,6 @@ class Config(_Strict):
     jobs: JobsConfig = Field(default_factory=JobsConfig)
     events: EventsConfig = Field(default_factory=EventsConfig)
     notify: NotifyConfig = Field(default_factory=NotifyConfig)
-    ntfy: NtfyConfig = Field(default_factory=NtfyConfig)  # old, unused
     approvals: ApprovalsConfig = Field(default_factory=ApprovalsConfig)
     windows: dict[str, str] = Field(default_factory=lambda: {"night": "01:00-06:00"})
     schedules: list[ScheduleConfig] = Field(default_factory=list)

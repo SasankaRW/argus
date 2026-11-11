@@ -112,11 +112,17 @@ warm, not flowery.
 Answer in JSON only."""
 
 NUM = re.compile(r"\d+(?:[.,:]\d+)?")
+STAMP = re.compile(r"^\d{1,2}:\d{2}\s+", re.M)  # the time each thing was said, at the start of its line
+
+
+def times(text: str) -> str:
+    """One way to write a time, so "7 .30", "7.30" and "7:30" are the same number."""
+    return re.sub(r"(\d+) ?[.:](\d+)", r"\1:\2", text)
 
 
 def entry_check(said: str, edited: dict | None = None):
     heard = said.lower()
-    numbers = set(NUM.findall(said))
+    numbers = set(NUM.findall(times(STAMP.sub("", said))))
     kept = " ".join(str((edited or {}).get("entry") or "").split())
 
     def check(e: Entry, _inp: Any) -> str | None:
@@ -126,7 +132,7 @@ def entry_check(said: str, edited: dict | None = None):
             return "keep the user's own edited text word for word (from \"your_edited_entry\"); only add after it"
         if len(e.entry) > 4000:
             return "the entry is too long: at most 4 short paragraphs"
-        extra = [n for n in NUM.findall(e.entry + " " + e.title) if n not in numbers]
+        extra = [n for n in NUM.findall(times(e.entry + " " + e.title)) if n not in numbers]
         if extra:
             return f"these numbers weren't said: {', '.join(extra[:5])}. Use only what the user said"
         for who in [*e.people, *e.places]:

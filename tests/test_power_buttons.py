@@ -288,3 +288,28 @@ def test_laptop_endpoint_and_island_actions(tmp_path, monkeypatch):
         with pytest.raises(ApiError):  # shutting the laptop down: Helios only, where it asks twice
             cl.post("/ask/do", {"action": "laptop:shutdown"})
     assert ran == ["reboot", "restart-argus"]
+
+
+def test_wake_also_goes_straight_to_the_pc(tmp_path):
+    """A laptop on Wi-Fi: the router may not pass the broadcast, so the packet also goes to the PC's own address,
+    and the wake says whether the laptop keeps the PC's card known (pc-wake-setup.sh) while the PC is off."""
+    rx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    rx.bind(("127.0.0.1", 0))
+    rx.settimeout(3)
+    port = rx.getsockname()[1]
+    a = make(tmp_path, f"power:\n  pc_mac: 04:7C:16:AB:CD:EF\n  pc_ip: 127.0.0.1\n  wol_broadcast: 127.0.0.2\n"
+                       f"  wol_port: {port}\n")
+    assert a.cfg.power.pc_ip == "127.0.0.1"
+    a.power.neighbour = lambda ip: None
+    with Server(a.open()) as srv:
+        cl = client(srv.url)
+        r = cl.post("/power/wake")
+        assert r["to"] == ["127.0.0.2", "127.0.0.1"] and r["direct"].startswith("not kept")
+        a.power.neighbour = lambda ip: {"mac": "04:7C:16:AB:CD:EF", "state": "PERMANENT", "dev": "wlan0"}
+        assert cl.post("/power/wake")["direct"] == "kept"
+        assert cl.get("/power")["wake_check"]["direct"] == "kept"
+    got = [rx.recv(200) for _ in range(power.WAKE_COPIES * 2)]  # two wakes, straight to the PC each time
+    rx.close()
+    assert set(got) == {b"\xff" * 6 + bytes.fromhex("047C16ABCDEF") * 16}
+    with pytest.raises(Exception, match="pc_ip"):
+        make(tmp_path, "power:\n  pc_ip: 192.168.8\n")

@@ -128,6 +128,8 @@ power:
   idle_minutes: 20         # no GPU or desktop work this long -> (would) shut the PC down
   pc_needs: [gpu, desktop] # job needs only the PC can serve
   pc_mac:                  # for the Wake button: the PC's wired card, e.g. 04:7C:16:AB:CD:EF (ipconfig /all)
+  pc_ip:                   # the PC's address, e.g. 192.168.8.192: the wake packet also goes straight to it (laptop on
+                           # Wi-Fi: run deploy/linux/pc-wake-setup.sh once; keep the address fixed in the router)
   shutdown_delay_seconds: 60   # Shut down / Restart wait this long, so Cancel still works
 
 plugins:

@@ -3,10 +3,10 @@ name: Life Hub
 version: 1.0.0
 kind: connector
 argus_api: ">=1.0 <2.0"
-description: 'Lets Ari use your Life Hub (G:\Projects\lifehub): the shopping list and wishlist ("add milk to the shopping list"), and how money looks this month (read only, local models only).'
+description: 'Lets Ari use your Life Hub (G:\Projects\lifehub): the shopping list and wishlist ("add milk to the shopping list"), how money looks this month, and money questions for the advisor ("can I afford it?") (read only, local models only).'
 runs_on: any
 
-workflows: [lists, add, money]
+workflows: [lists, add, money, advice]
 
 permissions:
   files: {read: [], write: [], delete: none}
@@ -33,6 +33,12 @@ ari:
     - name: money_this_month
       description: How money looks (from Cashly via Life Hub) - safe to spend until payday, spending vs budget this month, bills before payday. Read only.
       workflow: money
+      private: true
+    - name: money_advice
+      description: 'Money questions for Life Hub''s advisor (from Cashly): "can I afford a 45k phone?", "how much can I spend this weekend?", "how am I doing?", "what bills are due?". Gives the answer and why, or the totals to answer from. Read only.'
+      workflow: advice
+      input: {question: {type: string, description: "the user's money question, as they asked it"}}
+      required: [question]
       private: true
 
 helios:

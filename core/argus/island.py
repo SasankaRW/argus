@@ -24,12 +24,20 @@ WIDGETS: dict[str, str] = {
     "next": "The next thing on the schedule",
     "shortcuts": "Your shortcuts",
     "last": "Ari's last answer",
+    "media": "Page: what's playing, with play / pause / next",
+    "system": "Page: CPU, memory, GPU, disk and network",
+    "calendar": "Page: this month and today's weather",
+    "privacy": "A dot on the island while an app uses the mic (orange) or camera (green)",
 }
+PAGES_IDS = ("media", "system", "calendar")  # each is its own page of the opened island (scroll to flip)
+KEYS: dict[str, str] = {"ask": "ctrl+alt+space", "hide": "ctrl+alt+d"}  # type to Ari; hide / show the island
 PAGES = {"map": "Map", "inbox": "Inbox", "ari": "Ari", "plugins": "Plugins", "queue": "Queue", "runs": "Runs",
          "models": "Models", "settings": "Settings", "logs": "Logs", "power": "Power", "share": "Share"}
 DEFAULT: dict[str, Any] = {
     "widgets": [{"id": "clock", "on": True}, {"id": "status", "on": True}, {"id": "inbox", "on": True},
-                {"id": "next", "on": True}, {"id": "shortcuts", "on": True}, {"id": "last", "on": False}],
+                {"id": "next", "on": True}, {"id": "shortcuts", "on": True}, {"id": "last", "on": False},
+                {"id": "media", "on": True}, {"id": "system", "on": True}, {"id": "calendar", "on": True},
+                {"id": "privacy", "on": True}],
     "shortcuts": [{"label": "Sort downloads", "action": "run:downloads-organizer:sort"},
                   {"label": "Work mode", "action": "routine:work mode"},
                   {"label": "Inbox", "action": "show:inbox"},
@@ -49,11 +57,22 @@ def load(conn: sqlite3.Connection) -> dict[str, Any]:
     except ValueError:
         saved = None
     if not saved:
-        return json.loads(json.dumps(DEFAULT))
+        return {**json.loads(json.dumps(DEFAULT)), "keys": dict(KEYS)}
     known = [w for w in saved.get("widgets", []) if w.get("id") in WIDGETS]
     have = {w["id"] for w in known}
     known += [w for w in DEFAULT["widgets"] if w["id"] not in have]  # widgets added in a later version
-    return {"widgets": known, "shortcuts": saved.get("shortcuts", [])}
+    return {"widgets": known, "shortcuts": saved.get("shortcuts", []), "keys": keys_of(saved.get("keys"))}
+
+
+def keys_of(saved: Any) -> dict[str, str]:
+    """The island's global keys: the saved ones that make sense, the defaults for the rest."""
+    from .island_live import parse_hotkey
+
+    out = dict(KEYS)
+    for name, text in (saved or {}).items() if isinstance(saved, dict) else ():
+        if name in KEYS and isinstance(text, str) and (text == "" or parse_hotkey(text)):
+            out[name] = text.lower().replace(" ", "")  # "" turns that key off
+    return out
 
 
 def check(cfg: dict[str, Any], actions: set[str]) -> dict[str, Any]:
@@ -80,7 +99,11 @@ def check(cfg: dict[str, Any], actions: set[str]) -> dict[str, Any]:
         shortcuts.append({"label": label, "action": action})
     if len(shortcuts) > MAX_SHORTCUTS:
         raise IslandError(f"at most {MAX_SHORTCUTS} shortcuts")
-    return {"widgets": widgets, "shortcuts": shortcuts}
+    keys = keys_of(cfg.get("keys"))
+    for name, text in (cfg.get("keys") or {}).items():
+        if name in KEYS and text and keys.get(name) != str(text).lower().replace(" ", ""):
+            raise IslandError(f"{name}: {text!r} can't be a key (try ctrl+alt+space)")
+    return {"widgets": widgets, "shortcuts": shortcuts, "keys": keys}
 
 
 def save(conn: sqlite3.Connection, cfg: dict[str, Any]) -> None:

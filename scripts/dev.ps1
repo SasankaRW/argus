@@ -325,7 +325,7 @@ switch ($Command) {
         $File = if ($Arg) { $Arg } else { "lecture_07.pdf" }
         Submit-Job ('{"plugin":"demo","workflow":"classify","input":{"filename":"' + $File + '","reject_tier":"T1"}}') 600
     }
-    { $_ -in "notify", "ntfy" } {
+    "notify" {
         $H = @{}; $T = Token; if ($T) { $H["Authorization"] = "Bearer $T" }
         try { Invoke-RestMethod -Method Post -Uri "$ArgusUrl/outbox/test" -Headers $H | Out-Null }
         catch { throw "Could not send: $($_.ErrorDetails.Message) (is argusd running? is the phone app signed in?)" }

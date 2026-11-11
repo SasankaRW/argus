@@ -170,3 +170,54 @@ def test_the_stop_button_quietens_ari_and_drops_the_answer(tmp_path, monkeypatch
     client_._req = fake_req  # type: ignore[method-assign]
     out = client_.say("explain mutex")
     assert out == {"reply": "", "stopped": True}
+
+
+def test_the_island_flips_pages_and_says_whats_on_hover():
+    from argus.ari_popup import hover_label, pages_of
+
+    widgets = [{"id": "clock", "on": True}, {"id": "calendar", "on": True}, {"id": "media", "on": True},
+               {"id": "system", "on": False}, {"id": "privacy", "on": True}]
+    assert pages_of(widgets) == ["ari", "calendar", "media"]  # Ari's first, then in the order set in Helios
+    song = {"title": "Midnight City", "artist": "M83", "playing": True}
+    assert hover_label(False, False, {}, song) == "♪ Midnight City — M83"
+    assert hover_label(False, False, {}, {**song, "playing": False}) == "a r i"  # paused: nothing to say
+    assert hover_label(False, False, {"mic": ["Discord"]}, song) == "mic: Discord"  # who listens comes first
+    assert hover_label(True, True, {"mic": ["Discord"]}, song) == "a r i · game mode"
+    w, h = target_size("idle", "", True, 0, "♪ Midnight City — M83")
+    assert h == 22 and w > 138  # wide enough for the song
+    assert target_size("idle", "", True, 0) == (138, 22)
+
+
+def test_the_island_keeps_its_keys(tmp_path):
+    import sqlite3
+
+    import pytest
+
+    from argus import island
+
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT, created_at REAL, updated_at REAL)")
+    cfg = {**island.load(conn), "shortcuts": []}
+    assert cfg["keys"] == {"ask": "ctrl+alt+space", "hide": "ctrl+alt+d"}
+    assert {"media", "system", "calendar", "privacy"} <= {w["id"] for w in cfg["widgets"]}
+    saved = island.check({**cfg, "keys": {"ask": "Ctrl + Shift + A", "hide": ""}}, set())
+    assert saved["keys"] == {"ask": "ctrl+shift+a", "hide": ""}  # "" turns that key off
+    island.save(conn, saved)
+    assert island.load(conn)["keys"] == saved["keys"]
+    with pytest.raises(island.IslandError):
+        island.check({**cfg, "keys": {"ask": "space"}}, set())  # a global key needs ctrl / alt / shift / win
+    # an older island setting (no keys, no new widgets) gets them
+    conn.execute("UPDATE settings SET value = ? WHERE key = 'island'",
+                 ('{"widgets": [{"id": "clock", "on": true}], "shortcuts": []}',))
+    old = island.load(conn)
+    assert old["keys"]["ask"] == "ctrl+alt+space" and any(w["id"] == "media" for w in old["widgets"])
+
+
+def test_helios_keeps_the_island_keys_and_the_weather_page(tmp_path, monkeypatch):
+    with Server(make(tmp_path, monkeypatch).open()) as srv:
+        cl = client(srv.url)
+        cfg = cl.get("/island")
+        body = {"widgets": cfg["widgets"], "shortcuts": cfg["shortcuts"]}
+        cl.call("PUT", "/island", {**body, "keys": {"ask": "ctrl+alt+k", "hide": "ctrl+alt+d"}})
+        assert cl.call("PUT", "/island", body)[1]["keys"]["ask"] == "ctrl+alt+k"  # a Helios that sends no keys
+        assert cl.get("/island/weather") == {}  # no town set: the calendar page goes without
