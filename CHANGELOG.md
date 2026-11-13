@@ -6,6 +6,9 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 ## Unreleased
 
 - **Switching a plugin off:** list a plugin under `plugins.off` in argus.yaml and Argus no longer loads it: its schedules don't run, Ari doesn't offer its tools, its buttons are gone and jobs for it are refused. Its code and data stay, and taking it out of the list brings it back.
+- **Done means tried:** CONTRIBUTING.md now says a change is done once it is merged, live and tried on the real device, and that one new feature is in progress at a time.
+- **Restoring a backup:** `argusd --restore latest` (or a file name) puts a nightly backup back, with argusd stopped. It shows the plan first and acts only with `--yes`; a backup that fails its check or comes from a newer Argus is refused, and the database it replaces is moved to `data/replaced/`, never deleted. docs/restore.md has the steps for the laptop, the PC and a lost disk.
+- **Lint covers the plugins:** ruff now checks `plugins/` too, in CI and in `dev.ps1 lint`, `apply`, `merge local` and releases.
 
 ## 0.8.0 (2026-11-13)
 

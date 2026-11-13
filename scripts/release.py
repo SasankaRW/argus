@@ -99,7 +99,7 @@ def preflight() -> None:
 
 def checks() -> None:
     print("Running lint and tests ...")
-    run(sys.executable, "-m", "ruff", "check", "core", "tests", "scripts", capture=False)
+    run(sys.executable, "-m", "ruff", "check", "core", "tests", "scripts", "plugins", capture=False)
     run(sys.executable, "-m", "pytest", "-q", capture=False)
 
 

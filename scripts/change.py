@@ -245,7 +245,7 @@ def apply(package: Path, tests: bool = True, all_tests: bool = False) -> str:
         print("Helios source changed: rebuilding")
         rebuild_helios()
     if tests:
-        run(sys.executable, "-m", "ruff", "check", "core", "tests", "scripts")
+        run(sys.executable, "-m", "ruff", "check", "core", "tests", "scripts", "plugins")
         status = run("git", "status", "--porcelain", "-uall").stdout  # not git(): it strips the first line's space
         paths = [ln[3:].strip().strip('"').split(" -> ")[-1] for ln in status.splitlines() if ln.strip()]
         which = None if all_tests or os.environ.get("ARGUS_ALL_TESTS") else affected_tests(paths)
