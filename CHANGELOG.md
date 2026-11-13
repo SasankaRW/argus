@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Type check:** `python -m mypy` checks the models, database and API loosely; CI shows the error count (33 today) in its summary and doesn't fail on it yet.
+
 - **Same packages everywhere:** `constraints.txt` pins every package for Windows and Linux; CI, the laptop's updater and install script and dev.ps1 install with it. `python scripts/lock.py` keeps it (`--upgrade`, `--check`), and a monthly `deps` workflow lists what's newer.
 
 - **Coverage figure:** CI's Linux job shows test coverage in its summary (78% today), with the least covered files first. Report only; it never fails a build.

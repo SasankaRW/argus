@@ -45,6 +45,20 @@ jobs:
             echo
             echo "</details>"
           } >> "$GITHUB_STEP_SUMMARY" || true
+      - if: runner.os == 'Linux' && always()
+        # the type check, report only for now (33 errors when it started): the count goes in the summary
+        run: |
+          python -m mypy > mypy.txt 2>&1 || true
+          {
+            echo "### Type check: $(tail -1 mypy.txt)"
+            echo
+            echo "<details><summary>Errors</summary>"
+            echo
+            echo '```'
+            grep -E ': error:' mypy.txt || true
+            echo '```'
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
   helios:
     runs-on: ubuntu-latest
     defaults:
