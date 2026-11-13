@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+## 0.8.0 (2026-11-13)
+
 - **Fix, the diary refused times written differently:** when you said "I woke up around 7 .30" and the entry wrote "7:30", the check that keeps the entry to what you said saw a new number and made Ari try again. Times written with a space, a dot or a colon now count as the same number, and the time each thing was said (the clock at the start of each line) no longer counts as something you said.
 - **Docs, the roadmap says what is really left:** docs/roadmap.md now marks the guidance loop, the Tracker connector and the laptop move as done (they were), and lists what is open: the research ports (their source has to come over first), the bill filer, bank SMS and a money panel, and the later items from the development plan's Grow list.
 - **Money advisor, more:** the `advisor` plugin now watches wishlist prices (each item with a link gets a Watchers price watch; the prices it sees go to Life Hub's price history), looks up Sri Lanka's FD, T-bill and inflation rates every Monday for Life Hub's idle-money check (every number must be in the search results), and sends a Sunday-evening money review to the phone after filing uncategorised spending by the rules you taught Life Hub.
