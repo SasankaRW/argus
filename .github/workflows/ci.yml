@@ -27,7 +27,22 @@ jobs:
           cache-dependency-path: pyproject.toml
       - run: python -m pip install -e ".[dev]"
       - run: python -m ruff check core tests scripts plugins
-      - run: python -m pytest -q
+      - if: runner.os != 'Linux'
+        run: python -m pytest -q
+      - if: runner.os == 'Linux'
+        # with a coverage figure, report only: it shows which code has no tests and never fails the build
+        run: python -m pytest -q --cov --cov-report=term:skip-covered
+      - if: runner.os == 'Linux' && always()
+        run: |
+          {
+            echo "### Test coverage: $(python -m coverage report --format=total)%"
+            echo
+            echo "<details><summary>Files below 100%, least covered first</summary>"
+            echo
+            python -m coverage report --format=markdown --skip-covered --sort=cover
+            echo
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY" || true
   helios:
     runs-on: ubuntu-latest
     defaults:
