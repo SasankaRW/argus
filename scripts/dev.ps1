@@ -297,7 +297,7 @@ switch ($Command) {
         Write-Host "Setup done. Next: .\scripts\dev.ps1 test"
     }
     "test"  { Need-Venv; & $Py -m pytest -q --basetemp (Test-Temp) }
-    "lint"  { Need-Venv; & $Py -m ruff check core tests scripts }
+    "lint"  { Need-Venv; & $Py -m ruff check core tests scripts plugins }
     "check" { Need-Venv; & $Py -m argus --check }
     "run"   { Need-Venv; & $Py -m argus }
     "worker" { Need-Venv; & $Py -m argus.worker.cli --cap desktop --cap gpu }
@@ -462,7 +462,7 @@ switch ($Command) {
             # GitHub can't run CI (minutes or billing): the same checks here, then an admin merge.
             Need-Venv
             Write-Host "CI here instead of GitHub: lint, every test, the Helios build ..." -ForegroundColor Yellow
-            & $Py -m ruff check core tests scripts
+            & $Py -m ruff check core tests scripts plugins
             if ($LASTEXITCODE -ne 0) { throw "Lint failed: not merged" }
             & $Py -m pytest -q -p no:cacheprovider --basetemp (Test-Temp)
             if ($LASTEXITCODE -ne 0) { throw "Tests failed: not merged" }

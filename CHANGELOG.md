@@ -6,6 +6,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 ## Unreleased
 
 - **Restoring a backup:** `argusd --restore latest` (or a file name) puts a nightly backup back, with argusd stopped. It shows the plan first and acts only with `--yes`; a backup that fails its check or comes from a newer Argus is refused, and the database it replaces is moved to `data/replaced/`, never deleted. docs/restore.md has the steps for the laptop, the PC and a lost disk.
+- **Lint covers the plugins:** ruff now checks `plugins/` too, in CI and in `dev.ps1 lint`, `apply`, `merge local` and releases.
 
 ## 0.8.0 (2026-11-13)
 
