@@ -12,10 +12,14 @@ after=$(git rev-parse origin/main)
 [ "$before" = "$after" ] && exit 0   # nothing merged since the last look: quiet
 echo "updating ${before:0:8} -> ${after:0:8}: $(git log -1 --format=%s "$after")"
 
+# the package versions CI tested (constraints.txt), when this commit has them
+pins() { [ -f constraints.txt ] && echo "-c constraints.txt" || true; }
+
 rollback() {
   echo "update failed: rolling back to ${before:0:8}"
   git reset --quiet --hard "$before"
-  .venv/bin/pip install --quiet -e ".[plugins,console]" || true
+  # shellcheck disable=SC2046
+  .venv/bin/pip install --quiet -e ".[plugins,console]" $(pins) || true
   sudo /usr/bin/systemctl restart argusd argus-worker
   exit 1
 }
@@ -25,7 +29,8 @@ curl -fsS -X POST -H "Authorization: Bearer ${ARGUS_WORKER_TOKEN:-$(grep -E '^AR
 git checkout --quiet main
 git reset --quiet --hard "$after"
 trap rollback ERR
-.venv/bin/pip install --quiet -e ".[plugins,console]"
+# shellcheck disable=SC2046
+.venv/bin/pip install --quiet -e ".[plugins,console]" $(pins)
 .venv/bin/python -m argus --check
 sudo /usr/bin/systemctl restart argusd argus-worker
 for i in $(seq 1 30); do curl -fsS "$url/health" >/dev/null 2>&1 && { echo "updated: ${before:0:8} -> ${after:0:8}"; exit 0; }; sleep 1; done
