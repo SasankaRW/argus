@@ -29,6 +29,20 @@ suite. `$env:ARGUS_ALL_TESTS = 1` makes `apply` run everything too.
 After a merge the laptop updates itself within about 5 minutes (set up once with `deploy/linux/auto-update.sh`,
 see deploy/README.md); `ship` pulls main on the PC, whose supervisor restarts the worker.
 
+## When a change is done
+
+Merged is not done. A change is done when all of these are true:
+
+1. **Merged:** CI green, squash-merged, its line under `## Unreleased`.
+2. **Live:** it runs where it is meant to (the laptop updated itself, `ship` reached the PC, the phone app was
+   rebuilt and installed). A plugin that starts in dry-run counts as live only once it is in `plugins.live`.
+3. **Tried on the real device:** you used it once on that machine, for real, and it did what the changelog says.
+   Until then the PR's "How tested" says "not tried on the PC yet" (or the laptop, or the phone), and the plan
+   that asked for it keeps it open.
+
+One new feature is in progress at a time: the next one starts when the last one is done by this list. Fixes,
+docs and clean-ups don't count against it.
+
 ## Branch names
 
 `type/short-topic` in lower case: `feat/ari-direct-paths`, `fix/phone-claims-other-jobs`. Types are listed
