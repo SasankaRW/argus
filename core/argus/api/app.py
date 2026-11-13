@@ -87,7 +87,7 @@ from ..cron import next_run
 from ..events import EventFilter, insert_event, read_events
 from ..expressive import plain
 from ..ids import new_id
-from ..jobs import InvalidTransition, Job, JobNotFound, JobState, LeaseLost, QueueFull, Step
+from ..jobs import InvalidTransition, Job, JobNotFound, JobState, LeaseLost, PluginOff, QueueFull, Step
 from ..outbox import PRIORITIES, add_message, phone_message
 from ..power import PowerError
 from ..presence import describe_phone
@@ -446,6 +446,10 @@ def create_app(argus: Argus) -> FastAPI:
     @app.exception_handler(QueueFull)
     async def _full(request: Request, exc: QueueFull):
         return JSONResponse({"error": "queue_full", "detail": str(exc)}, status_code=429)
+
+    @app.exception_handler(PluginOff)
+    async def _off(request: Request, exc: PluginOff):
+        return JSONResponse({"error": "plugin_off", "detail": str(exc)}, status_code=409)
 
     def token_ok(authorization: str | None, query_token: str | None = None) -> bool:
         token = argus.cfg.secrets.worker_token
