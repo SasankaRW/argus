@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Done means tried:** CONTRIBUTING.md now says a change is done once it is merged, live and tried on the real device, and that one new feature is in progress at a time.
+
 ## 0.8.0 (2026-11-13)
 
 - **Fix, the diary refused times written differently:** when you said "I woke up around 7 .30" and the entry wrote "7:30", the check that keeps the entry to what you said saw a new number and made Ari try again. Times written with a space, a dot or a colon now count as the same number, and the time each thing was said (the clock at the start of each line) no longer counts as something you said.
