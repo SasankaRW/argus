@@ -4,8 +4,8 @@
     python scripts/release.py patch --dry-run  show what would happen, change nothing
 
 Steps: check you are on an up-to-date, clean main -> lint + tests -> bump VERSION -> turn the changelog's
-"Unreleased" section into the new version -> commit "Release vX.Y.Z" -> annotated tag -> push main and the
-tag -> GitHub release with the same notes (if the GitHub CLI is installed).
+"Unreleased" section into the new version -> docs/status.md (scripts/status.py) -> commit "Release vX.Y.Z" ->
+annotated tag -> push main and the tag -> GitHub release with the same notes (if the GitHub CLI is installed).
 """
 
 from __future__ import annotations
@@ -103,6 +103,11 @@ def checks() -> None:
     run(sys.executable, "-m", "pytest", "-q", capture=False)
 
 
+def write_status() -> None:
+    """The code's status page (docs/status.md), read from the code at this release."""
+    run(sys.executable, str(ROOT / "scripts" / "status.py"), "--write", capture=False)
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="release", description="Release Argus")
     p.add_argument("part", choices=PARTS)
@@ -133,7 +138,8 @@ def main(argv: list[str] | None = None) -> int:
 
         version_file.write_text(new + "\n", encoding="utf-8")
         changelog_file.write_text(updated, encoding="utf-8")
-        run("git", "add", "VERSION", "CHANGELOG.md")
+        write_status()
+        run("git", "add", "VERSION", "CHANGELOG.md", "docs/status.md")
         run("git", "commit", "-q", "-m", f"Release {tag}", "-m", notes)
         run("git", "tag", "-a", tag, "-m", f"Argus {new}\n\n{notes}")
         print(f"Committed and tagged {tag}.")
