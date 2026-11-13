@@ -76,7 +76,11 @@ def repo(tmp_path, monkeypatch):
 def test_release_end_to_end(repo, monkeypatch):
     work, origin = repo
     monkeypatch.setattr(release.shutil, "which", lambda name: None)  # no gh in tests
+    (work / "docs").mkdir(exist_ok=True)
+    monkeypatch.setattr(release, "write_status",  # scripts/status.py itself: tests/test_status.py
+                        lambda: (work / "docs" / "status.md").write_text("# status\n", encoding="utf-8"))
     assert release.main(["minor", "--skip-tests"]) == 0
+    assert git(origin, "show", "main:docs/status.md").stdout == "# status\n"  # in the release commit
     assert (work / "VERSION").read_text().strip() == "0.5.0"
     assert "## 0.5.0 (" in (work / "CHANGELOG.md").read_text()
     assert git(origin, "tag", "--list").stdout.split() == ["v0.5.0"]
