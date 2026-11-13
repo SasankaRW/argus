@@ -136,6 +136,7 @@ plugins:
   dirs: [plugins]          # one folder per plugin: plugin.yaml + plugin.py
   live: []                 # plugins promoted out of dry-run, e.g. [downloads-organizer]
   config: {}               # per-plugin settings over the manifest defaults, e.g. {downloads-organizer: {...}}
+  # off: [notes, screen]   # switched off: not loaded, no schedules, tools or buttons; jobs refused. Code stays.
 
 paths:
   allowed: []              # folders plugins may touch, e.g. C:/Users/Sas/Downloads

@@ -6,6 +6,7 @@ from .store import (
     JobNotFound,
     JobStore,
     LeaseLost,
+    PluginOff,
     QueueFull,
     Step,
 )
@@ -22,6 +23,7 @@ __all__ = [
     "JobState",
     "JobStore",
     "LeaseLost",
+    "PluginOff",
     "QueueFull",
     "Step",
     "Watchdog",

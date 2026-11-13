@@ -301,15 +301,20 @@ def check_setting(field: ConfigField, name: str, value: Any) -> Any:
 
 
 def discover(cfg: Config) -> tuple[list[Plugin], dict[str, str]]:
-    """Read every plugin folder. Returns (valid plugins, {folder: error}) - a bad plugin never stops Argus."""
+    """Read every plugin folder. Returns (valid plugins, {folder: error}) - a bad plugin never stops Argus.
+    A folder named in `plugins.off` is skipped unread (its folder name is its id), so it is not loaded at all."""
     plugins: list[Plugin] = []
     errors: dict[str, str] = {}
     seen: set[str] = set()
+    off_seen: set[str] = set()
     for d in cfg.plugins.dirs:
         root = cfg.resolve(d)
         if not root.is_dir():
             continue
         for folder in sorted(p for p in root.iterdir() if p.is_dir() and (p / "plugin.yaml").exists()):
+            if folder.name in cfg.plugins.off:
+                off_seen.add(folder.name)
+                continue
             try:
                 raw = yaml.safe_load((folder / "plugin.yaml").read_text(encoding="utf-8-sig")) or {}
                 m = Manifest.model_validate(raw)
@@ -333,6 +338,8 @@ def discover(cfg: Config) -> tuple[list[Plugin], dict[str, str]]:
             conf = {k: f.default for k, f in m.config.items()}
             conf.update(cfg.plugins.config.get(m.id, {}))
             plugins.append(Plugin(manifest=m, path=folder, live=m.id in cfg.plugins.live, config=conf))
+    for pid in sorted(set(cfg.plugins.off) - off_seen):
+        log.warning("plugins.off names no plugin folder", extra={"plugin": pid})
     return plugins, errors
 
 
@@ -414,6 +421,8 @@ class PluginHost:
             self.errors["(triggers)"] = _short(e)
         self.plugins = {p.manifest.id: p for p in ok}
         log.info("plugins loaded", extra={"plugins": sorted(self.plugins), "rejected": len(self.errors)})
+        if self.cfg.plugins.off:
+            log.info("plugins switched off", extra={"plugins": sorted(self.cfg.plugins.off)})
 
     def claude_caps(self) -> dict[str, int]:
         default = self.cfg.claude.plugin_calls_per_day
@@ -431,4 +440,5 @@ class PluginHost:
 
     def list(self) -> dict[str, Any]:
         return {"plugins": [p.info() for p in self.plugins.values()],
-                "errors": [{"folder": k, "error": v} for k, v in self.errors.items()]}
+                "errors": [{"folder": k, "error": v} for k, v in self.errors.items()],
+                "off": sorted(self.cfg.plugins.off)}  # switched off in plugins.off: not loaded, not listed above

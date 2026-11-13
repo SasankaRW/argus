@@ -46,7 +46,7 @@ class Argus:
         self.cfg = cfg
         self.version = __version__
         self.store = Store(cfg.db_path)
-        self.jobs = JobStore(self.store, cfg.jobs, windows=cfg.windows)
+        self.jobs = JobStore(self.store, cfg.jobs, windows=cfg.windows, off=cfg.plugins.off)
         self.registry = Registry(self.store)
         self.models = ModelBoard(self.store, cfg)
         self.outbox = Outbox(self.store, cfg)

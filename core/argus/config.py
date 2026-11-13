@@ -279,6 +279,24 @@ class PluginsConfig(_Strict):
     # Where a plugin's jobs run, over its manifest's runs_on: e.g. {web: desktop} when its service (SearXNG) is on
     # the PC and its address is 127.0.0.1 there; {tracker: laptop} once Tracker runs on the laptop.
     runs_on: dict[str, Literal["laptop", "desktop", "any"]] = Field(default_factory=dict)
+    # Plugins switched off: not loaded at all (no schedules, triggers, Ari tools or buttons; jobs are refused).
+    # Their folders and data stay as they are; take an id out of the list to switch it back on.
+    off: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _off_key(cls, values: Any) -> Any:
+        """YAML reads a bare `off:` key as the boolean false; it means the `off` setting here."""
+        if isinstance(values, dict) and False in values:
+            values = {("off" if k is False else k): v for k, v in values.items()}
+        return values
+
+    @model_validator(mode="after")
+    def _off_not_live(self) -> PluginsConfig:
+        both = sorted(set(self.live) & set(self.off))
+        if both:
+            raise ValueError(f"{', '.join(both)} listed in both live and off: remove it from one of them")
+        return self
 
 
 class ShareConfig(_Strict):

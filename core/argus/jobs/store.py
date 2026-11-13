@@ -54,6 +54,10 @@ class QueueFull(JobError):
     pass
 
 
+class PluginOff(JobError):
+    """The plugin is switched off in plugins.off: no job is queued for it."""
+
+
 @dataclass(frozen=True)
 class Job:
     id: str
@@ -134,11 +138,12 @@ def _dumps(value: Any) -> str:
 
 class JobStore:
     def __init__(self, store: Store, cfg: JobsConfig | None = None, clock: Callable[[], float] = time.time,
-                 windows: dict[str, str] | None = None):
+                 windows: dict[str, str] | None = None, off: Iterable[str] = ()):
         self.store = store
         self.cfg = cfg or JobsConfig()
         self.clock = clock
         self.windows = windows or {}
+        self.off = set(off)  # plugins.off: jobs for these are refused
         self.gpu_model: str | None = None  # the model the last GPU job used: likely still loaded in Ollama
 
     # ------------------------------------------------------------------ helpers (writer thread)
@@ -264,6 +269,8 @@ class JobStore:
     ) -> tuple[str, bool]:
         """enqueue() inside a Store write, so a schedule or trigger records its own state in the same
         transaction. Returns (job_id, created)."""
+        if plugin in self.off:
+            raise PluginOff(f"plugin {plugin} is switched off in plugins.off (take it out of that list to use it)")
         needs_list = sorted(set(needs))
         if dedupe_key is not None:
             row = conn.execute(

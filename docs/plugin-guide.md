@@ -246,6 +246,8 @@ Test set: every run you mark correct in Helios is saved to `tests/eval/`. Before
 
 Hot reload: core picks up changed plugins without a restart. Disabling a plugin stops new runs and lets running ones finish.
 
+Switching a plugin off: list it under `plugins.off` in argus.yaml (e.g. `off: [notes, screen]`) and restart argusd. It is not loaded at all: its schedules and triggers don't run, Ari doesn't offer its tools, its buttons don't show, and a job for it is refused ("switched off in plugins.off"). Its folder and data stay as they are, and `GET /plugins` lists it under `off`. Take it out of the list to switch it back on. A plugin can't be in both `live` and `off`: argusd refuses that config.
+
 ## Checklist for adding a new plugin
 
 Copy this list into the plugin's README and tick it off.
