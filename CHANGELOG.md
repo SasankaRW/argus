@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Same packages everywhere:** `constraints.txt` pins every package for Windows and Linux; CI, the laptop's updater and install script and dev.ps1 install with it. `python scripts/lock.py` keeps it (`--upgrade`, `--check`), and a monthly `deps` workflow lists what's newer.
+
 - **Coverage figure:** CI's Linux job shows test coverage in its summary (78% today), with the least covered files first. Report only; it never fails a build.
 
 - **Fix, long release notes:** the release tool no longer crashes on Windows when the notes are long; it hands the commit and tag messages to Git through stdin instead of the command line.

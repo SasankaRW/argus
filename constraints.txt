@@ -1,0 +1,125 @@
+# The package versions Argus installs with (pip install ... -c constraints.txt). Made by scripts/lock.py:
+# don't edit by hand. Windows and Linux, Python 3.11 and up.
+annotated-doc==0.0.5
+    # via fastapi
+annotated-types==0.8.0
+    # via pydantic
+anyio==4.15.1
+    # via
+    #   httpx
+    #   starlette
+certifi==2026.7.22
+    # via
+    #   httpcore
+    #   httpx
+click==8.5.0
+    # via uvicorn
+colorama==0.4.6 ; sys_platform == 'win32'
+    # via pytest
+comtypes==1.4.17 ; sys_platform == 'win32'
+    # via
+    #   argus (pyproject.toml)
+    #   pyvda
+    #   uiautomation
+coverage==7.17.3
+    # via pytest-cov
+fastapi==0.141.1
+    # via argus (pyproject.toml)
+greenlet==3.5.6 ; sys_platform == 'win32'
+    # via playwright
+h11==0.16.0
+    # via
+    #   httpcore
+    #   uvicorn
+httpcore==1.0.9
+    # via httpx
+httpx==0.28.1
+    # via argus (pyproject.toml)
+idna==3.20
+    # via
+    #   anyio
+    #   httpx
+iniconfig==2.3.0
+    # via pytest
+markdown-it-py==4.2.0
+    # via rich
+mdurl==0.1.2
+    # via markdown-it-py
+numpy==2.4.6 ; python_full_version < '3.12'
+    # via argus (pyproject.toml)
+numpy==2.5.3 ; python_full_version >= '3.12'
+    # via argus (pyproject.toml)
+packaging==26.3
+    # via
+    #   pytesseract
+    #   pytest
+pillow==12.3.0
+    # via
+    #   argus (pyproject.toml)
+    #   pytesseract
+playwright==1.63.0 ; sys_platform == 'win32'
+    # via argus (pyproject.toml)
+pluggy==1.6.0
+    # via
+    #   pytest
+    #   pytest-cov
+psutil==7.2.2
+    # via argus (pyproject.toml)
+pydantic==2.13.5
+    # via
+    #   argus (pyproject.toml)
+    #   fastapi
+pydantic-core==2.46.5
+    # via pydantic
+pyee==13.0.1 ; sys_platform == 'win32'
+    # via playwright
+pygments==2.21.0
+    # via
+    #   pytest
+    #   rich
+pypdf==6.19.0
+    # via argus (pyproject.toml)
+pytesseract==0.3.13
+    # via argus (pyproject.toml)
+pytest==9.1.1
+    # via
+    #   argus (pyproject.toml)
+    #   pytest-cov
+    #   pytest-timeout
+pytest-cov==7.1.0
+    # via argus (pyproject.toml)
+pytest-timeout==2.4.0
+    # via argus (pyproject.toml)
+pyvda==0.6.0 ; sys_platform == 'win32'
+    # via argus (pyproject.toml)
+pyyaml==6.0.3
+    # via argus (pyproject.toml)
+rich==15.0.0
+    # via argus (pyproject.toml)
+ruff==0.16.9
+    # via argus (pyproject.toml)
+send2trash==2.1.0
+    # via argus (pyproject.toml)
+starlette==1.7.0
+    # via fastapi
+typing-extensions==4.16.0
+    # via
+    #   anyio
+    #   fastapi
+    #   pydantic
+    #   pydantic-core
+    #   pyee
+    #   starlette
+    #   typing-inspection
+typing-inspection==0.4.4
+    # via
+    #   fastapi
+    #   pydantic
+tzdata==2026.6 ; sys_platform == 'win32'
+    # via argus (pyproject.toml)
+uiautomation==2.0.29 ; sys_platform == 'win32'
+    # via argus (pyproject.toml)
+uvicorn==0.54.0
+    # via argus (pyproject.toml)
+websockets==17.1
+    # via argus (pyproject.toml)

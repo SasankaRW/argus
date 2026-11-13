@@ -55,7 +55,7 @@ case "$PYV" in
     ;;
 esac
 sudo -H -u argus "$DIR/.venv/bin/pip" install --quiet --upgrade pip
-sudo -H -u argus "$DIR/.venv/bin/pip" install --quiet -e "$DIR[plugins,console]"
+sudo -H -u argus "$DIR/.venv/bin/pip" install --quiet -e "$DIR[plugins,console]" -c "$DIR/constraints.txt"
 
 say "settings"
 if [ ! -f "$DIR/argus.yaml" ]; then

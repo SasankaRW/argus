@@ -55,10 +55,10 @@ $OllamaUrl = if ($env:ARGUS_OLLAMA_URL) { $env:ARGUS_OLLAMA_URL } else { "http:/
 function Need-Venv {
     if (-not (Test-Path $Py)) { throw "No .venv yet. Run: .\scripts\dev.ps1 setup" }
     # New version with new dependencies? Update .venv automatically.
-    $Hash = (Get-FileHash (Join-Path $Root "pyproject.toml")).Hash + ":" + $Extras
+    $Hash = (Get-FileHash (Join-Path $Root "pyproject.toml")).Hash + ":" + (Get-FileHash (Join-Path $Root "constraints.txt")).Hash + ":" + $Extras
     if (-not (Test-Path $Stamp) -or (Get-Content $Stamp) -ne $Hash) {
         Write-Host "Dependencies changed; updating .venv ..."
-        & $Py -m pip install -q -e ".[$Extras]"
+        & $Py -m pip install -q -e ".[$Extras]" -c constraints.txt
         if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
         Set-Content $Stamp $Hash
     }
@@ -289,7 +289,7 @@ switch ($Command) {
             py -3 -m venv .venv
         }
         & $Py -m pip install --upgrade pip | Out-Null
-        & $Py -m pip install -e ".[$Extras]"
+        & $Py -m pip install -e ".[$Extras]" -c constraints.txt
         Set-Content $Stamp (Get-FileHash (Join-Path $Root "pyproject.toml")).Hash
         if (-not (Test-Path "argus.yaml")) { Copy-Item "argus.example.yaml" "argus.yaml"; Write-Host "Created argus.yaml" }
         if (-not (Test-Path ".env")) { Copy-Item ".env.example" ".env"; Write-Host "Created .env (edit the password)" }
