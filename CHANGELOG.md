@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Lint covers the plugins:** ruff now checks `plugins/` too, in CI and in `dev.ps1 lint`, `apply`, `merge local` and releases.
+
 ## 0.8.0 (2026-11-13)
 
 - **Fix, the diary refused times written differently:** when you said "I woke up around 7 .30" and the entry wrote "7:30", the check that keeps the entry to what you said saw a new number and made Ari try again. Times written with a space, a dot or a colon now count as the same number, and the time each thing was said (the clock at the start of each line) no longer counts as something you said.
