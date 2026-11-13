@@ -72,12 +72,21 @@ def apply_release(changelog: str, version: str, date: str) -> str:
 # ---------------------------------------------------------------------- git and friends
 
 
-def run(*cmd: str, check: bool = True, env: dict | None = None, capture: bool = True) -> str:
-    r = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=capture, env={**os.environ, **(env or {})})
+def run(*cmd: str, check: bool = True, env: dict | None = None, capture: bool = True,
+        input: str | None = None) -> str:
+    """Run a command in ROOT. `input` goes to its stdin as UTF-8 (what Git expects for messages)."""
+    r = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=capture, env={**os.environ, **(env or {})},
+                       input=input, encoding="utf-8" if input is not None else None)
     if check and r.returncode != 0:
         detail = (r.stderr or r.stdout or "").strip() if capture else ""
         raise ReleaseError(f"`{' '.join(cmd)}` failed{': ' + detail if detail else ''}")
     return (r.stdout or "").strip() if capture else ""
+
+
+def git_with_message(*args: str, message: str) -> str:
+    """`git <args> -F -` with the message on stdin: long release notes would overflow the
+    Windows command line (about 32K characters, WinError 206) if passed with -m."""
+    return run("git", *args, "-F", "-", input=message)
 
 
 def has_remote() -> bool:
@@ -140,8 +149,8 @@ def main(argv: list[str] | None = None) -> int:
         changelog_file.write_text(updated, encoding="utf-8")
         write_status()
         run("git", "add", "VERSION", "CHANGELOG.md", "docs/status.md")
-        run("git", "commit", "-q", "-m", f"Release {tag}", "-m", notes)
-        run("git", "tag", "-a", tag, "-m", f"Argus {new}\n\n{notes}")
+        git_with_message("commit", "-q", message=f"Release {tag}\n\n{notes}")
+        git_with_message("tag", "-a", tag, message=f"Argus {new}\n\n{notes}")
         print(f"Committed and tagged {tag}.")
 
         if args.no_push or not has_remote():

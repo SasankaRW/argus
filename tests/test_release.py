@@ -43,7 +43,7 @@ def git(cwd: Path, *args: str, env: dict | None = None, check: bool = True) -> s
     e = {k: v for k, v in os.environ.items() if not k.startswith("ARGUS_")}
     e.update({"GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "T",
               "GIT_COMMITTER_EMAIL": "t@t", **(env or {})})
-    r = subprocess.run(["git", *args], cwd=cwd, text=True, capture_output=True, env=e)
+    r = subprocess.run(["git", *args], cwd=cwd, text=True, capture_output=True, env=e, encoding="utf-8")
     if check and r.returncode != 0:
         raise AssertionError(r.stderr)
     return r
@@ -89,6 +89,37 @@ def test_release_end_to_end(repo, monkeypatch):
     assert "Added a thing" in msg
     # nothing new under Unreleased: a second release is refused
     assert release.main(["patch", "--skip-tests"]) == 1
+
+
+def test_release_with_long_notes(repo, monkeypatch):
+    """v0.8.0 had ~91 KB of notes: as -m arguments that overflowed the Windows command line (WinError 206)."""
+    work, origin = repo
+    monkeypatch.setattr(release.shutil, "which", lambda name: None)
+    (work / "docs").mkdir(exist_ok=True)
+    monkeypatch.setattr(release, "write_status",
+                        lambda: (work / "docs" / "status.md").write_text("# status\n", encoding="utf-8"))
+    long_notes = "\n".join(f"- Change {i}: café, naïve, über, long line of words" for i in range(1000))
+    assert len(long_notes) > 40_000
+    (work / "CHANGELOG.md").write_text(CHANGELOG.replace("- Added a thing", long_notes), encoding="utf-8")
+    git(work, "commit", "-q", "-am", "docs: long notes")
+    git(work, "push", "-q", "origin", "main", env={"ARGUS_ALLOW_MAIN": "1"})
+
+    longest = []
+    real_run = release.run
+
+    def spy(*cmd, **kw):
+        longest.append(sum(len(c) + 1 for c in cmd))
+        return real_run(*cmd, **kw)
+
+    monkeypatch.setattr(release, "run", spy)
+    assert release.main(["minor", "--skip-tests"]) == 0
+    assert max(longest) < 8_000  # no command line anywhere near the Windows limit, on any OS
+
+    body = git(work, "log", "-1", "--format=%B", "main").stdout
+    assert body.startswith("Release v0.5.0\n\n- Change 0: café") and "- Change 999:" in body
+    tag_msg = git(work, "tag", "-l", "--format=%(contents)", "v0.5.0").stdout
+    assert tag_msg.startswith("Argus 0.5.0\n\n- Change 0: café") and "- Change 999:" in tag_msg
+    assert git(origin, "tag", "--list").stdout.split() == ["v0.5.0"]
 
 
 def test_release_refuses_dirty_tree_and_other_branches(repo, capsys):
