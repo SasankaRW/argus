@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Restoring a backup:** `argusd --restore latest` (or a file name) puts a nightly backup back, with argusd stopped. It shows the plan first and acts only with `--yes`; a backup that fails its check or comes from a newer Argus is refused, and the database it replaces is moved to `data/replaced/`, never deleted. docs/restore.md has the steps for the laptop, the PC and a lost disk.
+
 ## 0.8.0 (2026-11-13)
 
 - **Fix, the diary refused times written differently:** when you said "I woke up around 7 .30" and the entry wrote "7:30", the check that keeps the entry to what you said saw a new number and made Ari try again. Times written with a space, a dot or a colon now count as the same number, and the time each thing was said (the clock at the start of each line) no longer counts as something you said.
