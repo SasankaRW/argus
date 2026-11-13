@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Fix, long release notes:** the release tool no longer crashes on Windows when the notes are long; it hands the commit and tag messages to Git through stdin instead of the command line.
+
 - **Status page from the code:** `python scripts/status.py --write` writes docs/status.md (version, schema, plugins, tests, routes, lines, big files) from the code itself, and every release does it.
 
 - **Switching a plugin off:** list a plugin under `plugins.off` in argus.yaml and Argus no longer loads it: its schedules don't run, Ari doesn't offer its tools, its buttons are gone and jobs for it are refused. Its code and data stay, and taking it out of the list brings it back.
