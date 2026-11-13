@@ -133,6 +133,7 @@ them; `remove` undoes it. Don't run `dev.ps1 up` on the PC any more (that starts
 - Leave the PC idle: after 20 minutes the phone says "PC shuts down at …" (tap it to keep it on), and 5 minutes later
   it shuts down. It only does this to a PC Argus woke itself, never while you use the keyboard or mouse.
 - Next morning: Helios > Logs shows `backup made` at 02:30, and the copy is in `backup.copy_to` on the PC.
+  Putting one back: [docs/restore.md](../docs/restore.md) (`argusd --restore latest`). Practise it once.
 
 ## What runs where
 
