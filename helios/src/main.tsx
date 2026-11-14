@@ -13,10 +13,12 @@ import { App } from "./App";
 import { currentConv } from "./conv";
 
 adoptTokenFromUrl();
+try { if (sessionStorage.getItem("helios.app") === "1" || new URLSearchParams(location.search).has("app")) document.documentElement.classList.add("app"); } catch { /* private */ }
 // Opened from the phone app's shortcuts: /helios/?app=1&mic=1#ari = Talk to Ari (the mic starts in the current chat).
 {
   const q = new URLSearchParams(location.search);
   if (q.has("app") || q.has("mic")) {
+    try { sessionStorage.setItem("helios.app", "1"); } catch { /* private */ }
     // Once, in the phone app: forget a "full dashboard" choice saved before the map's Plugins link stopped making it
     // (that link left the app stuck in the desktop layout). A real choice is one tap away again under More.
     try {
