@@ -1,29 +1,32 @@
 // The live map: boxes from the registry, lines from traffic, a dot along a line for every message.
 
 import {
-  Background, BaseEdge, Controls, EdgeProps, getBezierPath, Handle, Node, NodeProps, Position, ReactFlow,
-  useEdgesState, useInternalNode, useNodesState, useReactFlow, ReactFlowProvider, Edge,
+  Background, BackgroundVariant, BaseEdge, EdgeLabelRenderer, EdgeProps, getBezierPath, Handle, Node, NodeProps, Position, ReactFlow,
+  useEdgesState, useInternalNode, useNodesState, useReactFlow, useViewport, ReactFlowProvider, Edge,
 } from "@xyflow/react";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { ArgusMap, MapNode } from "./api";
+import type { ArgusEvent, ArgusMap, MapNode } from "./api";
+import { Ms } from "./m3";
+import type { IconName } from "./icons";
 import { ColumnLabel, layout, loadPins, NODE_H, NODE_W, Pos, Route, splinePath, savePins } from "./layout";
 import type { Pulse } from "./live";
 import { ago } from "./format";
 
 export type Selection = { type: "node"; id: string } | { type: "edge"; src: string; dst: string } | { type: "job"; id: string } | null;
 
-type BoxData = { n: MapNode; hot: boolean; fresh: boolean; selected: boolean };
-type LineData = { route?: Route; count: number; pulses: (Pulse & { back: boolean })[]; flow: boolean; selected: boolean; hot: boolean; tone: string };
+type BoxData = { n: MapNode; hot: boolean; fresh: boolean; selected: boolean; info: BoxInfo };
+type LineType = "ok" | "ctl" | "mdl" | "bad";
+type LineData = { route?: Route; count: number; rate: number; ltype: LineType; pulses: (Pulse & { back: boolean })[]; flow: boolean; selected: boolean; hot: boolean; tone: string };
 
 const KIND_LABEL: Record<string, string> = { core: "core", worker: "worker", plugin: "plugin", model: "model", app: "app", service: "service" };
 
-function sub(n: MapNode): string {
+export function sub(n: MapNode): string {
   if (n.kind === "core") return `core${n.meta?.version ? ` · v${n.meta.version}` : ""}`;
   if (n.kind === "worker") return `${n.state ?? "unknown"}${n.group ? ` · ${n.group}` : ""}`;
   if (n.id === PLUGINS) {
     const j = n.jobs ?? { active: 0, queued: 0, waiting: 0 };
     const busy = [j.active ? `${j.active} running` : "", j.queued ? `${j.queued} queued` : "", j.waiting ? `${j.waiting} waiting` : ""].filter(Boolean);
-    return busy.length ? `${n.meta.count} · ${busy.join(" · ")}` : `${n.meta.count} plugins · idle`;
+    return busy.length ? `${n.meta.count} plugins · ${busy.join(" · ")}` : `${n.meta.count} plugins · idle`;
   }
   if (n.kind === "plugin") {
     const j = n.jobs ?? { active: 0, queued: 0, waiting: 0 };
@@ -86,19 +89,56 @@ function dotColor(n: MapNode, hot: boolean): string {
   return "var(--tx3)";
 }
 
+// What a box shows beyond its name: an icon tile (colour by meaning), one key/value row and, where the numbers exist,
+// a meter. Only live data: counts from the registry, the status and the jobs list. Nothing is made up.
+export type BoxInfo = { icon: IconName; tone: "core" | "ok" | "sec" | "ter" | "err" | "plain"; row?: [string, string]; meter?: number };
+export type Ctx = { queue: { running: number; queued: number } | null; byWorker: Record<string, number> };
+
+export function boxInfo(n: MapNode, ctx: Ctx): BoxInfo {
+  if (n.kind === "core") {
+    const q = ctx.queue;
+    return { icon: "dns", tone: "core", row: q ? ["Queue", `${q.running} running · ${q.queued} waiting`] : undefined,
+      meter: q && q.running + q.queued > 0 ? q.running / (q.running + q.queued) : undefined };
+  }
+  if (n.kind === "worker") {
+    const run = ctx.byWorker[n.id] ?? ctx.byWorker[n.id.replace(/-now$/, "")] ?? 0;
+    return { icon: /pc|desktop|gpu/i.test(n.id + n.label) ? "desktop_windows" : "laptop_chromebook", tone: n.state === "online" ? "ok" : "err",
+      row: ["Running", `${run} ${run === 1 ? "job" : "jobs"}`] };
+  }
+  if (n.kind === "plugin") {
+    const j = n.jobs ?? { active: 0, queued: 0, waiting: 0 };
+    const all = j.active + j.queued + (j.waiting ?? 0);
+    return { icon: "extension", tone: "sec", row: ["Jobs", all ? `${j.active} running · ${j.queued + (j.waiting ?? 0)} waiting` : "none"], meter: all ? j.active / all : undefined };
+  }
+  if (n.kind === "model") {
+    const calls = (n as MapNode & { calls?: number }).calls ?? 0;
+    return { icon: "neurology", tone: n.state === "open" ? "err" : "ter", row: ["Calls", String(calls)] };
+  }
+  if (n.id === "phone" || n.id === "phone-app") return { icon: "smartphone", tone: n.id === "phone" && n.meta?.online === true ? "ok" : "plain", row: n.id === "phone-app" ? ["Waiting", String(n.unsent ?? 0)] : undefined };
+  if (n.id === "power") return { icon: "power_settings_new", tone: "plain" };
+  if (n.id === "approvals") return { icon: "pending_actions", tone: "ter", row: ["Waiting", String(n.pending ?? 0)] };
+  if (n.id === "scheduler") return { icon: "schedule", tone: "sec" };
+  return { icon: "hub", tone: "plain" };
+}
+
 const Box = memo(function Box({ data }: NodeProps<Node<BoxData>>) {
-  const { n, hot, fresh, selected } = data;
+  const { n, hot, fresh, selected, info } = data;
+  const live = n.kind === "worker" && n.state === "online";
   return (
-    <div className={`box${hot ? " on" : ""}${selected ? " sel" : ""}${n.implicit ? " ghost" : ""}${fresh ? " born" : ""}`}>
+    <div className={`box t-${info.tone}${hot ? " on" : ""}${selected ? " sel" : ""}${n.implicit ? " ghost" : ""}${fresh ? " born" : ""}`}>
       <Handle type="target" position={Position.Left} className="port" isConnectable={false} />
       <Handle id="t" type="target" position={Position.Top} className="port" isConnectable={false} />
       <Handle id="b-in" type="target" position={Position.Bottom} className="port" isConnectable={false} />
-      <div className="nn">
-        <span className="dot" style={{ background: dotColor(n, hot) }} />
-        <span className="name">{n.label}</span>
-        {fresh && <span className="new">new</span>}
+      <div className="nh">
+        <span className="ni"><Ms n={info.icon} fill /></span>
+        <div className="nx">
+          <div className="nn"><span className="name">{n.label}</span>{fresh && <span className="new">new</span>}</div>
+          <div className="ns">{sub(n)}</div>
+        </div>
+        <span className={`dot${live ? " live" : ""}`} style={{ background: dotColor(n, hot) }} />
       </div>
-      <div className="ns">{sub(n)}</div>
+      {info.row && <div className="brow"><span>{info.row[0]}</span><span className="num">{info.row[1]}</span></div>}
+      {info.meter !== undefined && <div className="bar"><span style={{ width: `${Math.round(Math.max(0.04, info.meter) * 100)}%` }} /></div>}
       <Handle type="source" position={Position.Right} className="port" isConnectable={false} />
       <Handle id="b" type="source" position={Position.Bottom} className="port" isConnectable={false} />
       <Handle id="t-out" type="source" position={Position.Top} className="port" isConnectable={false} />
@@ -139,13 +179,21 @@ const Line = memo(function Line(props: EdgeProps<Edge<LineData>>) {
   const r = d.route;
   const fits = r && r.length >= 2 && Math.abs(r[0].x - p.sourceX) < 3 && Math.abs(r[0].y - p.sourceY) < 3
     && Math.abs(r[r.length - 1].x - p.targetX) < 3 && Math.abs(r[r.length - 1].y - p.targetY) < 3;
-  const path = fits ? splinePath(r!)
-    : getBezierPath({ sourceX: p.sourceX, sourceY: p.sourceY, targetX: p.targetX, targetY: p.targetY, sourcePosition: p.sourcePosition, targetPosition: p.targetPosition })[0];
-  const width = Math.min(1.2 + Math.log2(1 + d.count) * 0.35, 3.6);
-  const cls = `line${d.hot ? (d.tone === "bad" ? " bad" : d.tone === "warn" ? " warn" : " on") : ""}${d.selected ? " sel" : ""}`;
+  const bez = getBezierPath({ sourceX: p.sourceX, sourceY: p.sourceY, targetX: p.targetX, targetY: p.targetY, sourcePosition: p.sourcePosition, targetPosition: p.targetPosition });
+  const path = fits ? splinePath(r!) : bez[0];
+  const mid = fits ? r![Math.floor(r!.length / 2)] : { x: bez[1], y: bez[2] };
+  const width = 2.5;
+  const flowing = d.hot || d.rate > 0;
+  const type = d.hot && d.tone === "bad" ? "bad" : d.ltype;
   return (
     <>
-      <BaseEdge id={p.id} path={path} className={cls} style={{ strokeWidth: d.hot || d.selected ? width + 0.4 : width }} interactionWidth={16} />
+      <BaseEdge id={p.id} path={path} className={`line${d.selected ? " sel" : ""}`} style={{ strokeWidth: width }} interactionWidth={16} />
+      {flowing && <path d={path} className={`line flow ${type}`} style={{ strokeWidth: width }} fill="none" pointerEvents="none" />}
+      {d.rate > 0 && (
+        <EdgeLabelRenderer>
+          <span className={`rate ${type}`} style={{ transform: `translate(-50%, -50%) translate(${mid.x}px, ${mid.y}px)` }}>{d.rate}/min</span>
+        </EdgeLabelRenderer>
+      )}
       {d.flow && d.pulses.map((x) => <Dot key={x.id} path={path} tone={x.tone} back={x.back} />)}
     </>
   );
@@ -168,11 +216,29 @@ type Props = {
   flow: boolean;
   relayoutSignal: number;
   fitPad?: FitPad;  // room kept clear around the map when it fits itself (cards floating over it)
+  events?: ArgusEvent[];  // for the rate on each line (messages in the last minute)
+  queue?: Ctx["queue"];  // the core's queue, from the status
+  byWorker?: Ctx["byWorker"];  // jobs running on each worker
+  vertical?: boolean;  // lay the boxes out top to bottom (the phone)
 };
+
+// Zoom in, out and fit, as floating round buttons (the board's zoom column on the phone, the zoom row on the desktop).
+function ZoomPad({ onFit }: { onFit: () => void }) {
+  const rf = useReactFlow();
+  const { zoom } = useViewport();
+  return (
+    <div className="zoompad" role="group" aria-label="Zoom">
+      <button type="button" className="zb zout" aria-label="Zoom out" onClick={() => rf.zoomOut({ duration: 200 })}><Ms n="remove" /></button>
+      <span className="zpct mono">{Math.round(zoom * 100)}%</span>
+      <button type="button" className="zb zin" aria-label="Zoom in" onClick={() => rf.zoomIn({ duration: 200 })}><Ms n="add" /></button>
+      <button type="button" className="zb zfit" aria-label="Fit to screen" onClick={onFit}><Ms n="fit_screen" /></button>
+    </div>
+  );
+}
 
 export type FitPad = { top: `${number}px`; right: `${number}px`; bottom: `${number}px`; left: `${number}px` };
 
-function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal, fitPad }: Props) {
+function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal, fitPad, rates, queue, byWorker, vertical }: Props & { rates: Record<string, number> }) {
   const [positions, setPositions] = useState<Record<string, Pos>>({});
   const [labels, setLabels] = useState<ColumnLabel[]>([]);
   const [routes, setRoutes] = useState<Record<string, Route>>({});
@@ -196,12 +262,12 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal,
   // Re-run layout when the set of boxes or lines changes (not on every count update).
   const lines = useMemo(() => mergeEdges(map.edges), [map.edges]);
   const shapeKey = useMemo(
-    () => map.nodes.map((n) => n.id).sort().join("|") + "#" + lines.map((e) => `${e.src}>${e.dst}`).sort().join("|"),
+    () => (vertical ? "v" : "h") + map.nodes.map((n) => n.id).sort().join("|") + "#" + lines.map((e) => `${e.src}>${e.dst}`).sort().join("|"),
     [map.nodes, lines],
   );
   useEffect(() => {
     let cancelled = false;
-    layout(map.nodes, lines).then((r) => { if (!cancelled) { setPositions(r.pos); setLabels(r.labels); setRoutes(r.routes); } });
+    layout(map.nodes, lines, vertical).then((r) => { if (!cancelled) { setPositions(r.pos); setLabels(r.labels); setRoutes(r.routes); } });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shapeKey]);
@@ -257,7 +323,7 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal,
           id: n.id,
           type: "box",
           position: dragging.has(n.id) && old ? old.position : pos,
-          data: { n, hot, fresh, selected: selection?.type === "node" && selection.id === n.id },
+          data: { n, hot, fresh, selected: selection?.type === "node" && selection.id === n.id, info: boxInfo(n, { queue: queue ?? null, byWorker: byWorker ?? {} }) },
           width: NODE_W,
           height: NODE_H,
           draggable: true,
@@ -265,11 +331,12 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal,
         };
       })];
     });
-  }, [map.nodes, positions, labels, pins, active, now, selection, oldest, setNodes]);
+  }, [map.nodes, positions, labels, pins, active, now, selection, oldest, setNodes, queue, byWorker]);
 
   // Boxes in the same column (the model tiers) connect top to bottom instead of side to side.
   const stacked = (a: string, b: string) => {
     const pa = pins[a] ?? positions[a], pb = pins[b] ?? positions[b];
+    if (vertical && pa && pb) return pa.y <= pb.y ? { sourceHandle: "b", targetHandle: "t" } : { sourceHandle: "t-out", targetHandle: "b-in" };
     if (!pa || !pb || Math.abs(pa.x - pb.x) > NODE_W / 2) return {};
     return pa.y < pb.y ? { sourceHandle: "b", targetHandle: "t" } : { sourceHandle: "t-out", targetHandle: "b-in" };
   };
@@ -292,6 +359,9 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal,
           data: {
             route: routes[`${e.src}>${e.dst}`],
             count: e.count,
+            rate: rates[[e.src, e.dst].sort().join("|")] ?? 0,
+            ltype: /fail|dead|error|offline|opened/.test(e.last_kind) ? "bad" : /^(model|check)\./.test(e.last_kind) || map.nodes.find((x) => x.id === e.dst || x.id === e.src)?.kind === "model" ? "mdl"
+              : /^(job|step|approval|outbox|notify)\./.test(e.last_kind) ? "ok" : "ctl",
             pulses: live,
             flow,
             hot: live.length > 0,
@@ -302,10 +372,10 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal,
       }),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lines, pulses, flow, selection, now, setEdges, positions, pins, routes]);
+  }, [lines, pulses, flow, selection, now, setEdges, positions, pins, routes, rates]);
 
   return (
-    <div ref={wrap} style={{ width: "100%", height: "100%" }}>
+    <div ref={wrap} style={{ width: "100%", height: "100%", position: "relative" }}>
     <ReactFlow
       nodes={nodes}
       edges={edges}
@@ -332,9 +402,9 @@ function Inner({ map, pulses, active, selection, onSelect, flow, relayoutSignal,
       elementsSelectable={false}
       colorMode="dark"
     >
-      <Background gap={20} size={1.2} color="#1c2330" />
-      <Controls showInteractive={false} position="bottom-left" onFitView={() => { userMoved.current = false; }} />
+      <Background variant={BackgroundVariant.Dots} gap={24} size={1.1} color="#232329" />
     </ReactFlow>
+    <ZoomPad onFit={() => { userMoved.current = false; fit(300); }} />
     </div>
   );
 }
@@ -362,11 +432,26 @@ export function mainParts(map: ArgusMap, pulses: Pulse[], active: Record<string,
 
 export function MapView(p: Props & { onPlugins?: () => void }) {
   const m = useMemo(() => mainParts(p.map, p.pulses, p.active), [p.map, p.pulses, p.active]);
+  const rates = useMemo(() => {  // messages per line in the last minute, counted from the live events (plugins fold into one box)
+    const plug = new Set(p.map.nodes.filter((n) => n.kind === "plugin").map((n) => n.id));
+    const to = (id: string) => (plug.has(id) ? PLUGINS : id);
+    const since = Date.now() / 1000 - 60;
+    const out: Record<string, number> = {};
+    for (const e of p.events ?? []) {
+      if (!e.from || !e.to || e.at < since) continue;
+      const a = to(e.from), b = to(e.to);
+      if (a === b) continue;
+      const k = [a, b].sort().join("|");
+      out[k] = (out[k] ?? 0) + 1;
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.events, p.map.nodes]);
   const sel = p.selection?.type === "node" && p.selection.id === PLUGINS ? null : p.selection;
   const onSelect = (s: Selection) => (s?.type === "node" && s.id === PLUGINS && p.onPlugins ? p.onPlugins() : p.onSelect(s));
   return (
     <ReactFlowProvider>
-      <Inner {...p} {...m} selection={sel} onSelect={onSelect} />
+      <Inner {...p} {...m} selection={sel} onSelect={onSelect} rates={rates} />
     </ReactFlowProvider>
   );
 }

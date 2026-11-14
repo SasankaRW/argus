@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ArgusEvent, Status } from "./api";
 import { MiniLog, Pane, useHomeData } from "./Phone";
-import { IconTile, Logo, Ms } from "./sonoma";
+import { IconTile, Logo, Ms } from "./m3";
 
 // The PC's home screen has two layouts, switched in the header and remembered per browser:
-//   desk    - the live map as the main focus, panels beside it (SonomaDesk.tsx)
+//   desk    - the live map as the main focus, panels beside it (DeskLayer.tsx)
 //   command - the map fills the screen, small floating panels, one command bar at the bottom
 
 export type Layout = "desk" | "command";

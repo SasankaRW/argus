@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, Job } from "./api";
 import type { Selection } from "./MapView";
-import { HoldButton, Ms } from "./sonoma";
+import { HoldButton, Ms } from "./m3";
 
 type Answer = { reply: string; action: string | null; label?: string | null; via: string; tier?: string };
 
@@ -77,7 +77,7 @@ export function AskBox({ onSelect, onView, big = false }: { onSelect: (s: Select
     <div className={`ask${big ? " big" : ""}`}>
       <form onSubmit={(e) => { e.preventDefault(); ask(text); }}>
         {!big && <Ms n="search" size={18} />}
-        <input ref={input} value={text} onChange={(e) => setText(e.target.value)} placeholder={big ? "Ask Argus…" : "Ask Argus, or jump to a page"}
+        <input ref={input} value={text} onChange={(e) => setText(e.target.value)} placeholder={big ? "Ask Argus…" : "Search or ask Argus"}
           aria-label="Ask Argus" enterKeyHint="send" />
         {!big && <kbd className="hide-sm">ctrl k</kbd>}
         {Speech && <button type="button" className={`mic${listening ? " on" : ""}`} onClick={listen} aria-label="Speak">

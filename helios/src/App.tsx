@@ -9,9 +9,13 @@ import { useArgus } from "./live";
 import { FitPad, mainParts, MapView, mergeEdges, Selection } from "./MapView";
 import { MapFull } from "./MapFull";
 import { CommandLayer, Layout, LayoutSwitch, loadLayout, saveLayout } from "./Desk";
-import { PhoneHeader, PhoneMore, PhoneOffline, PhoneTab, PhoneTabs, SonomaHome } from "./Phone";
-import { DeskHome } from "./SonomaDesk";
-import { Logo, Ms, PhoneCtx } from "./sonoma";
+import { PhoneHeader, PhoneMore, PhoneOffline, PhoneTab, PhoneTabs, PhoneHome } from "./Phone";
+import { PhoneMap } from "./PhoneMap";
+import { DeskLayer } from "./DeskLayer";
+import { InspectCard } from "./InspectCard";
+import { ClaudeChip, Clock } from "./chips";
+import { useJobs } from "./jobsFeed";
+import { Logo, Ms, PhoneCtx } from "./m3";
 import type { IconName } from "./icons";
 import { Sheet } from "./Sheet";
 import { useInboxCount } from "./inboxCount";
@@ -36,6 +40,7 @@ const RunsView = lazy(() => import("./RunsView").then((m) => ({ default: m.RunsV
 const ShareView = lazy(() => import("./ShareView").then((m) => ({ default: m.ShareView })));
 const VoiceTrain = lazy(() => import("./VoiceTrain").then((m) => ({ default: m.VoiceTrain })));
 
+const DESK_PAD: FitPad = { top: "130px", right: "330px", bottom: "150px", left: "90px" };  // between the floating bars, tools, inspector and timeline
 const CMD_PAD: FitPad = { top: "340px", right: "40px", bottom: "150px", left: "40px" };  // below the corner cards, above the command bar
 
 const NAV: { id: string; label: string; icon: IconName }[] = [
@@ -52,7 +57,10 @@ const NAV: { id: string; label: string; icon: IconName }[] = [
   { id: "logs", label: "Logs", icon: "terminal" },
   { id: "settings", label: "Settings", icon: "settings" },
 ];
-const NAV_BOTTOM = ["logs", "settings"];  // after the spacer, as on the board
+// The desktop rail, as on the board (design/material3/boards/Desktop.dc.html). The palette (Ctrl K) goes to every page in NAV.
+const RAIL_TOP = ["map", "inbox", "plugins", "runs", "power", "models"];
+const RAIL_BOTTOM = ["logs", "settings"];  // after the spacer
+const RAIL_LABEL: Record<string, string> = { map: "Map" };
 
 // Phones (narrow screens) get the simple view; "Open the full dashboard" switches, remembered per browser.
 function useNarrow(): boolean {
@@ -67,43 +75,13 @@ function useNarrow(): boolean {
   return m;
 }
 
-function Clock() {
-  const [t, setT] = useState(new Date());
-  useEffect(() => { const i = window.setInterval(() => setT(new Date()), 1000); return () => window.clearInterval(i); }, []);
-  const p = (n: number) => String(n).padStart(2, "0");
-  return <b className="clock" role="timer" aria-label={`${p(t.getHours())}:${p(t.getMinutes())}`}>{p(t.getHours())}<span className="ac">:</span><span className="mm">{p(t.getMinutes())}</span></b>;
-}
-
-// Claude today: calls used of the daily cap, and whether the CLI is logged in (checked by the workers).
-function ClaudeChip() {
-  const [c, setC] = useState<{ calls_today: number; calls_per_day: number; logged_in: boolean | null } | null>(null);
-  useEffect(() => {
-    const load = () => api<{ claude: NonNullable<typeof c> }>("/models").then((m) => setC(m.claude)).catch(() => {});
-    load();
-    const id = setInterval(load, 60000);
-    return () => clearInterval(id);
-  }, []);
-  if (!c) return null;
-  if (c.logged_in === false) {
-    return <span className="seg-s claude-chip bad" title="Run `claude` on the PC and log in (/login)"><span className="dot" style={{ background: "var(--bad)" }} />Claude is logged out</span>;
-  }
-  const left = c.calls_per_day - c.calls_today;
-  return (
-    <span className="seg-s claude-chip hide-sm" title={`Claude calls today: ${c.calls_today} of ${c.calls_per_day}`}>
-      Claude <b>{c.calls_today} of {c.calls_per_day}</b>
-      {left <= 3 && <span className={left <= 0 ? "bad" : "warn"}>{left <= 0 ? " · none left" : ` · ${left} left`}</span>}
-    </span>
-  );
-}
-
 function Login({ onDone, bad }: { onDone: () => void; bad: boolean }) {
   const [v, setV] = useState("");
   return (
     <div className="login">
       <form className="panel card" onSubmit={(e) => { e.preventDefault(); setToken(v.trim()); onDone(); }}>
         <div className="brand"><Logo size={30} /></div>
-        <div className="sn-eye">Argus</div>
-        <h1 className="sn-h1">Helios<span className="ac">.</span></h1>
+        <h1 className="sn-h1">Helios</h1>
         <p>Argus needs its worker token (ARGUS_WORKER_TOKEN in <code>.env</code>). It is kept in this browser only.</p>
         {bad && <p className="bad" role="alert">That token did not work.</p>}
         <span className={`sn-field${bad ? " is-error" : ""}`}><input autoFocus type="password" value={v} onChange={(e) => setV(e.target.value)} placeholder="Token" aria-label="Token" /></span>
@@ -122,11 +100,10 @@ export function App() {
   const [bigMap, setBigMap] = useState(false);
   const [layout, setLayoutState] = useState<Layout>(loadLayout);  // the PC's home: map + tiles, or map + command bar
   const setLayout = (l: Layout) => { setLayoutState(l); saveLayout(l); };  // the phone's "waiting for you" sheet  // the phone's sideways full-screen map  // the map's inspector drawer with nothing selected (the overview)
-  const [wide, setWide] = useState(() => { try { return localStorage.getItem("helios.rail") === "wide"; } catch { return false; } });
-  const setWideRail = (v: boolean) => { setWide(v); try { localStorage.setItem("helios.rail", v ? "wide" : "icons"); } catch { /* private */ } };
   const [triedLogin, setTriedLogin] = useState(false);
-  const parse = (h: string) => (["queue", "runs", "logs", "share", "power", "ari", "plugins", "more", "inbox", "notifications", "models", "settings", "voice"].includes(h) || h.startsWith("rules/") || h.startsWith("plugins/") || h.startsWith("ari/") ? h : "map");
-  const [view, setView] = useState<string>(() => parse(location.hash.slice(1)));
+  const parse = (h: string) => (["livemap", "queue", "runs", "logs", "share", "power", "ari", "plugins", "more", "inbox", "notifications", "models", "settings", "voice"].includes(h) || h.startsWith("rules/") || h.startsWith("plugins/") || h.startsWith("ari/") ? h : "map");
+  const [rawView, setView] = useState<string>(() => parse(location.hash.slice(1)));
+  const [details, setDetails] = useState(false);  // the desktop inspector card opened into the full details
   useEffect(() => {  // the share menu opens /helios/#share on a page that may already be open
     const on = () => setView(parse(location.hash.slice(1)));
     window.addEventListener("hashchange", on);
@@ -144,6 +121,13 @@ export function App() {
   const [full, setFull] = useState(() => { try { return localStorage.getItem("helios.full") === "1"; } catch { return false; } });
   const setFullView = (v: boolean) => { setFull(v); try { localStorage.setItem("helios.full", v ? "1" : "0"); } catch { /* private */ } };
   const phone = narrow && !full;
+  const view = rawView === "livemap" && !phone ? "map" : rawView;  // the phone's Map screen is the desktop's map
+  const jobs = useJobs(a.events);
+  const qj = a.status?.jobs ?? {};
+  const queue = { running: (qj.running ?? 0) + (qj.leased ?? 0), queued: (qj.queued ?? 0) + (qj.retry ?? 0) };
+  const byWorker: Record<string, number> = {};
+  for (const j of jobs) if ((j.state === "running" || j.state === "leased") && j.lease_owner) byWorker[j.lease_owner] = (byWorker[j.lease_owner] ?? 0) + 1;
+  useEffect(() => { setDetails(false); }, [sel]);
   const go = (to: string) => {
     let v = to;
     if (v === "ari") {  // a question or the mic waiting for Ari: straight into the current chat, not the chat list
@@ -161,6 +145,8 @@ export function App() {
     { id: "lay-command", group: "Layout", label: "Home: command bar", run: () => { setLayout("command" as Layout); go("map"); } },
     { id: "ask", group: "Ari", label: "Talk to Ari", hint: "Open the current chat", run: () => go("ari") },
     { id: "phone", group: "View", label: "Phone view", run: () => setFullView(false) },
+    { id: "lite", group: "View", label: "Lite view", hint: "/lite", run: () => { location.href = "/lite"; } },
+    { id: "api", group: "View", label: "API docs", hint: "/docs", run: () => { location.href = "/docs"; } },
   // eslint-disable-next-line react-hooks/exhaustive-deps
   ], []);
   const viewRef = useRef(view);
@@ -244,8 +230,8 @@ export function App() {
     {heard && <div className="ari-heard" role="status">{heard}</div>}
   </>;
   const closeMap = useCallback(() => setBigMap(false), []);
-  const mapFull = bigMap && a.map ? (
-    <MapFull phone={phone} map={a.map} pulses={a.pulses} active={a.active} status={a.status} events={a.events} onClose={closeMap}
+  const mapFull = bigMap && a.map && !phone ? (
+    <MapFull map={a.map} pulses={a.pulses} active={a.active} status={a.status} events={a.events} onClose={closeMap}
       // On the phone the map's Plugins link opens the phone's Plugins page. It used to switch to the full dashboard
       // (and remember it), which left the phone app stuck in the desktop layout. Only More's "Open the full
       // dashboard" switches views.
@@ -256,15 +242,22 @@ export function App() {
 
   const st = a.status;
   const ok = st?.status === "ok" && a.conn === "live";
-  if (phone) {  // the phone: Sonoma panels (Phone.tsx), a floating tab bar, details in a bottom sheet
+  if (phone) {  // the phone: M3 cards (Phone.tsx), the standard navigation bar, details in a bottom sheet
     const proot = view.split("/")[0];
-    const tab: PhoneTab = proot === "map" ? "home" : proot === "ari" ? "ari" : proot === "plugins" ? "plug" : "more";
+    const tab: PhoneTab = proot === "map" ? "home" : proot === "livemap" ? "map" : proot === "ari" ? "ari" : proot === "inbox" ? "inbox" : "more";
     const open = (v: string) => go(v);
-    const title = proot === "map" ? null : proot === "more" ? "More" : PAGES[proot]?.title ?? null;
+    const title = proot === "map" || proot === "livemap" ? null : proot === "more" ? "More" : PAGES[proot]?.title ?? null;
+    const onTab = (t: PhoneTab) => go(t === "home" ? "map" : t === "map" ? "livemap" : t);
     return (
       <PhoneCtx.Provider value={true}>
-      <div className="phone2">
-        <PhoneHeader status={st} live={a.conn === "live"} title={title} down={a.phase === "down"} />
+      <div className={`phone2${proot === "livemap" ? " pm-on" : ""}`}>
+        {proot === "livemap" ? (
+          a.map && a.map.nodes.length > 0
+            ? <PhoneMap map={a.map} pulses={a.pulses} active={a.active} status={st} events={a.events} layout={layout} onLayout={setLayout}
+                onPlugins={() => go("plugins")} onDetails={setSel} onAsk={askAri} onView={go} />
+            : <div className="empty pm-empty">{a.phase === "down" ? "Waiting for Argus…" : "Loading the map…"}</div>
+        ) : (<>
+        <PhoneHeader status={st} live={a.conn === "live"} title={title} down={a.phase === "down"} onBell={() => go("notifications")} />
         {a.phase === "down" && <PhoneOffline onRetry={() => a.reconnect()} />}
         <main key={view} className="pmain2">
           <Suspense fallback={<Skeleton rows={4} />}>
@@ -286,31 +279,34 @@ export function App() {
           : proot === "voice" ? <VoiceTrain />
           : proot === "models" ? <ModelsView events={a.events} />
           : proot === "more" ? <PhoneMore onOpen={open} onFull={() => setFullView(true)} waiting={waiting} />
-          : <SonomaHome status={st} events={a.events} onSelect={setSel} onOpen={open} onInbox={() => go("inbox")} onAsk={askAri}
+          : <PhoneHome status={st} events={a.events} live={a.conn === "live"} down={a.phase === "down"} onSelect={setSel} onOpen={open} onInbox={() => go("inbox")} onAsk={askAri}
               onAri={(mic) => { if (mic) { try { sessionStorage.setItem("ari.mic", "1"); } catch { /* private */ } } go("ari"); }} />}
           </Suspense>
         </main>
-        <PhoneTabs tab={tab} onTab={(t) => (t === "map" ? setBigMap(true) : go(t === "home" ? "map" : t === "plug" ? "plugins" : t))} />
+        </>)}
+        <PhoneTabs tab={tab} onTab={onTab} waiting={waiting} />
         {sel && a.map && (
           <Sheet onClose={() => setSel(null)}>
             <Inspector sel={sel} map={a.map} status={st} events={a.events} onSelect={setSel} />
           </Sheet>
         )}
-        {mapFull}
         {heardBadge}
       </div>
       </PhoneCtx.Provider>
     );
   }
-  const navItem = (n: (typeof NAV)[number]) => (
-    <button key={n.id} type="button" className="nav" title={n.label} aria-label={n.id === "inbox" && waiting > 0 ? `${n.label}, ${waiting} waiting` : n.label}
-      aria-current={n.id === view.split("/")[0] ? "page" : undefined} onClick={() => go(n.id)}>
-      <Ms n={n.icon} fill={n.id === view.split("/")[0]} /><span className="nl">{n.label}</span>
-      {n.id === "inbox" && waiting > 0 && <span className="navbadge" aria-hidden="true">{waiting}</span>}
-    </button>
-  );
+  const navItem = (id: string) => {
+    const n = NAV.find((x) => x.id === id)!;
+    const cur = id === view.split("/")[0];
+    const label = RAIL_LABEL[id] ?? n.label;
+    return (
+      <button key={id} type="button" className="side-i" title={n.label} aria-label={id === "inbox" && waiting > 0 ? `${label}, ${waiting} waiting` : label}
+        aria-current={cur ? "page" : undefined} onClick={() => go(id)}>
+        <span className="ind"><Ms n={n.icon} fill={cur} />{id === "inbox" && waiting > 0 && <span className="sn-badge" aria-hidden="true">{waiting}</span>}</span>{label}
+      </button>
+    );
+  };
   const root = view.split("/")[0];
-  const main = a.map ? mainParts(a.map, [], {}).map : null;
   const meta = pageMeta(view);
   const cmd = root === "map" && layout === "command";
   const tools = (
@@ -321,55 +317,70 @@ export function App() {
       <button type="button" className="btn" aria-pressed={info || !!sel} onClick={() => (sel || info ? (setSel(null), setInfo(false)) : setInfo(true))}>Inspector</button>
     </>
   );
+  const deskTools = (
+    <>
+      <button type="button" className="tb" aria-label="Flow" title="Flow" aria-pressed={flow} onClick={() => setFlow(!flow)}><Ms n="route" fill={flow} size={20} /></button>
+      <button type="button" className="tb" aria-label="Auto layout" title="Auto layout" onClick={() => setRelayout((x) => x + 1)}><Ms n="auto_awesome_mosaic" size={20} /></button>
+      <button type="button" className="tb" aria-label="Inspector" title="Inspector" aria-pressed={info || !!sel} onClick={() => (sel || info ? (setSel(null), setInfo(false)) : setInfo(true))}><Ms n="info" fill={info || !!sel} size={20} /></button>
+      {narrow && <button type="button" className="tb" aria-label="Full screen" title="Full screen" onClick={() => setBigMap(true)}><Ms n="fit_screen" size={20} /></button>}
+    </>
+  );
+  const search = (
+    <div className="float dl-search">
+      <AskBox onSelect={setSel} onView={(v) => go(v)} />
+      <button type="button" className="cmdk" onClick={() => setPal(true)} title="Command palette"><kbd>Ctrl K</kbd></button>
+    </div>
+  );
+  const nodeSel = sel?.type === "node" ? sel.id : null;
+  const inspector = a.map && (sel || info) ? (
+    <aside className={`drawer${nodeSel && !details ? " card-ic" : ""}`} aria-label="Inspector">
+      {nodeSel && !details
+        ? <InspectCard id={nodeSel} map={mainParts(a.map, [], {}).map} jobs={jobs} queue={queue} byWorker={byWorker} onClose={() => { setSel(null); setInfo(false); }} onDetails={() => setDetails(true)} />
+        : <>
+            {nodeSel && <button type="button" className="sn-link ic-back" onClick={() => setDetails(false)}>Summary</button>}
+            <Inspector sel={sel} map={a.map} status={st} events={a.events} onSelect={setSel} onClose={() => { setSel(null); setInfo(false); }} />
+          </>}
+    </aside>
+  ) : null;
   const stage = (
-    <section className={`stage${cmd ? " cmd" : " sn-pane"}`} aria-label="Live map">
-      {!cmd && (
-        <div className="stage-h">
-          <span className="sn-lbl">Live map</span>
-          <span className="stage-n">{main ? `${main.nodes.length} parts · ${mergeEdges(main.edges).length} lines` : "Loading…"}</span>
-          <span className="grow" />
-          <div className="tools">{tools}</div>
-          <span className="stage-live"><span className={`sn-dot ${a.conn === "live" ? "d-green" : "d-amber"}`} />{a.conn === "live" ? "Live" : "Offline"}</span>
-        </div>
-      )}
+    <section className={`stage${cmd ? " cmd" : ""}`} aria-label="Live map">
       <div className="canvas">
         {a.map && a.map.nodes.length > 0 ? (
           <MapView map={a.map} pulses={a.pulses} active={a.active} selection={sel} onSelect={setSel} flow={flow} relayoutSignal={relayout} onPlugins={() => go("plugins")}
-            fitPad={cmd ? CMD_PAD : undefined} />
+            events={a.events} queue={queue} byWorker={byWorker} fitPad={cmd ? CMD_PAD : DESK_PAD} />
         ) : (
           <div className="empty">{a.phase === "down" ? "Waiting for Argus…" : "Loading the map…"}</div>
         )}
       </div>
-      {cmd && (
+      {cmd ? (
         <CommandLayer status={st} events={a.events} live={a.conn === "live"} onView={go} onAsk={askAri}
           onInbox={() => go("inbox")} onLayout={setLayout} tools={tools} />
+      ) : (
+        <DeskLayer status={st} events={a.events} live={a.conn === "live"} down={a.phase === "down"} onInbox={() => go("inbox")}
+          layoutSwitch={<LayoutSwitch layout={layout} onChange={setLayout} />} search={search} tools={deskTools} />
       )}
-      {!cmd && <div className="hud hud-bl legend">
-        <span><i style={{ background: "var(--flow)" }} />Message</span>
-        <span><i style={{ background: "var(--amber)" }} />Escalation</span>
-        <span><i style={{ background: "var(--bad)" }} />Failure</span>
-        <span><i className="thick" />Busier line</span>
-        <span className="dim hide-sm">Drag to arrange, click to inspect</span>
-      </div>}
-      {a.map && (sel || info) && (
-        <aside className="drawer">
-          <Inspector sel={sel} map={a.map} status={st} events={a.events} onSelect={setSel} onClose={() => { setSel(null); setInfo(false); }} />
-        </aside>
-      )}
+      {inspector}
+      {!cmd && <EventsPanel events={a.events} conn={a.conn} onSelect={setSel} lanes={{ jobs, workers: st?.workers ?? [] }} />}
     </section>
   );
   const health = a.phase === "down" ? "Can't reach Argus" : ok ? "All good" : a.conn === "live" ? "Needs a look" : "Connecting";
   const hTone = a.phase === "down" ? "d-coral" : ok ? "d-green" : "d-amber";
   return (
-    <div className={`shell${wide ? " wide" : ""}${cmd ? " cmdmode" : ""}`}>
-      {!cmd && <header className="top sn-pane">
+    <div className={`shell${root === "map" ? " onmap" : ""}`}>
+      <nav className="side" aria-label="Helios sections">
+        <button type="button" className="side-ask" aria-label="Ask Ari" title="Ask Ari" onClick={() => go("ari")}><Ms n="graphic_eq" fill /></button>
+        {RAIL_TOP.map(navItem)}
+        <div className="side-grow" />
+        {RAIL_BOTTOM.map(navItem)}
+      </nav>
+
+      {root !== "map" && <header className="top">
         <div className="brand" title={st ? `${st.instance}@${st.host}` : undefined}>
           <span className="who">Argus</span>
         </div>
         <AskBox onSelect={setSel} onView={(v) => go(v)} />
         <button type="button" className="cmdk" onClick={() => setPal(true)} title="Command palette"><span className="lbl">Jump to</span><kbd>Ctrl K</kbd></button>
         {narrow && <button type="button" className="btn phone-back" onClick={() => setFullView(false)}>Phone view</button>}
-        {root === "map" && <LayoutSwitch layout={layout} onChange={setLayout} />}
         <div className="status">
           <span className={`seg-s ${a.phase === "down" ? "bad" : ok ? "ok" : "warn"}`}>
             <span className={`sn-dot ${hTone}`} />{health}
@@ -379,22 +390,6 @@ export function App() {
           <span className="seg-s hide-sm"><Clock /></span>
         </div>
       </header>}
-
-      {!cmd && <nav className="rail sn-pane" aria-label="Helios sections">
-        <div className="rail-logo" aria-hidden="true"><Logo size={30} /></div>
-        {NAV.filter((n) => !NAV_BOTTOM.includes(n.id)).map(navItem)}
-        <div className="rail-grow" />
-        {NAV.filter((n) => NAV_BOTTOM.includes(n.id)).map(navItem)}
-        <div className="foot">
-          <span className="nl">
-            <a href="/lite">Lite</a> · <a href="/docs">API</a>
-            {narrow && <> · <button type="button" className="linkbtn" onClick={() => setFullView(false)}>Phone</button></>}
-          </span>
-          <button type="button" className="nav" title={wide ? "Collapse the menu" : "Show labels"} onClick={() => setWideRail(!wide)} aria-pressed={wide}>
-            <Ms n={wide ? "chevron_left" : "chevron_right"} /><span className="nl">Collapse</span>
-          </button>
-        </div>
-      </nav>}
 
       <main>
         {root !== "map" && <Vitals status={st} />}
@@ -416,13 +411,7 @@ export function App() {
         : view === "voice" ? <VoiceTrain />
         : view === "models" ? <ModelsView events={a.events} />
         : root === "map" ? (
-          cmd ? stage : (
-            <DeskHome status={st} events={a.events} live={a.conn === "live"} down={a.phase === "down"} waiting={waiting}
-              onOpen={go} onInbox={() => go("inbox")} onAsk={askAri}
-              onAri={(mic) => { if (mic) { try { sessionStorage.setItem("ari.mic", "1"); } catch { /* private */ } } go("ari"); }}>
-              {stage}
-            </DeskHome>
-          )
+          stage
         ) : (
         <div className="mid one">
           {view === "ari" ? (
@@ -446,7 +435,7 @@ export function App() {
         </Suspense>
         </PageBoundary>
         </div>
-        {!cmd && <EventsPanel events={a.events} conn={a.conn} onSelect={setSel} />}
+        {root !== "map" && <EventsPanel events={a.events} conn={a.conn} onSelect={setSel} />}
       </main>
       <Palette items={items} open={pal} onClose={() => setPal(false)} />
       {mapFull}

@@ -1,11 +1,10 @@
 import "@xyflow/react/dist/style.css";
 import "./styles.css";
 import "./kit.css";
-// The Sonoma look: sonoma.css has the tokens, components and shared pages for the phone (.phone2) and the desktop
-// (.shell), with the self-hosted Inter 4.1 and Material Symbols Rounded (@font-face there). sonoma-desktop.css is the
-// desktop's own layout (shell, rail, home, events footer, palette), loaded last.
-import "./sonoma.css";
-import "./sonoma-desktop.css";
+// The Material 3 Expressive look: m3.css has the fonts, tokens, components and shared pages for the phone (.phone2) and the
+// desktop (.shell); m3-desktop.css is the desktop's own layout (shell, rail, floating panels, palette), loaded last.
+import "./m3.css";
+import "./m3-desktop.css";
 
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";

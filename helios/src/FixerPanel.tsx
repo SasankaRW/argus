@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type ArgusEvent, type Job } from "./api";
-import { HoldButton } from "./sonoma";
+import { HoldButton } from "./m3";
 
 // The Ticket fixer's "Fixes" tab: where each ticket is, and the buttons that start a plan or approve a fix.
 // Everything goes through the plugin's own workflows (status, queue, approve), so Helios and Ari do the same thing.

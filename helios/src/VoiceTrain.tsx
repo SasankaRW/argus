@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, getToken } from "./api";
 import { earsPaused, pauseEars, resumeEars } from "./ariState";
-import { Pt } from "./sonoma";
+import { Pt } from "./m3";
 
 type Sentence = { id: string; text: string; kind: string; done: boolean; seconds: number | null };
 type State = { sentences: Sentence[]; recorded: number; seconds: number; goal_seconds: number; model: string };

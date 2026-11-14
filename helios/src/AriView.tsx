@@ -7,7 +7,7 @@ import { powerAri, useAri, useEars } from "./ariState";
 import { listen, pref, setPref, speak, Speech, stopSpeaking, voiceStatus, VoiceStatus } from "./voice";
 import { plain } from "./spoken";
 import { ProblemsCard, Timeline } from "./Timeline";
-import { Ms, Pt, useSc } from "./sonoma";
+import { Ms, Pt, useSc } from "./m3";
 
 type Turn = { id: number; role: "you" | "ari"; text: string | null; action: string | null; label?: string | null;
   pending: { kind: string; action: string } | null; job_id: string | null; created_at: number;

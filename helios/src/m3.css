@@ -1,0 +1,611 @@
+/* Helios in Material 3 Expressive (design/material3/SPEC.md and boards), phone and desktop. Loaded after styles.css and
+   kit.css. :is(.phone2, .shell, .login) is the part both share (the phone is .phone2, the desktop .shell): the icon font,
+   tokens, components (sn-*) and the shared pages. Rules only the phone needs say .phone2 alone; the desktop's own layout is
+   m3-desktop.css. Order: fonts > tokens > components > shared pages > motion. */
+
+@font-face {
+  font-family: "Material Symbols Rounded";
+  font-style: normal;
+  font-weight: 500;
+  font-display: block;
+  src: url("./fonts/symbols-rounded.woff2") format("woff2");  /* cut to src/icons.ts by scripts/icons.py */
+}
+
+/* Roboto Flex, the variable font with the width axis (wght 100-1000, wdth 25-151), and Roboto Mono (wght 100-700), from the
+   Fontsource packages (latin subset). SIL OFL 1.1, see fonts/LICENSE-RobotoFlex.txt and LICENSE-RobotoMono.txt. */
+@font-face {
+  font-family: "Roboto Flex";
+  font-style: normal;
+  font-weight: 100 1000;
+  font-stretch: 25% 151%;
+  font-display: swap;
+  src: url("./fonts/RobotoFlex-wdth.woff2") format("woff2");
+}
+@font-face { font-family: "Roboto Mono"; font-style: normal; font-weight: 100 700; font-display: swap; src: url("./fonts/RobotoMono-wght.woff2") format("woff2"); }
+
+/* ---- tokens: re-pointing the shared variables re-tones every page at once */
+:is(.phone2, .shell, .login) {
+  --bg: #0b0b0e; --panel: #141416; --s1: #18181c; --raise: #1c1c21; --s2: #222227; --s3: #26262c; --map: #111114;
+  --line: transparent; --line2: #3d3d46; --outline: #3d3d46;
+  --tx: #e2e2e9; --tx2: #c4c6d0; --tx3: #9c9ea9;
+  --ac: #a8c8ff; --ac-rgb: 168, 200, 255; --ac2: #dbbce1; --tg: var(--ac);
+  --ok: #9bd5a8; --amber: #f8d8fe; --flow: #a8c8ff; --bad: #ffb4ab; --violet: #dbbce1;
+  --c-pri: #244777; --c-pri-on: #d5e3ff; --c-ter: #573e5c; --c-ter-on: #f8d8fe; --c-sec: #34405a; --c-sec-on: #d9e3f8;
+  --c-ok: #1f4d2e; --c-ok-on: #b6f2c3; --c-err: #690005; --c-err-on: #ffb4ab;
+  --glow-a: transparent; --glow-f: transparent;
+  --sans: "Roboto Flex", "Roboto", system-ui, sans-serif; --mono: var(--sans); --rm: "Roboto Mono", ui-monospace, Consolas, monospace;
+  --b-amber: var(--ac); --b-amber-line: transparent; --b-amber-glow: transparent;
+  --sn-edge: 0 0 0 transparent;
+  --sn-out: cubic-bezier(.05, .7, .1, 1); --sn-std: cubic-bezier(.2, 0, 0, 1);
+  --sl-h: rgba(226, 226, 233, .08); --sl-p: rgba(226, 226, 233, .12);  /* state layers: hover +8%, pressed +12% */
+  --r: 16px;
+  background: #0b0b0e; color: #e2e2e9;
+  font: 15px/1.45 var(--sans); font-optical-sizing: auto;
+}
+.phone2 { min-height: 100dvh; padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+:is(.phone2, .shell, .login) * { text-shadow: none !important; }
+:is(.phone2, .shell, .login) ::selection { background: rgba(168, 200, 255, .3); }
+:is(.phone2, .shell, .login) .mono { font-family: var(--rm); font-variant-numeric: tabular-nums; }
+:is(.phone2, .shell, .login) .ok { color: var(--ok); } :is(.phone2, .shell, .login) .bad { color: var(--bad); } :is(.phone2, .shell, .login) .warn { color: var(--amber); }
+:is(.phone2, .shell, .login) .flow { color: var(--flow); } :is(.phone2, .shell, .login) .dim, :is(.phone2, .shell, .login) .muted { color: var(--tx3); }
+:is(.phone2, .shell, .login) .c-coral { color: var(--bad); }
+:is(.phone2, .shell, .login) .ac { color: var(--ac); }
+:is(.phone2, .shell, .login) .grow { flex: 1; }
+:is(.phone2, .shell, .login) .num { font-variant-numeric: tabular-nums; }
+
+:is(.phone2, .shell, .login) .ms {
+  font-family: "Material Symbols Rounded"; font-weight: 500; font-style: normal; font-size: 24px; line-height: 1; letter-spacing: normal;
+  text-transform: none; white-space: nowrap; direction: ltr; display: inline-block; -webkit-font-smoothing: antialiased;
+  font-feature-settings: "liga", "rlig"; font-variation-settings: "FILL" 0; user-select: none; flex: none;
+}
+:is(.phone2, .shell, .login) .ms.fill { font-variation-settings: "FILL" 1; }
+
+/* ---- page header (phone pages other than Home): the page's name, then the status line */
+:is(.phone2, .shell, .login) .sn-head { padding: calc(44px + env(safe-area-inset-top)) 20px 10px; display: flex; flex-direction: column; gap: 2px; }
+:is(.phone2, .shell, .login) .sn-head.home { flex-direction: row; align-items: center; gap: 8px; padding: calc(44px + env(safe-area-inset-top)) 12px 6px 20px; }
+:is(.phone2, .shell, .login) .sn-h1 { margin: 0; font-size: 26px; font-weight: 500; line-height: 1.15; font-variation-settings: 'wdth' 110; }
+:is(.phone2, .shell, .login) .sn-greet { flex: 1; min-width: 0; }
+:is(.phone2, .shell, .login) .sn-greet .sn-date { font-size: 13px; color: var(--tx2); }
+:is(.phone2, .shell, .login) .sn-status { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 13px; color: var(--tx2); }
+:is(.phone2, .shell, .login) .sn-bell { width: 44px; height: 44px; border-radius: 50%; background: transparent; color: var(--tx2); display: flex; align-items: center; justify-content: center; border: 0; cursor: pointer; position: relative; }
+:is(.phone2, .shell, .login) .sn-avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--c-ter); color: var(--c-ter-on); display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; flex: none; }
+
+:is(.phone2, .shell, .login) .sn-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; display: inline-block; --c: var(--ok); background: var(--c); }
+:is(.phone2, .shell, .login) .d-green { --c: var(--ok); } :is(.phone2, .shell, .login) .d-amber { --c: var(--amber); } :is(.phone2, .shell, .login) .d-coral { --c: var(--bad); } :is(.phone2, .shell, .login) .d-blue { --c: var(--ac); }
+
+/* ---- page body */
+:is(.phone2, .shell, .login) .pmain2 { position: relative; padding: 0 16px 16px; animation: none; }
+:is(.phone2, .shell, .login) .sn-stack { display: flex; flex-direction: column; gap: 14px; }
+:is(.phone2, .shell, .login) .sn-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+
+/* panel: surface, a lit top edge, no border, no drop shadow; sections inside split by space, not lines */
+:is(.phone2, .shell, .login) .sn-pane, :is(.phone2, .shell, .login) .panel {
+  background: var(--panel); border: 0; border-radius: 28px; box-shadow: none; overflow: hidden; min-width: 0;
+}
+:is(.phone2, .shell, .login) .sn-pane { padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; }
+:is(.phone2, .shell, .login) .sn-pane.flush { padding: 6px 0; gap: 0; }
+:is(.phone2, .shell, .login) .sn-pane-h { display: flex; align-items: center; gap: 10px; min-height: 22px; }
+:is(.phone2, .shell, .login) .sn-lbl { font-size: 12.5px; font-weight: 500; letter-spacing: .1px; color: #c4c6d0; }
+:is(.phone2, .shell, .login) .sn-meta { margin-left: auto; font-size: 12px; color: #c4c6d0; }
+:is(.phone2, .shell, .login) .sn-tap { width: 100%; align-items: flex-start; gap: 0; text-align: left; color: inherit; font: inherit; cursor: pointer; }
+:is(.phone2, .shell, .login) .sn-big { margin-top: 10px; font-size: 26px; font-weight: 600; line-height: 1.15; font-variation-settings: 'wdth' 112; font-variant-numeric: tabular-nums; }
+:is(.phone2, .shell, .login) .sn-sub { margin-top: 2px; font-size: 13px; color: var(--tx2); }
+:is(.phone2, .shell, .login) .sn-state { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 17px; font-weight: 600; }
+:is(.phone2, .shell, .login) .sn-state + .sn-sub { margin-top: 6px; }
+:is(.phone2, .shell, .login) .sn-empty { margin: 0; padding: 18px 4px; font-size: 14px; color: var(--tx2); }
+
+/* tonal icon tile (list rows): tone at 16% behind a filled glyph */
+:is(.phone2, .shell, .login) .sn-tile { width: 40px; height: 40px; border-radius: 14px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+:is(.phone2, .shell, .login) .sn-tile .ms { font-size: 22px; }
+:is(.phone2, .shell, .login) .t-green { background: #1f4d2e; color: #b6f2c3; }
+:is(.phone2, .shell, .login) .t-amber { background: #573e5c; color: #f8d8fe; }
+:is(.phone2, .shell, .login) .t-blue { background: #244777; color: #d5e3ff; }
+:is(.phone2, .shell, .login) .t-violet { background: #573e5c; color: #f8d8fe; }
+:is(.phone2, .shell, .login) .t-coral { background: #690005; color: #ffb4ab; }
+:is(.phone2, .shell, .login) .t-plain { background: rgba(226, 226, 233, .08); color: #e2e2e9; }
+
+:is(.phone2, .shell, .login) .sn-row { display: flex; align-items: center; gap: 12px; min-width: 0; }
+:is(.phone2, .shell, .login) .sn-row-t { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; text-align: left; }
+:is(.phone2, .shell, .login) .sn-row-t b { font-size: 15px; font-weight: 600; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+:is(.phone2, .shell, .login) .sn-waiting .sn-row-t b { font-size: 16px; }
+:is(.phone2, .shell, .login) .sn-row-t > span { font-size: 13px; color: var(--tx2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:is(.phone2, .shell, .login) .sn-acts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* pill / status tag */
+:is(.phone2, .shell, .login) .sn-pill, :is(.phone2, .shell, .login) .pill, :is(.phone2, .shell, .login) .pchip, :is(.phone2, .shell, .login) .ikind, :is(.phone2, .shell, .login) .dotbadge {
+  display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 9px; border-radius: 8px; border: 0;
+  font: 600 11px/1 var(--sans); letter-spacing: .3px; white-space: nowrap; background: rgba(226, 226, 233, .08); color: #e2e2e9; box-shadow: none;
+}
+:is(.phone2, .shell, .login) .pill.ok, :is(.phone2, .shell, .login) .pchip.live { background: #1f4d2e; color: #b6f2c3; }
+:is(.phone2, .shell, .login) .pill.warn, :is(.phone2, .shell, .login) .ikind.approval, :is(.phone2, .shell, .login) .dotbadge { background: #573e5c; color: #f8d8fe; }
+:is(.phone2, .shell, .login) .pill.bad { background: #690005; color: #ffb4ab; }
+:is(.phone2, .shell, .login) .pill.flow, :is(.phone2, .shell, .login) .ikind.question { background: #244777; color: #d5e3ff; }
+:is(.phone2, .shell, .login) .ikind.lesson { background: #573e5c; color: #f8d8fe; }
+:is(.phone2, .shell, .login) .pchip.dry { color: #c4c6d0; font-weight: 600; }
+:is(.phone2, .shell, .login) .sn-pill.t-amber { background: #573e5c; color: #f8d8fe; }
+:is(.phone2, .shell, .login) .sn-pill.t-green { background: #1f4d2e; color: #b6f2c3; }
+:is(.phone2, .shell, .login) .sn-pill.t-coral { background: #690005; color: #ffb4ab; }
+
+/* ---- buttons: primary filled accent pill, secondary tonal, quiet text; an M3 state layer on every one */
+:is(.phone2, .shell, .login) button, :is(.phone2, .shell, .login) .btn, :is(.phone2, .shell, .login) a.btn { -webkit-tap-highlight-color: transparent; }
+:is(.phone2, .shell, .login) .sn-btn, :is(.phone2, .shell, .login) .btn.btn, :is(.phone2, .shell, .login) .primary.primary, :is(.phone2, .shell, .login) .btn.primary-btn, :is(.phone2, .shell, .login) .k-yes.k-yes, :is(.phone2, .shell, .login) .k-no.k-no,
+:is(.phone2, .shell, .login) .pd-buttons .primary, :is(.phone2, .shell, .login) .pshare.pshare, :is(.phone2, .shell, .login) .linkbtn, :is(.phone2, .shell, .login) .pback, :is(.phone2, .shell, .login) .sn-link,
+:is(.phone2, .shell, .login) .sn-iconbtn, :is(.phone2, .shell, .login) .sn-chip, :is(.phone2, .shell, .login) .chip.chip, :is(.phone2, .shell, .login) button.seg, :is(.phone2, .shell, .login) .seg button, :is(.phone2, .shell, .login) .tab, :is(.phone2, .shell, .login) .switch {
+  transition: transform 160ms var(--sn-std), box-shadow 200ms var(--sn-std), background-color 200ms var(--sn-std), color 200ms var(--sn-std);
+}
+:is(.phone2, .shell, .login) .sn-btn, :is(.phone2, .shell, .login) .btn.btn, :is(.phone2, .shell, .login) .primary.primary, :is(.phone2, .shell, .login) .btn.primary-btn, :is(.phone2, .shell, .login) .k-yes.k-yes, :is(.phone2, .shell, .login) .k-no.k-no, :is(.phone2, .shell, .login) .pd-buttons .primary, :is(.phone2, .shell, .login) .pshare.pshare {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 40px; min-height: 40px; padding: 0 18px;
+  border: 0 !important; border-radius: 999px; font: 600 14px/1 var(--sans); letter-spacing: 0; white-space: nowrap; cursor: pointer; box-shadow: none;
+}
+:is(.phone2, .shell, .login) .sn-btn .ms { font-size: 18px; margin-left: -4px; }
+/* secondary (tonal: accent at 16%, as in every Sonoma app): the old outlined .btn */
+:is(.phone2, .shell, .login) .btn.btn { background: #34405a; color: #d9e3f8; font-weight: 600; padding: 0 18px; }
+:is(.phone2, .shell, .login) .btn.btn[aria-pressed="true"] { background: #34405a; color: #d9e3f8; }
+/* shared pages write some labels in lower case ("send", "copy report"): show them in sentence case on the phone */
+:is(.phone2, .shell, .login) .btn.btn, :is(.phone2, .shell, .login) .primary.primary { display: inline-block; line-height: 40px; text-align: center; vertical-align: middle; }
+:is(.phone2, .shell, .login) .btn.btn::first-letter, :is(.phone2, .shell, .login) .primary.primary::first-letter { text-transform: uppercase; }
+:is(.phone2, .shell, .login) .btn.btn:has(svg, .ms), :is(.phone2, .shell, .login) .primary.primary:has(svg, .ms) { display: inline-flex; line-height: 1; }
+:is(.phone2, .shell, .login) .pill, :is(.phone2, .shell, .login) .pchip, :is(.phone2, .shell, .login) .ikind { display: inline-block; line-height: 22px; vertical-align: middle; }
+:is(.phone2, .shell, .login) .pill::first-letter, :is(.phone2, .shell, .login) .pchip::first-letter, :is(.phone2, .shell, .login) .ikind::first-letter { text-transform: uppercase; }
+/* primary */
+:is(.phone2, .shell, .login) .sn-btn.primary, :is(.phone2, .shell, .login) .primary.primary, :is(.phone2, .shell, .login) .btn.primary-btn, :is(.phone2, .shell, .login) .k-yes.k-yes, :is(.phone2, .shell, .login) .pd-buttons .primary, :is(.phone2, .shell, .login) .pshare.pshare {
+  background: var(--ac) !important; color: #06305f !important; box-shadow: none !important;
+}
+:is(.phone2, .shell, .login) .sn-btn.tonal { background: #34405a; color: #d9e3f8; }
+:is(.phone2, .shell, .login) .sn-btn.quiet, :is(.phone2, .shell, .login) .k-no.k-no { background: transparent; color: var(--ac); padding: 0 14px; }
+:is(.phone2, .shell, .login) .linkbtn, :is(.phone2, .shell, .login) .sn-link, :is(.phone2, .shell, .login) .pback {
+  border: 0; background: none; color: var(--ac); font: 600 13px var(--sans); border-radius: 999px; padding: 8px 12px; margin: -8px -12px; cursor: pointer;
+}
+:is(.phone2, .shell, .login) .pback { margin: 0 0 6px -12px; display: inline-flex; align-items: center; gap: 4px; }
+:is(.phone2, .shell, .login) .btn.btn.danger, :is(.phone2, .shell, .login) .pbtn.danger:not(:disabled) { background: #690005; color: var(--bad); }
+
+/* state layers: hover +8%, pressed +12% and a .96 squeeze, a 2px accent focus ring */
+:is(.phone2, .shell, .login) .sn-btn:hover:not(:disabled), :is(.phone2, .shell, .login) .btn.btn:hover:not(:disabled), :is(.phone2, .shell, .login) .k-no.k-no:hover:not(:disabled), :is(.phone2, .shell, .login) .sn-iconbtn:hover:not(:disabled),
+:is(.phone2, .shell, .login) .sn-chip:hover, :is(.phone2, .shell, .login) .chip.chip:hover, :is(.phone2, .shell, .login) button.seg:hover, :is(.phone2, .shell, .login) .seg button:hover, :is(.phone2, .shell, .login) .tab:hover, :is(.phone2, .shell, .login) .linkbtn:hover,
+:is(.phone2, .shell, .login) .sn-link:hover, :is(.phone2, .shell, .login) .pback:hover, :is(.phone2, .shell, .login) .sn-menu-row:hover, :is(.phone2, .shell, .login) .sn-li:hover, :is(.phone2, .shell, .login) .sn-tap:hover, :is(.phone2, .shell, .login) .switch:hover {
+  box-shadow: inset 0 0 0 999px rgba(226, 226, 233, .08); border-color: transparent;
+}
+:is(.phone2, .shell, .login) .sn-btn.primary:hover:not(:disabled), :is(.phone2, .shell, .login) .primary.primary:hover:not(:disabled), :is(.phone2, .shell, .login) .btn.primary-btn:hover:not(:disabled),
+:is(.phone2, .shell, .login) .k-yes.k-yes:hover:not(:disabled), :is(.phone2, .shell, .login) .pd-buttons .primary:hover:not(:disabled), :is(.phone2, .shell, .login) .sn-iconbtn.accent:hover {
+  background: var(--ac) !important; color: #06305f !important; box-shadow: inset 0 0 0 999px rgba(20, 20, 24, .08) !important;
+}
+:is(.phone2, .shell, .login) .sn-btn:active:not(:disabled), :is(.phone2, .shell, .login) .btn.btn:active:not(:disabled), :is(.phone2, .shell, .login) .primary.primary:active:not(:disabled), :is(.phone2, .shell, .login) .k-yes.k-yes:active:not(:disabled),
+:is(.phone2, .shell, .login) .k-no.k-no:active:not(:disabled), :is(.phone2, .shell, .login) .btn.primary-btn:active:not(:disabled), :is(.phone2, .shell, .login) .sn-iconbtn:active, :is(.phone2, .shell, .login) .sn-chip:active, :is(.phone2, .shell, .login) .chip.chip:active,
+:is(.phone2, .shell, .login) button.seg:active, :is(.phone2, .shell, .login) .seg button:active, :is(.phone2, .shell, .login) .tab:active, :is(.phone2, .shell, .login) .sn-tab:active, :is(.phone2, .shell, .login) .linkbtn:active, :is(.phone2, .shell, .login) .sn-link:active, :is(.phone2, .shell, .login) .sn-hold:active {
+  transform: scale(.96); box-shadow: inset 0 0 0 999px rgba(226, 226, 233, .12);
+}
+:is(.phone2, .shell, .login) .sn-menu-row:active, :is(.phone2, .shell, .login) .sn-li:active, :is(.phone2, .shell, .login) .sn-tap:active { box-shadow: inset 0 0 0 999px rgba(226, 226, 233, .12); }
+:is(.phone2, .shell, .login) button:focus-visible, :is(.phone2, .shell, .login) a:focus-visible, :is(.phone2, .shell, .login) .chip:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
+:is(.phone2, .shell, .login) .sn-btn:disabled, :is(.phone2, .shell, .login) .btn.btn:disabled, :is(.phone2, .shell, .login) .primary.primary:disabled, :is(.phone2, .shell, .login) .btn.primary-btn:disabled,
+:is(.phone2, .shell, .login) .k-yes.k-yes:disabled, :is(.phone2, .shell, .login) .k-no.k-no:disabled, :is(.phone2, .shell, .login) .sn-hold:disabled { opacity: .4; cursor: default; }
+
+/* round icon button (the mic: accent, a dark glyph) */
+:is(.phone2, .shell, .login) .sn-iconbtn { width: 44px; height: 44px; flex: none; border: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  background: #222227; color: #e2e2e9; cursor: pointer; padding: 0; }
+:is(.phone2, .shell, .login) .sn-iconbtn.accent { background: var(--ac); color: #06305f; }
+
+/* filter chip / segmented control */
+:is(.phone2, .shell, .login) .sn-chip, :is(.phone2, .shell, .login) .chip.chip, :is(.phone2, .shell, .login) button.seg, :is(.phone2, .shell, .login) .tab {
+  display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 14px; border: 0; border-radius: 8px;
+  background: #26262c; color: #e2e2e9; font: 500 13px/1 var(--sans); white-space: nowrap; cursor: pointer; flex: none;
+}
+:is(.phone2, .shell, .login) .sn-chip .ms { font-size: 18px; margin-left: -4px; }
+:is(.phone2, .shell, .login) .sn-chip[aria-pressed="true"], :is(.phone2, .shell, .login) button.seg.on, :is(.phone2, .shell, .login) .tab.on, :is(.phone2, .shell, .login) .tab[aria-selected="true"],
+:is(.phone2, .shell, .login) .seg button[aria-pressed="true"], :is(.phone2, .shell, .login) .seg .btn.btn[aria-pressed="true"] { background: #34405a; color: #d9e3f8; }
+:is(.phone2, .shell, .login) button.seg.on::before, :is(.phone2, .shell, .login) .tab.on::before, :is(.phone2, .shell, .login) .seg button[aria-pressed="true"]::before, :is(.phone2, .shell, .login) .seg-f .btn[aria-pressed="true"]::before {
+  content: "check"; font-family: "Material Symbols Rounded"; font-weight: 500; font-size: 18px; line-height: 1; margin: 0 5px 0 -4px; vertical-align: -4px; font-feature-settings: "liga", "rlig";
+}
+:is(.phone2, .shell, .login) div.seg, :is(.phone2, .shell, .login) .seg-f, :is(.phone2, .shell, .login) .pd-mode[role="group"] { display: inline-flex; flex-wrap: nowrap; max-width: 100%; overflow-x: auto; scrollbar-width: none; gap: 4px; padding: 3px; border-radius: 999px; background: rgba(226, 226, 233, .05); }
+:is(.phone2, .shell, .login) .pd-mode[role="group"] { background: none; padding: 0; gap: 8px; align-items: center; }
+:is(.phone2, .shell, .login) div.seg button, :is(.phone2, .shell, .login) div.seg .btn.btn, :is(.phone2, .shell, .login) .seg-f .btn.btn { flex: none; white-space: nowrap; height: 30px; min-height: 30px; line-height: 30px; padding: 0 12px; border-radius: 999px; background: transparent; font: 500 13px/1 var(--sans); }
+:is(.phone2, .shell, .login) .tabs { display: flex; gap: 8px; overflow-x: auto; padding: 4px 0 12px; border: 0; scrollbar-width: none; }
+
+/* text field: a filled tonal box, a 2px accent ring while focused */
+:is(.phone2, .shell, .login) :where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]), select, textarea) {
+  border: 0 !important; border-radius: 12px !important; box-shadow: none !important; background: #222227 !important;
+  color: #e2e2e9; font: 15px var(--sans); padding: 10px 14px; min-height: 40px; outline: 0; transition: box-shadow 200ms var(--sn-std);
+}
+:is(.phone2, .shell, .login) :where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, textarea):focus { box-shadow: inset 0 0 0 2px var(--ac) !important; outline: 0; }
+:is(.phone2, .shell, .login) input::placeholder, :is(.phone2, .shell, .login) textarea::placeholder { color: #9c9ea9; }
+:is(.phone2, .shell, .login) select { color-scheme: dark; }
+:is(.phone2, .shell, .login) select option { background: #222227; color: #e2e2e9; }
+:is(.phone2, .shell, .login) input[type="checkbox"], :is(.phone2, .shell, .login) input[type="radio"] { accent-color: var(--ac); width: 18px; height: 18px; }
+:is(.phone2, .shell, .login) .sn-field { flex: 1; min-width: 0; display: flex; }
+:is(.phone2, .shell, .login) .sn-field input { flex: 1; min-width: 0; }
+
+/* ---- home tiles */
+:is(.phone2, .shell, .login) .sn-ari-last { margin: 0; font-size: 15px; line-height: 1.45; color: #e2e2e9; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+:is(.phone2, .shell, .login) .sn-ask { display: flex; align-items: center; gap: 12px; }
+:is(.phone2, .shell, .login) .sn-spark { margin-top: 10px; overflow: visible; }
+:is(.phone2, .shell, .login) .sn-spark path { fill: none; stroke: var(--ac); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 0; }
+:is(.phone2, .shell, .login) .sn-spark circle { fill: var(--ac); }
+:is(.phone2, .shell, .login) .sn-list { display: flex; flex-direction: column; }
+:is(.phone2, .shell, .login) .sn-li { display: grid; grid-template-columns: 8px minmax(0, 1fr) 64px; gap: 12px; align-items: center; min-height: 44px; margin: 0 -8px; padding: 0 8px;
+  border: 0; border-radius: 12px; background: none; color: #e2e2e9; font: 14px var(--sans); text-align: left; cursor: pointer; }
+:is(.phone2, .shell, .login) .sn-li-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:is(.phone2, .shell, .login) .sn-meter { height: 4px; border-radius: 2px; background: rgba(226, 226, 233, .1); overflow: hidden; position: relative; }
+:is(.phone2, .shell, .login) .sn-meter i { position: absolute; top: 0; bottom: 0; left: 0; width: 40%; border-radius: 2px; background: var(--ok); }
+:is(.phone2, .shell, .login) .minilog { height: auto; max-height: 160px; font: 12.5px/1.6 var(--sans); color: var(--tx2); font-variant-numeric: tabular-nums; }
+:is(.phone2, .shell, .login) .minilog .src { color: var(--ac); }
+:is(.phone2, .shell, .login) .minilog .dim { color: var(--tx3); }
+:is(.phone2, .shell, .login) .minilog .warn { color: var(--amber); } :is(.phone2, .shell, .login) .minilog .bad { color: var(--bad); }
+
+/* Logs keep a monospace face */
+.phone2 .logbox, .phone2 .ll, .phone2 .ll * { font-family: var(--rm); }
+
+/* ---- More: a list of rows */
+:is(.phone2, .shell, .login) .sn-menu-row { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto auto; gap: 12px; align-items: center; width: 100%; min-height: 62px;
+  padding: 10px 16px 10px 18px; border: 0; background: none; color: #e2e2e9; font: inherit; text-align: left; cursor: pointer; }
+:is(.phone2, .shell, .login) .sn-menu-row > .ms { color: #9c9ea9; font-size: 22px; }
+
+/* ---- the M3 navigation bar: 80px, #18181c, items 56x32 with an indicator pill #34405a, 12px labels */
+:is(.phone2, .shell, .login) .sn-tabs { position: fixed; z-index: 40; left: 0; right: 0; bottom: 0; height: 80px; padding-bottom: calc(8px + env(safe-area-inset-bottom)); box-sizing: content-box;
+  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); background: var(--s1); }
+:is(.phone2, .shell, .login) .sn-tab { padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--tx2); display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 4px; font: 500 12px/1 var(--sans); cursor: pointer; min-width: 0; }
+:is(.phone2, .shell, .login) .sn-tab .ind { position: relative; width: 56px; height: 32px; border-radius: 999px; display: flex; align-items: center; justify-content: center; transition: background-color 300ms var(--sn-std), color 300ms var(--sn-std); }
+:is(.phone2, .shell, .login) .sn-tab:hover { box-shadow: none; } :is(.phone2, .shell, .login) .sn-tab:hover .ind { background: var(--sl-h); } :is(.phone2, .shell, .login) .sn-tab:active { transform: none; box-shadow: none; } :is(.phone2, .shell, .login) .sn-tab:active .ind { background: var(--sl-p); }
+:is(.phone2, .shell, .login) .sn-tab[aria-current="page"] { color: var(--tx); font-weight: 600; }
+:is(.phone2, .shell, .login) .sn-tab[aria-current="page"] .ind { background: var(--c-sec); color: var(--c-sec-on); }
+:is(.phone2, .shell, .login) .sn-badge, .shell .navbadge { position: absolute; top: 0; right: 14px; min-width: 16px; height: 16px; padding: 0 4px; box-sizing: border-box; border-radius: 8px; background: var(--c-err-on); color: var(--c-err);
+  font: 700 10px/16px var(--sans); text-align: center; }
+
+/* ---- can't reach Argus */
+:is(.phone2, .shell, .login) .sn-offline { margin: 0 16px 14px; }
+:is(.phone2, .shell, .login) .sn-offline .sn-row-t > span { white-space: normal; }
+
+/* ---- hold to confirm: a round coral button, an accent ring fills in about 1.2 s */
+:is(.phone2, .shell, .login) .sn-holds { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; align-items: start; justify-items: center; }
+:is(.phone2, .shell, .login) .sn-holds > .sn-btn { align-self: center; justify-self: stretch; padding: 0 10px; margin-top: 2px; }
+:is(.phone2, .shell, .login) .sn-holdwrap { display: inline-flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
+:is(.phone2, .shell, .login) .sn-hold { position: relative; width: 44px; height: 44px; border: 0; border-radius: 50%; padding: 0; display: inline-flex; align-items: center; justify-content: center;
+  background: #690005; color: #ffb4ab; cursor: pointer; touch-action: none; user-select: none; -webkit-user-select: none;
+  transition: transform 160ms var(--sn-std), box-shadow 200ms var(--sn-std); }
+:is(.phone2, .shell, .login) .sn-hold:hover:not(:disabled) { box-shadow: inset 0 0 0 999px rgba(226, 226, 233, .08); }
+:is(.phone2, .shell, .login) .sn-hold .ms { font-size: 20px; }
+:is(.phone2, .shell, .login) .sn-hold svg { position: absolute; inset: 0; width: 44px; height: 44px; pointer-events: none; }
+:is(.phone2, .shell, .login) .sn-hold circle { fill: none; stroke-width: 2; }
+:is(.phone2, .shell, .login) .sn-hold .trk { stroke: rgba(226, 226, 233, .12); }
+:is(.phone2, .shell, .login) .sn-hold .prg { stroke: var(--ac); stroke-linecap: round; stroke-dasharray: 1; stroke-dashoffset: 1; transition: stroke-dashoffset 250ms var(--sn-std); }
+:is(.phone2, .shell, .login) .sn-hold.on .prg { stroke-dashoffset: 0; transition: stroke-dashoffset 1200ms linear; }
+:is(.phone2, .shell, .login) .sn-holdcap { font-size: 13px; color: var(--tx2); line-height: 1.25; }
+:is(.phone2, .shell, .login) .sn-holdcap.hint { color: var(--ac); animation: sn-pop 200ms cubic-bezier(.34, 1.56, .64, 1); }
+:is(.phone2, .shell, .login) .sn-hold.accent { background: #34405a; color: #d9e3f8; }
+:is(.phone2, .shell, .login) .sn-arm { display: flex; align-items: center; gap: 12px; padding: 12px 12px 12px 14px; border-radius: 20px; background: #222227; font-size: 13px; color: var(--tx2); }
+:is(.phone2, .shell, .login) .sn-arm > span:not(.sn-holdwrap) { flex: 1; }
+
+/* ---- bottom sheet: the surface, rounded on top, no border, no drop shadow */
+:is(.phone2, .shell, .login) .sheet-back { background: rgba(0, 0, 0, .55); }
+:is(.phone2, .shell, .login) .sheet { background: var(--panel); border: 0; border-radius: 28px 28px 0 0; box-shadow: var(--sn-edge); animation: sn-sheetup 420ms var(--sn-out); }
+:is(.phone2, .shell, .login) .sheet-grip { height: 28px; }
+:is(.phone2, .shell, .login) .sheet-grip span { width: 36px; height: 4px; border-radius: 2px; background: rgba(226, 226, 233, .3); }
+:is(.phone2, .shell, .login) .sheet-body .insp, :is(.phone2, .shell, .login) .drawer .insp { background: none; border: 0; box-shadow: none; border-radius: 0; backdrop-filter: none; }
+:is(.phone2, .shell, .login) .insp .close { width: 40px; height: 40px; border-radius: 50%; background: #222227; color: #e2e2e9; font-size: 20px; top: 8px; right: 12px; }
+:is(.phone2, .shell, .login) .ih { padding: 6px 20px 8px; border: 0; }
+:is(.phone2, .shell, .login) .ih h2 { margin: 8px 0 4px; font-size: 24px; font-weight: 620; letter-spacing: -.5px; line-height: 1.2; font-variation-settings: 'wdth' 112; }
+:is(.phone2, .shell, .login) .ih p { font-size: 13px; color: var(--tx2); }
+:is(.phone2, .shell, .login) .ib { padding: 6px 20px 24px; }
+:is(.phone2, .shell, .login) .eyebrow { font-size: 12.5px; font-weight: 500; color: var(--tx2); }
+
+/* ---- floating surfaces and number chips (the map screens: phone and desktop) */
+:is(.phone2, .shell) .float { background: var(--raise); border-radius: 20px; box-shadow: 0 10px 30px rgba(0, 0, 0, .5); }
+:is(.phone2, .shell) .kpi { height: 34px; padding: 0 12px; border-radius: 12px; background: var(--s3); display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--tx2); white-space: nowrap; flex: none; }
+:is(.phone2, .shell) .kpi b { color: var(--tx); font-weight: 600; }
+:is(.phone2, .shell) .kpi .ms { font-size: 18px; }
+:is(.phone2, .shell) .lay-switch { display: flex; flex: none; padding: 3px; gap: 0; border-radius: 999px; background: var(--raise); box-shadow: 0 10px 30px rgba(0, 0, 0, .5); }
+:is(.phone2, .shell) .lay-switch .btn.btn { height: 36px; min-height: 36px; line-height: 36px; padding: 0 14px; border-radius: 999px; background: transparent; color: var(--tx2); font: 500 13px/36px var(--sans); }
+:is(.phone2, .shell) .lay-switch .btn.btn[aria-pressed="true"] { background: var(--c-sec); color: var(--c-sec-on); font-weight: 600; }
+:is(.phone2, .shell) .lay-switch .btn.btn::before { content: none !important; }
+
+/* ---- the map: dotted ground, cards with an icon tile, curved lines that flow, rate labels in mono */
+:is(.phone2, .shell) .react-flow { background: var(--map) !important; --xy-background-color: var(--map); --xy-edge-stroke: #3d3d46; }
+:is(.phone2, .shell) .react-flow__attribution { display: none; }
+:is(.phone2, .shell) .box { width: 196px; height: 84px; box-sizing: border-box; padding: 10px 14px; border: 0; border-radius: 24px; background: var(--raise); color: var(--tx);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .04), 0 12px 28px rgba(0, 0, 0, .5); display: flex; flex-direction: column; justify-content: center; gap: 5px; transition: box-shadow 200ms var(--sn-std); }
+:is(.phone2, .shell) .box:hover { transform: none; border: 0; }
+:is(.phone2, .shell) .box.on { animation: none; box-shadow: inset 0 0 0 1.5px rgba(168, 200, 255, .5), 0 12px 28px rgba(0, 0, 0, .5); }
+:is(.phone2, .shell) .box.sel { box-shadow: 0 0 0 2px var(--ac), 0 12px 28px rgba(0, 0, 0, .5); }
+:is(.phone2, .shell) .box.t-core { background: var(--c-pri); color: var(--c-pri-on); box-shadow: 0 0 0 2px var(--ac), 0 12px 30px rgba(0, 0, 0, .55); }
+:is(.phone2, .shell) .box.ghost { background: transparent; box-shadow: inset 0 0 0 1px var(--outline); }
+:is(.phone2, .shell) .box .nh { display: flex; align-items: center; gap: 10px; min-width: 0; }
+:is(.phone2, .shell) .ni { width: 36px; height: 36px; border-radius: 12px; display: inline-flex; align-items: center; justify-content: center; flex: none; background: #2c2c33; color: var(--tx2); }
+:is(.phone2, .shell) .ni .ms { font-size: 22px; }
+:is(.phone2, .shell) .t-core > .nh > .ni, :is(.phone2, .shell) .ni.t-core { background: var(--ac); color: #06305f; }
+:is(.phone2, .shell) .t-ok > .nh > .ni, :is(.phone2, .shell) .ni.t-ok { background: var(--c-ok); color: var(--c-ok-on); }
+:is(.phone2, .shell) .t-sec > .nh > .ni, :is(.phone2, .shell) .ni.t-sec { background: var(--c-sec); color: var(--c-sec-on); }
+:is(.phone2, .shell) .t-ter > .nh > .ni, :is(.phone2, .shell) .ni.t-ter { background: var(--c-ter); color: var(--c-ter-on); }
+:is(.phone2, .shell) .t-err > .nh > .ni, :is(.phone2, .shell) .ni.t-err { background: var(--c-err); color: var(--c-err-on); }
+:is(.phone2, .shell) .box .nx { min-width: 0; flex: 1; }
+:is(.phone2, .shell) .box .nn { font-size: 14.5px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+:is(.phone2, .shell) .ns { font: 400 12px/1.3 var(--sans); color: var(--tx2); padding: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:is(.phone2, .shell) .box.t-core .ns { color: #bcd0f5; }
+:is(.phone2, .shell) .box .new { border: 0; background: var(--c-sec); color: var(--c-sec-on); border-radius: 8px; padding: 1px 6px; font: 600 10px var(--sans); }
+:is(.phone2, .shell) .box .dot { width: 8px; height: 8px; margin-right: -2px; }
+:is(.phone2, .shell) .box .dot.live { animation: m3-ping 2.4s ease-out infinite; }
+:is(.phone2, .shell) .brow { display: flex; justify-content: space-between; gap: 8px; font: 400 12px/1 var(--sans); color: var(--tx2); }
+:is(.phone2, .shell) .box.t-core .brow { color: #bcd0f5; }
+:is(.phone2, .shell) .bar { height: 4px; border-radius: 2px; background: #2c2c33; overflow: hidden; }
+:is(.phone2, .shell) .bar span { display: block; height: 100%; border-radius: 2px; background: var(--ok); transition: width 400ms var(--sn-std); }
+:is(.phone2, .shell) .box.t-core .bar span { background: var(--ac); }
+:is(.phone2, .shell) .box.t-ter .bar span { background: var(--violet); }
+:is(.phone2, .shell) .col-h { font-size: 12.5px; font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--tx3); }
+:is(.phone2, .shell) .line { stroke: #3d3d46 !important; stroke-width: 2.5px; fill: none; }
+:is(.phone2, .shell) .line.sel { stroke: var(--ac) !important; }
+:is(.phone2, .shell) .line.flow { stroke-dasharray: 6 10; animation: m3-dash 1.4s linear infinite; }
+:is(.phone2, .shell) .line.flow.ok { stroke: var(--ok) !important; }
+:is(.phone2, .shell) .line.flow.ctl { stroke: var(--ac) !important; animation-duration: 3s; }
+:is(.phone2, .shell) .line.flow.mdl { stroke: var(--violet) !important; animation-duration: 3s; }
+:is(.phone2, .shell) .line.flow.bad { stroke: var(--bad) !important; }
+:is(.phone2, .shell) .rate { position: absolute; pointer-events: none; padding: 2px 6px; border-radius: 6px; background: var(--map); font: 400 11px/1.2 var(--rm); font-variant-numeric: tabular-nums; color: var(--ac); }
+:is(.phone2, .shell) .rate.ok { color: var(--ok); } :is(.phone2, .shell) .rate.mdl { color: var(--violet); } :is(.phone2, .shell) .rate.bad { color: var(--bad); }
+:is(.phone2, .shell) .packet, :is(.phone2, .shell) .packet.bad, :is(.phone2, .shell) .packet.warn { filter: none; }
+:is(.phone2, .shell) .zoompad { position: absolute; z-index: 5; display: flex; background: var(--raise); border-radius: 20px; box-shadow: 0 10px 30px rgba(0, 0, 0, .5); padding: 4px; align-items: center; gap: 2px; }
+:is(.phone2, .shell) .zb { width: 38px; height: 38px; padding: 0; border: 0; border-radius: 12px; background: transparent; color: var(--tx2); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+:is(.phone2, .shell) .zb .ms { font-size: 20px; }
+:is(.phone2, .shell) .zpct { color: var(--tx2); padding: 0 6px; font-size: 12px; min-width: 40px; text-align: center; }
+
+/* ---- the phone's Map screen */
+.phone2.pm-on { padding-bottom: 0; height: 100dvh; overflow: hidden; }
+.phone2 .phonemap { position: fixed; z-index: 1; left: 0; right: 0; top: 0; bottom: calc(80px + env(safe-area-inset-bottom)); background: var(--map); overflow: hidden; }
+.phone2 .pm-canvas { position: absolute; inset: 0; }
+.phone2 .pm-empty { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--tx3); font-size: 14px; }
+.phone2 .pm-top { position: absolute; z-index: 3; left: 14px; right: 14px; top: calc(50px + env(safe-area-inset-top)); display: flex; align-items: center; gap: 10px; }
+.phone2 .pm-live { height: 44px; padding: 0 14px; display: flex; align-items: center; gap: 8px; border-radius: 22px; }
+.phone2 .pm-live b { font-size: 14px; font-weight: 600; }
+.phone2 .pm-live .ns { font-size: 12.5px; }
+.phone2 .zoompad { right: 14px; top: calc(108px + env(safe-area-inset-top)); width: 46px; flex-direction: column; padding: 2px; gap: 0; }
+.phone2 .zoompad .zb { width: 42px; height: 42px; border-radius: 14px; }
+.phone2 .zoompad .zpct { display: none; }
+.phone2 .zoompad .zin { order: 1; } .phone2 .zoompad .zout { order: 2; } .phone2 .zoompad .zfit { order: 3; }
+.phone2 .pm-sheet { position: absolute; z-index: 3; left: 0; right: 0; bottom: 0; border-radius: 28px 28px 0 0; padding: 8px 18px 12px; animation: m3-rise 560ms var(--sn-out) backwards; }
+.phone2 .pm-grip { width: 36px; height: 4px; border-radius: 2px; background: #44444c; margin: 0 auto 10px; }
+.phone2 .pm-sh { display: flex; align-items: center; gap: 12px; }
+.phone2 .pm-sh .ni { width: 40px; height: 40px; border-radius: 13px; }
+.phone2 .pm-t { font-size: 16px; font-weight: 600; }
+.phone2 .pm-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+.phone2 .pm-tile { background: var(--s3); border-radius: 16px; padding: 10px 12px; min-width: 0; }
+.phone2 .pm-v { font-size: 18px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.phone2 .pm-more { display: block; margin: 8px 0 0 auto; }
+.phone2 .pm-cmd { position: absolute; z-index: 3; left: 14px; right: 14px; bottom: 14px; height: 52px; border-radius: 26px; display: flex; align-items: center; gap: 10px; padding: 0 6px 0 16px; }
+.phone2 .pm-cmd .ms { color: var(--tx2); }
+.phone2 .pm-cmd input { flex: 1; min-width: 0; background: transparent !important; box-shadow: none !important; padding: 0; font-size: 16px; }
+.ic-x { width: 38px; height: 38px; border: 0; border-radius: 50%; background: transparent; color: var(--tx2); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; flex: none; }
+.ic-x .ms { font-size: 20px; }
+
+/* ---- Home: greeting, status card, waiting card, ask bar, cards, recent */
+:is(.phone2, .shell, .login) .sn-stack.home { gap: 10px; }
+:is(.phone2, .shell, .login) .sn-status-card { background: var(--c-pri); color: var(--c-pri-on); border-radius: 28px; padding: 18px 20px; display: flex; gap: 14px; align-items: center; }
+:is(.phone2, .shell, .login) .sn-sc-l { font-size: 13px; font-weight: 500; opacity: .85; }
+:is(.phone2, .shell, .login) .sn-sc-h { font-size: 24px; font-weight: 600; font-variation-settings: 'wdth' 112; line-height: 1.15; margin-top: 2px; }
+:is(.phone2, .shell, .login) .sn-chips { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+:is(.phone2, .shell, .login) .sn-mini { height: 28px; padding: 0 10px; border-radius: 8px; background: rgba(213, 227, 255, .14); display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 500; }
+:is(.phone2, .shell, .login) .sn-mini .ms { font-size: 16px; }
+:is(.phone2, .shell, .login) .sn-cookie { position: relative; width: 68px; height: 68px; flex: none; }
+:is(.phone2, .shell, .login) .sn-cookie svg, :is(.phone2, .shell, .login) .sn-cookie path { fill: var(--ac); animation: m3-spin 24s linear infinite; }
+:is(.phone2, .shell, .login) .sn-cookie .ms { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #06305f; font-size: 30px; }
+:is(.phone2, .shell, .login) .sn-waiting-card { background: var(--c-ter); color: var(--c-ter-on); border-radius: 28px; padding: 14px 16px; display: flex; align-items: center; gap: 12px; }
+:is(.phone2, .shell, .login) .sn-wc-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; border-radius: 16px; }
+:is(.phone2, .shell, .login) .sn-wc-tile { width: 44px; height: 44px; border-radius: 14px; background: #f8d8fe; color: #573e5c; display: flex; align-items: center; justify-content: center; flex: none; }
+:is(.phone2, .shell, .login) .sn-wc-l { font-size: 12px; font-weight: 500; opacity: .85; }
+:is(.phone2, .shell, .login) .sn-waiting-card .sn-row-t b { font-size: 15.5px; font-weight: 600; line-height: 1.2; }
+:is(.phone2, .shell, .login) .sn-wc-btn { height: 38px; padding: 0 16px; border: 0; border-radius: 999px; background: #f8d8fe; color: #3b2541; font: 600 13.5px/1 var(--sans); flex: none; cursor: pointer; }
+:is(.phone2, .shell, .login) .sn-wc-btn:disabled { opacity: .5; }
+:is(.phone2, .shell, .login) .sn-askbar { height: 52px; border-radius: 26px; background: var(--s1); display: flex; align-items: center; gap: 12px; padding: 0 6px 0 16px; }
+:is(.phone2, .shell, .login) .sn-askbar > .ms { color: var(--violet); }
+:is(.phone2, .shell, .login) .sn-askbar input { flex: 1; min-width: 0; background: transparent !important; box-shadow: none !important; padding: 0; font-size: 16px; }
+:is(.phone2, .shell, .login) .sn-fab { width: 40px; height: 40px; flex: none; border: 0; border-radius: 50%; background: var(--ac); color: #06305f; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
+:is(.phone2, .shell, .login) .sn-fab .ms { font-size: 20px; }
+:is(.phone2, .shell, .login) .sn-pair { gap: 10px; }
+:is(.phone2, .shell, .login) .sn-card { background: var(--s1); border: 0; border-radius: 22px; padding: 14px 16px; display: flex; flex-direction: column; align-items: stretch; gap: 2px; text-align: left; color: inherit; font: inherit; cursor: pointer; min-width: 0; }
+:is(.phone2, .shell, .login) .sn-card .sn-lbl { font-size: 12.5px; color: var(--tx2); }
+:is(.phone2, .shell, .login) .sn-card .sn-big { margin: 0; font-size: 30px; }
+:is(.phone2, .shell, .login) .sn-big small { font-size: 13px; font-weight: 500; color: var(--tx2); }
+:is(.phone2, .shell, .login) .sn-card .sn-spark { margin-top: 6px; }
+:is(.phone2, .shell, .login) .sn-mach { display: flex; align-items: center; gap: 8px; font-size: 13.5px; margin-top: 8px; }
+:is(.phone2, .shell, .login) .sn-mach .live { animation: m3-ping 2.4s ease-out infinite; }
+:is(.phone2, .shell, .login) .sn-recent { background: var(--panel); border-radius: 22px; padding: 6px 0; }
+:is(.phone2, .shell, .login) .sn-item { display: flex; align-items: center; gap: 14px; width: 100%; padding: 9px 16px; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+:is(.phone2, .shell, .login) .sn-item:hover { box-shadow: inset 0 0 0 999px var(--sl-h); }
+:is(.phone2, .shell, .login) .sn-item .sn-row-t b { font-size: 14.5px; font-weight: 400; }
+:is(.phone2, .shell, .login) .sn-item .sn-row-t > span { font-size: 12.5px; }
+:is(.phone2, .shell, .login) .sn-when { font-size: 12px; color: var(--tx2); }
+:is(.phone2, .shell, .login) .sn-av { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex: none; }
+:is(.phone2, .shell, .login) .sn-av .ms { font-size: 20px; }
+:is(.phone2, .shell, .login) .av-ok { background: var(--c-ok); color: var(--c-ok-on); }
+:is(.phone2, .shell, .login) .av-ter { background: var(--c-ter); color: var(--c-ter-on); }
+:is(.phone2, .shell, .login) .av-err { background: var(--c-err); color: var(--c-err-on); }
+:is(.phone2, .shell, .login) .sn-spark { overflow: visible; display: block; }
+:is(.phone2, .shell, .login) .sn-spark path { fill: none; stroke: var(--ac); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 0; }
+
+/* ---- the compact inspector card (desktop) */
+.shell .ic { display: flex; flex-direction: column; gap: 12px; }
+.shell .ic-h { display: flex; align-items: center; gap: 10px; }
+.shell .ic-h .ni { width: 38px; height: 38px; }
+.shell .ic-t { font-size: 15px; font-weight: 600; }
+.shell .ic-gauges { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.shell .ic-gauge { background: var(--s3); border-radius: 14px; padding: 8px 4px; text-align: center; }
+.shell .ic-gauge svg { display: block; margin: 0 auto; }
+.shell .ic-gauge .ring { transition: stroke-dashoffset 600ms var(--sn-std); }
+.shell .ring.pri { stroke: var(--ac); } .shell .ring.ter { stroke: var(--violet); } .shell .ring.ok { stroke: var(--ok); }
+.shell .ic-v { font-size: 14px; font-weight: 600; }
+.shell .ic-k { font-size: 11px; color: var(--tx2); }
+.shell .ic-card { background: var(--s3); border-radius: 14px; padding: 10px 12px; }
+.shell .ic-row { display: flex; justify-content: space-between; align-items: baseline; font-size: 12.5px; color: var(--tx2); }
+.shell .ic-spark { display: block; margin-top: 4px; }
+.shell .ic-spark path { fill: none; stroke: var(--ac); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 0; animation: sn-draw 1.6s var(--sn-out) .3s backwards; }
+.shell .ic-job { display: flex; align-items: center; gap: 10px; padding: 6px 0; font-size: 13px; min-width: 0; }
+.shell .ic-job .grow { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shell .ic-job .mono { color: var(--tx2); font-size: 12px; }
+.shell .ic-job .dot { width: 8px; height: 8px; }
+.shell .ic-foot { display: flex; align-items: center; gap: 8px; }
+.shell .ic-back { margin: 0 0 8px; }
+
+@keyframes m3-rise { from { opacity: 0; transform: translateY(24px); } }
+@keyframes m3-dash { to { stroke-dashoffset: -48; } }
+@keyframes m3-spin { to { transform: rotate(360deg); } }
+@keyframes m3-draw { to { stroke-dashoffset: 0; } }
+@keyframes m3-ping { 0% { box-shadow: 0 0 0 0 rgba(155, 213, 168, .55); } 100% { box-shadow: 0 0 0 7px rgba(155, 213, 168, 0); } }
+@media (prefers-reduced-motion: reduce) { :is(.phone2, .shell) .line.flow { animation: none; } }
+
+/* ---- the shared pages inside the phone (Ari, Plugins, Inbox, Queue, Runs, Power, Share, Models, Settings, Logs) */
+:is(.phone2, .shell, .login) .pmain2 > .panel, :is(.phone2, .shell, .login) .pmain2 > div > .panel { margin-bottom: 14px; }
+:is(.phone2, .shell, .login) .ph { min-height: 0; padding: 16px 18px 6px; border: 0; gap: 10px; }
+:is(.phone2, .shell, .login) .pt, :is(.phone2, .shell, .login) .sect, :is(.phone2, .shell, .login) .sect-i, :is(.phone2, .shell, .login) .tlabel, :is(.phone2, .shell, .login) .vt-kind, :is(.phone2, .shell, .login) .pgroup-h, :is(.phone2, .shell, .login) .setk {
+  display: inline-block; font: 500 12.5px/1.4 var(--sans); letter-spacing: .1px; text-transform: none; color: #c4c6d0;
+}
+:is(.phone2, .shell, .login) .pt::first-letter, :is(.phone2, .shell, .login) .sect::first-letter, :is(.phone2, .shell, .login) .sect-i::first-letter, :is(.phone2, .shell, .login) .tlabel::first-letter, :is(.phone2, .shell, .login) .pgroup-h::first-letter { text-transform: uppercase; color: inherit; }
+:is(.phone2, .shell, .login) .pt::before, :is(.phone2, .shell, .login) .sect::before { content: none; display: none; }
+:is(.phone2, .shell, .login) .sect { display: block; margin: 20px 0 8px; }
+:is(.phone2, .shell, .login) .tools { gap: 8px; }
+:is(.phone2, .shell, .login) .toolbar { border: 0; gap: 8px; padding: 10px 18px; background: none; flex-wrap: wrap; }
+:is(.phone2, .shell, .login) .count { font: 500 12px var(--sans); color: #c4c6d0; background: none; border: 0; display: inline-block; }
+/* shared pages write some hints in lower case: sentence case on the phone, like the other Sonoma apps */
+:is(.phone2, .shell, .login) .count::first-letter, :is(.phone2, .shell, .login) .qcard .sub::first-letter, :is(.phone2, .shell, .login) .tip::first-letter { text-transform: uppercase; }
+:is(.phone2, .shell, .login) .qcard .sub { display: block; }
+/* tone meaning: running is green (as in every Sonoma app), queued is information blue */
+:is(.phone2, .shell, .login) .lane-run { --c: var(--ok); } :is(.phone2, .shell, .login) .lane.next { --c: var(--ac); }
+:is(.phone2, .shell, .login) .pill[data-s="running"] { background: #1f4d2e; color: #b6f2c3; }
+:is(.phone2, .shell, .login) .tip { font-size: 13px; line-height: 1.5; color: var(--tx2); }
+:is(.phone2, .shell, .login) .tip.bad { color: var(--bad); }
+:is(.phone2, .shell, .login) .muted { font-size: 12.5px; }
+:is(.phone2, .shell, .login) .kv { padding: 9px 0; font-size: 13.5px; border: 0; }
+:is(.phone2, .shell, .login) .kv .k { color: var(--tx2); }
+:is(.phone2, .shell, .login) .code, :is(.phone2, .shell, .login) .ilesson, :is(.phone2, .shell, .login) .tests, :is(.phone2, .shell, .login) .fx-log, :is(.phone2, .shell, .login) pre { background: #222227; border: 0; border-radius: 16px; font: 12.5px/1.5 var(--sans); color: #e2e2e9; }
+:is(.phone2, .shell, .login) .code.bad { color: var(--bad); }
+:is(.phone2, .shell, .login) .card, :is(.phone2, .shell, .login) .irow, :is(.phone2, .shell, .login) .appr, :is(.phone2, .shell, .login) .qcard, :is(.phone2, .shell, .login) .sitem, :is(.phone2, .shell, .login) .target, :is(.phone2, .shell, .login) .vt-card, :is(.phone2, .shell, .login) .lesson, :is(.phone2, .shell, .login) .fx-rows {
+  background: #222227; border: 0 !important; border-radius: 20px; box-shadow: none;
+}
+:is(.phone2, .shell, .login) .card { width: auto; padding: 16px; gap: 6px; }
+:is(.phone2, .shell, .login) .card h4 { margin: 0 0 4px; font-size: 12.5px; font-weight: 500; color: #c4c6d0; }
+:is(.phone2, .shell, .login) .card p { font-size: 14px; color: #e2e2e9; }
+:is(.phone2, .shell, .login) .irow { padding: 14px 16px; gap: 10px; }
+:is(.phone2, .shell, .login) .irow-h .it { font-size: 15px; font-weight: 600; min-width: 0; }
+:is(.phone2, .shell, .login) .ibox { border: 0; padding-top: 0; }
+:is(.phone2, .shell, .login) .appr { padding: 16px; margin: 8px 0 12px; }
+:is(.phone2, .shell, .login) .appr-big { font-size: 22px; font-weight: 620; letter-spacing: -.4px; font-variant-numeric: tabular-nums; }
+:is(.phone2, .shell, .login) .appr-in { width: 58%; text-align: right; }
+:is(.phone2, .shell, .login) .appr-actions, :is(.phone2, .shell, .login) .iact { gap: 8px; justify-content: flex-end; align-items: center; }
+:is(.phone2, .shell, .login) .appr-actions .btn, :is(.phone2, .shell, .login) .iact .btn, :is(.phone2, .shell, .login) .appr-actions .primary, :is(.phone2, .shell, .login) .iact .primary { height: 40px; }
+:is(.phone2, .shell, .login) .appr-img { border: 0; border-radius: 16px; }
+:is(.phone2, .shell, .login) .setrow, :is(.phone2, .shell, .login) .isl-set-row, :is(.phone2, .shell, .login) .mrow2, :is(.phone2, .shell, .login) .ttrow, :is(.phone2, .shell, .login) .chg, :is(.phone2, .shell, .login) .tl, :is(.phone2, .shell, .login) .prob, :is(.phone2, .shell, .login) .callr, :is(.phone2, .shell, .login) .test-row, :is(.phone2, .shell, .login) .fx-row { border: 0; }
+:is(.phone2, .shell, .login) .setl { font-size: 14px; }
+:is(.phone2, .shell, .login) .setrow.dirty .setl { color: var(--amber); }
+:is(.phone2, .shell, .login) .switch { height: 32px; padding: 0 12px 0 4px; border: 0; border-radius: 999px; background: rgba(226, 226, 233, .07); color: #c4c6d0; font: 500 13px var(--sans); }
+:is(.phone2, .shell, .login) .switch i { width: 24px; height: 24px; background: rgba(226, 226, 233, .35); box-shadow: none; }
+:is(.phone2, .shell, .login) .switch.on { background: #34405a; color: #d9e3f8; }
+:is(.phone2, .shell, .login) .switch.on i { background: var(--ac); box-shadow: none; }
+:is(.phone2, .shell, .login) .empty-note, :is(.phone2, .shell, .login) .empty-state { font: 14px var(--sans); color: var(--tx2); }
+:is(.phone2, .shell, .login) .empty-state svg { color: var(--ac); opacity: .7; }
+:is(.phone2, .shell, .login) .empty-state b { color: #e2e2e9; font-weight: 600; }
+:is(.phone2, .shell, .login) .skel { padding: 18px; }
+:is(.phone2, .shell, .login) .skel-h, :is(.phone2, .shell, .login) .skel-r, :is(.phone2, .shell, .login) .skel-row { background: rgba(226, 226, 233, .06); animation: sn-pulse 2.2s ease-in-out infinite; border-radius: 999px; }
+:is(.phone2, .shell, .login) .bar, :is(.phone2, .shell, .login) .vt-level { height: 6px; border-radius: 3px; background: rgba(226, 226, 233, .1); }
+:is(.phone2, .shell, .login) .bar i { background: var(--ac); box-shadow: none; border-radius: 3px; }
+:is(.phone2, .shell, .login) .mstate i, :is(.phone2, .shell, .login) .lane-h i { box-shadow: none; }
+:is(.phone2, .shell, .login) .modn b { font: 600 28px var(--sans); letter-spacing: -.5px; }
+:is(.phone2, .shell, .login) .spark i { background: var(--ac); border-radius: 3px; }
+:is(.phone2, .shell, .login) .spark i.zero { background: rgba(226, 226, 233, .1); }
+:is(.phone2, .shell, .login) .sdot { box-shadow: none; }
+
+/* Ari: chat list, bubbles, the input */
+:is(.phone2, .shell, .login) .bubble, :is(.phone2, .shell, .login) .msg .bubble { font: 15px/1.45 var(--sans); border: 0 !important; padding: 10px 14px; }
+:is(.phone2, .shell, .login) .msg.ari .bubble, :is(.phone2, .shell, .login) .bubble.ari { background: #222227; color: #e2e2e9; border-radius: 20px 20px 20px 6px; }
+:is(.phone2, .shell, .login) .msg.you .bubble, :is(.phone2, .shell, .login) .bubble.you { background: #34405a; color: #e2e2e9; border-radius: 20px 20px 6px 20px; }
+:is(.phone2, .shell, .login) .msg .who { font: 500 12px var(--sans); color: #9c9ea9; text-transform: capitalize; }
+:is(.phone2, .shell, .login) .fx-ln .fx-tx { font-family: var(--sans) !important; }
+:is(.phone2, .shell, .login) .msg.you .who { color: #9c9ea9; }
+:is(.phone2, .shell, .login) .bubble .used span { border: 0; background: rgba(226, 226, 233, .08); font-family: var(--sans); }
+:is(.phone2, .shell, .login) .ari-start, :is(.phone2, .shell, .login) .ari-in { border: 0 !important; background: none !important; box-shadow: none !important; gap: 12px; }
+:is(.phone2, .shell, .login) .ari-start { margin: 10px 18px 6px; padding: 0; height: auto; }
+:is(.phone2, .shell, .login) .ari-in { padding: 10px 18px 14px; }
+:is(.phone2, .shell, .login) .ari-start .caret, :is(.phone2, .shell, .login) .ari-in .caret { display: none; }
+:is(.phone2, .shell, .login) .ari-in .mic, :is(.phone2, .shell, .login) .mic { width: 44px; height: 44px; border: 0; border-radius: 50%; background: #222227; color: #e2e2e9; }
+:is(.phone2, .shell, .login) .ari-in .mic.on, :is(.phone2, .shell, .login) .mic.on { background: var(--ac); color: #06305f; }
+:is(.phone2, .shell, .login) .chat-row { border: 0; border-radius: 16px; }
+:is(.phone2, .shell, .login) .chat-open { font-family: var(--sans); padding: 12px 8px 12px 16px; }
+:is(.phone2, .shell, .login) .chat-t { font-size: 15px; font-weight: 600; color: #e2e2e9; }
+:is(.phone2, .shell, .login) .chat-l, :is(.phone2, .shell, .login) .chat-m { font-size: 13px; color: var(--tx2); }
+:is(.phone2, .shell, .login) .chat-del { width: 44px; border-radius: 50%; }
+:is(.phone2, .shell, .login) .chat-del:hover { color: var(--bad); }
+:is(.phone2, .shell, .login) .typing span, :is(.phone2, .shell, .login) .typing i { background: var(--violet); }
+
+/* Plugins */
+:is(.phone2, .shell, .login) .plugins.phone .plist { padding: 6px 8px 10px; }
+:is(.phone2, .shell, .login) .prow { border: 0 !important; border-radius: 16px; padding: 12px 12px; background: none; }
+:is(.phone2, .shell, .login) .prow[aria-current="true"] { background: rgba(226, 226, 233, .06); }
+:is(.phone2, .shell, .login) .prow-name { font-size: 15px; font-weight: 600; }
+:is(.phone2, .shell, .login) .prow-desc { font-size: 13px; color: var(--tx2); }
+:is(.phone2, .shell, .login) .pgroup-h { padding: 12px 12px 4px; }
+:is(.phone2, .shell, .login) .pgroup-h.bad { color: var(--bad); }
+:is(.phone2, .shell, .login) .psearch { margin: 8px 12px 4px; width: calc(100% - 24px); }
+:is(.phone2, .shell, .login) .pd-head { display: flex; flex-direction: column; gap: 10px; }
+:is(.phone2, .shell, .login) .pd-title h2 { margin: 0; font-size: 26px; font-weight: 620; letter-spacing: -.5px; font-variation-settings: 'wdth' 112; }
+:is(.phone2, .shell, .login) .pd-desc { margin: 0; font-size: 14px; color: var(--tx2); }
+:is(.phone2, .shell, .login) .pd-saved { font-size: 12.5px; color: var(--tx2); }
+:is(.phone2, .shell, .login) .pd-grid { gap: 10px; }
+:is(.phone2, .shell, .login) .lstats { gap: 6px 14px; font-size: 13px; }
+
+/* Queue, Runs, Logs */
+:is(.phone2, .shell, .login) .lanes { gap: 14px; }
+:is(.phone2, .shell, .login) .lane-h { border: 0; padding: 16px 18px 6px; font: 500 12.5px/1.4 var(--sans); letter-spacing: .1px; text-transform: none; color: #c4c6d0; }
+:is(.phone2, .shell, .login) .lane-h b { font: 600 13px var(--sans); }
+:is(.phone2, .shell, .login) .lane-b { padding: 6px 12px 14px; }
+:is(.phone2, .shell, .login) .qcard { padding: 12px 14px; }
+:is(.phone2, .shell, .login) .qcard::before, :is(.phone2, .shell, .login) .qcard.on::after { display: none; }
+:is(.phone2, .shell, .login) .qcard:hover { transform: none; background: #222227; }
+:is(.phone2, .shell, .login) .run { border-radius: 12px; padding: 10px; font-size: 13px; }
+:is(.phone2, .shell, .login) .run:hover { transform: none; background: rgba(226, 226, 233, .06); }
+:is(.phone2, .shell, .login) .run .w { font-weight: 500; }
+:is(.phone2, .shell, .login) .thead { display: none; }
+:is(.phone2, .shell, .login) .toolbar .muted, :is(.phone2, .shell, .login) .toolbar .tip { white-space: normal; }
+:is(.phone2, .shell, .login) .logbox { margin: 0 12px 12px; border: 0; border-radius: 16px; background: #0b0b0e; font: 12.5px/1.6 var(--sans); }
+:is(.phone2, .shell, .login) .ll .m { color: #e2e2e9; }
+:is(.phone2, .shell, .login) .ll .s.src-argus { color: var(--amber); } :is(.phone2, .shell, .login) .ll .s.src-worker { color: var(--ac); } :is(.phone2, .shell, .login) .ll .s.src-ollama { color: var(--violet); }
+:is(.phone2, .shell, .login) .ll.lv-error .m, :is(.phone2, .shell, .login) .ll.lv-critical .m { color: var(--bad); }
+:is(.phone2, .shell, .login) .errn { background: #690005; color: var(--bad); border-radius: 999px; }
+
+/* Power, Share, Models, Voice */
+:is(.phone2, .shell, .login) .devgrid { gap: 14px; }
+:is(.phone2, .shell, .login) .dcard-b { padding: 16px 18px; }
+:is(.phone2, .shell, .login) .pwr-head b { font-size: 16px; font-weight: 600; }
+:is(.phone2, .shell, .login) .pwr-pending { border: 0; border-radius: 16px; background: #573e5c; color: #f8d8fe; padding: 10px 10px 10px 16px; }
+:is(.phone2, .shell, .login) .pbtn { height: 44px; }
+:is(.phone2, .shell, .login) .dropzone { border: 1.5px dashed rgba(226, 226, 233, .26); border-radius: 20px; background: none; }
+:is(.phone2, .shell, .login) .dropzone:hover, :is(.phone2, .shell, .login) .dropzone.over { border-color: var(--ac); background: rgba(166, 200, 255, .08); }
+:is(.phone2, .shell, .login) .target.on { background: #34405a; }
+:is(.phone2, .shell, .login) .sitem img, :is(.phone2, .shell, .login) .sitem .ficon { border-radius: 12px; }
+:is(.phone2, .shell, .login) .vt-card.rec { box-shadow: inset 0 0 0 2px var(--bad); }
+:is(.phone2, .shell, .login) .vt-level i { background: var(--bad); }
+:is(.phone2, .shell, .login) .vt-text { font-size: 22px; font-weight: 600; letter-spacing: -.3px; }
+:is(.phone2, .shell, .login) .voice-train .vt-actions button.primary.rec { background: var(--bad) !important; color: #06305f !important; }
+
+/* ---- motion: panels fade up staggered, live things move; all of it stops under reduced motion */
+@keyframes sn-rise { from { opacity: 0; transform: translateY(12px); } }
+@keyframes sn-ping { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--c) 45%, transparent); } 100% { box-shadow: 0 0 0 9px color-mix(in srgb, var(--c) 0%, transparent); } }
+@keyframes sn-pulse { 50% { opacity: .35; } }
+@keyframes sn-breathe { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ac) 50%, transparent); } 100% { box-shadow: 0 0 0 14px color-mix(in srgb, var(--ac) 0%, transparent); } }
+@keyframes sn-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes sn-slide { from { left: -40%; } to { left: 100%; } }
+@keyframes sn-sheetup { from { transform: translateY(100%); } }
+@keyframes sn-pop { from { transform: scale(.6); opacity: 0; } }
+
+:is(.phone2, .shell, .login) .sn-head, :is(.phone2, .shell, .login) .sn-stack > *, :is(.phone2, .shell, .login) .pmain2 > .panel, :is(.phone2, .shell, .login) .pmain2 > div > .panel, :is(.phone2, .shell, .login) .sn-offline { animation: sn-rise 650ms var(--sn-out) backwards; }
+:is(.phone2, .shell, .login) .sn-stack > :nth-child(2), :is(.phone2, .shell, .login) .pmain2 > div > .panel:nth-child(2) { animation-delay: 70ms; }
+:is(.phone2, .shell, .login) .sn-stack > :nth-child(3), :is(.phone2, .shell, .login) .pmain2 > div > .panel:nth-child(3) { animation-delay: 140ms; }
+:is(.phone2, .shell, .login) .sn-stack > :nth-child(4), :is(.phone2, .shell, .login) .pmain2 > div > .panel:nth-child(4) { animation-delay: 210ms; }
+:is(.phone2, .shell, .login) .sn-stack > :nth-child(5) { animation-delay: 280ms; } :is(.phone2, .shell, .login) .sn-stack > :nth-child(6) { animation-delay: 350ms; }
+:is(.phone2, .shell, .login) .sn-status .sn-dot, :is(.phone2, .shell, .login) .sn-state .sn-dot, :is(.phone2, .shell, .login) .sn-li .sn-dot { animation: sn-ping 2.4s ease-out infinite; }
+:is(.phone2, .shell, .login) .sn-status .d-coral, :is(.phone2, .shell, .login) .sn-state .d-coral { animation: none; }
+:is(.phone2, .shell, .login) .breathe { animation: sn-breathe 2.6s var(--sn-out) infinite; }
+:is(.phone2, .shell, .login) .sn-spark path { animation: sn-draw 1.6s var(--sn-out) .35s backwards; }
+:is(.phone2, .shell, .login) .sn-spark circle { animation: sn-pulse 2.2s ease-in-out 1.9s infinite; }
+:is(.phone2, .shell, .login) .sn-meter i { animation: sn-slide 1.6s var(--sn-std) infinite; }
+:is(.phone2, .shell, .login) .sn-pill, :is(.phone2, .shell, .login) .dotbadge { animation: sn-pop 220ms cubic-bezier(.34, 1.56, .64, 1) backwards; }
+html[data-paused="1"] :is(.phone2, .shell, .login) * { animation-play-state: paused !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  :is(.phone2, .shell, .login) *, :is(.phone2, .shell, .login) *::before, :is(.phone2, .shell, .login) *::after { animation: none !important; transition: none !important; }
+  :is(.phone2, .shell, .login) .sn-spark path { stroke-dashoffset: 0; }
+  :is(.phone2, .shell, .login) .sn-hold.on .prg { stroke-dashoffset: 0; }  /* the ring shows full while held; the timer still confirms */
+  :is(.phone2, .shell, .login) .sn-meter i { left: 0; width: 100%; opacity: .6; }
+}

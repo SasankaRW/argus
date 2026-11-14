@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, ArgusEvent, Job } from "./api";
 import { ago, tone } from "./format";
 import type { Selection } from "./MapView";
-import { HoldButton } from "./sonoma";
+import { HoldButton } from "./m3";
 
 type Power = { mode: string; state: string; idle_since: number | null; idle_minutes: number; pc_online: boolean;
   shutdown_at: number | null; woken_by_argus: boolean;

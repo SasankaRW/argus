@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Empty, Skeleton } from "./kit";
-import { useSc } from "./sonoma";
+import { useSc } from "./m3";
 import { api, getToken } from "./api";
 
 type Target = { plugin: string; name: string; workflow: string; label: string; accepts: string[] };

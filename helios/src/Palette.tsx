@@ -1,6 +1,6 @@
 // Ctrl+K: jump to any page or run an action from the keyboard.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Ms } from "./sonoma";
+import { Ms } from "./m3";
 
 export type PaletteItem = { id: string; label: string; hint?: string; group: string; run: () => void };
 

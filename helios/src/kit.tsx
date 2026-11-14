@@ -2,8 +2,8 @@
 // so the pages read as one product. Styles live in kit.css.
 import { Component, ErrorInfo, ReactNode, useEffect, useRef, useState } from "react";
 import { Status } from "./api";
-import { IconTile } from "./sonoma";
-import type { Tone } from "./sonoma";
+import { IconTile } from "./m3";
+import type { Tone } from "./m3";
 import type { IconName } from "./icons";
 
 export type PageMeta = { title: string; sub: string };
@@ -134,8 +134,7 @@ export function PageHead({ meta, live, children }: { meta: PageMeta; live: boole
     <header className="pagehead">
       <div className="ph-row">
         <div className="ph-id">
-          <span className="sn-eye">Argus</span>
-          <h1>{meta.title}<span className="ac">.</span></h1>
+          <h1>{meta.title}</h1>
           <p>{meta.sub}</p>
         </div>
         <div className="ph-side">
@@ -188,7 +187,6 @@ export class PageBoundary extends Component<{ children: ReactNode; name: string 
     if (!this.state.err) return this.props.children;
     return (
       <div className="panel errcard" role="alert">
-        <span className="sn-eye">Argus</span>
         <b>This page hit a problem.</b>
         <code>{this.state.err.message}</code>
         <button type="button" className="btn" onClick={() => this.setState({ err: null })}>Try again</button>

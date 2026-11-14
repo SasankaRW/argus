@@ -4,7 +4,7 @@
     python scripts/icons.py        (from helios/, after npm ci; writes src/fonts/symbols-rounded.woff2)
 
 Run it again after adding a name to ICONS in src/icons.ts. The font is pinned to weight 500 and grade 0 at 24 px
-optical size, and keeps the FILL axis (0 = outlined, 1 = filled), as the Sonoma spec asks.
+optical size, and keeps the FILL axis (0 = outlined, 1 = filled), as the Material 3 spec asks.
 """
 
 import re

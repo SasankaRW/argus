@@ -1,0 +1,305 @@
+/* Helios on the desktop in Material 3 Expressive (design/material3/SPEC.md, boards/Desktop.dc.html). Loaded last. The fonts,
+   tokens, components and shared pages are in m3.css (shared with the phone, which is .phone2); this file is the desktop
+   shell and what only the desktop has: the rail, the map with its floating panels, the events footer, drawer, palette
+   and login. Order: shell > top bar > rail > page frame > vitals + page head > the map > command layout > events
+   footer > drawer > palette > login > pages > motion > narrow windows. Logs is the one place with a monospace face. */
+
+.shell {
+  height: 100vh; box-sizing: border-box; padding: 12px 12px 12px 0; gap: 12px; position: relative;
+  display: grid; grid-template-columns: 92px minmax(0, 1fr); grid-template-rows: 52px minmax(0, 1fr);
+}
+.shell.onmap { grid-template-rows: minmax(0, 1fr); }
+.shell ::selection { background: rgba(168, 200, 255, .3); }
+.shell code, .shell kbd { font-family: var(--rm); }
+.shell .mono, .shell .who, .shell .mono * { font-family: var(--rm); font-variant-numeric: tabular-nums; }
+.shell .faint, .shell .seg-s.faint { color: var(--tx3); }
+.shell button:focus-visible, .shell a:focus-visible, .shell [tabindex]:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
+.shell a { color: var(--ac); font-weight: 500; }
+.shell a:hover { color: var(--tx); text-decoration: none; }
+
+/* ---- top bar (every page but the map, which has its own floating bar) */
+.shell .top { grid-column: 2; grid-row: 1; display: flex; align-items: center; gap: 14px; padding: 0; min-width: 0; background: none; border: 0; overflow: visible; }
+.shell .brand { display: flex; align-items: center; gap: 9px; flex: none; }
+.shell .brand .who { font: 600 18px var(--sans); font-variation-settings: 'wdth' 112; color: var(--tx); }
+.shell .ask { flex: 1; min-width: 0; margin: 0; position: relative; height: 100%; }
+.shell .ask form { display: flex; align-items: center; gap: 8px; height: 100%; padding: 0; border: 0; background: none; border-radius: 0; }
+.shell .ask form > .ms { color: var(--tx2); font-size: 22px; }
+.shell .ask input { flex: 1; min-width: 0; font: 15px var(--sans); padding: 0 2px; min-height: 0; background: transparent !important; box-shadow: none !important; }
+.shell .ask kbd { display: none; }
+.shell .ask .mic { width: 40px; height: 40px; border: 0; border-radius: 50%; background: var(--ac); color: #06305f; display: flex; align-items: center; justify-content: center; cursor: pointer; flex: none; padding: 0; }
+.shell .ask .mic.on { background: var(--c-err-on); color: var(--c-err); }
+.shell .top .ask { flex: none; width: 340px; height: 48px; padding: 0 5px 0 16px; border-radius: 24px; background: var(--raise); box-shadow: 0 10px 30px rgba(0, 0, 0, .35); }
+.shell .ask-out { top: 56px; left: 0; right: auto; width: 420px; max-width: 80vw; padding: 16px 18px; border: 0; border-radius: 24px; background: var(--raise); box-shadow: 0 10px 30px rgba(0, 0, 0, .5); z-index: 30; }
+.shell .ask-out p { font-size: 14px; color: var(--tx); }
+.shell .cmdk { display: inline-flex; align-items: center; height: 32px; padding: 0; border: 0; border-radius: 8px; background: none; color: var(--tx2); cursor: pointer; flex: none; }
+.shell .cmdk kbd { display: inline-flex; align-items: center; height: 26px; padding: 0 9px; border-radius: 8px; background: var(--s3); color: var(--tx2); font: 500 11.5px var(--sans); }
+.shell .cmdk:hover { box-shadow: inset 0 0 0 999px var(--sl-h); }
+.shell .status { margin-left: auto; display: flex; align-items: center; gap: 12px; height: auto; font-size: 13px; color: var(--tx2); }
+.shell .seg-s { gap: 8px; padding: 0 12px; height: 34px; display: inline-flex; align-items: center; border: 0; border-radius: 12px; background: var(--s1); color: var(--tx2); font-size: 13px; }
+.shell .seg-s b { color: var(--tx); font-weight: 600; }
+.shell .seg-s.ok, .shell .seg-s.warn, .shell .seg-s.bad { color: var(--tx2); }
+.shell .clock { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; padding: 0 6px; }
+.shell .seg-s .clock { padding: 0; font-size: 15px; }
+.shell .sn-dot.d-green { animation: m3-ping 2.4s ease-out infinite; }
+
+/* ---- rail: the Ask Ari button, then items with an indicator pill (56x32) and a 12px label */
+.shell .side { grid-column: 1; grid-row: 1 / -1; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 18px 0; overflow-x: hidden; overflow-y: auto; scrollbar-width: none; background: none; }
+.shell .side::-webkit-scrollbar { display: none; }
+.shell .side-ask { flex: none; width: 56px; height: 56px; margin-bottom: 14px; border: 0; border-radius: 16px; background: var(--c-pri); color: var(--c-pri-on); display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
+.shell .side-grow { flex: 1 1 0; min-height: 8px; }
+.shell .side-i { flex: none; width: 100%; padding: 4px 0; border: 0; border-radius: 0; background: transparent; color: var(--tx2); display: flex; flex-direction: column; align-items: center; gap: 4px; font: 500 12px/1 var(--sans); cursor: pointer; }
+.shell .side-i .ind { position: relative; width: 56px; height: 32px; border-radius: 999px; display: flex; align-items: center; justify-content: center; transition: background-color 300ms var(--sn-std), color 300ms var(--sn-std); }
+.shell .side-i:hover { box-shadow: none; } .shell .side-i:hover .ind { background: var(--sl-h); }
+.shell .side-i:active .ind { background: var(--sl-p); }
+.shell .side-i[aria-current="page"] { color: var(--tx); font-weight: 600; }
+.shell .side-i[aria-current="page"] .ind { background: var(--c-sec); color: var(--c-sec-on); }
+.shell .side-i .sn-badge { top: 2px; right: 12px; }
+
+/* ---- page frame */
+.shell main { grid-column: 2; grid-row: 2; position: relative; display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; }
+.shell.onmap main { grid-row: 1; }
+.shell .page { padding: 0; gap: 18px; overflow: auto; scrollbar-width: thin; }
+.shell .page.stagepage { overflow: hidden; flex: 1; min-height: 0; padding: 0; }
+.shell .page:not(.stagepage) > * { width: 100%; max-width: 1480px; margin-inline: auto; animation: sn-rise 650ms var(--sn-out) backwards; }
+.shell .page:not(.stagepage) > :nth-child(2) { animation-delay: 70ms; } .shell .page:not(.stagepage) > :nth-child(3) { animation-delay: 140ms; }
+.shell .page.fill { overflow: hidden; }
+.shell .page.fill > .mid, .shell .page.fill > .fillp { flex: 1; min-height: 0; }
+.shell .page.fill > .mid > .fillp { height: 100%; min-height: 0; }
+.shell .mid { gap: 18px; }
+.shell .mid.one { grid-template-columns: minmax(0, 1fr); }
+.shell .mid:has(> .ari) { flex: 1; min-height: 0; }
+.shell .mid > .ari { min-height: 0; max-height: 100%; }
+.shell .mid > .ari .ari-log { max-height: none; min-height: 0; }
+.shell .panel { overflow: hidden; }
+.shell .ph { padding: 18px 22px 6px; }
+.shell .toolbar { padding: 12px 22px; }
+.shell .tools { gap: 8px; }
+.shell .btn.btn, .shell .primary.primary { height: 36px; min-height: 36px; line-height: 36px; padding: 0 16px; font-size: 13px; }
+.shell .btn.btn:has(svg, .ms), .shell .primary.primary:has(svg, .ms) { line-height: 1; }
+.shell .empty-state, .shell .empty-note, .shell .tip { font-family: var(--sans); }
+
+/* ---- the system strip (Vitals) and the page head */
+.shell .vitals { flex: none; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 24px; padding: 14px 22px; animation: none; }
+.shell .vt { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 0; border: 0; background: none; overflow: visible; }
+.shell .vt-txt { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.shell .vt-k { font: 500 12.5px var(--sans); letter-spacing: .1px; color: #c4c6d0; }
+.shell .vt-line { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.shell .vt-v { font: 600 20px/1.25 var(--sans); letter-spacing: 0; color: #e2e2e9; font-variant-numeric: tabular-nums; }
+.shell .vt-v small { font-size: 13px; font-weight: 500; color: var(--tx2); }
+.shell .vt-s { font: 12px var(--sans); color: var(--tx3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.shell .sparkl path:first-of-type { fill: none; }
+.shell .sparkl path { stroke-width: 2; }
+.shell .pagehead { display: flex; flex-direction: column; gap: 0; padding: 4px 4px 0; position: relative; }
+.shell .ph-id { min-width: 0; }
+.shell .ph-side { display: flex; align-items: center; gap: 10px; padding-bottom: 6px; }
+.shell .ph-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: nowrap; }
+.shell .pagehead h1 { margin: 0; font-size: 32px; font-weight: 500; letter-spacing: 0; line-height: 1.15; font-variation-settings: 'wdth' 112; }
+.shell .pagehead p { margin: 8px 0 0; font-size: 15px; color: var(--tx2); max-width: 62ch; }
+.shell .livepill { display: inline-flex; align-items: center; gap: 7px; height: 22px; padding: 0 9px; border: 0; border-radius: 999px; font: 600 11px var(--sans); letter-spacing: .3px; text-transform: none; background: #573e5c; color: var(--amber); }
+.shell .livepill i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: none; }
+.shell .livepill.on { background: #1f4d2e; color: var(--ok); }
+.shell .livepill.on i { animation: sn-ping 2.4s ease-out infinite; --c: var(--ok); }
+.shell .ph-side { gap: 10px; }
+
+/* ---- the map: it fills the window; the status bar, search, waiting card, tools, inspector, zoom and timeline float over it */
+.shell .stage { position: relative; width: 100%; height: 100%; min-width: 0; padding: 0; border-radius: 28px; background: var(--map); overflow: hidden; animation: m3-rise 520ms var(--sn-out) backwards; }
+.shell .stage .canvas { position: absolute; inset: 0; }
+.shell .stage .empty { color: var(--tx3); font-size: 13px; }
+.shell .zoompad { left: 18px; bottom: 16px; }
+.shell .dl-top { position: absolute; z-index: 6; left: 18px; right: 18px; top: 16px; display: flex; align-items: center; gap: 12px; pointer-events: none; }
+.shell .dl-top > * { pointer-events: auto; }
+.shell .dl-status { height: 52px; padding: 0 16px; display: flex; align-items: center; gap: 10px; min-width: 0; }
+.shell .dl-head { font-size: 18px; font-weight: 600; font-variation-settings: 'wdth' 112; margin-right: 6px; white-space: nowrap; }
+.shell .dl-status .sn-dot { width: 10px; height: 10px; }
+.shell .dl-top .lay-switch { padding: 4px; }
+.shell .dl-top .lay-switch .btn.btn { height: 40px; min-height: 40px; line-height: 40px; padding: 0 18px; font-size: 13.5px; }
+.shell .dl-search { width: 300px; height: 52px; border-radius: 26px; display: flex; align-items: center; padding: 0 6px 0 16px; gap: 6px; flex: none; position: relative; }
+.shell .dl-search .ask { flex: 1; width: auto; height: 100%; padding: 0; background: none; box-shadow: none; }
+.shell .dl-left { position: absolute; z-index: 5; left: 18px; top: 84px; display: flex; flex-direction: column; gap: 14px; align-items: flex-start; }
+.shell .dl-wait { width: 290px; padding: 16px; display: flex; flex-direction: column; gap: 12px; background: var(--c-ter); color: var(--c-ter-on); }
+.shell .dl-wait-h { display: flex; gap: 12px; align-items: center; }
+.shell .dl-wait-tile { width: 42px; height: 42px; border-radius: 14px; background: #f8d8fe; color: #573e5c; display: flex; align-items: center; justify-content: center; flex: none; }
+.shell .dl-wait-l { font-size: 12px; opacity: .85; }
+.shell .dl-wait-t { font-size: 15.5px; font-weight: 600; line-height: 1.25; }
+.shell .dl-wait-a { display: flex; gap: 8px; flex-wrap: wrap; }
+.shell .dl-yes { height: 38px; padding: 0 18px; border: 0; border-radius: 999px; background: #f8d8fe; color: #3b2541; font: 600 13.5px/1 var(--sans); cursor: pointer; }
+.shell .dl-yes:disabled { opacity: .5; }
+.shell .dl-later { height: 38px; padding: 0 16px; border: 1px solid #c4a9c9; border-radius: 999px; background: transparent; color: #f8d8fe; font: 600 13.5px/1 var(--sans); cursor: pointer; }
+.shell .dl-tools { width: 46px; padding: 4px; display: flex; flex-direction: column; gap: 2px; }
+.shell .tb { width: 38px; height: 38px; padding: 0; border: 0; border-radius: 12px; background: transparent; color: var(--tx2); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.shell .tb[aria-pressed="true"] { background: var(--c-sec); color: var(--c-sec-on); }
+
+/* ---- command layout: the same map with small panels and one command bar */
+.shell .cmd-top { position: absolute; z-index: 5; left: 18px; right: 18px; top: 16px; display: flex; align-items: center; gap: 10px; pointer-events: none; }
+.shell .cmd-top > * { pointer-events: auto; }
+.shell .cmd-id.sn-pane { flex-direction: row; align-items: center; gap: 10px; padding: 0 18px; height: 52px; border-radius: 26px; background: var(--raise); box-shadow: 0 10px 30px rgba(0, 0, 0, .5); }
+.shell .cmd-id .who { font: 600 18px var(--sans); font-variation-settings: 'wdth' 112; }
+.shell .cmd-tools { margin-left: auto; display: flex; gap: 6px; }
+.shell .cmd-tools .btn.btn { background: var(--raise); height: 36px; box-shadow: 0 10px 30px rgba(0, 0, 0, .5); }
+.shell .cmd-tools .btn.btn[aria-pressed="true"] { background: var(--c-sec); color: var(--c-sec-on); }
+.shell .cmd-top .badge.sn-pane { flex-direction: row; align-items: center; gap: 8px; height: 36px; padding: 0 16px; border-radius: 18px; font-size: 13px; color: var(--tx); background: var(--raise); }
+.shell .cmd-col { position: absolute; z-index: 4; top: 84px; width: 320px; display: flex; flex-direction: column; gap: 14px; font-family: var(--sans); }
+.shell .cmd-col.left { left: 18px; } .shell .cmd-col.right { right: 18px; }
+.shell .cmd-col .sn-pane, .shell .cmd-col .sn-tap { background: var(--raise); box-shadow: 0 10px 30px rgba(0, 0, 0, .5); }
+.shell .cmd-col .sn-waiting { background: var(--c-ter); color: var(--c-ter-on); }
+.shell .cmd-col .minilog { max-height: 220px; }
+.shell .cmd-bar { position: absolute; z-index: 5; left: 50%; bottom: 16px; transform: translateX(-50%); width: min(760px, calc(100% - 36px)); display: flex; flex-direction: column; gap: 12px; font-family: var(--sans); }
+.shell .cmd-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.shell .cmd-chips .chip.chip { height: 32px; padding: 0 14px; background: var(--raise); }
+.shell .cmd-in.sn-pane { flex-direction: row; align-items: center; gap: 12px; height: 64px; padding: 0 10px 0 22px; border-radius: 32px; background: var(--raise); box-shadow: 0 10px 30px rgba(0, 0, 0, .5); border: 0; }
+.shell .cmd-in > .ms { color: var(--tx2); }
+.shell .cmd-in input { flex: 1; min-width: 0; font-size: 16px; background: transparent !important; box-shadow: none !important; padding: 0; }
+.shell .cmd-in kbd { height: 24px; line-height: 24px; padding: 0 9px; border: 0; border-radius: 8px; background: var(--s3); color: var(--tx2); font: 500 11.5px var(--sans); }
+
+/* ---- the timeline dock over the map: one lane per machine, a bar per job of the last hour */
+.shell .dock.tlk { position: absolute; z-index: 5; left: 220px; right: 18px; bottom: 16px; padding: 10px 16px 12px; border-radius: 20px; background: var(--raise); box-shadow: 0 10px 30px rgba(0, 0, 0, .5); overflow: hidden; }
+.shell .tlk-h { height: auto; padding: 0; gap: 12px; margin-bottom: 6px; align-items: center; }
+.shell .tlk-t { font-size: 13px; font-weight: 600; }
+.shell .tlk-tick { font: 400 12px var(--rm); color: var(--tx2); }
+.shell .tlk-tick.now { color: var(--tx); }
+.shell .tlk-h .dock-x { width: 28px; height: 28px; }
+.shell .tlk-lanes { position: relative; }
+.shell .tlk-lane { display: grid; grid-template-columns: 60px minmax(0, 1fr); align-items: center; height: 20px; margin-top: 4px; }
+.shell .tlk-lane:first-child { margin-top: 0; }
+.shell .tlk-track { position: relative; height: 20px; background: var(--s3); border-radius: 8px; overflow: hidden; }
+.shell .tlk-job { position: absolute; top: 3px; height: 14px; border-radius: 7px; }
+.shell .tlk-now { position: absolute; right: 0; top: -4px; bottom: -4px; width: 2px; background: var(--tx); border-radius: 1px; }
+.shell .tlk-filters { padding: 8px 0 4px; height: auto; }
+.shell .dock.tlk .log { height: 180px; padding: 0 0 4px; }
+
+/* ---- the events footer: one calm line, opens into the list */
+.shell .dock { flex: none; border: 0; border-radius: 22px; background: var(--panel); overflow: hidden; }
+.shell .dock-h { height: 48px; padding: 0 22px; gap: 16px; }
+.shell .dock-t { height: 32px; padding: 0; border-radius: 999px; background: none; color: inherit; font: inherit; text-transform: none; letter-spacing: 0; cursor: pointer; }
+.shell .dock-t:hover { box-shadow: none; background: none; }
+.shell .dock-last { flex: 1; display: flex; gap: 12px; align-items: center; min-width: 0; padding: 0; border: 0; background: none; color: #e2e2e9; font: 13px var(--sans); text-align: left; cursor: pointer; overflow: hidden; white-space: nowrap; }
+.shell .dock-last span { font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; }
+.shell .dock-last .dim, .shell .dock-last .ok, .shell .dock-last .flow, .shell .dock-last .warn, .shell .dock-last .bad { color: #e2e2e9; }
+.shell .dock-last .dim { color: #c4c6d0; }
+.shell .live-ind { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; font: 12px var(--sans); color: #c4c6d0; }
+.shell .dock-x { width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: none; color: #9c9ea9; display: grid; place-items: center; cursor: pointer; }
+.shell .dock-x:hover { box-shadow: inset 0 0 0 999px rgba(226, 226, 233, .08); }
+.shell .tabs-t { gap: 6px; flex: 1; }
+.shell .tabs-t button { height: 28px; padding: 0 12px; border-radius: 999px; background: rgba(226, 226, 233, .07); color: #e2e2e9; font: 500 12px var(--sans); }
+.shell .tabs-t button:hover { color: #e2e2e9; box-shadow: inset 0 0 0 999px rgba(226, 226, 233, .08); }
+.shell .tabs-t button[aria-pressed="true"] { background: #34405a; color: #d9e3f8; }
+.shell .log { height: 200px; padding: 0 14px 14px; }
+.shell .ev { font: 12.5px/26px var(--sans); border-radius: 10px; padding: 0 8px; grid-template-columns: 96px 150px minmax(120px, 220px) 110px minmax(0, 1fr); }
+.shell .ev::before { content: none; }
+.shell .ev:hover { background: rgba(226, 226, 233, .06); }
+.shell .ev .t { font-variant-numeric: tabular-nums; }
+.shell .ev .k.ok { color: var(--ok); } .shell .ev .k.bad { color: var(--bad); } .shell .ev .k.warn { color: var(--amber); } .shell .ev .k.flow { color: var(--ac); } .shell .ev .k.dim { color: var(--tx3); }
+
+/* ---- the inspector over the map (a compact card; "Details" opens the full one), and the details drawer on other pages */
+.shell .stage .drawer { position: absolute; z-index: 7; top: 84px; right: 18px; bottom: auto; width: 380px; max-width: calc(100% - 36px); max-height: calc(100% - 84px - 130px); overflow: auto; display: block;
+  border-radius: 20px; background: var(--raise); box-shadow: 0 10px 30px rgba(0, 0, 0, .5); animation: m3-rise 420ms var(--sn-out) backwards; scrollbar-width: thin; }
+.shell .stage .drawer.card-ic { width: 286px; padding: 16px; }
+.shell .drawer .insp { background: none; box-shadow: none; border-radius: 0; flex: 1; min-width: 0; backdrop-filter: none; }
+.shell .page-drawer { position: absolute; top: 0; right: 0; bottom: 0; width: min(400px, calc(100% - 28px)); z-index: 15; border-radius: 28px; background: var(--raise); box-shadow: 0 10px 30px rgba(0, 0, 0, .5); overflow: hidden; }
+.shell .drawer .card, .shell .drawer .irow, .shell .drawer .appr, .shell .drawer .code, .shell .drawer pre { background: var(--s3); }
+.shell .insp .close { background: var(--sl-h); }
+.shell .stage .drawer > .ic-back { margin: 12px 18px 0; }
+
+/* ---- Ctrl+K palette */
+.shell .pal-back { position: fixed; inset: 0; z-index: 100; display: flex; justify-content: center; align-items: flex-start; padding: 14vh 16px 16px; background: rgba(0, 0, 0, .6); animation: sn-fade 200ms var(--sn-std); }
+.shell .pal { width: min(620px, 100%); border: 0; border-radius: 28px; background: var(--raise); box-shadow: var(--sn-edge), 0 8px 24px rgba(0, 0, 0, .5); overflow: hidden; animation: sn-rise 420ms var(--sn-out); }
+.shell .pal-in { display: flex; align-items: center; gap: 12px; height: 60px; padding: 0 22px; border: 0; }
+.shell .pal-in > .ms { color: #9c9ea9; }
+.shell .pal-in input { flex: 1; min-width: 0; height: 100%; font: 16px var(--sans); }
+.shell .pal-in kbd { height: 22px; line-height: 22px; padding: 0 9px; border: 0; border-radius: 999px; background: rgba(226, 226, 233, .08); color: var(--tx2); font: 600 11px var(--sans); }
+.shell .pal-list { max-height: min(52vh, 440px); overflow: auto; padding: 4px 10px 12px; }
+.shell .pal-row { display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; gap: 12px; align-items: center; width: 100%; height: 42px; padding: 0 14px; border: 0; border-radius: 14px; background: none; color: #e2e2e9; font: 14px var(--sans); text-align: left; cursor: pointer; }
+.shell .pal-row[aria-selected="true"] { background: #34405a; color: #d9e3f8; box-shadow: none; }
+.shell .pal-g { font: 500 12px var(--sans); letter-spacing: .1px; text-transform: none; color: var(--tx3); }
+.shell .pal-row[aria-selected="true"] .pal-g { color: #a8c8ff; }
+.shell .pal-h { font: 12px var(--sans); color: var(--tx3); }
+.shell .pal-none { padding: 22px; text-align: center; color: var(--tx2); font: 14px var(--sans); }
+@keyframes sn-fade { from { opacity: 0; } }
+
+/* ---- sign in */
+.login { min-height: 100vh; background: #0b0b0e; color: #e2e2e9; font: 15px/1.45 var(--sans); }
+.login .card { width: min(400px, 100%); padding: 32px 30px; gap: 14px; animation: sn-rise 650ms var(--sn-out) backwards; }
+.login .card p { font-size: 14px; color: var(--tx2); }
+.login .brand { margin-bottom: 6px; }
+.login .sn-h1 { margin: 0 0 4px; font-size: 32px; font-weight: 500; line-height: 1.15; }
+.login .sn-field { display: block; width: 100%; }
+.login .sn-field input { width: 100%; }
+.login .card { background: var(--panel); }
+.login .sn-field.is-error { animation: sn-shake 350ms ease-in-out; }
+.login .sn-field.is-error input { border-bottom-color: var(--bad) !important; }
+.login .primary.primary { width: 100%; height: 48px; margin-top: 6px; }
+@keyframes sn-shake { 20% { transform: translateX(-12px); } 40% { transform: translateX(12px); } 60% { transform: translateX(-8px); } 80% { transform: translateX(8px); } }
+
+/* ---- pages */
+.shell .logbox, .shell .ll, .shell .ll * { font-family: var(--rm); }
+.shell .logbox { font-size: 12.5px; line-height: 20px; margin: 0 14px 14px; border-radius: 18px; background: #0b0b0e; flex: 1; height: auto; min-height: 0; }
+.shell .logs { min-height: 0; }
+.shell .ll { grid-template-columns: 76px 104px 52px minmax(0, 1fr); content-visibility: auto; contain-intrinsic-size: auto 20px; border-left: 2px solid transparent; }
+.shell .ll.lv-error, .shell .ll.lv-critical { border-left-color: var(--bad); }
+.shell .ll.lv-warning, .shell .ll.lv-warn { border-left-color: var(--amber); }
+.shell .runs { min-height: 0; }
+.shell .runs .runlist { flex: 1; max-height: none; overflow: auto; padding: 4px 12px 12px; }
+.shell .run { grid-template-columns: 84px minmax(170px, 240px) 96px minmax(0, 1fr) 96px 64px; min-height: 40px; padding: 0 14px; content-visibility: auto; contain-intrinsic-size: auto 40px; font-size: 13px; }
+.shell .run::before { content: none; }
+.shell .run[aria-current="true"] { background: rgba(166, 200, 255, .12); }
+.shell .thead.run { display: grid; min-height: 32px; height: 32px; margin: 0 12px; font: 500 12px var(--sans); letter-spacing: .1px; text-transform: none; color: #c4c6d0; }
+.shell .thead.run:hover { background: none; }
+.shell .page.fill > .mid > .fillp, .shell .lanes { min-height: 0; }
+.shell .lane.wait { --c: var(--amber); } .shell .lane.next { --c: var(--ac); } .shell .lane { --c: var(--ok); }
+.shell .qcard:hover { transform: none; }
+.shell .setp > .panel { overflow: visible; }
+.shell .setgrid { grid-template-columns: repeat(auto-fill, minmax(440px, 1fr)); gap: 14px; padding: 6px 18px 18px; }
+.shell .setgroup { border: 0; border-radius: 20px; padding: 6px 18px 10px; background: #222227; }
+.shell .setgroup .sect { margin: 12px 0 4px; font-size: 12.5px; }
+.shell .toolbar.sticky { position: sticky; top: 0; z-index: 3; background: var(--panel); border-radius: 24px 24px 0 0; }
+.shell .plugins { min-height: calc(100vh - 290px); }
+.shell .plist { border: 0; background: none; max-height: none; }
+.shell .pd-head h2, .shell .pd-title h2 { font-size: 26px; font-weight: 620; letter-spacing: -.5px; }
+.shell .sharegrid { gap: 18px; }
+.shell .devgrid { gap: 18px; }
+.shell .modt { background: #222227; border: 0; border-radius: 20px; }
+.shell .modt::after { content: none; }
+.shell .modt .modn b { text-shadow: none; }
+.shell .kstrip:not(.float) { border: 0; background: none; gap: 12px; overflow: visible; }
+.shell .kstrip:not(.float) .kc { border: 0; border-radius: 20px; background: var(--panel); padding: 12px 18px; box-shadow: var(--sn-edge); }
+.shell .kstrip:not(.float) .kc b { font: 600 22px var(--sans); text-shadow: none; }
+.shell .kl { font: 500 12.5px var(--sans); letter-spacing: .1px; text-transform: none; color: #c4c6d0; }
+.shell .sn-holds { display: flex; flex-wrap: wrap; gap: 14px 22px; align-items: flex-start; justify-items: start; }
+.shell .sn-holds > .sn-btn { align-self: center; margin-top: 0; height: 44px; }
+.shell .sn-holdwrap { flex-direction: row; gap: 10px; }
+.shell .fx-act { display: inline-flex; gap: 8px; align-items: center; }
+.shell .rules-body .editor { background: #0b0b0e; border: 0; border-radius: 18px; font: 13px/1.6 var(--sans); }
+.shell .msg { max-width: min(72%, 720px); }
+.shell .ari-in, .shell .ari-start { border: 0; background: none; }
+.shell .ari-home { gap: 18px; }
+.shell .aripill-wrap { top: 6px; }
+
+/* ---- motion: calm; all of it stops under reduced motion */
+html[data-paused="1"] .shell * { animation-play-state: paused !important; }
+@media (prefers-reduced-motion: reduce) {
+  .shell *, .shell *::before, .shell *::after, .login *, .login *::before, .login *::after { animation: none !important; transition: none !important; }
+}
+
+/* ---- narrow windows (the full dashboard on a small screen): the rail becomes a strip above the page */
+@media (max-width: 1180px) {
+  .shell .kpi { display: none; }
+  .shell .dl-search { width: 220px; }
+  .shell .vitals { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 860px) {
+  .shell, .shell.onmap { padding: 8px; gap: 8px; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 52px minmax(0, 1fr); }
+  .shell.onmap { grid-template-rows: auto minmax(0, 1fr); }
+  .shell .side { grid-column: 1; grid-row: 1; flex-direction: row; padding: 4px 0; overflow-x: auto; overflow-y: hidden; gap: 4px; }
+  .shell .side-ask { width: 44px; height: 44px; margin: 0 8px 0 0; border-radius: 14px; }
+  .shell .side-i { width: 64px; flex: none; }
+  .shell .side-grow { display: none; }
+  .shell .top { grid-column: 1; grid-row: 2; }
+  .shell main { grid-column: 1; grid-row: 3; }
+  .shell.onmap main { grid-row: 2; }
+  .shell .ask { display: none; }
+  .shell .top .ask { display: none; }
+  .shell .dl-search, .shell .dl-top .lay-switch { display: none; }
+  .shell .dock.tlk { left: 18px; }
+  .shell .pagehead h1 { font-size: 26px; }
+  .shell .cmdk kbd { display: none; }
+}

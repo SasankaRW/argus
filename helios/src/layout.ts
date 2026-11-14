@@ -4,8 +4,8 @@
 import type { ELK as ElkApi } from "elkjs/lib/elk-api";
 import type { MapEdge, MapNode } from "./api";
 
-export const NODE_W = 168;
-export const NODE_H = 50;
+export const NODE_W = 196;
+export const NODE_H = 84;
 
 // ELK is large, so it loads after the first paint, in its own file.
 let elkPromise: Promise<ElkApi> | null = null;
@@ -41,7 +41,8 @@ function partition(n: MapNode): number {
 
 const RANK: Record<string, number> = { core: 0, app: 1, worker: 1, plugin: 2, service: 3, model: 3 };
 
-export async function layout(nodes: MapNode[], edges: MapEdge[]):
+// `vertical` lays the map out top to bottom (the phone's narrow screen); otherwise left to right.
+export async function layout(nodes: MapNode[], edges: MapEdge[], vertical = false):
   Promise<{ pos: Record<string, Pos>; labels: ColumnLabel[]; routes: Record<string, Route> }> {
   const ids = new Set(nodes.map((n) => n.id));
   const kind = new Map(nodes.map((n) => [n.id, n.kind]));
@@ -49,14 +50,14 @@ export async function layout(nodes: MapNode[], edges: MapEdge[]):
     id: "root",
     layoutOptions: {
       "elk.algorithm": "layered",
-      "elk.direction": "RIGHT",
+      "elk.direction": vertical ? "DOWN" : "RIGHT",
       "elk.partitioning.activate": "true",
       "elk.edgeRouting": "SPLINES",
       "elk.layered.edgeRouting.splines.mode": "CONSERVATIVE",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "56",
+      "elk.layered.spacing.nodeNodeBetweenLayers": "72",
       "elk.layered.spacing.edgeNodeBetweenLayers": "14",
       "elk.layered.spacing.edgeEdgeBetweenLayers": "8",
-      "elk.spacing.nodeNode": "20",
+      "elk.spacing.nodeNode": "28",
       "elk.spacing.edgeNode": "12",
       "elk.spacing.edgeEdge": "8",
       "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
@@ -72,8 +73,12 @@ export async function layout(nodes: MapNode[], edges: MapEdge[]):
         layoutOptions: { "elk.partitioning.partition": String(partition(n)), "elk.portConstraints": "FIXED_POS" } as Record<string, string>,
         // one port in the middle of each side, where the map draws its handles
         ports: [
-          { id: `${n.id}:w`, x: 0, y: NODE_H / 2, width: 0, height: 0, layoutOptions: { "elk.port.side": "WEST" } },
-          { id: `${n.id}:e`, x: NODE_W, y: NODE_H / 2, width: 0, height: 0, layoutOptions: { "elk.port.side": "EAST" } },
+          vertical
+            ? { id: `${n.id}:w`, x: NODE_W / 2, y: 0, width: 0, height: 0, layoutOptions: { "elk.port.side": "NORTH" } }
+            : { id: `${n.id}:w`, x: 0, y: NODE_H / 2, width: 0, height: 0, layoutOptions: { "elk.port.side": "WEST" } },
+          vertical
+            ? { id: `${n.id}:e`, x: NODE_W / 2, y: NODE_H, width: 0, height: 0, layoutOptions: { "elk.port.side": "SOUTH" } }
+            : { id: `${n.id}:e`, x: NODE_W, y: NODE_H / 2, width: 0, height: 0, layoutOptions: { "elk.port.side": "EAST" } },
         ],
       })),
     // lines between two models (escalations) are drawn top to bottom, so they don't shape the columns

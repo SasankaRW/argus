@@ -1,13 +1,13 @@
-// The phone view's Sonoma pieces: an icon (Material Symbols Rounded, cut to src/icons.ts), the hold-to-confirm
-// button, and a context that tells shared pages they are on the phone (layout only: the desktop is Sonoma
-// too, so labels, holds and icons are the same). Styles: sonoma.css (shared by the phone and the desktop).
+// The Material 3 pieces shared by the phone and the desktop: an icon (Material Symbols Rounded, cut to src/icons.ts), the hold-to-confirm
+// button, and a context that tells shared pages they are on the phone (layout only: the desktop has the same look, so
+// labels, holds and icons are the same). Styles: m3.css (shared by the phone and the desktop).
 import { createContext, KeyboardEvent, ReactNode, useContext, useEffect, useRef, useState } from "react";
 import type { IconName } from "./icons";
 
 export const PhoneCtx = createContext(false);
 export const useIsPhone = () => useContext(PhoneCtx);
 
-// Sentence case, as the other Sonoma apps write it: a capital first letter, and Ari's name capitalised.
+// Sentence case, a capital first letter, and Ari's name capitalised.
 export const sentence = (s: string) => s.replace(/\bari\b/g, "Ari").replace(/^[a-z]/, (c) => c.toUpperCase());
 // Labels, placeholders and hints are written in sentence case, on the phone and the desktop alike.
 export function useSc() {
@@ -38,7 +38,7 @@ export function IconTile({ n, tone = "plain" }: { n: IconName; tone?: Tone }) {
 const HOLD_MS = 1200;
 
 // Press and hold about 1.2 s to confirm: an accent ring fills around a round coral button. Letting go early does
-// nothing but show "Hold to <action>" in the accent for 1.6 s (the same hint as every Sonoma app; onTap can add more).
+// nothing but show "Hold to <action>" in the accent for 1.6 s (onTap can add more).
 // Works with touch, mouse and the keyboard (hold Space or Enter). The timer, not the animation, confirms, so it still
 // works with reduced motion.
 export function HoldButton({ icon, label, caption, onConfirm, onTap, disabled = false, tone = "coral" }: {
