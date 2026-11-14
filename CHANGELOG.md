@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **New Helios icon:** the browser tab and the installed app use the Argus icon from the shared set.
+
 - **Helios phone:** no doubled status-bar or gesture-bar gap, a clean scalloped status badge, and sentence-case event titles.
 
 - **Helios:** phone and desktop are restyled in Material 3 Expressive: a Home and a separate Map on the phone, a map-first desktop with floating panels, Roboto Flex and live meters on the map boxes.
