@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **New app icon:** the Argus phone app uses the Sonoma icon (a blue ring around a dot), with a themed-icon layer.
+
 - **Phone view in the Sonoma look:** Helios on the phone now uses the new design (Inter, tonal panels, a live clock home, hold-to-confirm for power actions), matching the other Sonoma apps; the desktop is unchanged.
 - **Fix:** tapping Plugins on the phone's full-screen map no longer leaves the phone app stuck in the desktop layout.
 
