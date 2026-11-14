@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Fix, the phone app's page sat under the status bar:** on Android 15 and later the app is drawn edge to edge, and Helios's top row (including its "phone view" button) was hidden under the status bar. The page now keeps clear of the status bar, the navigation bar, a camera cutout and the keyboard.
+
 - **New app icon:** the Argus phone app uses the Sonoma icon (a blue ring around a dot), with a themed-icon layer.
 
 - **Phone view in the Sonoma look:** Helios on the phone now uses the new design (Inter, tonal panels, a live clock home, hold-to-confirm for power actions), matching the other Sonoma apps; the desktop is unchanged.
