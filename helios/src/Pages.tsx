@@ -3,7 +3,7 @@ import { api, ArgusEvent } from "./api";
 import { ApprovalCard } from "./Inspector";
 import { CallLog } from "./Calls";
 import { Empty, Skeleton } from "./kit";
-import { useSc } from "./sonoma";
+import { useSc } from "./m3";
 
 function ago(t: number) {
   const s = Date.now() / 1000 - t;

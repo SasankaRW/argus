@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, Job } from "./api";
 import { FixerPanel } from "./FixerPanel";
-import { HoldButton, Ms, SectI } from "./sonoma";
+import { HoldButton, Ms, SectI } from "./m3";
 import { ago, tone } from "./format";
 import type { Selection } from "./MapView";
 

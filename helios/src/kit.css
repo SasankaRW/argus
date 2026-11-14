@@ -18,7 +18,7 @@
 
 /* ---- loading and empty */
 .skel { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
-.skel-h, .skel-r { border-radius: 8px; background: linear-gradient(90deg, rgba(255, 255, 255, .04) 25%, rgba(255, 255, 255, .09) 50%, rgba(255, 255, 255, .04) 75%); background-size: 300% 100%; animation: shimmer 1.4s linear infinite; }
+.skel-h, .skel-r { border-radius: 8px; background: rgba(226, 226, 233, .07); animation: sn-pulse 1.4s ease-in-out infinite; }
 .skel-h { height: 20px; width: 34%; } .skel-r { height: 14px; }
 @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 .empty-state { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 40px 16px; color: var(--tx3); text-align: center; font: 12.5px var(--mono); }
@@ -33,7 +33,7 @@
 .fillp { display: flex; flex-direction: column; min-height: 0; }
 
 /* the toolbar every panel starts with (filters left, count right) */
-.toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-height: 50px; padding: 9px 14px; border-bottom: 1px solid var(--edge); background: linear-gradient(180deg, rgba(255, 255, 255, .025), transparent); }
+.toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-height: 50px; padding: 9px 14px; border-bottom: 1px solid var(--edge); background: var(--panel); }
 .toolbar .tools { margin-left: auto; display: flex; gap: 6px; }
 .tlabel { font: 600 11px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--tx2); display: inline-flex; align-items: center; gap: 8px; }
 .tlabel::before { content: ""; width: 6px; height: 6px; border-radius: 2px; background: var(--brand); box-shadow: 0 0 8px rgba(var(--ac-rgb), .7); }
@@ -42,7 +42,7 @@
 
 /* Runs: a table with a sticky head and a state bar on each row */
 .btn.more { margin: 8px 6px; }
-.skel-row { height: 30px; margin: 6px 8px; border-radius: 8px; background: linear-gradient(90deg, rgba(255, 255, 255, .03) 25%, rgba(255, 255, 255, .07) 50%, rgba(255, 255, 255, .03) 75%); background-size: 300% 100%; animation: shimmer 1.4s linear infinite; }
+.skel-row { height: 30px; margin: 6px 8px; border-radius: 8px; background: rgba(226, 226, 233, .06); animation: sn-pulse 1.4s ease-in-out infinite; }
 
 /* Queue: three lanes */
 .queuepage { display: flex; flex-direction: column; gap: 12px; }
@@ -61,7 +61,7 @@
 .qcard { position: relative; padding: 11px 12px 10px 14px; border-radius: 12px; border: 1px solid var(--edge); background: rgba(255, 255, 255, .02); display: flex; flex-direction: column; gap: 8px; transition: border-color .15s, background .15s, transform .15s; }
 .qcard::before { content: ""; position: absolute; left: 0; top: 12px; bottom: 12px; width: 2px; border-radius: 2px; background: var(--c); opacity: .7; }
 .qcard:hover { border-color: var(--edge-hi); background: rgba(255, 255, 255, .035); transform: translateY(-1px); }
-.qcard.on::after { content: ""; position: absolute; left: 14px; right: 14px; bottom: 0; height: 1px; background: linear-gradient(90deg, transparent, var(--ac), transparent); background-size: 50% 100%; background-repeat: no-repeat; animation: stream 2.4s linear infinite; }
+
 .qcard .qmain { gap: 3px; }
 .qcard .qmain .w { font-size: 13px; }
 .qcard .qmain .sub { white-space: normal; line-height: 1.45; }
@@ -75,10 +75,10 @@
 .sharegrid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(300px, 1fr); gap: 16px; align-items: start; }
 .sharegrid .share-body { padding: 16px; gap: 12px; }
 .dropzone { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 26px 16px; border-radius: 14px; border: 1px dashed rgba(var(--ac-rgb), .35);
-  background: radial-gradient(400px 120px at 50% 0, rgba(var(--ac-rgb), .07), transparent), rgba(0, 0, 0, .25); color: var(--tx3); font: 12px var(--mono); cursor: pointer; transition: border-color .15s, background .15s; }
+  background: var(--s1); color: var(--tx3); font: 12px var(--mono); cursor: pointer; transition: border-color .15s, background .15s; }
 .dropzone svg { color: var(--ac); margin-bottom: 4px; }
 .dropzone b { color: var(--tx); font: 500 13px var(--sans); }
-.dropzone:hover, .dropzone.over { border-color: var(--ac); background: radial-gradient(400px 140px at 50% 0, rgba(var(--ac-rgb), .14), transparent), rgba(0, 0, 0, .25); }
+.dropzone:hover, .dropzone.over { border-color: var(--ac); background: var(--c-sec); }
 .sharegrid .fld { grid-template-columns: 64px minmax(0, 1fr); }
 .sharegrid .sitem { border-color: var(--edge); background: rgba(0, 0, 0, .25); border-radius: 12px; }
 .sendto { position: sticky; top: 0; }

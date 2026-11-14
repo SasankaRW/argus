@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, getToken } from "./api";
-import { HoldButton } from "./sonoma";
+import { HoldButton } from "./m3";
 
 type Rules = { label: string; file: string; text: string; default: string; custom: boolean; learned: Record<string, string> | null };
 

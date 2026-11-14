@@ -21,8 +21,8 @@ npm run build      # writes core/argus/helios_dist (commit that folder)
 
 or `.\scripts\dev.ps1 helios` from the repo root to rebuild.
 
-The phone view (narrow screens) uses the Sonoma look (`src/sonoma.css`, every rule under `.phone2`) with Inter and
-Material Symbols Rounded icons. The icon font is cut to the names in `src/icons.ts`: after adding one, run
+Helios (phone and desktop) is in Material 3 Expressive (design/material3: `src/m3.css`, shared by `.phone2` and `.shell`, and
+`src/m3-desktop.css`) with Roboto Flex, Roboto Mono and Material Symbols Rounded icons. The icon font is cut to the names in `src/icons.ts`: after adding one, run
 `pip install fonttools brotli` once, then `python scripts/icons.py` here.
 
 Token: if `ARGUS_WORKER_TOKEN` is set, Helios asks for it once and keeps it in the browser. A proper
