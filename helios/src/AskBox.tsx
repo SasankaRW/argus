@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { api, Job } from "./api";
 import type { Selection } from "./MapView";
+import { HoldButton, Ms } from "./sonoma";
 
 type Answer = { reply: string; action: string | null; label?: string | null; via: string; tier?: string };
 
+// Actions that change the PC's state are confirmed by holding a button, not a dialog.
 const CONFIRM: Record<string, string> = {
-  "power:shutdown": "Shut the PC down?", "power:restart": "Restart the PC?", "power:sleep": "Put the PC to sleep?",
+  "power:shutdown": "Shut the PC down", "power:restart": "Restart the PC", "power:sleep": "Put the PC to sleep",
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -50,7 +52,6 @@ export function AskBox({ onSelect, onView, big = false }: { onSelect: (s: Select
   };
 
   const doIt = async (action: string) => {
-    if (CONFIRM[action] && !window.confirm(CONFIRM[action])) return;
     setBusy(true); setErr(null);
     try {
       const r = await api<{ view?: string; job_id?: string; power?: { id?: string } }>("/ask/do", { method: "POST", body: JSON.stringify({ action }) });
@@ -75,12 +76,12 @@ export function AskBox({ onSelect, onView, big = false }: { onSelect: (s: Select
   return (
     <div className={`ask${big ? " big" : ""}`}>
       <form onSubmit={(e) => { e.preventDefault(); ask(text); }}>
-        {!big && <span className="prompt" aria-hidden="true">›</span>}
-        <input ref={input} value={text} onChange={(e) => setText(e.target.value)} placeholder={big ? "Ask Argus…" : "ask argus…"}
+        {!big && <Ms n="search" size={18} />}
+        <input ref={input} value={text} onChange={(e) => setText(e.target.value)} placeholder={big ? "Ask Argus…" : "Ask Argus, or jump to a page"}
           aria-label="Ask Argus" enterKeyHint="send" />
         {!big && <kbd className="hide-sm">ctrl k</kbd>}
         {Speech && <button type="button" className={`mic${listening ? " on" : ""}`} onClick={listen} aria-label="Speak">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></svg>
+          <Ms n="mic" fill size={18} />
         </button>}
       </form>
       {(busy || ans || err) && (
@@ -91,7 +92,9 @@ export function AskBox({ onSelect, onView, big = false }: { onSelect: (s: Select
             <>
               <p>{ans.reply}</p>
               <div className="ask-acts">
-                {ans.action && <button type="button" className="btn primary-btn" disabled={busy} onClick={() => doIt(ans.action!)}>
+                {ans.action && CONFIRM[ans.action]
+                  ? <HoldButton icon="power_settings_new" label={CONFIRM[ans.action]} caption={`Hold: ${CONFIRM[ans.action].toLowerCase()}`} disabled={busy} onConfirm={() => doIt(ans.action!)} />
+                  : ans.action && <button type="button" className="btn primary-btn" disabled={busy} onClick={() => doIt(ans.action!)}>
                   {ans.action.startsWith("show:") ? (ans.label ?? "Open") : `Do it: ${ans.label ?? ans.action}`}</button>}
                 <button type="button" className="btn" onClick={() => { setAns(null); setErr(null); }}>Close</button>
                 <span className="muted via">{ans.via === "rules" ? "instant" : `answered by ${ans.tier ?? "a model"}`}</span>

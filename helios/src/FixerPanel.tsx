@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type ArgusEvent, type Job } from "./api";
-import { HoldButton, useIsPhone } from "./sonoma";
+import { HoldButton } from "./sonoma";
 
 // The Ticket fixer's "Fixes" tab: where each ticket is, and the buttons that start a plan or approve a fix.
 // Everything goes through the plugin's own workflows (status, queue, approve), so Helios and Ari do the same thing.
@@ -143,9 +143,7 @@ export function FixerPanel() {
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  const phone = useIsPhone();
-  const go = async (workflow: "queue" | "approve" | "terminal", k: string, ask: string, held = false) => {  // held: phone hold
-    if (ask && !held && !window.confirm(`${k}: ${ask}`)) return;
+  const go = async (workflow: "queue" | "approve" | "terminal", k: string, ask: string) => {  // `ask`: what a hold confirms
     setBusy(true); setMsg(null);
     const input: Record<string, string> = { key: k };
     if (planModel && workflow === "queue") input.plan_model = planModel;
@@ -205,9 +203,9 @@ export function FixerPanel() {
               <span className="fx-title">{r.title}</span>
               <span className="fx-stage">{r.stage}</span>
               <span className="fx-act">
-                {actions(r.stage).map((a) => (phone && a.ask
+                {actions(r.stage).map((a) => (a.ask
                   ? <HoldButton key={a.workflow} tone="accent" icon="play_arrow" label={a.label} caption={`Hold: ${a.label.toLowerCase()}`} disabled={busy}
-                      onConfirm={() => go(a.workflow, r.key, a.ask, true)} onTap={() => setMsg({ ok: true, text: `${r.key}: hold to confirm. ${a.ask}` })} />
+                      onConfirm={() => go(a.workflow, r.key, a.ask)} onTap={() => setMsg({ ok: true, text: `${r.key}: hold to confirm. ${a.ask}` })} />
                   : <button key={a.workflow} type="button" className="btn" disabled={busy} onClick={() => go(a.workflow, r.key, a.ask)}>{a.label}</button>
                 ))}
               </span>

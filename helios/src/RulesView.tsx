@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, getToken } from "./api";
+import { HoldButton } from "./sonoma";
 
 type Rules = { label: string; file: string; text: string; default: string; custom: boolean; learned: Record<string, string> | null };
 
@@ -32,7 +33,6 @@ export function RulesView({ plugin, onBack }: { plugin: string; onBack: () => vo
   };
 
   const reset = async () => {
-    if (!confirmReset()) return;
     setBusy(true); setErr(null);
     try { await api(`/plugins/${encodeURIComponent(plugin)}/rules`, { method: "DELETE" }); await load(); setMsg(`Back to ${r?.file}.`); }
     catch (e) { setErr(String(e)); } finally { setBusy(false); }
@@ -56,7 +56,8 @@ export function RulesView({ plugin, onBack }: { plugin: string; onBack: () => vo
         {r && <span className={`pill ${r.custom ? "warn" : ""}`}>{r.custom ? "edited in Helios" : `default (${r.file})`}</span>}
         <div className="tools">
           <button type="button" className="btn" disabled={busy || !dirty} onClick={() => r && setText(r.text)}>Discard changes</button>
-          <button type="button" className="btn" disabled={busy || !r?.custom} onClick={reset}>Reset to default</button>
+          <HoldButton icon="restart_alt" label="Reset to default" caption="Hold to reset to default" disabled={busy || !r?.custom} onConfirm={reset}
+            onTap={() => setMsg("Hold to throw away your edits and use the default rules again.")} />
           <button type="button" className="btn primary-btn" disabled={busy || !dirty} onClick={save}>Save</button>
         </div>
       </div>
@@ -102,7 +103,4 @@ export function RulesView({ plugin, onBack }: { plugin: string; onBack: () => vo
   );
 }
 
-function confirmReset(): boolean {
-  // eslint-disable-next-line no-alert
-  return window.confirm("Throw away your edits and use the default rules again?");
-}
+

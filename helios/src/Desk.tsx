@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ArgusEvent, Status } from "./api";
-import { MiniLog, Tile, useHomeData } from "./Phone";
+import { MiniLog, Pane, useHomeData } from "./Phone";
+import { IconTile, Logo, Ms } from "./sonoma";
 
 // The PC's home screen has two layouts, switched in the header and remembered per browser:
-//   desk    - the live map as the main focus, terminal tiles in a column beside it (Phone.tsx's tiles)
-//   command - the map fills the screen, small floating cards, one command bar at the bottom
+//   desk    - the live map as the main focus, panels beside it (SonomaDesk.tsx)
+//   command - the map fills the screen, small floating panels, one command bar at the bottom
 
 export type Layout = "desk" | "command";
 
@@ -18,10 +19,10 @@ export function saveLayout(l: Layout) {
 
 export function LayoutSwitch({ layout, onChange }: { layout: Layout; onChange: (l: Layout) => void }) {
   return (
-    <span className="lay-switch mono" role="group" aria-label="Layout">
+    <span className="seg-f lay-switch" role="group" aria-label="Layout">
       {(["desk", "command"] as const).map((l) => (
-        <button key={l} type="button" aria-pressed={layout === l} onClick={() => onChange(l)}
-          title={l === "desk" ? "Map with tiles beside it" : "Full-screen map with a command bar"}>{l}</button>
+        <button key={l} type="button" className="btn" aria-pressed={layout === l} onClick={() => onChange(l)}
+          title={l === "desk" ? "Map with panels beside it" : "Full-screen map with a command bar"}>{l === "desk" ? "Desk" : "Command"}</button>
       ))}
     </span>
   );
@@ -73,47 +74,48 @@ export function CommandLayer({ status, events, live, onView, onAsk, onInbox, onL
   return (
     <>
       <header className="cmd-top">
-        <span className="who mono"><span className="tg">sas@argus</span><span className="dim">:~$</span> map</span>
+        <span className="cmd-id sn-pane"><Logo size={22} /><span className="who">Argus</span></span>
         <span className="cmd-tools">{tools}</span>
         <LayoutSwitch layout="command" onChange={onLayout} />
-        <span className={`badge mono ${ok ? "ok" : "warn"}`}><i />{ok ? "ONLINE" : live ? "DEGRADED" : "OFFLINE"}</span>
+        <span className="badge sn-pane"><span className={`sn-dot ${ok ? "d-green" : live ? "d-amber" : "d-coral"}`} />{ok ? "Online" : live ? "Needs a look" : "Offline"}</span>
       </header>
 
       <div className="cmd-col left">
         {first && (
-          <Tile path={`! awaiting input${d.pending.length > 1 ? ` · ${d.pending.length}` : ""}`} dot="var(--amber)" alert>
-            <div className="await-t"><b>{first.title}</b><span>{first.plugin}</span></div>
-            <div className="cmd-yn">
-              <button type="button" className="k-yes" disabled={busy} onClick={() => decide(first.id, "approve")}>[Y] ok</button>
-              <button type="button" className="k-no" disabled={busy} onClick={() => decide(first.id, "reject")}>[n]</button>
-              {d.pending.length > 1 && <button type="button" className="tt-link" onClick={onInbox}>all ›</button>}
+          <Pane label="Waiting for you" className="sn-waiting" meta={<button type="button" className="sn-link" onClick={onInbox}>{d.pending.length > 1 ? `All ${d.pending.length}` : "Open"}</button>}>
+            <div className="sn-row">
+              <IconTile n="folder_open" tone="amber" />
+              <div className="sn-row-t"><b>{first.title}</b><span>{first.plugin}</span></div>
             </div>
-          </Tile>
+            <div className="sn-acts">
+              <button type="button" className="sn-btn primary" disabled={busy} onClick={() => decide(first.id, "approve")}><Ms n="check" />Approve</button>
+              <button type="button" className="sn-btn quiet" disabled={busy} onClick={() => decide(first.id, "reject")}>Reject</button>
+            </div>
+          </Pane>
         )}
-        <Tile path="~/today" dot="var(--tg)" onOpen={() => onView("runs")}>
-          <div className="big ok">{d.today}</div>
-          <div className="sub">jobs · {d.ok} ok{d.failed ? ` · ${d.failed} failed` : ""}{d.running.length ? ` · ${d.running.length} run` : ""}</div>
-        </Tile>
+        <button type="button" className="sn-pane sn-tap" aria-label={`Today: ${d.today} jobs ran. Open runs`} onClick={() => onView("runs")}>
+          <span className="sn-pane-h"><IconTile n="bolt" tone="blue" /><span className="sn-lbl">Today</span></span>
+          <span className="sn-big">{d.today}</span>
+          <span className="sn-sub">{d.today === 1 ? "job ran" : "jobs ran"}{d.failed ? <> · <span className="c-coral">{d.failed} failed</span></> : null}{d.running.length ? ` · ${d.running.length} running` : ""}</span>
+        </button>
       </div>
 
       <div className="cmd-col right">
-        <Tile path="~/logs" dot="var(--flow)" onOpen={() => onView("logs")}>
-          <MiniLog />
-        </Tile>
+        <Pane label="Logs" icon="receipt_long" meta={<button type="button" className="sn-link" onClick={() => onView("logs")}>Open</button>}>
+          <MiniLog n={12} empty="No logs yet" />
+        </Pane>
       </div>
 
       <form className="cmd-bar" onSubmit={(e) => { e.preventDefault(); run(q); }}>
         <div className="cmd-chips">
-          {suggest.map((p) => <button key={p} type="button" className="chip" onClick={() => onView(p)}>/{p}</button>)}
+          {suggest.map((p) => <button key={p} type="button" className="chip" onClick={() => onView(p)}>{p}</button>)}
         </div>
-        <div className="cmd-in">
-          <span className="caret">›</span>
-          <input ref={input} value={q} onChange={(e) => setQ(e.target.value)} placeholder="ask ari, or / for a page…" aria-label="Ask Ari or open a page" />
-          <kbd>ctrl k</kbd>
-          <button type="button" className="prompt-mic" aria-label="Talk to Ari"
-            onClick={() => { try { sessionStorage.setItem("ari.mic", "1"); } catch { /* private */ } onView("ari"); }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></svg>
-          </button>
+        <div className="cmd-in sn-pane">
+          <Ms n="search" size={20} />
+          <input ref={input} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ask Ari, or type / for a page" aria-label="Ask Ari or open a page" />
+          <kbd>Ctrl K</kbd>
+          <button type="button" className="sn-iconbtn accent breathe" aria-label="Talk to Ari"
+            onClick={() => { try { sessionStorage.setItem("ari.mic", "1"); } catch { /* private */ } onView("ari"); }}><Ms n="mic" fill /></button>
         </div>
       </form>
     </>

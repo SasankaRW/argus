@@ -1,5 +1,6 @@
 // Ctrl+K: jump to any page or run an action from the keyboard.
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Ms } from "./sonoma";
 
 export type PaletteItem = { id: string; label: string; hint?: string; group: string; run: () => void };
 
@@ -36,9 +37,9 @@ export function Palette({ items, open, onClose }: { items: PaletteItem[]; open: 
           else if (e.key === "ArrowUp") { e.preventDefault(); setI((v) => Math.max(0, v - 1)); }
           else if (e.key === "Enter") { e.preventDefault(); run(shown[i]); }
         }}>
-        <div className="pal-in"><span className="prompt">&gt;</span>
+        <div className="pal-in"><Ms n="search" size={20} />
           <input ref={ref} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Go to a page or run an action" aria-label="Command" />
-          <kbd>esc</kbd>
+          <kbd>Esc</kbd>
         </div>
         <div className="pal-list" ref={list} role="listbox">
           {shown.length === 0 && <div className="pal-none">Nothing matches “{q}”.</div>}

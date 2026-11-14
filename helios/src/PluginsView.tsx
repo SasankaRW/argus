@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, Job } from "./api";
 import { FixerPanel } from "./FixerPanel";
-import { HoldButton, Ms, SectI, useIsPhone } from "./sonoma";
+import { HoldButton, Ms, SectI } from "./sonoma";
 import { ago, tone } from "./format";
 import type { Selection } from "./MapView";
 
@@ -100,8 +100,7 @@ function PluginDetail({ id, onSelect, onChanged }: { id: string; onSelect: (s: S
   const [tab, setTab] = useState<Tab>("Overview");
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const phone = useIsPhone();
-  const [armLive, setArmLive] = useState(false);  // phone: "Live" tapped, waiting for the hold
+  const [armLive, setArmLive] = useState(false);  // "Live" tapped, waiting for the hold
   const load = useCallback(() => api<Detail>(`/plugins/${id}`).then(setD).catch((e) => setErr(String(e))), [id]);
   useEffect(() => { setD(null); setMsg(null); setErr(null); setTab("Overview"); setArmLive(false); load(); }, [id, load]);
   if (!d) return err ? <div className="tip bad">{err}</div> : <div className="tip">Loading…</div>;
@@ -113,8 +112,7 @@ function PluginDetail({ id, onSelect, onChanged }: { id: string; onSelect: (s: S
       setMsg(`${label}: started.`); onSelect({ type: "job", id: r.id });
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
   };
-  const setLive = async (live: boolean | null, held = false) => {  // held: confirmed by holding the button (phone)
-    if (live && !held && !window.confirm(`Let ${d.name} really change things? (Dry-run only shows what it would do.)`)) return;
+  const setLive = async (live: boolean | null) => {
     try {
       await api(`/plugins/${id}/settings`, { method: "PUT", body: JSON.stringify({ live }) });
       await load(); onChanged(); setMsg(live ? "Live: it changes things from the next job on." : "Dry-run: it only shows what it would do.");
@@ -132,14 +130,14 @@ function PluginDetail({ id, onSelect, onChanged }: { id: string; onSelect: (s: S
         <p className="pd-desc">{d.description}</p>
         <div className="pd-mode" role="group" aria-label="Mode">
           <button type="button" className={`seg ${!d.live ? "on" : ""}`} onClick={() => d.live && setLive(false)}>Dry-run</button>
-          <button type="button" className={`seg ${d.live ? "on" : ""}`} onClick={() => !d.live && (phone ? setArmLive(true) : setLive(true))}>Live</button>
+          <button type="button" className={`seg ${d.live ? "on" : ""}`} onClick={() => !d.live && setArmLive(true)}>Live</button>
           {d.live_from === "you" && <button type="button" className="linkbtn" onClick={() => setLive(null)} title="Back to plugins.live in argus.yaml">use argus.yaml</button>}
           <span className="grow" />
           {d.saved.seconds > 0 && <span className="pd-saved">saved you <b>{mins(d.saved.seconds)}</b> this week</span>}
         </div>
-        {phone && armLive && !d.live && (
+        {armLive && !d.live && (
           <div className="sn-arm">
-            <HoldButton tone="accent" icon="check" label="Go live" onConfirm={() => { setArmLive(false); setLive(true, true); }} />
+            <HoldButton tone="accent" icon="check" label="Go live" onConfirm={() => { setArmLive(false); setLive(true); }} />
             <span>Hold to let {d.name} really change things. Dry-run only shows what it would do.</span>
             <button type="button" className="sn-btn quiet" onClick={() => setArmLive(false)}>Not now</button>
           </div>
@@ -264,10 +262,7 @@ function Learning({ d, reload }: { d: Detail; reload: () => void }) {
     setMsg(r?.job_id ? "Review started: new lessons will wait for your OK (here and on the phone)." : r?.note ?? "Could not start.");
   };
   const decide = async (l: Lesson, approve: boolean) => { await api(`/lessons/${l.id}/decide`, { method: "POST", body: JSON.stringify({ approve }) }).catch(() => {}); reload(); };
-  const phone = useIsPhone();
-  const drop = async (l: Lesson, held = false) => {  // held: confirmed by holding the button (phone)
-    if (held || window.confirm("Stop using these lessons?")) { await api(`/lessons/${l.id}`, { method: "DELETE" }).catch(() => {}); reload(); }
-  };
+  const drop = async (l: Lesson) => { await api(`/lessons/${l.id}`, { method: "DELETE" }).catch(() => {}); reload(); };
   const score = (s?: Score | null) => (s ? `${s.passed}/${s.total}` : "—");
   if (d.learning.length === 0) {
     return <p className="muted">This plugin hasn't asked a model anything yet. After it has, mark answers Correct or Wrong on its runs, and the nightly review turns mistakes into lessons for you to approve.</p>;
@@ -296,8 +291,7 @@ function Learning({ d, reload }: { d: Detail; reload: () => void }) {
                 {l.state === "proposed" ? (<>
                   <button type="button" className="btn" onClick={() => decide(l, false)}>Reject</button>
                   <button type="button" className="primary" onClick={() => decide(l, true)}>Use these</button>
-                </>) : phone ? <HoldButton icon="delete" label="Stop using" caption="Hold to stop using" onConfirm={() => drop(l, true)} />
-                  : <button type="button" className="btn" onClick={() => drop(l)}>Stop using</button>}
+                </>) : <HoldButton icon="delete" label="Stop using" caption="Hold to stop using" onConfirm={() => drop(l)} />}
               </div>
             </div>
           ))}

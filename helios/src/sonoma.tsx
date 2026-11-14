@@ -1,6 +1,6 @@
 // The phone view's Sonoma pieces: an icon (Material Symbols Rounded, cut to src/icons.ts), the hold-to-confirm
-// button, and a context that tells shared pages they are on the phone. The desktop never sets the context, so
-// shared pages keep their desktop behaviour there. Styles: sonoma-phone.css (all under .phone2).
+// button, and a context that tells shared pages they are on the phone (layout only: the desktop is Sonoma
+// too, so labels, holds and icons are the same). Styles: sonoma.css (shared by the phone and the desktop).
 import { createContext, KeyboardEvent, ReactNode, useContext, useEffect, useRef, useState } from "react";
 import type { IconName } from "./icons";
 
@@ -9,22 +9,19 @@ export const useIsPhone = () => useContext(PhoneCtx);
 
 // Sentence case, as the other Sonoma apps write it: a capital first letter, and Ari's name capitalised.
 export const sentence = (s: string) => s.replace(/\bari\b/g, "Ari").replace(/^[a-z]/, (c) => c.toUpperCase());
-// The desktop keeps its lower-case terminal voice; the phone writes labels, placeholders and hints in sentence case.
+// Labels, placeholders and hints are written in sentence case, on the phone and the desktop alike.
 export function useSc() {
-  const phone = useIsPhone();
-  return phone ? sentence : (s: string) => s;
+  return sentence;
 }
 
-// A panel title. The desktop's titles read like paths ("ari/settings"); the phone drops the path part.
+// A panel title. Some are written like paths ("ari/settings"); the path part is dropped.
 export function Pt({ children }: { children: string }) {
-  const phone = useIsPhone();
-  return <span className="pt">{phone ? children.replace(/^ari\//, "") : children}</span>;
+  return <span className="pt">{children.replace(/^ari\//, "")}</span>;
 }
 
-// A small heading the desktop writes like a comment ("# tests"); the phone drops the "# ".
+// A small heading some pages write like a comment ("# tests"); the "# " is dropped.
 export function SectI({ children }: { children: string }) {
-  const phone = useIsPhone();
-  return <span className="sect-i">{phone ? children.replace(/^# /, "") : children}</span>;
+  return <span className="sect-i">{children.replace(/^# /, "")}</span>;
 }
 
 export function Ms({ n, fill = false, size }: { n: IconName; fill?: boolean; size?: number }) {
@@ -92,5 +89,15 @@ export function HoldButton({ icon, label, caption, onConfirm, onTap, disabled = 
       {hint ? <span className="sn-holdcap hint" role="status">Hold to {label.toLowerCase()}</span>
         : caption !== undefined && <span className="sn-holdcap">{caption}</span>}
     </span>
+  );
+}
+
+// The Argus mark: a ring around a dot, in the accent (the app icon is the same).
+export function Logo({ size = 22 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true" className="logo">
+      <circle cx="16" cy="16" r="13" stroke="var(--ac)" strokeWidth="2.4" />
+      <circle cx="16" cy="16" r="4.6" fill="var(--ac)" />
+    </svg>
   );
 }

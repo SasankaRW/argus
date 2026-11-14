@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Helios desktop:** now in the Sonoma look like the phone view: Inter and Material icons, a calm summary home, a floating rail, and hold-to-confirm instead of dialogs.
+
 - **Ari's island** has the Sonoma look: Inter, Material Symbols icons, the green/blue/amber/coral tones, and a new type box and question box.
 
 - **Fix, the phone app's page sat under the status bar:** on Android 15 and later the app is drawn edge to edge, and Helios's top row (including its "phone view" button) was hidden under the status bar. The page now keeps clear of the status bar, the navigation bar, a camera cutout and the keyboard.

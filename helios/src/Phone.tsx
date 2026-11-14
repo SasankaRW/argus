@@ -5,25 +5,11 @@ import type { IconName } from "./icons";
 import { IconTile, Ms, Tone } from "./sonoma";
 
 // Helios on the phone, in the Sonoma look (design/sonoma/SPEC.md): plain panels on #0b0b0e, Inter, tonal icon tiles,
-// a floating pill tab bar at the thumb. The desktop's "at a glance" tiles (Tile, PhoneHome below) keep their own
-// look until the desktop is redesigned; the phone uses SonomaHome.
+// a floating pill tab bar at the thumb. The desktop's home (SonomaDesk.tsx) reuses Pane, Sparkline, useHomeData
+// and statusLine from here.
 
 export const PHONE_TABS = ["home", "ari", "plug", "map", "more"] as const;
 export type PhoneTab = (typeof PHONE_TABS)[number];
-
-export function Tile({ path, dot = "var(--ok)", span = false, alert = false, children, onOpen }: {
-  path: string; dot?: string; span?: boolean; alert?: boolean; children: ReactNode; onOpen?: () => void;
-}) {
-  return (
-    <section className={`tt${span ? " span" : ""}${alert ? " alert" : ""}`}>
-      <header className="tt-h">
-        <i style={{ background: dot, boxShadow: `0 0 8px ${dot}` }} />
-        {onOpen ? <button type="button" className="tt-open" onClick={onOpen}>{path} <span aria-hidden="true">›</span></button> : <span>{path}</span>}
-      </header>
-      <div className="tt-b">{children}</div>
-    </section>
-  );
-}
 
 type LogLine = { source: string; ts: string | null; level: string; msg: string };
 
@@ -72,11 +58,6 @@ export function MiniLog({ n = 40, empty = "no logs yet" }: { n?: number; empty?:
   );
 }
 
-export function Meter({ value, n = 10, color = "var(--ok)" }: { value: number; n?: number; color?: string }) {
-  const f = Math.max(0, Math.min(n, Math.round(value * n)));
-  return <span className="meter" aria-hidden="true"><span style={{ color }}>{"▮".repeat(f)}</span><span className="off">{"▮".repeat(n - f)}</span></span>;
-}
-
 function startOfDay() { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime() / 1000; }
 
 // What the home screen shows, refreshed whenever a job or approval changes.
@@ -107,88 +88,6 @@ export function useHomeData(events: ArgusEvent[]) {
     queued: jobs.filter((j) => j.state === "queued" || j.state === "retry").length,
     pending, lastAri, reload: () => api<Approval[]>("/approvals?state=pending").then(setPending).catch(() => {}),
   };
-}
-
-export function PhoneHome({ status, events, onSelect, onAri, onOpen, onInbox, onAsk }: {
-  status: Status | null; events: ArgusEvent[]; onSelect: (s: { type: "job"; id: string }) => void;
-  onAri: (mic: boolean) => void; onOpen: (view: string) => void; onInbox: () => void;
-  onAsk?: (text: string) => void;  // the desktop: type right in the tile
-}) {
-  const [q, setQ] = useState("");
-  const d = useHomeData(events);
-  const [busy, setBusy] = useState<string | null>(null);
-  const online = status?.workers.filter((w) => w.state === "online") ?? [];
-  const machines = new Set(online.map((w) => w.host)).size;  // a worker's fast lane and session worker are the same PC
-  const first = d.pending[0];
-  const decide = async (id: string, answer: "approve" | "reject") => {
-    setBusy(id);
-    try { await api(`/approvals/${id}/decide`, { method: "POST", body: JSON.stringify({ answer, by: "phone" }) }); await d.reload(); }
-    finally { setBusy(null); }
-  };
-  return (
-    <div className="tgrid">
-      <Tile path="~/ari" dot="var(--amber)" span>
-        <p className="ari-last">› {d.lastAri ?? "hi, I'm Ari. Ask me anything, or tell me what to do."}</p>
-        <div className="tprompt">
-          {onAsk ? (
-            <form className="prompt-in" onSubmit={(e) => { e.preventDefault(); if (q.trim()) { onAsk(q.trim()); setQ(""); } }}>
-              <span className="caret">›</span>
-              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ask ari anything…" aria-label="Ask Ari" />
-            </form>
-          ) : (
-            <button type="button" className="prompt-in" onClick={() => onAri(false)}>
-              <span className="caret">›</span><span className="tph">ask ari…</span><span className="cur" aria-hidden="true" />
-            </button>
-          )}
-          <button type="button" className="prompt-mic" aria-label="Talk to Ari" onClick={() => onAri(true)}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></svg>
-          </button>
-        </div>
-      </Tile>
-
-      {first && (
-        <Tile path="! awaiting input" dot="var(--amber)" span alert>
-          <div className="await">
-            <div className="await-t">
-              <b>{first.title}</b>
-              <span>{first.plugin}{d.pending.length > 1 ? ` · +${d.pending.length - 1} more` : ""}</span>
-            </div>
-            <button type="button" className="k-yes" disabled={busy === first.id} onClick={() => decide(first.id, "approve")}>[Y] ok</button>
-            <button type="button" className="k-no" disabled={busy === first.id} onClick={() => decide(first.id, "reject")}>[n]</button>
-          </div>
-          <button type="button" className="tt-link" onClick={onInbox}>details{d.pending.length > 1 ? " · all waiting" : ""} ›</button>
-        </Tile>
-      )}
-
-      <Tile path="~/jobs" dot="var(--ok)" onOpen={() => onOpen("runs")}>
-        <div className="big ok">{d.today}</div>
-        <div className="sub">today · {d.ok} ok{d.failed ? ` · ${d.failed} failed` : ""}{d.running.length ? ` · ${d.running.length} run` : ""}</div>
-        <Meter value={d.today ? d.ok / d.today : 0} />
-      </Tile>
-
-
-      {d.running.length > 0 && (
-        <Tile path="~/running" dot="var(--flow)" span>
-          {d.running.slice(0, 3).map((j) => (
-            <button key={j.id} type="button" className="run-row" onClick={() => onSelect({ type: "job", id: j.id })}>
-              <span className="flow">●</span><span className="run-name">{j.plugin} · {j.workflow}</span>
-              <span className="run-bar stripe" aria-hidden="true" />
-            </button>
-          ))}
-        </Tile>
-      )}
-
-      <Tile path="~/pc" dot={online.length ? "var(--ok)" : "var(--bad)"} onOpen={() => onOpen("power")}>
-        <div className="tmid">{online.length ? "online" : "offline"}</div>
-        <div className="sub">{machines} machine{machines === 1 ? "" : "s"}</div>
-        <div className="sub">queue <Meter value={Math.min(1, d.queued / 10)} n={6} color="var(--amber)" /> {d.queued}</div>
-      </Tile>
-
-      <Tile path="~/logs" dot="var(--flow)" span onOpen={() => onOpen("logs")}>
-        <MiniLog />
-      </Tile>
-    </div>
-  );
 }
 
 // ---------------------------------------------------------------- the phone (Sonoma)
@@ -242,7 +141,7 @@ export function PhoneHeader({ status, live, title, down = false }: { status: Sta
 }
 
 // Today's jobs per hour as a line that draws itself in.
-function Sparkline({ data }: { data: number[] }) {
+export function Sparkline({ data }: { data: number[] }) {
   const pts = data.length > 1 ? data.slice(-9) : [0, ...data];
   const max = Math.max(1, ...pts);
   const step = 144 / (pts.length - 1);
@@ -257,7 +156,7 @@ function Sparkline({ data }: { data: number[] }) {
   );
 }
 
-function Pane({ label, icon, tone, meta, children, className = "" }: {
+export function Pane({ label, icon, tone, meta, children, className = "" }: {
   label: string; icon?: IconName; tone?: Tone; meta?: ReactNode; children?: ReactNode; className?: string;
 }) {
   return (
