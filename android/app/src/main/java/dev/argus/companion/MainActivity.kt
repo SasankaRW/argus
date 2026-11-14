@@ -16,6 +16,9 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.text.InputType
 import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
+import android.view.WindowInsets
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.webkit.PermissionRequest
@@ -27,6 +30,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -125,7 +129,29 @@ class MainActivity : Activity() {
                 startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(target)))
             w.url == null -> w.loadUrl("${prefs.url}/helios/?app=1&token=${Uri.encode(prefs.token)}")
         }
-        setContentView(w)
+        setContentView(framed(w))
+    }
+
+    // Android 15+ draws every app edge to edge: keep the page clear of the status bar, the navigation bar, a camera
+    // cutout and the keyboard, so nothing at the top (Helios's "phone view" button) ends up under the status bar.
+    private fun framed(content: View): FrameLayout {
+        (content.parent as? ViewGroup)?.removeView(content)  // the WebView is kept between visits
+        return FrameLayout(this).apply {
+            setBackgroundColor(bg)
+            addView(content, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+            setOnApplyWindowInsetsListener { v, insets ->
+                if (Build.VERSION.SDK_INT >= 30) {
+                    val b = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout() or
+                        WindowInsets.Type.ime())
+                    v.setPadding(b.left, b.top, b.right, b.bottom)
+                } else {
+                    @Suppress("DEPRECATION")
+                    v.setPadding(insets.systemWindowInsetLeft, insets.systemWindowInsetTop,
+                        insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
+                }
+                insets
+            }
+        }
     }
 
     private fun problem(view: WebView, title: String, why: String) {
@@ -238,7 +264,7 @@ class MainActivity : Activity() {
             WorkerService.start(this)  // notifications keep coming either way
             setup()
         })
-        setContentView(ScrollView(this).apply { setBackgroundColor(bg); addView(col) })
+        setContentView(framed(ScrollView(this).apply { setBackgroundColor(bg); addView(col) }))
     }
 
     override fun onResume() {
