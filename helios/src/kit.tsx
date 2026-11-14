@@ -2,24 +2,27 @@
 // so the pages read as one product. Styles live in kit.css.
 import { Component, ErrorInfo, ReactNode, useEffect, useRef, useState } from "react";
 import { Status } from "./api";
+import { IconTile } from "./sonoma";
+import type { Tone } from "./sonoma";
+import type { IconName } from "./icons";
 
-export type PageMeta = { title: string; sub: string; tag: string };
+export type PageMeta = { title: string; sub: string };
 
-// One line of identity per page: the eyebrow (tag), the title and what the page is for.
+// One line of identity per page: the title and what the page is for.
 export const PAGES: Record<string, PageMeta> = {
-  inbox: { tag: "waiting", title: "Inbox", sub: "Things Argus needs from you: approvals, questions and results." },
-  notifications: { tag: "signals", title: "Notifications", sub: "What Argus told you and when." },
-  ari: { tag: "assistant", title: "Ari", sub: "Talk to Ari, review chats and scheduled things." },
-  plugins: { tag: "modules", title: "Plugins", sub: "Every capability, its mode and its rules." },
-  queue: { tag: "pipeline", title: "Queue", sub: "What is running now and what is next." },
-  runs: { tag: "history", title: "Runs", sub: "Every job, step by step." },
-  share: { tag: "send", title: "Share", sub: "Send a file, a link or a note to a device." },
-  power: { tag: "hardware", title: "Power", sub: "Wake, sleep and find your machines." },
-  models: { tag: "intelligence", title: "Models", sub: "Local models, Claude usage and levels." },
-  settings: { tag: "control", title: "Settings", sub: "Tune Argus without touching files." },
-  logs: { tag: "trace", title: "Logs", sub: "The raw log, searchable and live." },
-  voice: { tag: "voice", title: "Voice", sub: "Train how Ari hears you." },
-  rules: { tag: "modules", title: "Rules", sub: "Edit a plugin's rules." },
+  inbox: { title: "Inbox", sub: "Things Argus needs from you: approvals, questions and results." },
+  notifications: { title: "Notifications", sub: "What Argus told you and when." },
+  ari: { title: "Ari", sub: "Talk to Ari, review chats and scheduled things." },
+  plugins: { title: "Plugins", sub: "Every capability, its mode and its rules." },
+  queue: { title: "Queue", sub: "What is running now and what is next." },
+  runs: { title: "Runs", sub: "Every job, step by step." },
+  share: { title: "Share", sub: "Send a file, a link or a note to a device." },
+  power: { title: "Power", sub: "Wake, sleep and find your machines." },
+  models: { title: "Models", sub: "Local models, Claude usage and levels." },
+  settings: { title: "Settings", sub: "Tune Argus without touching files." },
+  logs: { title: "Logs", sub: "The raw log, searchable and live." },
+  voice: { title: "Voice", sub: "Train how Ari hears you." },
+  rules: { title: "Rules", sub: "Edit a plugin's rules." },
 };
 
 export function pageMeta(view: string): PageMeta | null {
@@ -103,21 +106,22 @@ export function Vitals({ status }: { status: Status | null }) {
   const online = status?.workers.filter((w) => w.state === "online").length ?? 0;
   const total = status?.workers.length ?? 0;
   const tr = useTrail(running), tq = useTrail(queued), tw = useTrail(waiting), td = useTrail(dead), to = useTrail(online);
-  const tiles: { k: string; v: number; sub: string; trail: number[]; c: string; of?: number }[] = [
-    { k: "running", v: running, sub: queued ? `${queued} queued` : "queue empty", trail: running ? tr : tq, c: "var(--flow)" },
-    { k: "waiting", v: waiting, sub: "for you or a resume", trail: tw, c: waiting ? "var(--amber)" : "var(--tx3)" },
-    { k: "failed", v: dead, sub: "after retries", trail: td, c: dead ? "var(--bad)" : "var(--tx3)" },
-    { k: "workers", v: online, of: total, sub: total - online ? `${total - online} offline` : "all online", trail: to, c: online ? "var(--tg)" : "var(--bad)" },
+  const tiles: { k: string; icon: IconName; tone: Tone; v: number; sub: string; trail: number[]; c: string; of?: number }[] = [
+    { k: "Running", icon: "play_arrow", tone: "green", v: running, sub: queued ? `${queued} queued` : "Queue empty", trail: running ? tr : tq, c: "var(--ok)" },
+    { k: "Waiting", icon: "hourglass_top", tone: "amber", v: waiting, sub: "For you or a resume", trail: tw, c: "var(--amber)" },
+    { k: "Failed", icon: "close", tone: dead ? "coral" : "plain", v: dead, sub: "After retries", trail: td, c: dead ? "var(--bad)" : "var(--tx3)" },
+    { k: "Workers", icon: "devices", tone: online ? "blue" : "coral", v: online, of: total, sub: total - online ? `${total - online} offline` : "All online", trail: to, c: online ? "var(--ac)" : "var(--bad)" },
   ];
   return (
-    <div className="vitals" role="group" aria-label="Argus vitals">
+    <div className="vitals sn-pane" role="group" aria-label="Argus vitals">
       {tiles.map((t) => (
         <div key={t.k} className="vt" style={{ ["--c" as string]: t.c }}>
+          <IconTile n={t.icon} tone={t.tone} />
           <div className="vt-txt">
-            <span className="vt-k"><i />{t.k}</span>
-            <span className="vt-line"><span className="vt-v"><Tick v={t.v} />{t.of !== undefined && <small>/{t.of}</small>}</span><span className="vt-s">{t.sub}</span></span>
+            <span className="vt-k">{t.k}</span>
+            <span className="vt-line"><span className="vt-v"><Tick v={t.v} />{t.of !== undefined && <small> of {t.of}</small>}</span><span className="vt-s">{t.sub}</span></span>
           </div>
-          <Spark data={t.trail} color={t.c} w={96} h={30} />
+          <Spark data={t.trail} color={t.c} w={80} h={26} />
         </div>
       ))}
     </div>
@@ -130,12 +134,12 @@ export function PageHead({ meta, live, children }: { meta: PageMeta; live: boole
     <header className="pagehead">
       <div className="ph-row">
         <div className="ph-id">
-          <span className="ph-tag">// {meta.tag}</span>
-          <h1>{meta.title}</h1>
+          <span className="sn-eye">Argus</span>
+          <h1>{meta.title}<span className="ac">.</span></h1>
           <p>{meta.sub}</p>
         </div>
         <div className="ph-side">
-          <span className={`livepill${live ? " on" : ""}`}><i />{live ? "live" : "offline"}</span>
+          <span className={`livepill${live ? " on" : ""}`}><i />{live ? "Live" : "Offline"}</span>
           {children}
         </div>
       </div>
@@ -184,7 +188,7 @@ export class PageBoundary extends Component<{ children: ReactNode; name: string 
     if (!this.state.err) return this.props.children;
     return (
       <div className="panel errcard" role="alert">
-        <span className="ph-tag">// error</span>
+        <span className="sn-eye">Argus</span>
         <b>This page hit a problem.</b>
         <code>{this.state.err.message}</code>
         <button type="button" className="btn" onClick={() => this.setState({ err: null })}>Try again</button>

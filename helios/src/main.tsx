@@ -1,14 +1,11 @@
-import "@fontsource/geist-sans/latin-400.css";
-import "@fontsource/geist-sans/latin-500.css";
-import "@fontsource/geist-sans/latin-600.css";
-import "@fontsource/geist-mono/latin-400.css";
-import "@fontsource/geist-mono/latin-500.css";
 import "@xyflow/react/dist/style.css";
 import "./styles.css";
 import "./kit.css";
-// The phone view (Sonoma): its styles (all under .phone2), with Inter 4.1 (@font-face in sonoma-phone.css). Browsers
-// fetch a font only when a page uses it, so the desktop never downloads Inter.
-import "./sonoma-phone.css";
+// The Sonoma look: sonoma.css has the tokens, components and shared pages for the phone (.phone2) and the desktop
+// (.shell), with the self-hosted Inter 4.1 and Material Symbols Rounded (@font-face there). sonoma-desktop.css is the
+// desktop's own layout (shell, rail, home, events footer, palette), loaded last.
+import "./sonoma.css";
+import "./sonoma-desktop.css";
 
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";

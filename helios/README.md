@@ -21,7 +21,7 @@ npm run build      # writes core/argus/helios_dist (commit that folder)
 
 or `.\scripts\dev.ps1 helios` from the repo root to rebuild.
 
-The phone view (narrow screens) uses the Sonoma look (`src/sonoma-phone.css`, every rule under `.phone2`) with Inter and
+The phone view (narrow screens) uses the Sonoma look (`src/sonoma.css`, every rule under `.phone2`) with Inter and
 Material Symbols Rounded icons. The icon font is cut to the names in `src/icons.ts`: after adding one, run
 `pip install fonttools brotli` once, then `python scripts/icons.py` here.
 
