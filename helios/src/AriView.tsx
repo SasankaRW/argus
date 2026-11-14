@@ -7,6 +7,7 @@ import { powerAri, useAri, useEars } from "./ariState";
 import { listen, pref, setPref, speak, Speech, stopSpeaking, voiceStatus, VoiceStatus } from "./voice";
 import { plain } from "./spoken";
 import { ProblemsCard, Timeline } from "./Timeline";
+import { Ms, Pt, useIsPhone, useSc } from "./sonoma";
 
 type Turn = { id: number; role: "you" | "ari"; text: string | null; action: string | null; label?: string | null;
   pending: { kind: string; action: string } | null; job_id: string | null; created_at: number;
@@ -37,6 +38,7 @@ function ago(t: number) {
 
 // The Ari page: your chats (open one to continue it), Ari's settings, schedules and what Ari remembers.
 export function AriHome({ onOpen }: { onOpen: (conv: string) => void }) {
+  const phone = useIsPhone();
   const [chats, setChats] = useState<Chat[] | null>(null);
   const [q, setQ] = useState("");
   const [find, setFind] = useState("");
@@ -60,13 +62,13 @@ export function AriHome({ onOpen }: { onOpen: (conv: string) => void }) {
           <span className="tlabel">Chats</span>
           <span className="count" style={{ marginLeft: 0 }}>{chats ? `${chats.length}` : "…"}</span>
           <div className="tools" style={{ marginLeft: "auto" }}>
-            <input className="chat-find" value={find} onChange={(e) => setFind(e.target.value)} placeholder="find a chat…" aria-label="Find a chat" />
-            <button type="button" className="primary chat-new" onClick={() => start()}>+ new chat</button>
+            <input className="chat-find" value={find} onChange={(e) => setFind(e.target.value)} placeholder={phone ? "Find a chat" : "find a chat…"} aria-label="Find a chat" />
+            <button type="button" className="primary chat-new" onClick={() => start()}>{phone ? <><Ms n="add" />New chat</> : "+ new chat"}</button>
           </div>
         </div>
         <form className="ari-start" onSubmit={(e) => { e.preventDefault(); if (q.trim()) start(q.trim()); }}>
           <span className="caret">›</span>
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ask ari something new…" aria-label="Start a new chat" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={phone ? "Ask Ari something new" : "ask ari something new…"} aria-label="Start a new chat" />
         </form>
         <div className="chat-list">
           {!chats && <div className="skel-row" />}
@@ -96,6 +98,7 @@ export function AriView({ conv, onBack, onNew, onSelect, onView, compact = false
   onSelect: (s: Selection) => void; onView: (v: string) => void; compact?: boolean;
 }) {
   const [turns, setTurns] = useState<Turn[]>([]);
+  const phone = useIsPhone();
   const ari = useAri();  // what Ari is doing right now ("looking at your screen"), shown in the waiting bubble
   const asked = useRef(0);  // when this screen last asked something (only then does it speak the answer)
   const [text, setText] = useState("");
@@ -234,13 +237,13 @@ export function AriView({ conv, onBack, onNew, onSelect, onView, compact = false
   return (
     <section className={`panel ari${compact ? " compact" : ""}`} aria-label="Ari">
       <div className="ph">
-        {onBack && <button type="button" className="btn chat-back" onClick={() => { stopSpeaking(); onBack(); }}>‹ chats</button>}
+        {onBack && <button type="button" className="btn chat-back" onClick={() => { stopSpeaking(); onBack(); }}>{phone ? <><Ms n="arrow_back" />Chats</> : "‹ chats"}</button>}
         <span className="pt">ari</span>
         <span className="chat-title" title={title}>{title}</span>
         <div className="tools">
           {turns.length > 0 && <button type="button" className="btn" title="Copy this chat with what Ari did, errors and logs (secrets removed) to paste to Claude" onClick={() => exportChat("copy")}>copy report</button>}
           {turns.length > 0 && !/Android/i.test(navigator.userAgent) && <button type="button" className="btn" title="Save this chat with what Ari did, errors and logs (secrets removed) as a file" onClick={() => exportChat("save")}>save report</button>}
-          <button type="button" className="btn" onClick={() => { stopSpeaking(); onNew(newConv()); }}>+ new chat</button>
+          <button type="button" className="btn" onClick={() => { stopSpeaking(); onNew(newConv()); }}>{phone ? <><Ms n="add" />New chat</> : "+ new chat"}</button>
         </div>
       </div>
       <div ref={log} className="ari-log">
@@ -275,7 +278,7 @@ export function AriView({ conv, onBack, onNew, onSelect, onView, compact = false
       </div>
       <form className="ari-in" onSubmit={(e) => { e.preventDefault(); send(text); }}>
         <span className="caret">›</span>
-        <input value={text} onChange={(e) => setText(e.target.value)} placeholder={listening ? "listening… speak now" : "talk to ari…"} aria-label="Message Ari" enterKeyHint="send" />
+        <input value={text} onChange={(e) => setText(e.target.value)} placeholder={phone ? (listening ? "Listening… speak now" : "Talk to Ari") : listening ? "listening… speak now" : "talk to ari…"} aria-label="Message Ari" enterKeyHint="send" />
         {(Speech || vs.whisper_ready) && <button type="button" className={`mic${listening ? " on" : ""}`} onClick={mic} aria-label="Speak" title={vs.whisper_ready ? "Whisper on the PC hears you" : "The browser hears you"}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></svg>
         </button>}
@@ -332,7 +335,7 @@ function AriSettings() {
   return (
     <div className="ari-side">
       <section className="panel">
-        <div className="ph"><span className="pt">ari/settings</span></div>
+        <div className="ph"><Pt>ari/settings</Pt></div>
         <div className="ari-set">
           <a className="btn" href="#voice" title="Read sentences aloud so Ari learns your accent and names">train on my voice</a>
           <EarsButton />
@@ -342,7 +345,7 @@ function AriSettings() {
       </section>
       <IslandSettings />
       <section className="panel">
-        <div className="ph"><span className="pt">ari/schedules</span><span className="muted">{mine.length}</span></div>
+        <div className="ph"><Pt>ari/schedules</Pt><span className="muted">{mine.length}</span></div>
         <div className="ari-sched">
           {err && <div className="tip bad">{err}</div>}
           {mine.length === 0 ? <div className="tip">None yet. Tell Ari: "sort downloads every morning at 7".</div> : mine.map((s) => (
@@ -363,7 +366,7 @@ function AriSettings() {
         </div>
       </section>
       <section className="panel">
-        <div className="ph"><span className="pt">ari/memory</span><span className="muted">{mem.length}</span></div>
+        <div className="ph"><Pt>ari/memory</Pt><span className="muted">{mem.length}</span></div>
         <div className="ari-sched">
           {mem.length === 0 ? <div className="tip">Nothing yet. Say "remember my car service is due in December".</div> : mem.map((m) => (
             <div key={m.id} className="srow">
@@ -374,7 +377,7 @@ function AriSettings() {
         </div>
       </section>
       <section className="panel">
-        <div className="ph"><span className="pt">ari/past chats</span><span className="muted">{eps.length} · what Ari remembers happened (no private chats)</span></div>
+        <div className="ph"><Pt>ari/past chats</Pt><span className="muted">{eps.length} · what Ari remembers happened (no private chats)</span></div>
         <div className="ari-sched">
           {eps.length === 0 ? <div className="tip">Nothing yet. A chat is remembered in 2-3 lines once it has been quiet for 10 minutes.</div> : eps.map((e) => (
             <div key={e.id} className="srow">
@@ -397,6 +400,7 @@ const ISLAND_KEYS: [string, string][] = [["ask", "Type to Ari"], ["hide", "Hide 
 
 // What Ari's island on the PC shows when you click it: widgets (on/off, order) and your shortcuts.
 function IslandSettings() {
+  const sc_ = useSc();
   const [d, setD] = useState<IslandData | null>(null);
   const [w, setW] = useState<IslandW[]>([]);
   const [sc, setSc] = useState<IslandS[]>([]);
@@ -427,8 +431,8 @@ function IslandSettings() {
   return (
     <section className="panel">
       <div className="ph">
-        <span className="pt">ari/island</span>
-        <span className="muted">what the island on the PC shows when you click it</span>
+        <Pt>ari/island</Pt>
+        <span className="muted">{sc_("what the island on the PC shows when you click it")}</span>
       </div>
       <div className="isl-set">
         <div className="sect">widgets</div>
@@ -466,7 +470,7 @@ function IslandSettings() {
           <div key={id} className="isl-set-row">
             <span>{label}</span>
             <span className="grow" />
-            <input value={keys[id] ?? ""} aria-label={label} placeholder="off" className="mono"
+            <input value={keys[id] ?? ""} aria-label={label} placeholder={sc_("off")} className="mono"
               onChange={(e) => setKeys({ ...keys, [id]: e.target.value })} />
           </div>
         ))}

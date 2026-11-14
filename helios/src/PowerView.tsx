@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, ArgusEvent, Job } from "./api";
 import { ago, tone } from "./format";
 import type { Selection } from "./MapView";
+import { HoldButton, useIsPhone } from "./sonoma";
 
 type Power = { mode: string; state: string; idle_since: number | null; idle_minutes: number; pc_online: boolean;
   shutdown_at: number | null; woken_by_argus: boolean;
@@ -32,6 +33,7 @@ export function PowerControls({ events, onSelect, compact = false }: { events: A
   const [p, reload] = usePower(events);
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const phone = useIsPhone();
   if (!p) return <div className="tip">Loading…</div>;
 
   // a shutdown or restart that ran in the last `delay` seconds can still be cancelled
@@ -40,8 +42,8 @@ export function PowerControls({ events, onSelect, compact = false }: { events: A
   const auto = p.state === "warned" && p.shutdown_at ? p.shutdown_at : null;
   const pending = p.pending.length > 0 || !!countdown || !!auto;
 
-  const act = async (a: string) => {
-    if (ASK[a] && !window.confirm(ASK[a].replace("{d}", String(p.delay)))) return;
+  const act = async (a: string, held = false) => {  // held: confirmed by holding the button (phone)
+    if (ASK[a] && !held && !window.confirm(ASK[a].replace("{d}", String(p.delay)))) return;
     setBusy(a); setMsg(null);
     try {
       const r = await api<{ id?: string; sent?: boolean }>(`/power/${a}`, { method: "POST" });
@@ -70,6 +72,15 @@ export function PowerControls({ events, onSelect, compact = false }: { events: A
           {p.mode === "simulated" ? " — only logged while developing; these buttons act for real." : ""}
         </div>
       )}
+      {phone ? (
+        <div className="sn-holds">
+          <button type="button" className="sn-btn tonal" disabled={busy !== null || p.pc_online || !p.wol} onClick={() => act("wake")}>Wake</button>
+          {([["sleep", "bedtime", "Sleep"], ["restart", "restart_alt", "Restart"], ["shutdown", "power_settings_new", "Shut down"]] as const).map(([a, icon, label]) => (
+            <HoldButton key={a} icon={icon} label={label} caption={label} disabled={busy !== null || !p.pc_online}
+              onConfirm={() => act(a, true)} onTap={() => setMsg(`Hold to confirm. ${ASK[a].replace("{d}", String(p.delay))}`)} />
+          ))}
+        </div>
+      ) : (
       <div className="pwr-btns">
         <button type="button" className="btn pbtn" disabled={busy !== null || p.pc_online || !p.wol}
           title={!p.wol ? "Set power.pc_mac in argus.yaml" : p.pc_online ? "The PC is on" : ""} onClick={() => act("wake")}>Wake</button>
@@ -77,6 +88,7 @@ export function PowerControls({ events, onSelect, compact = false }: { events: A
         <button type="button" className="btn pbtn" disabled={busy !== null || !p.pc_online} onClick={() => act("restart")}>Restart</button>
         <button type="button" className="btn pbtn danger" disabled={busy !== null || !p.pc_online} onClick={() => act("shutdown")}>Shut down</button>
       </div>
+      )}
       {pending && (
         <div className="pwr-pending">
           <span>{auto ? `Idle: shuts down at ${new Date(auto * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}`
@@ -116,6 +128,7 @@ export function PowerControls({ events, onSelect, compact = false }: { events: A
   );
 }
 
+const LAPTOP_SHUTDOWN_AGAIN = "Really shut it down? With no screen and no battery, only its power button brings it back.";
 const LAPTOP_ASK: Record<string, string> = {
   "restart-argus": "Restart Argus? Helios, Ari and the phone are away for about 10 seconds.",
   reboot: "Restart the laptop in 1 minute? Argus is away for a minute or two; you can cancel until then.",
@@ -127,11 +140,12 @@ export function LaptopControls({ events }: { events: ArgusEvent[] }) {
   const [p, reload] = usePower(events);
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const phone = useIsPhone();
   const l = p?.laptop;
   if (!l) return null;
-  const act = async (a: string) => {
-    if (LAPTOP_ASK[a] && !window.confirm(LAPTOP_ASK[a])) return;
-    if (a === "shutdown" && !window.confirm("Really shut it down? With no screen and no battery, only its power button brings it back.")) return;
+  const act = async (a: string, held = false) => {  // held: confirmed by holding the button (phone)
+    if (LAPTOP_ASK[a] && !held && !window.confirm(LAPTOP_ASK[a])) return;
+    if (a === "shutdown" && !held && !window.confirm(LAPTOP_SHUTDOWN_AGAIN)) return;
     setBusy(a); setMsg(null);
     try {
       await api(`/power/laptop/${a}`, { method: "POST", body: JSON.stringify({ confirm: a === "shutdown" }) });
@@ -150,11 +164,22 @@ export function LaptopControls({ events }: { events: ArgusEvent[] }) {
         <span className="muted">{l.host} · runs Argus</span>
       </div>
       {!l.available && <div className="tip">These work when Argus runs on the Linux laptop.</div>}
+      {phone ? (<>
+        <div className="sn-holds">
+          {([["restart-argus", "refresh", "Restart Argus", !l.available], ["reboot", "restart_alt", "Restart", !l.available || !!l.scheduled],
+            ["shutdown", "power_settings_new", "Shut down", !l.available || !!l.scheduled]] as const).map(([a, icon, label, off]) => (
+            <HoldButton key={a} icon={icon} label={label} caption={label} disabled={busy !== null || off}
+              onConfirm={() => act(a, true)} onTap={() => setMsg(`Hold to confirm. ${LAPTOP_ASK[a]}`)} />
+          ))}
+        </div>
+        <div className="tip">Shut down: {LAPTOP_SHUTDOWN_AGAIN}</div>
+      </>) : (
       <div className="pwr-btns">
         <button type="button" className="btn pbtn" disabled={busy !== null || !l.available} onClick={() => act("restart-argus")}>Restart Argus</button>
         <button type="button" className="btn pbtn" disabled={busy !== null || !l.available || !!l.scheduled} onClick={() => act("reboot")}>Restart</button>
         <button type="button" className="btn pbtn danger" disabled={busy !== null || !l.available || !!l.scheduled} onClick={() => act("shutdown")}>Shut down</button>
       </div>
+      )}
       {l.scheduled && (
         <div className="pwr-pending">
           <span>{l.scheduled.mode === "reboot" ? "Restarting" : "Shutting down"} at {HHMM(l.scheduled.at)}</span>

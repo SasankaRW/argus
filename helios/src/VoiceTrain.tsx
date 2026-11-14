@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, getToken } from "./api";
 import { earsPaused, pauseEars, resumeEars } from "./ariState";
+import { Pt } from "./sonoma";
 
 type Sentence = { id: string; text: string; kind: string; done: boolean; seconds: number | null };
 type State = { sentences: Sentence[]; recorded: number; seconds: number; goal_seconds: number; model: string };
@@ -127,12 +128,12 @@ export function VoiceTrain() {
     return () => window.removeEventListener("keydown", on);
   });
 
-  if (!st) return <section className="panel voice-train"><div className="ph"><span className="pt">ari/voice</span></div><div className="empty">{err ?? "loading…"}</div></section>;
+  if (!st) return <section className="panel voice-train"><div className="ph"><Pt>ari/voice</Pt></div><div className="empty">{err ?? "loading…"}</div></section>;
   const pct = Math.min(1, st.seconds / st.goal_seconds);
   const enough = st.seconds >= 10 * 60;
   return (
     <section className="panel voice-train">
-      <div className="ph"><span className="pt">ari/voice</span><span className="muted">train Ari on your voice</span></div>
+      <div className="ph"><Pt>ari/voice</Pt><span className="muted">train Ari on your voice</span></div>
       <div className="vt-body">
         <div className="vt-progress">
           <div className="bar"><i style={{ width: `${pct * 100}%` }} /></div>

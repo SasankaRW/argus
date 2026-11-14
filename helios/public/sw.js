@@ -5,10 +5,10 @@
 //   answers and the kept one is used when it doesn't (then Helios says it can't reach Argus). Argus's data is never
 //   kept here: every API call goes to Argus.
 const SHARE = "helios-share";
-const SHELL = "helios-shell-v4";
+const SHELL = "helios-shell-v5";  // v5: the Sonoma app icons
 
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(SHELL).then((c) => c.addAll(["/helios/", "/helios/manifest.webmanifest", "/helios/icon-192.png", "/helios/favicon.png"])).catch(() => {}));
+  e.waitUntil(caches.open(SHELL).then((c) => c.addAll(["/helios/", "/helios/manifest.webmanifest", "/helios/icon-192.png", "/helios/icon.svg", "/helios/favicon.png"])).catch(() => {}));
   self.skipWaiting();
 });
 self.addEventListener("activate", (e) => e.waitUntil((async () => {
@@ -65,7 +65,7 @@ self.addEventListener("fetch", (e) => {
   if (e.request.method === "POST" && url.pathname === "/helios/share-target") { e.respondWith(share(e.request)); return; }
   if (e.request.method !== "GET") return;
   if (e.request.mode === "navigate" && url.pathname.startsWith("/helios")) { e.respondWith(page(e.request)); return; }
-  if (url.pathname.startsWith("/helios/assets/") || /^\/helios\/(icon|sc|favicon)[\w-]*\.png$/.test(url.pathname)) {
+  if (url.pathname.startsWith("/helios/assets/") || /^\/helios\/(icon|sc|favicon)[\w-]*\.(png|svg)$/.test(url.pathname)) {
     e.respondWith(asset(e.request));
   }
 });

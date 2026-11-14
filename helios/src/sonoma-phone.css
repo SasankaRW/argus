@@ -1,0 +1,472 @@
+/* Helios on the phone, in the Sonoma look (design/sonoma/SPEC.md). Loaded after styles.css and kit.css.
+   Every rule here is under .phone2, so the desktop (.shell) is untouched until its own redesign. Order: the icon
+   font > tokens > Sonoma components (sn-*) > the shared pages inside the phone > motion. */
+
+@font-face {
+  font-family: "Material Symbols Rounded";
+  font-style: normal;
+  font-weight: 500;
+  font-display: block;
+  src: url("./fonts/symbols-rounded.woff2") format("woff2");  /* cut to src/icons.ts by scripts/icons.py */
+}
+
+/* Inter 4.1, the official variable font (wght + opsz) from the rsms/inter release, so ss01 + cv11 work (the npm
+   @fontsource build drops them). SIL OFL 1.1, see fonts/LICENSE-Inter.txt. */
+@font-face {
+  font-family: "Inter Variable";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./fonts/InterVariable.woff2") format("woff2");
+}
+
+/* ---- tokens: re-pointing the shared variables re-tones every page inside the phone at once */
+.phone2 {
+  --bg: #0b0b0e; --panel: #16161b; --raise: #222228; --line: transparent; --line2: rgba(255, 255, 255, .26);
+  --tx: #ffffff; --tx2: rgba(255, 255, 255, .68); --tx3: rgba(255, 255, 255, .55);
+  --ac: #a6c8ff; --ac-rgb: 166, 200, 255; --ac2: #d3b6ff; --tg: var(--ac);
+  --ok: #8fe3ad; --amber: #ffc58f; --flow: #a6c8ff; --bad: #ff9d94; --violet: #d3b6ff;
+  --glow-a: transparent; --glow-f: transparent;
+  --sans: "Inter Variable", Inter, "Segoe UI Variable", system-ui, sans-serif; --mono: var(--sans);
+  --b-amber: var(--ac); --b-amber-line: transparent; --b-amber-glow: transparent;
+  --sn-edge: inset 0 1px 0 rgba(255, 255, 255, .06);
+  --sn-out: cubic-bezier(.33, 1, .68, 1); --sn-std: cubic-bezier(.2, 0, 0, 1);
+  --r: 16px;
+  min-height: 100dvh; padding-bottom: calc(110px + env(safe-area-inset-bottom)); background: #0b0b0e; color: #fff;
+  font: 15px/1.45 var(--sans); font-feature-settings: "ss01", "cv11"; font-optical-sizing: auto;
+}
+.phone2 * { text-shadow: none !important; }
+.phone2 ::selection { background: rgba(166, 200, 255, .3); }
+.phone2 .mono { font-family: var(--sans); font-variant-numeric: tabular-nums; }
+.phone2 .ok { color: var(--ok); } .phone2 .bad { color: var(--bad); } .phone2 .warn { color: var(--amber); }
+.phone2 .flow { color: var(--flow); } .phone2 .dim, .phone2 .muted { color: var(--tx3); }
+.phone2 .c-coral { color: var(--bad); }
+.phone2 .ac { color: var(--ac); }
+.phone2 .grow { flex: 1; }
+
+.phone2 .ms {
+  font-family: "Material Symbols Rounded"; font-weight: 500; font-style: normal; font-size: 22px; line-height: 1; letter-spacing: normal;
+  text-transform: none; white-space: nowrap; direction: ltr; display: inline-block; -webkit-font-smoothing: antialiased;
+  font-feature-settings: "liga", "rlig"; font-variation-settings: "FILL" 0; user-select: none; flex: none;
+}
+.phone2 .ms.fill { font-variation-settings: "FILL" 1; }
+
+/* ---- header: one eyebrow, then the clock (home) or the page's name with an accent full stop */
+.phone2 .sn-head { padding: calc(28px + env(safe-area-inset-top)) 20px 14px; display: flex; flex-direction: column; gap: 4px; }
+.phone2 .sn-head.home { align-items: center; padding-top: calc(40px + env(safe-area-inset-top)); padding-bottom: 18px; }
+.phone2 .sn-eye { font-size: 11px; font-weight: 600; letter-spacing: 2.5px; text-transform: uppercase; color: var(--ac); }
+.phone2 .sn-h1 { margin: 4px 0 0; font-size: 32px; font-weight: 600; letter-spacing: -.8px; line-height: 1.1; font-variation-settings: "opsz" 32; }
+.phone2 .sn-clock { font-size: 76px; font-weight: 640; font-variation-settings: "opsz" 32; letter-spacing: -3px; line-height: 1; font-variant-numeric: tabular-nums; }
+.phone2 .sn-clock .mm { color: rgba(255, 255, 255, .6); }
+.phone2 .sn-status { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 13px; color: rgba(255, 255, 255, .75); }
+
+.phone2 .sn-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; display: inline-block; --c: var(--ok); background: var(--c); }
+.phone2 .d-green { --c: var(--ok); } .phone2 .d-amber { --c: var(--amber); } .phone2 .d-coral { --c: var(--bad); } .phone2 .d-blue { --c: var(--ac); }
+
+/* ---- page body */
+.phone2 .pmain2 { position: relative; padding: 0 16px 16px; animation: none; }
+.phone2 .sn-stack { display: flex; flex-direction: column; gap: 14px; }
+.phone2 .sn-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+
+/* panel: surface, a lit top edge, no border, no drop shadow; sections inside split by space, not lines */
+.phone2 .sn-pane, .phone2 .panel {
+  background: var(--panel); border: 0; border-radius: 24px; box-shadow: var(--sn-edge); overflow: hidden; min-width: 0;
+}
+.phone2 .sn-pane { padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; }
+.phone2 .sn-pane.flush { padding: 6px 0; gap: 0; }
+.phone2 .sn-pane-h { display: flex; align-items: center; gap: 10px; min-height: 22px; }
+.phone2 .sn-lbl { font-size: 12.5px; font-weight: 500; letter-spacing: .1px; color: rgba(255, 255, 255, .6); }
+.phone2 .sn-meta { margin-left: auto; font-size: 12px; color: rgba(255, 255, 255, .6); }
+.phone2 .sn-tap { width: 100%; align-items: flex-start; gap: 0; text-align: left; color: inherit; font: inherit; cursor: pointer; }
+.phone2 .sn-big { margin-top: 10px; font-size: 26px; font-weight: 600; line-height: 1.15; font-variation-settings: "opsz" 32; font-variant-numeric: tabular-nums; }
+.phone2 .sn-sub { margin-top: 2px; font-size: 13px; color: var(--tx2); }
+.phone2 .sn-state { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 17px; font-weight: 600; }
+.phone2 .sn-state + .sn-sub { margin-top: 6px; }
+.phone2 .sn-empty { margin: 0; padding: 18px 4px; font-size: 14px; color: var(--tx2); }
+
+/* tonal icon tile (list rows): tone at 16% behind a filled glyph */
+.phone2 .sn-tile { width: 36px; height: 36px; border-radius: 12px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.phone2 .sn-tile .ms { font-size: 20px; }
+.phone2 .t-green { background: rgba(143, 227, 173, .16); color: #8fe3ad; }
+.phone2 .t-amber { background: rgba(255, 197, 143, .16); color: #ffc58f; }
+.phone2 .t-blue { background: rgba(166, 200, 255, .16); color: #a6c8ff; }
+.phone2 .t-violet { background: rgba(211, 182, 255, .16); color: #d3b6ff; }
+.phone2 .t-coral { background: rgba(255, 157, 148, .16); color: #ff9d94; }
+.phone2 .t-plain { background: rgba(255, 255, 255, .08); color: rgba(255, 255, 255, .85); }
+
+.phone2 .sn-row { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.phone2 .sn-row-t { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; text-align: left; }
+.phone2 .sn-row-t b { font-size: 15px; font-weight: 600; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.phone2 .sn-waiting .sn-row-t b { font-size: 16px; }
+.phone2 .sn-row-t > span { font-size: 13px; color: var(--tx2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.phone2 .sn-acts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* pill / status tag */
+.phone2 .sn-pill, .phone2 .pill, .phone2 .pchip, .phone2 .ikind, .phone2 .dotbadge {
+  display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 9px; border-radius: 999px; border: 0;
+  font: 600 11px/1 var(--sans); letter-spacing: .3px; white-space: nowrap; background: rgba(255, 255, 255, .08); color: rgba(255, 255, 255, .85); box-shadow: none;
+}
+.phone2 .pill.ok, .phone2 .pchip.live { background: rgba(143, 227, 173, .16); color: #8fe3ad; }
+.phone2 .pill.warn, .phone2 .ikind.approval, .phone2 .dotbadge { background: rgba(255, 197, 143, .16); color: #ffc58f; }
+.phone2 .pill.bad { background: rgba(255, 157, 148, .16); color: #ff9d94; }
+.phone2 .pill.flow, .phone2 .ikind.question { background: rgba(166, 200, 255, .16); color: #a6c8ff; }
+.phone2 .ikind.lesson { background: rgba(211, 182, 255, .16); color: #d3b6ff; }
+.phone2 .pchip.dry { color: rgba(255, 255, 255, .7); font-weight: 600; }
+.phone2 .sn-pill.t-amber { background: rgba(255, 197, 143, .16); color: #ffc58f; }
+.phone2 .sn-pill.t-green { background: rgba(143, 227, 173, .16); color: #8fe3ad; }
+.phone2 .sn-pill.t-coral { background: rgba(255, 157, 148, .16); color: #ff9d94; }
+
+/* ---- buttons: primary filled accent pill, secondary tonal, quiet text; an M3 state layer on every one */
+.phone2 button, .phone2 .btn, .phone2 a.btn { -webkit-tap-highlight-color: transparent; }
+.phone2 .sn-btn, .phone2 .btn.btn, .phone2 .primary.primary, .phone2 .btn.primary-btn, .phone2 .k-yes.k-yes, .phone2 .k-no.k-no,
+.phone2 .pd-buttons .primary, .phone2 .pshare.pshare, .phone2 .linkbtn, .phone2 .pback, .phone2 .sn-link,
+.phone2 .sn-iconbtn, .phone2 .sn-chip, .phone2 .chip.chip, .phone2 button.seg, .phone2 .seg button, .phone2 .tab, .phone2 .switch {
+  transition: transform 160ms var(--sn-std), box-shadow 200ms var(--sn-std), background-color 200ms var(--sn-std), color 200ms var(--sn-std);
+}
+.phone2 .sn-btn, .phone2 .btn.btn, .phone2 .primary.primary, .phone2 .btn.primary-btn, .phone2 .k-yes.k-yes, .phone2 .k-no.k-no, .phone2 .pd-buttons .primary, .phone2 .pshare.pshare {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 40px; min-height: 40px; padding: 0 18px;
+  border: 0 !important; border-radius: 999px; font: 600 14px/1 var(--sans); letter-spacing: 0; white-space: nowrap; cursor: pointer; box-shadow: none;
+}
+.phone2 .sn-btn .ms { font-size: 18px; margin-left: -4px; }
+/* secondary (tonal: accent at 16%, as in every Sonoma app): the old outlined .btn */
+.phone2 .btn.btn { background: rgba(166, 200, 255, .16); color: var(--ac); font-weight: 600; padding: 0 18px; }
+.phone2 .btn.btn[aria-pressed="true"] { background: rgba(166, 200, 255, .16); color: var(--ac); }
+/* shared pages write some labels in lower case ("send", "copy report"): show them in sentence case on the phone */
+.phone2 .btn.btn, .phone2 .primary.primary { display: inline-block; line-height: 40px; text-align: center; vertical-align: middle; }
+.phone2 .btn.btn::first-letter, .phone2 .primary.primary::first-letter { text-transform: uppercase; }
+.phone2 .btn.btn:has(svg, .ms), .phone2 .primary.primary:has(svg, .ms) { display: inline-flex; line-height: 1; }
+.phone2 .pill, .phone2 .pchip, .phone2 .ikind { display: inline-block; line-height: 22px; vertical-align: middle; }
+.phone2 .pill::first-letter, .phone2 .pchip::first-letter, .phone2 .ikind::first-letter { text-transform: uppercase; }
+/* primary */
+.phone2 .sn-btn.primary, .phone2 .primary.primary, .phone2 .btn.primary-btn, .phone2 .k-yes.k-yes, .phone2 .pd-buttons .primary, .phone2 .pshare.pshare {
+  background: var(--ac) !important; color: #141418 !important; box-shadow: none !important;
+}
+.phone2 .sn-btn.tonal { background: rgba(166, 200, 255, .16); color: var(--ac); }
+.phone2 .sn-btn.quiet, .phone2 .k-no.k-no { background: transparent; color: var(--ac); padding: 0 14px; }
+.phone2 .linkbtn, .phone2 .sn-link, .phone2 .pback {
+  border: 0; background: none; color: var(--ac); font: 600 13px var(--sans); border-radius: 999px; padding: 8px 12px; margin: -8px -12px; cursor: pointer;
+}
+.phone2 .pback { margin: 0 0 6px -12px; display: inline-flex; align-items: center; gap: 4px; }
+.phone2 .btn.btn.danger, .phone2 .pbtn.danger:not(:disabled) { background: rgba(255, 157, 148, .16); color: var(--bad); }
+
+/* state layers: hover +8%, pressed +12% and a .96 squeeze, a 2px accent focus ring */
+.phone2 .sn-btn:hover:not(:disabled), .phone2 .btn.btn:hover:not(:disabled), .phone2 .k-no.k-no:hover:not(:disabled), .phone2 .sn-iconbtn:hover:not(:disabled),
+.phone2 .sn-chip:hover, .phone2 .chip.chip:hover, .phone2 button.seg:hover, .phone2 .seg button:hover, .phone2 .tab:hover, .phone2 .linkbtn:hover,
+.phone2 .sn-link:hover, .phone2 .pback:hover, .phone2 .sn-menu-row:hover, .phone2 .sn-li:hover, .phone2 .sn-tap:hover, .phone2 .switch:hover {
+  box-shadow: inset 0 0 0 999px rgba(255, 255, 255, .08); border-color: transparent;
+}
+.phone2 .sn-btn.primary:hover:not(:disabled), .phone2 .primary.primary:hover:not(:disabled), .phone2 .btn.primary-btn:hover:not(:disabled),
+.phone2 .k-yes.k-yes:hover:not(:disabled), .phone2 .pd-buttons .primary:hover:not(:disabled), .phone2 .sn-iconbtn.accent:hover {
+  background: var(--ac) !important; color: #141418 !important; box-shadow: inset 0 0 0 999px rgba(20, 20, 24, .08) !important;
+}
+.phone2 .sn-btn:active:not(:disabled), .phone2 .btn.btn:active:not(:disabled), .phone2 .primary.primary:active:not(:disabled), .phone2 .k-yes.k-yes:active:not(:disabled),
+.phone2 .k-no.k-no:active:not(:disabled), .phone2 .btn.primary-btn:active:not(:disabled), .phone2 .sn-iconbtn:active, .phone2 .sn-chip:active, .phone2 .chip.chip:active,
+.phone2 button.seg:active, .phone2 .seg button:active, .phone2 .tab:active, .phone2 .sn-tab:active, .phone2 .linkbtn:active, .phone2 .sn-link:active, .phone2 .sn-hold:active {
+  transform: scale(.96); box-shadow: inset 0 0 0 999px rgba(255, 255, 255, .12);
+}
+.phone2 .sn-menu-row:active, .phone2 .sn-li:active, .phone2 .sn-tap:active { box-shadow: inset 0 0 0 999px rgba(255, 255, 255, .12); }
+.phone2 button:focus-visible, .phone2 a:focus-visible, .phone2 .chip:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
+.phone2 .sn-btn:disabled, .phone2 .btn.btn:disabled, .phone2 .primary.primary:disabled, .phone2 .btn.primary-btn:disabled,
+.phone2 .k-yes.k-yes:disabled, .phone2 .k-no.k-no:disabled, .phone2 .sn-hold:disabled { opacity: .4; cursor: default; }
+
+/* round icon button (the mic: accent, a dark glyph) */
+.phone2 .sn-iconbtn { width: 44px; height: 44px; flex: none; border: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  background: #222228; color: rgba(255, 255, 255, .9); cursor: pointer; padding: 0; }
+.phone2 .sn-iconbtn.accent { background: var(--ac); color: #141418; }
+
+/* filter chip / segmented control */
+.phone2 .sn-chip, .phone2 .chip.chip, .phone2 button.seg, .phone2 .tab {
+  display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 14px; border: 0; border-radius: 999px;
+  background: rgba(255, 255, 255, .07); color: rgba(255, 255, 255, .85); font: 500 13px/1 var(--sans); white-space: nowrap; cursor: pointer; flex: none;
+}
+.phone2 .sn-chip .ms { font-size: 18px; margin-left: -4px; }
+.phone2 .sn-chip[aria-pressed="true"], .phone2 button.seg.on, .phone2 .tab.on, .phone2 .tab[aria-selected="true"],
+.phone2 .seg button[aria-pressed="true"], .phone2 .seg .btn.btn[aria-pressed="true"] { background: rgba(166, 200, 255, .16); color: var(--ac); }
+.phone2 button.seg.on::before, .phone2 .tab.on::before, .phone2 .seg button[aria-pressed="true"]::before, .phone2 .seg-f .btn[aria-pressed="true"]::before {
+  content: "check"; font-family: "Material Symbols Rounded"; font-weight: 500; font-size: 18px; line-height: 1; margin: 0 5px 0 -4px; vertical-align: -4px; font-feature-settings: "liga", "rlig";
+}
+.phone2 div.seg, .phone2 .seg-f, .phone2 .pd-mode[role="group"] { display: inline-flex; flex-wrap: nowrap; max-width: 100%; overflow-x: auto; scrollbar-width: none; gap: 4px; padding: 3px; border-radius: 999px; background: rgba(255, 255, 255, .05); }
+.phone2 .pd-mode[role="group"] { background: none; padding: 0; gap: 8px; align-items: center; }
+.phone2 div.seg button, .phone2 div.seg .btn.btn, .phone2 .seg-f .btn.btn { flex: none; white-space: nowrap; height: 30px; min-height: 30px; line-height: 30px; padding: 0 12px; border-radius: 999px; background: transparent; font: 500 13px/1 var(--sans); }
+.phone2 .tabs { display: flex; gap: 8px; overflow-x: auto; padding: 4px 0 12px; border: 0; scrollbar-width: none; }
+
+/* text field: no box, a 26% underline; a 2px accent line grows from the centre while focused */
+.phone2 input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]), .phone2 select, .phone2 textarea {
+  border: 0 !important; border-bottom: 1px solid rgba(255, 255, 255, .26) !important; border-radius: 0 !important; box-shadow: none !important;
+  background: linear-gradient(var(--ac), var(--ac)) center bottom / 0 2px no-repeat transparent !important;
+  color: #fff; font: 15px var(--sans); padding: 10px 4px; min-height: 40px; outline: 0; transition: background-size 300ms var(--sn-std);
+}
+.phone2 input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus, .phone2 select:focus, .phone2 textarea:focus { background-size: 100% 2px !important; outline: 0; }
+.phone2 input::placeholder, .phone2 textarea::placeholder { color: rgba(255, 255, 255, .55); }
+.phone2 select { color-scheme: dark; }
+.phone2 select option { background: #222228; color: #fff; }
+.phone2 input[type="checkbox"], .phone2 input[type="radio"] { accent-color: var(--ac); width: 18px; height: 18px; }
+.phone2 .sn-field { flex: 1; min-width: 0; display: flex; }
+.phone2 .sn-field input { flex: 1; min-width: 0; }
+
+/* ---- home tiles */
+.phone2 .sn-ari-last { margin: 0; font-size: 15px; line-height: 1.45; color: rgba(255, 255, 255, .9); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.phone2 .sn-ask { display: flex; align-items: center; gap: 12px; }
+.phone2 .sn-spark { margin-top: 10px; overflow: visible; }
+.phone2 .sn-spark path { fill: none; stroke: var(--ac); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 0; }
+.phone2 .sn-spark circle { fill: var(--ac); }
+.phone2 .sn-list { display: flex; flex-direction: column; }
+.phone2 .sn-li { display: grid; grid-template-columns: 8px minmax(0, 1fr) 64px; gap: 12px; align-items: center; min-height: 44px; margin: 0 -8px; padding: 0 8px;
+  border: 0; border-radius: 12px; background: none; color: #fff; font: 14px var(--sans); text-align: left; cursor: pointer; }
+.phone2 .sn-li-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.phone2 .sn-meter { height: 4px; border-radius: 2px; background: rgba(255, 255, 255, .1); overflow: hidden; position: relative; }
+.phone2 .sn-meter i { position: absolute; top: 0; bottom: 0; left: 0; width: 40%; border-radius: 2px; background: var(--ok); }
+.phone2 .minilog { height: auto; max-height: 160px; font: 12.5px/1.6 var(--sans); color: var(--tx2); font-variant-numeric: tabular-nums; }
+.phone2 .minilog .src { color: var(--ac); }
+.phone2 .minilog .dim { color: var(--tx3); }
+.phone2 .minilog .warn { color: var(--amber); } .phone2 .minilog .bad { color: var(--bad); }
+
+/* ---- More: a list of rows */
+.phone2 .sn-menu-row { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto auto; gap: 12px; align-items: center; width: 100%; min-height: 62px;
+  padding: 10px 16px 10px 18px; border: 0; background: none; color: #fff; font: inherit; text-align: left; cursor: pointer; }
+.phone2 .sn-menu-row > .ms { color: rgba(255, 255, 255, .45); font-size: 22px; }
+
+/* ---- the floating tab bar (M3 items: an indicator pill behind the icon) */
+.phone2 .sn-tabs { position: fixed; z-index: 40; left: 50%; bottom: calc(26px + env(safe-area-inset-bottom)); transform: translateX(-50%);
+  display: flex; gap: 4px; padding: 6px; border-radius: 999px; background: var(--raise); box-shadow: var(--sn-edge), 0 8px 24px rgba(0, 0, 0, .5); } /* surface high + soft shadow: distinct over panels */
+.phone2 .sn-tab { width: 64px; height: 56px; padding: 0; border: 0; border-radius: 18px; background: transparent; color: rgba(255, 255, 255, .68);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font: 500 11px/1 var(--sans); cursor: pointer; transition: transform 160ms var(--sn-std); }
+.phone2 .sn-tab .ind { width: 52px; height: 30px; border-radius: 999px; display: flex; align-items: center; justify-content: center; transition: background-color 300ms var(--sn-std), color 300ms var(--sn-std); }
+.phone2 .sn-tab:hover .ind { background: rgba(255, 255, 255, .08); }
+.phone2 .sn-tab[aria-current="page"] { color: #fff; }
+.phone2 .sn-tab[aria-current="page"] .ind { background: rgba(166, 200, 255, .18); color: var(--ac); }
+@media (max-width: 360px) { .phone2 .sn-tab { width: 56px; } .phone2 .sn-tab .ind { width: 46px; } }
+
+/* ---- can't reach Argus */
+.phone2 .sn-offline { margin: 0 16px 14px; }
+.phone2 .sn-offline .sn-row-t > span { white-space: normal; }
+
+/* ---- hold to confirm: a round coral button, an accent ring fills in about 1.2 s */
+.phone2 .sn-holds { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; align-items: start; justify-items: center; }
+.phone2 .sn-holds > .sn-btn { align-self: center; justify-self: stretch; padding: 0 10px; margin-top: 2px; }
+.phone2 .sn-holdwrap { display: inline-flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
+.phone2 .sn-hold { position: relative; width: 44px; height: 44px; border: 0; border-radius: 50%; padding: 0; display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(255, 157, 148, .16); color: #ff9d94; cursor: pointer; touch-action: none; user-select: none; -webkit-user-select: none;
+  transition: transform 160ms var(--sn-std), box-shadow 200ms var(--sn-std); }
+.phone2 .sn-hold:hover:not(:disabled) { box-shadow: inset 0 0 0 999px rgba(255, 255, 255, .08); }
+.phone2 .sn-hold .ms { font-size: 20px; }
+.phone2 .sn-hold svg { position: absolute; inset: 0; width: 44px; height: 44px; pointer-events: none; }
+.phone2 .sn-hold circle { fill: none; stroke-width: 2; }
+.phone2 .sn-hold .trk { stroke: rgba(255, 255, 255, .12); }
+.phone2 .sn-hold .prg { stroke: var(--ac); stroke-linecap: round; stroke-dasharray: 1; stroke-dashoffset: 1; transition: stroke-dashoffset 250ms var(--sn-std); }
+.phone2 .sn-hold.on .prg { stroke-dashoffset: 0; transition: stroke-dashoffset 1200ms linear; }
+.phone2 .sn-holdcap { font-size: 13px; color: var(--tx2); line-height: 1.25; }
+.phone2 .sn-holdcap.hint { color: var(--ac); animation: sn-pop 200ms cubic-bezier(.34, 1.56, .64, 1); }
+.phone2 .sn-hold.accent { background: rgba(166, 200, 255, .16); color: var(--ac); }
+.phone2 .sn-arm { display: flex; align-items: center; gap: 12px; padding: 12px 12px 12px 14px; border-radius: 20px; background: #222228; font-size: 13px; color: var(--tx2); }
+.phone2 .sn-arm > span:not(.sn-holdwrap) { flex: 1; }
+
+/* ---- bottom sheet: the surface, rounded on top, no border, no drop shadow */
+.phone2 .sheet-back { background: rgba(0, 0, 0, .55); }
+.phone2 .sheet { background: var(--panel); border: 0; border-radius: 28px 28px 0 0; box-shadow: var(--sn-edge); animation: sn-sheetup 420ms var(--sn-out); }
+.phone2 .sheet-grip { height: 28px; }
+.phone2 .sheet-grip span { width: 36px; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, .3); }
+.phone2 .sheet-body .insp, .phone2 .drawer .insp { background: none; border: 0; box-shadow: none; border-radius: 0; backdrop-filter: none; }
+.phone2 .insp .close { width: 40px; height: 40px; border-radius: 50%; background: #222228; color: rgba(255, 255, 255, .85); font-size: 20px; top: 8px; right: 12px; }
+.phone2 .ih { padding: 6px 20px 8px; border: 0; }
+.phone2 .ih h2 { margin: 8px 0 4px; font-size: 24px; font-weight: 620; letter-spacing: -.5px; line-height: 1.2; font-variation-settings: "opsz" 32; }
+.phone2 .ih p { font-size: 13px; color: var(--tx2); }
+.phone2 .ib { padding: 6px 20px 24px; }
+.phone2 .eyebrow { font-size: 11px; font-weight: 600; letter-spacing: 2.5px; text-transform: uppercase; color: var(--ac); }
+
+/* ---- the full-screen map: plain ground, surface cards, no grid, no glow */
+.phone2 .mapfull { background: #0b0b0e; }
+.phone2 .react-flow { background: #0b0b0e !important; --xy-background-color: #0b0b0e; --xy-edge-stroke: rgba(255, 255, 255, .18); }
+.phone2 .react-flow__background { display: none; }
+.phone2 .box { background: var(--panel); border: 0; border-radius: 16px; box-shadow: var(--sn-edge); }
+.phone2 .box:hover { border: 0; }
+.phone2 .box.on { background: #1b2230; box-shadow: var(--sn-edge), inset 0 0 0 1.5px rgba(166, 200, 255, .55); animation: none; }
+.phone2 .box.sel { box-shadow: var(--sn-edge), inset 0 0 0 2px var(--ac); }
+.phone2 .box.ghost { background: transparent; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .18); }
+.phone2 .nn { font: 600 13px var(--sans); }
+.phone2 .ns, .phone2 .new { font-family: var(--sans); }
+.phone2 .new { border: 0; background: rgba(166, 200, 255, .16); border-radius: 999px; padding: 1px 7px; }
+.phone2 .col-h { font-size: 12.5px; font-weight: 500; letter-spacing: .1px; text-transform: none; color: rgba(255, 255, 255, .6); }
+.phone2 .line { stroke: rgba(255, 255, 255, .18) !important; }
+.phone2 .line.on { stroke: var(--flow) !important; } .phone2 .line.bad { stroke: var(--bad) !important; } .phone2 .line.warn { stroke: var(--amber) !important; }
+.phone2 .line.sel { stroke: var(--ac) !important; }
+.phone2 .packet, .phone2 .packet.bad, .phone2 .packet.warn { filter: none; }
+.phone2 .react-flow__controls { border: 0; border-radius: 999px; box-shadow: var(--sn-edge) !important; background: var(--panel); padding: 4px; }
+.phone2 .react-flow__controls-button { background: transparent !important; border: 0 !important; border-radius: 50%; fill: rgba(255, 255, 255, .85) !important; width: 36px; height: 36px; }
+.phone2 .mapfull .hud-tl { top: 14px; left: 16px; }
+.phone2 .mapfull .hud-tr { top: 10px; right: 12px; }
+.phone2 .sn-mf-title { font-size: 22px; font-weight: 620; letter-spacing: -.5px; }
+.phone2 .sn-mf-tools { display: flex; align-items: center; gap: 8px; }
+.phone2 .sn-mf-tools .sn-chip, .phone2 .sn-mf-tools .sn-iconbtn { background: var(--panel); box-shadow: var(--sn-edge); }
+.phone2 .sn-mf-tools .sn-chip[aria-pressed="true"] { background: #1f2633; color: var(--ac); }
+.phone2 .mapfull .drawer { top: 62px; right: 12px; bottom: 12px; }
+.phone2 .mapfull .drawer .insp { background: var(--panel); border-radius: 24px; box-shadow: var(--sn-edge); }
+
+/* ---- the shared pages inside the phone (Ari, Plugins, Inbox, Queue, Runs, Power, Share, Models, Settings, Logs) */
+.phone2 .pmain2 > .panel, .phone2 .pmain2 > div > .panel { margin-bottom: 14px; }
+.phone2 .ph { min-height: 0; padding: 16px 18px 6px; border: 0; gap: 10px; }
+.phone2 .pt, .phone2 .sect, .phone2 .sect-i, .phone2 .tlabel, .phone2 .vt-kind, .phone2 .pgroup-h, .phone2 .setk {
+  display: inline-block; font: 500 12.5px/1.4 var(--sans); letter-spacing: .1px; text-transform: none; color: rgba(255, 255, 255, .6);
+}
+.phone2 .pt::first-letter, .phone2 .sect::first-letter, .phone2 .sect-i::first-letter, .phone2 .tlabel::first-letter, .phone2 .pgroup-h::first-letter { text-transform: uppercase; color: inherit; }
+.phone2 .pt::before, .phone2 .sect::before { content: none; display: none; }
+.phone2 .sect { display: block; margin: 20px 0 8px; }
+.phone2 .tools { gap: 8px; }
+.phone2 .toolbar { border: 0; gap: 8px; padding: 10px 18px; background: none; flex-wrap: wrap; }
+.phone2 .count { font: 500 12px var(--sans); color: rgba(255, 255, 255, .6); background: none; border: 0; display: inline-block; }
+/* shared pages write some hints in lower case: sentence case on the phone, like the other Sonoma apps */
+.phone2 .count::first-letter, .phone2 .qcard .sub::first-letter, .phone2 .tip::first-letter { text-transform: uppercase; }
+.phone2 .qcard .sub { display: block; }
+/* tone meaning: running is green (as in every Sonoma app), queued is information blue */
+.phone2 .lane-run { --c: var(--ok); } .phone2 .lane.next { --c: var(--ac); }
+.phone2 .pill[data-s="running"] { background: rgba(143, 227, 173, .16); color: #8fe3ad; }
+.phone2 .tip { font-size: 13px; line-height: 1.5; color: var(--tx2); }
+.phone2 .tip.bad { color: var(--bad); }
+.phone2 .muted { font-size: 12.5px; }
+.phone2 .kv { padding: 9px 0; font-size: 13.5px; border: 0; }
+.phone2 .kv .k { color: var(--tx2); }
+.phone2 .code, .phone2 .ilesson, .phone2 .tests, .phone2 .fx-log, .phone2 pre { background: #222228; border: 0; border-radius: 16px; font: 12.5px/1.5 var(--sans); color: rgba(255, 255, 255, .85); }
+.phone2 .code.bad { color: var(--bad); }
+.phone2 .card, .phone2 .irow, .phone2 .appr, .phone2 .qcard, .phone2 .sitem, .phone2 .target, .phone2 .vt-card, .phone2 .lesson, .phone2 .fx-rows {
+  background: #222228; border: 0 !important; border-radius: 20px; box-shadow: none;
+}
+.phone2 .card { width: auto; padding: 16px; gap: 6px; }
+.phone2 .card h4 { margin: 0 0 4px; font-size: 12.5px; font-weight: 500; color: rgba(255, 255, 255, .6); }
+.phone2 .card p { font-size: 14px; color: rgba(255, 255, 255, .85); }
+.phone2 .irow { padding: 14px 16px; gap: 10px; }
+.phone2 .irow-h .it { font-size: 15px; font-weight: 600; min-width: 0; }
+.phone2 .ibox { border: 0; padding-top: 0; }
+.phone2 .appr { padding: 16px; margin: 8px 0 12px; }
+.phone2 .appr-big { font-size: 22px; font-weight: 620; letter-spacing: -.4px; font-variant-numeric: tabular-nums; }
+.phone2 .appr-in { width: 58%; text-align: right; }
+.phone2 .appr-actions, .phone2 .iact { gap: 8px; justify-content: flex-end; align-items: center; }
+.phone2 .appr-actions .btn, .phone2 .iact .btn, .phone2 .appr-actions .primary, .phone2 .iact .primary { height: 40px; }
+.phone2 .appr-img { border: 0; border-radius: 16px; }
+.phone2 .setrow, .phone2 .isl-set-row, .phone2 .mrow2, .phone2 .ttrow, .phone2 .chg, .phone2 .tl, .phone2 .prob, .phone2 .callr, .phone2 .test-row, .phone2 .fx-row { border: 0; }
+.phone2 .setl { font-size: 14px; }
+.phone2 .setrow.dirty .setl { color: var(--amber); }
+.phone2 .switch { height: 32px; padding: 0 12px 0 4px; border: 0; border-radius: 999px; background: rgba(255, 255, 255, .07); color: rgba(255, 255, 255, .7); font: 500 13px var(--sans); }
+.phone2 .switch i { width: 24px; height: 24px; background: rgba(255, 255, 255, .35); box-shadow: none; }
+.phone2 .switch.on { background: rgba(166, 200, 255, .16); color: var(--ac); }
+.phone2 .switch.on i { background: var(--ac); box-shadow: none; }
+.phone2 .empty-note, .phone2 .empty-state { font: 14px var(--sans); color: var(--tx2); }
+.phone2 .empty-state svg { color: var(--ac); opacity: .7; }
+.phone2 .empty-state b { color: #fff; font-weight: 600; }
+.phone2 .skel { padding: 18px; }
+.phone2 .skel-h, .phone2 .skel-r, .phone2 .skel-row { background: rgba(255, 255, 255, .06); animation: sn-pulse 2.2s ease-in-out infinite; border-radius: 999px; }
+.phone2 .bar, .phone2 .vt-level { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, .1); }
+.phone2 .bar i { background: var(--ac); box-shadow: none; border-radius: 3px; }
+.phone2 .mstate i, .phone2 .lane-h i { box-shadow: none; }
+.phone2 .modn b { font: 600 28px var(--sans); letter-spacing: -.5px; }
+.phone2 .spark i { background: var(--ac); border-radius: 3px; }
+.phone2 .spark i.zero { background: rgba(255, 255, 255, .1); }
+.phone2 .sdot { box-shadow: none; }
+
+/* Ari: chat list, bubbles, the input */
+.phone2 .bubble, .phone2 .msg .bubble { font: 15px/1.45 var(--sans); border: 0 !important; padding: 10px 14px; }
+.phone2 .msg.ari .bubble, .phone2 .bubble.ari { background: #222228; color: #fff; border-radius: 20px 20px 20px 6px; }
+.phone2 .msg.you .bubble, .phone2 .bubble.you { background: rgba(166, 200, 255, .16); color: #fff; border-radius: 20px 20px 6px 20px; }
+.phone2 .msg .who { font: 500 12px var(--sans); color: rgba(255, 255, 255, .55); text-transform: capitalize; }
+.phone2 .fx-ln .fx-tx { font-family: var(--sans) !important; }
+.phone2 .msg.you .who { color: rgba(255, 255, 255, .55); }
+.phone2 .bubble .used span { border: 0; background: rgba(255, 255, 255, .08); font-family: var(--sans); }
+.phone2 .ari-start, .phone2 .ari-in { border: 0 !important; background: none !important; box-shadow: none !important; gap: 12px; }
+.phone2 .ari-start { margin: 10px 18px 6px; padding: 0; height: auto; }
+.phone2 .ari-in { padding: 10px 18px 14px; }
+.phone2 .ari-start .caret, .phone2 .ari-in .caret { display: none; }
+.phone2 .ari-in .mic, .phone2 .mic { width: 44px; height: 44px; border: 0; border-radius: 50%; background: #222228; color: #fff; }
+.phone2 .ari-in .mic.on, .phone2 .mic.on { background: var(--ac); color: #141418; }
+.phone2 .chat-row { border: 0; border-radius: 16px; }
+.phone2 .chat-open { font-family: var(--sans); padding: 12px 8px 12px 16px; }
+.phone2 .chat-t { font-size: 15px; font-weight: 600; color: #fff; }
+.phone2 .chat-l, .phone2 .chat-m { font-size: 13px; color: var(--tx2); }
+.phone2 .chat-del { width: 44px; border-radius: 50%; }
+.phone2 .chat-del:hover { color: var(--bad); }
+.phone2 .typing span, .phone2 .typing i { background: var(--violet); }
+
+/* Plugins */
+.phone2 .plugins.phone .plist { padding: 6px 8px 10px; }
+.phone2 .prow { border: 0 !important; border-radius: 16px; padding: 12px 12px; background: none; }
+.phone2 .prow[aria-current="true"] { background: rgba(255, 255, 255, .06); }
+.phone2 .prow-name { font-size: 15px; font-weight: 600; }
+.phone2 .prow-desc { font-size: 13px; color: var(--tx2); }
+.phone2 .pgroup-h { padding: 12px 12px 4px; }
+.phone2 .pgroup-h.bad { color: var(--bad); }
+.phone2 .psearch { margin: 8px 12px 4px; width: calc(100% - 24px); }
+.phone2 .pd-head { display: flex; flex-direction: column; gap: 10px; }
+.phone2 .pd-title h2 { margin: 0; font-size: 26px; font-weight: 620; letter-spacing: -.5px; font-variation-settings: "opsz" 32; }
+.phone2 .pd-desc { margin: 0; font-size: 14px; color: var(--tx2); }
+.phone2 .pd-saved { font-size: 12.5px; color: var(--tx2); }
+.phone2 .pd-grid { gap: 10px; }
+.phone2 .lstats { gap: 6px 14px; font-size: 13px; }
+
+/* Queue, Runs, Logs */
+.phone2 .lanes { gap: 14px; }
+.phone2 .lane-h { border: 0; padding: 16px 18px 6px; font: 500 12.5px/1.4 var(--sans); letter-spacing: .1px; text-transform: none; color: rgba(255, 255, 255, .6); }
+.phone2 .lane-h b { font: 600 13px var(--sans); }
+.phone2 .lane-b { padding: 6px 12px 14px; }
+.phone2 .qcard { padding: 12px 14px; }
+.phone2 .qcard::before, .phone2 .qcard.on::after { display: none; }
+.phone2 .qcard:hover { transform: none; background: #222228; }
+.phone2 .run { border-radius: 12px; padding: 10px; font-size: 13px; }
+.phone2 .run:hover { transform: none; background: rgba(255, 255, 255, .06); }
+.phone2 .run .w { font-weight: 500; }
+.phone2 .thead { display: none; }
+.phone2 .toolbar .muted, .phone2 .toolbar .tip { white-space: normal; }
+.phone2 .logbox { margin: 0 12px 12px; border: 0; border-radius: 16px; background: #0b0b0e; font: 12.5px/1.6 var(--sans); }
+.phone2 .ll .m { color: rgba(255, 255, 255, .9); }
+.phone2 .ll .s.src-argus { color: var(--amber); } .phone2 .ll .s.src-worker { color: var(--ac); } .phone2 .ll .s.src-ollama { color: var(--violet); }
+.phone2 .ll.lv-error .m, .phone2 .ll.lv-critical .m { color: var(--bad); }
+.phone2 .errn { background: rgba(255, 157, 148, .16); color: var(--bad); border-radius: 999px; }
+
+/* Power, Share, Models, Voice */
+.phone2 .devgrid { gap: 14px; }
+.phone2 .dcard-b { padding: 16px 18px; }
+.phone2 .pwr-head b { font-size: 16px; font-weight: 600; }
+.phone2 .pwr-pending { border: 0; border-radius: 16px; background: rgba(255, 197, 143, .16); color: #ffc58f; padding: 10px 10px 10px 16px; }
+.phone2 .pbtn { height: 44px; }
+.phone2 .dropzone { border: 1.5px dashed rgba(255, 255, 255, .26); border-radius: 20px; background: none; }
+.phone2 .dropzone:hover, .phone2 .dropzone.over { border-color: var(--ac); background: rgba(166, 200, 255, .08); }
+.phone2 .target.on { background: rgba(166, 200, 255, .16); }
+.phone2 .sitem img, .phone2 .sitem .ficon { border-radius: 12px; }
+.phone2 .vt-card.rec { box-shadow: inset 0 0 0 2px var(--bad); }
+.phone2 .vt-level i { background: var(--bad); }
+.phone2 .vt-text { font-size: 22px; font-weight: 600; letter-spacing: -.3px; }
+.phone2 .voice-train .vt-actions button.primary.rec { background: var(--bad) !important; color: #141418 !important; }
+
+@supports (corner-shape: squircle) {
+  .phone2 .sn-pane:not(.sn-tabs), .phone2 .panel { border-radius: 36px; corner-shape: squircle; }
+  .phone2 .sn-tile { border-radius: 16px; corner-shape: squircle; }
+  .phone2 .card, .phone2 .irow, .phone2 .appr, .phone2 .box { border-radius: 22px; corner-shape: squircle; }
+}
+
+/* ---- motion: panels fade up staggered, live things move; all of it stops under reduced motion */
+@keyframes sn-rise { from { opacity: 0; transform: translateY(12px); } }
+@keyframes sn-ping { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--c) 45%, transparent); } 100% { box-shadow: 0 0 0 9px color-mix(in srgb, var(--c) 0%, transparent); } }
+@keyframes sn-pulse { 50% { opacity: .35; } }
+@keyframes sn-breathe { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ac) 50%, transparent); } 100% { box-shadow: 0 0 0 14px color-mix(in srgb, var(--ac) 0%, transparent); } }
+@keyframes sn-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes sn-slide { from { left: -40%; } to { left: 100%; } }
+@keyframes sn-sheetup { from { transform: translateY(100%); } }
+@keyframes sn-pop { from { transform: scale(.6); opacity: 0; } }
+
+.phone2 .sn-head, .phone2 .sn-stack > *, .phone2 .pmain2 > .panel, .phone2 .pmain2 > div > .panel, .phone2 .sn-offline { animation: sn-rise 650ms var(--sn-out) backwards; }
+.phone2 .sn-stack > :nth-child(2), .phone2 .pmain2 > div > .panel:nth-child(2) { animation-delay: 70ms; }
+.phone2 .sn-stack > :nth-child(3), .phone2 .pmain2 > div > .panel:nth-child(3) { animation-delay: 140ms; }
+.phone2 .sn-stack > :nth-child(4), .phone2 .pmain2 > div > .panel:nth-child(4) { animation-delay: 210ms; }
+.phone2 .sn-stack > :nth-child(5) { animation-delay: 280ms; } .phone2 .sn-stack > :nth-child(6) { animation-delay: 350ms; }
+.phone2 .sn-status .sn-dot, .phone2 .sn-state .sn-dot, .phone2 .sn-li .sn-dot { animation: sn-ping 2.4s ease-out infinite; }
+.phone2 .sn-status .d-coral, .phone2 .sn-state .d-coral { animation: none; }
+.phone2 .breathe { animation: sn-breathe 2.6s var(--sn-out) infinite; }
+.phone2 .sn-spark path { animation: sn-draw 1.6s var(--sn-out) .35s backwards; }
+.phone2 .sn-spark circle { animation: sn-pulse 2.2s ease-in-out 1.9s infinite; }
+.phone2 .sn-meter i { animation: sn-slide 1.6s var(--sn-std) infinite; }
+.phone2 .sn-pill, .phone2 .dotbadge { animation: sn-pop 220ms cubic-bezier(.34, 1.56, .64, 1) backwards; }
+html[data-paused="1"] .phone2 * { animation-play-state: paused !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  .phone2 *, .phone2 *::before, .phone2 *::after { animation: none !important; transition: none !important; }
+  .phone2 .sn-spark path { stroke-dashoffset: 0; }
+  .phone2 .sn-hold.on .prg { stroke-dashoffset: 0; }  /* the ring shows full while held; the timer still confirms */
+  .phone2 .sn-meter i { left: 0; width: 100%; opacity: .6; }
+}

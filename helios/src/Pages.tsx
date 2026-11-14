@@ -3,6 +3,7 @@ import { api, ArgusEvent } from "./api";
 import { ApprovalCard } from "./Inspector";
 import { CallLog } from "./Calls";
 import { Empty, Skeleton } from "./kit";
+import { useSc } from "./sonoma";
 
 function ago(t: number) {
   const s = Date.now() / 1000 - t;
@@ -19,6 +20,7 @@ type Note = { id: string; title: string; text: string; priority: number; click: 
 type NoteData = { notifications: Note[]; phone: { connected: boolean; last_seen: number; device: string } };
 
 export function NotificationsView({ events }: { events: ArgusEvent[] }) {
+  const sc = useSc();
   const [d, setD] = useState<NoteData | null>(null);
   const [only, setOnly] = useState<string>("all");
   const [msg, setMsg] = useState<string | null>(null);
@@ -39,7 +41,7 @@ export function NotificationsView({ events }: { events: ArgusEvent[] }) {
       <div className="toolbar">
         <div className="seg" role="group" aria-label="Show">
           {["all", "important", "waiting", "delivered"].map((k) => (
-            <button key={k} type="button" aria-pressed={only === k} onClick={() => setOnly(k)}>{k}</button>
+            <button key={k} type="button" aria-pressed={only === k} onClick={() => setOnly(k)}>{sc(k)}</button>
           ))}
         </div>
         <span className="count">
@@ -57,7 +59,7 @@ export function NotificationsView({ events }: { events: ArgusEvent[] }) {
             <div className="irow-h">
               <span className={`ikind ${n.priority >= 4 ? "approval" : "lesson"}`}>{n.priority >= 5 ? "urgent" : n.priority >= 4 ? "important" : n.state}</span>
               <b className="it">{n.title}</b>
-              <span className="muted">{n.state === "waiting" ? "waiting for the phone" : n.state === "dropped" ? "never collected" : "delivered"} · {ago(n.at)}</span>
+              <span className="muted">{sc(n.state === "waiting" ? "waiting for the phone" : n.state === "dropped" ? "never collected" : "delivered")} · {ago(n.at)}</span>
             </div>
             {n.text && <div className="ibox" style={{ whiteSpace: "pre-wrap" }}>{n.text}</div>}
             {n.approval_id && n.approval_state === "pending" && (review === n.id
@@ -81,6 +83,7 @@ export type InboxData = { items: InboxItem[]; counts: Record<string, number> };
 export { useInboxCount } from "./inboxCount";
 
 export function InboxView({ events, onOpenChat }: { events: ArgusEvent[]; onOpenChat: (conv: string) => void }) {
+  const sc = useSc();
   const [d, setD] = useState<InboxData | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -100,7 +103,7 @@ export function InboxView({ events, onOpenChat }: { events: ArgusEvent[]; onOpen
         <div className="seg" role="group" aria-label="Show">
           {["all", "approval", "lesson", "question"].map((k) => (
             <button key={k} type="button" aria-pressed={only === k} onClick={() => setOnly(k)}>
-              {k === "all" ? "all" : label[k]}{k !== "all" && d?.counts[k] ? <span className="segn">{d.counts[k]}</span> : null}
+              {sc(k === "all" ? "all" : label[k])}{k !== "all" && d?.counts[k] ? <span className="segn">{d.counts[k]}</span> : null}
             </button>
           ))}
         </div>

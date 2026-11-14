@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Empty, Skeleton } from "./kit";
+import { useSc } from "./sonoma";
 import { api, getToken } from "./api";
 
 type Target = { plugin: string; name: string; workflow: string; label: string; accepts: string[] };
@@ -33,6 +34,7 @@ async function clearShared() {
 
 // Helios > Share: send photos, PDFs, links or text to a plugin. From the phone's share menu, or picked here.
 export function ShareView({ onJob, onDone }: { onJob: (id: string) => void; onDone: () => void }) {
+  const sc = useSc();
   const [targets, setTargets] = useState<Target[] | null>(null);
   const [items, setItems] = useState<Item[]>([]);
   const [drag, setDrag] = useState(false);
@@ -137,9 +139,9 @@ export function ShareView({ onJob, onDone }: { onJob: (id: string) => void; onDo
             </div>
           )}
           <label className="fld"><span>Link</span><input type="url" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://" /></label>
-          <label className="fld"><span>Title</span><input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="optional" /></label>
-          <label className="fld"><span>Text</span><textarea rows={4} value={text} onChange={(e) => setText(e.target.value)} placeholder="optional" /></label>
-          <label className="fld"><span>Note</span><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="optional, for you or the plugin" /></label>
+          <label className="fld"><span>Title</span><input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={sc("optional")} /></label>
+          <label className="fld"><span>Text</span><textarea rows={4} value={text} onChange={(e) => setText(e.target.value)} placeholder={sc("optional")} /></label>
+          <label className="fld"><span>Note</span><input value={note} onChange={(e) => setNote(e.target.value)} placeholder={sc("optional, for you or the plugin")} /></label>
         </div>
       </section>
       <section className="panel sendto" aria-label="Send to">

@@ -97,7 +97,7 @@ export function RunsView({ events, selected, onSelect }: { events: ArgusEvent[];
             onClick={() => onSelect({ type: "job", id: j.id })}>
             <span className="t mono">{ago(j.created_at)}</span>
             <span className="w mono">{j.plugin}.<b>{j.workflow}</b></span>
-            <span className={`pill ${tone("job." + j.state)}`}>{j.state}</span>
+            <span className={`pill ${tone("job." + j.state)}`} data-s={j.state}>{j.state}</span>
             <span className="d">{summary(j)}</span>
             <span className="t mono">{took(j)}{j.attempt > 1 ? ` · try ${j.attempt}` : ""}</span>
             <span className="t mono hide-sm">{shortId(j.id)}</span>
