@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Helios phone:** no doubled status-bar or gesture-bar gap, a clean scalloped status badge, and sentence-case event titles.
+
 - **Helios:** phone and desktop are restyled in Material 3 Expressive: a Home and a separate Map on the phone, a map-first desktop with floating panels, Roboto Flex and live meters on the map boxes.
 
 - **Helios desktop:** now in the Sonoma look like the phone view: Inter and Material icons, a calm summary home, a floating rail, and hold-to-confirm instead of dialogs.

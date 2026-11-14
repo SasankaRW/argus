@@ -170,16 +170,23 @@ export function Pane({ label, icon, tone, meta, children, className = "" }: {
   );
 }
 
+// A 12-point scallop: a circle of radius 31 with 12 soft bumps of 3.
+const COOKIE = (() => {
+  const pts: string[] = [];
+  for (let i = 0; i < 144; i++) { const a = (i / 144) * Math.PI * 2, r = 31 + 3 * Math.cos(12 * a); pts.push(`${(r * Math.cos(a)).toFixed(2)} ${(r * Math.sin(a)).toFixed(2)}`); }
+  return `M${pts.join("L")}Z`;
+})();
 // The cookie: a scalloped badge that turns slowly behind the status icon.
 function Cookie({ icon }: { icon: IconName }) {
   return (
     <div className="sn-cookie">
-      <svg className="cookie" aria-hidden="true" width="68" height="68" viewBox="0 0 76 76"><path d="M38 2c4 0 6 4 10 5s8-1 11 2 1 7 3 10 6 5 7 9-3 7-3 10 3 6 1 10-6 4-9 7-3 7-7 9-7-2-11-2-7 4-11 3-6-5-9-7-8-1-10-5 1-7-1-10-6-5-6-9 4-6 4-10-3-7 0-10 7-1 10-3 4-7 8-8 6 3 10 3 6-4 10-4z" /></svg>
+      <svg className="cookie" aria-hidden="true" viewBox="-36 -36 72 72"><path d={COOKIE} /></svg>
       <Ms n={icon} fill />
     </div>
   );
 }
 
+export const sentence = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();  // "ask" is Ask, never ASK
 const ago = (t: number) => {
   const m = Math.max(0, Math.round((Date.now() / 1000 - t) / 60));
   return m < 1 ? "now" : m < 60 ? `${m} min` : m < 1440 ? `${Math.round(m / 60)} h` : `${Math.round(m / 1440)} d`;
@@ -195,7 +202,7 @@ function recentRows(jobs: Job[]) {
     const took = j.finished_at! - j.created_at;
     return {
       id: j.id, icon: (bad ? "close" : ari ? "graphic_eq" : "done_all") as IconName, tone: bad ? "err" : ari ? "ter" : "ok",
-      title: ari ? `Ari ${j.workflow.replace(/_/g, " ")}` : `${cap(j.workflow.replace(/_/g, " "))} ${bad ? "failed" : "finished"}`,
+      title: ari ? `Ari ${j.workflow.replace(/_/g, " ")}` : `${sentence(j.workflow.replace(/_/g, " "))} ${bad ? "failed" : "finished"}`,
       sub: ari && !bad ? `Answered in ${took.toFixed(1)} s` : `${j.plugin}${j.lease_owner ? ` · ${niceHost(j.lease_owner)}` : ""}`, at: j.finished_at!,
     };
   });
