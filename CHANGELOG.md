@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Ari's island** has the Sonoma look: Inter, Material Symbols icons, the green/blue/amber/coral tones, and a new type box and question box.
+
 - **Fix, the phone app's page sat under the status bar:** on Android 15 and later the app is drawn edge to edge, and Helios's top row (including its "phone view" button) was hidden under the status bar. The page now keeps clear of the status bar, the navigation bar, a camera cutout and the keyboard.
 
 - **New app icon:** the Argus phone app uses the Sonoma icon (a blue ring around a dot), with a themed-icon layer.
