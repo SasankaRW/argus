@@ -607,7 +607,7 @@ main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 
 /* ---------------------------------------------------------------- phone: terminal widgets
    near-black ground with soft green / amber glows, tiles that are small terminal windows, a floating pill tab bar */
-.phone2 { --tg: var(--ac); position: relative; min-height: 100dvh; padding-bottom: calc(96px + var(--sab)); background: #050607; overflow-x: hidden; font-family: var(--mono); }
+.phone2 { --tg: var(--ac); position: relative; min-height: 100dvh; padding-bottom: calc(124px + var(--sab)); background: #050607; overflow-x: hidden; font-family: var(--mono); }
 .phone2 .glow { position: fixed; width: 300px; height: 300px; border-radius: 50%; filter: blur(120px); opacity: .14; pointer-events: none; z-index: 0; }
 .phone2 .g1 { left: -110px; top: -90px; background: var(--tg); }
 .phone2 .g2 { right: -120px; top: 320px; background: var(--ac); }

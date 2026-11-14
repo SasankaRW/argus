@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Helios:** the phone's bottom bar is the floating pill dock again.
+
 - **New Helios icon:** the browser tab and the installed app use the Argus icon from the shared set.
 
 - **Helios phone:** no doubled status-bar or gesture-bar gap, a clean scalloped status badge, and sentence-case event titles.
