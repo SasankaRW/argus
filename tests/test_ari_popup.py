@@ -42,7 +42,7 @@ def test_the_island_helpers():
     assert not st.apply([{"kind": "step.running", "job_id": "other", "step": "tool 1: x", "data": {}}], 2.0)
     st.apply([{"kind": "ari.state", "job_id": "j1", "data": {"phase": "done", "text": "Done."}}], 3.0)
     assert not st.fold_due(4.0) and st.fold_due(10.0)
-    assert target_size("idle", "", False, 0) == (84, 10) and target_size("details", "", False, 999)[1] == 300
+    assert target_size("idle", "", False, 0) == (84, 10) and target_size("details", "", False, 999)[1] == 380
     assert next_schedule([{"enabled": True, "next_run_at": 9}, {"enabled": True, "next_run_at": 5},
                           {"enabled": False, "next_run_at": 1}])["next_run_at"] == 5
     assert open_target("http://x:8600", "show:inbox") == "http://x:8600/helios/#inbox"
@@ -180,9 +180,9 @@ def test_the_island_flips_pages_and_says_whats_on_hover():
     assert pages_of(widgets) == ["ari", "calendar", "media"]  # Ari's first, then in the order set in Helios
     song = {"title": "Midnight City", "artist": "M83", "playing": True}
     assert hover_label(False, False, {}, song) == "♪ Midnight City — M83"
-    assert hover_label(False, False, {}, {**song, "playing": False}) == "a r i"  # paused: nothing to say
+    assert hover_label(False, False, {}, {**song, "playing": False}) == "Ari"  # paused: nothing to say
     assert hover_label(False, False, {"mic": ["Discord"]}, song) == "mic: Discord"  # who listens comes first
-    assert hover_label(True, True, {"mic": ["Discord"]}, song) == "a r i · game mode"
+    assert hover_label(True, True, {"mic": ["Discord"]}, song) == "Ari · game mode"
     w, h = target_size("idle", "", True, 0, "♪ Midnight City — M83")
     assert h == 22 and w > 138  # wide enough for the song
     assert target_size("idle", "", True, 0) == (138, 22)
@@ -221,3 +221,34 @@ def test_helios_keeps_the_island_keys_and_the_weather_page(tmp_path, monkeypatch
         cl.call("PUT", "/island", {**body, "keys": {"ask": "ctrl+alt+k", "hide": "ctrl+alt+d"}})
         assert cl.call("PUT", "/island", body)[1]["keys"]["ask"] == "ctrl+alt+k"  # a Helios that sends no keys
         assert cl.get("/island/weather") == {}  # no town set: the calendar page goes without
+
+
+def test_the_island_ships_its_fonts_and_every_icon_it_names():
+    import os
+    import re
+
+    import pytest
+
+    from argus import ari_popup
+
+    for name in ari_popup.FONT_FILES:
+        assert (ari_popup.FONT_DIR / name).stat().st_size > 1000
+    # every icon name the island draws is in the cut-down icon font's list (scripts/island_fonts.py)
+    wanted = set(ari_popup.ICON_NAMES.values())
+    wanted |= set(re.findall(r'symbol\(qp, "([a-z_]+)"', open(ari_popup.__file__, encoding="utf-8").read()))
+    wanted |= {"mic", "hub", "sports_esports", "power_settings_new", "play_arrow", "pause", "skip_previous",
+               "skip_next"}
+    root = ari_popup.FONT_DIR.parents[2]
+    script = (root / "scripts" / "island_fonts.py").read_text(encoding="utf-8")
+    listing = script.split("ICONS = [", 1)[1].split("]", 1)[0]
+    assert wanted <= set(re.findall(r'"([a-z_]+)"', listing))
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")  # no screen needed (CI)
+    qtgui = pytest.importorskip("PySide6.QtGui")
+    qtwidgets = pytest.importorskip("PySide6.QtWidgets")
+    app = qtwidgets.QApplication.instance() or qtwidgets.QApplication([])
+    families = {f for n in ari_popup.FONT_FILES
+                for i in [qtgui.QFontDatabase.addApplicationFont(str(ari_popup.FONT_DIR / n))] if i >= 0
+                for f in qtgui.QFontDatabase.applicationFontFamilies(i)}
+    assert {"Inter", "Inter Medium", "Inter SemiBold", "Inter Display", "Island Symbols",
+            "Island Symbols Filled"} <= families
+    assert app is not None

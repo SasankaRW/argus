@@ -7,6 +7,7 @@
 *.jpg binary
 *.woff binary
 *.woff2 binary
+*.ttf binary
 *.db binary
 # Built Helios: generated, keep diffs out of reviews
 core/argus/helios_dist/** linguist-generated=true -diff

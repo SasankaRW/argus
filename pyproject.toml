@@ -58,7 +58,7 @@ version = { file = "VERSION" }
 where = ["core"]
 
 [tool.setuptools.package-data]
-argus = ["db/migrations/*.sql", "helios_dist/*", "helios_dist/**/*"]
+argus = ["db/migrations/*.sql", "helios_dist/*", "helios_dist/**/*", "island_fonts/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,10 +1,10 @@
-"""Ari's island on the PC: a black shape grown out of the top edge of the main screen, over every app.
+"""Ari's island on the PC: a dark shape grown out of the top edge of the main screen, over every app.
 
     python -m argus.ari_popup     (dev.ps1 up starts it when ari.popup is on; needs: pip install -e .[popup])
 
-Native Qt (no browser inside): a few MB of memory, and nothing runs while it sits idle. It follows Ari through
-Argus's event stream (a light poll):
-  idle     a slim lip under the edge; hover shows "ari"
+Native Qt (no browser inside), in the Sonoma look (Inter, Material Symbols Rounded, the five tones): a few MB of
+memory, and nothing runs while it sits idle. It follows Ari through Argus's event stream (a light poll):
+  idle     a slim lip under the edge; hover shows "Ari"
   active   it widens: listening / thinking / working / speaking, with what Ari is on
   done     the answer, two lines, then it folds back
   click    it opens down: the time, Talk (the PC's "Hey Ari" listener starts listening), how Argus is doing, what
@@ -60,20 +60,37 @@ IDLE = (84, 10)
 HOVER = (138, 22)
 DETAILS_W = 336
 MAX_W = 430
-MAX_H = 300
+MAX_H = 380
 W, H = MAX_W + 2 * 30 + 2 * MARGIN, MAX_H + MARGIN  # the window (room for the widest shoulders)
 
 FOLLOW_S = 10.0  # how long Ari listens for a follow-up after answering (ari.talk_idle_s)
-WORDS = {"listening": "listening", "thinking": "thinking", "working": "on it", "speaking": "speaking",
-         "starting": "starting"}
+WORDS = {"listening": "Listening", "thinking": "Thinking", "working": "On it", "speaking": "Speaking",
+         "starting": "Starting"}
 NICE = {"search_my_files": "searching your files", "find_file": "looking for the file", "open_app": "opening it",
         "set_volume": "setting the volume", "argus_status": "checking Argus", "add_note": "writing it down",
         "run_routine": "running the routine", "lab_status": "checking the lab", "repo_status": "checking your repos",
         "look_at_screen": "looking at your screen", "summarise_clipboard": "reading what you copied",
         "weather": "checking the weather", "web_search": "searching the web", "read_page": "reading the page",
         "search_everything": "finding the file"}
-TONE = {"listening": "#39ff9c", "done": "#39ff9c", "working": "#4cc2ff", "thinking": "#f5a524",
-        "speaking": "#f5a524", "idle": "#f5a524", "starting": "#6f7680"}
+# The Sonoma look (design/sonoma/SPEC.md). Surfaces and ink, then the tones: a tone means something, it never decorates.
+SURFACE = "#16161b"   # the island; the lit top edge is white at 7 %
+CARD = "#222228"      # a card or tile inside it
+KEY = "#26262d"       # a round key
+ACCENT = "#a6c8ff"
+ON_ACCENT = "#141418"  # text on an accent fill
+GREEN, AMBER, CORAL = "#8fe3ad", "#ffc58f", "#ff9d94"
+MIC_DOT, CAM_DOT = "#fb923c", "#4ade80"  # the privacy dots keep their own colours: orange mic, green camera
+INK = (255, 255, 255)  # ink at 100 / 68 / 55 %: white, DIM, FAINT
+DIM, FAINT = 0.68, 0.55
+TONE = {"listening": GREEN, "done": GREEN, "working": ACCENT, "thinking": AMBER,
+        "speaking": AMBER, "idle": AMBER, "starting": "#8c8c92"}
+ICON_NAMES = {"inbox": "inbox", "grid": "grid_view", "chat": "chat_bubble", "page": "description", "moon": "bedtime",
+              "power": "power_settings_new", "spark": "auto_awesome", "bolt": "bolt", "globe": "language",
+              "bell": "notifications", "dot": "circle"}
+# Inter and Material Symbols Rounded, cut by scripts/island_fonts.py
+FONT_DIR = Path(__file__).resolve().parent / "island_fonts"
+FONT_FILES = ("Inter-Regular.ttf", "Inter-Medium.ttf", "Inter-SemiBold.ttf", "Inter-Display.ttf",
+              "Symbols-Rounded.ttf", "Symbols-Rounded-Filled.ttf")
 
 
 def placement(x: int, y: int, width: int) -> tuple[int, int, int, int]:
@@ -86,7 +103,7 @@ def shoulder_of(h: float) -> float:
 
 
 def radius_of(h: float, sh: float, big: bool) -> float:
-    return max(2.0, min(24.0 if big else 19.0, h - sh, h / 2))
+    return max(2.0, min(26.0 if big else 19.0, h - sh, h / 2))
 
 
 def stretch_of(h: float) -> float:
@@ -226,15 +243,15 @@ def pages_of(widgets: list[dict]) -> list[str]:
 def hover_label(game: bool, off: bool, priv: dict, media: dict | None) -> str:
     """What the island says on hover: who has the mic or camera first, then the song, else just "ari"."""
     if game:
-        return "a r i · game mode"
+        return "Ari · game mode"
     if off:
-        return "a r i · off"
+        return "Ari · off"
     used = [("mic", a) for a in priv.get("mic") or []] + [("camera", a) for a in priv.get("camera") or []]
     if used:
         return " · ".join(f"{k}: {a}" for k, a in used[:2])
     if media and media.get("playing") and media.get("title"):
         return "♪ " + media["title"] + (f" — {media['artist']}" if media.get("artist") else "")
-    return "a r i"
+    return "Ari"
 
 
 def icon_for(action: str) -> str:
@@ -361,22 +378,20 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
     p.add_argument("--hover", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--page", default="ari", help=argparse.SUPPRESS)  # with --details: media, system, calendar
     p.add_argument("--ask", action="store_true", help=argparse.SUPPRESS)  # the type-to-Ari box
+    p.add_argument("--question", action="store_true", help=argparse.SUPPRESS)  # Ari's question box
     args = p.parse_args(argv)
     token = os.environ.get("ARGUS_WORKER_TOKEN") or parse_env_file(Path(".env")).get("ARGUS_WORKER_TOKEN")
     try:
         from PySide6.QtCore import QObject, QPointF, QRect, QRectF, Qt, QTimer, Signal  # type: ignore
         from PySide6.QtGui import (  # type: ignore[import-not-found]
-            QBrush,
             QColor,
             QCursor,
             QFont,
             QFontMetrics,
             QImage,
-            QLinearGradient,
             QPainter,
             QPainterPath,
             QPen,
-            QRadialGradient,
             QRegion,
         )
         from PySide6.QtWidgets import (  # type: ignore[import-not-found]
@@ -452,26 +467,70 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
 
     live = Live()
 
-    def font(families: list[str], px: float, weight: int = 400) -> QFont:
+    from PySide6.QtGui import QFontDatabase  # type: ignore[import-not-found]
+
+    fonts_ok = [False]
+
+    def load_fonts() -> None:
+        """Inter and the icon font ship with the package (island_fonts/): nothing is read from the system."""
+        got = [QFontDatabase.addApplicationFont(str(FONT_DIR / n)) for n in FONT_FILES]
+        fonts_ok[0] = all(i >= 0 for i in got)
+
+    app = QApplication(sys.argv[:1])  # the fonts below need it
+    app.setQuitOnLastWindowClosed(False)
+    load_fonts()
+
+    FALLBACK = ["Segoe UI Variable Text", "Segoe UI", "Helvetica Neue", "Arial"]
+
+    def font(px: float, weight: int = 400, *, display: bool = False, tnum: bool = False,
+             spacing: float = 0.0) -> QFont:
+        """Inter at this size. Each weight is its own family (see scripts/island_fonts.py), so a family is
+        never bolded or thinned by the system; Inter's tabular digits for clocks and amounts."""
+        family = ("Inter Display" if display else "Inter SemiBold" if weight >= 600 else
+                  "Inter Medium" if weight >= 500 else "Inter")
         f = QFont()
-        f.setFamilies(families)
+        f.setFamilies([family, *FALLBACK])
         f.setPixelSize(max(1, round(px)))
-        f.setWeight(QFont.Weight(weight))
+        f.setWeight(QFont.Weight.Normal if fonts_ok[0] else QFont.Weight(weight))
+        f.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
+        if spacing:
+            f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, spacing)
+        if tnum:
+            try:
+                f.setFeature(QFont.Tag("tnum"), 1)
+            except (AttributeError, TypeError, ValueError):  # Qt before 6.7: proportional digits
+                pass
+        return f
+
+    def symbol_font(px: float, filled: bool = False) -> QFont:
+        """Material Symbols Rounded: draw an icon's name and the font turns it into the picture."""
+        f = QFont()
+        f.setFamilies(["Island Symbols Filled" if filled else "Island Symbols"])
+        f.setPixelSize(max(1, round(px)))
         f.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
         return f
 
-    SANS = ["Segoe UI Variable Text", "Segoe UI Variable Display", "Segoe UI", "Inter", "Helvetica Neue", "Arial"]
-    DISPLAY = ["Segoe UI Variable Display", "Segoe UI Variable Text", "Segoe UI", "Inter", "Arial"]
-    MONO = ["Cascadia Mono", "Consolas", "Menlo", "monospace"]
-    F_TEXT = font(SANS, 13)
-    F_SMALL = font(SANS, 12)
-    F_LABEL = font(MONO, 11)
-    F_CLOCK = font(DISPLAY, 21, 400)
-    F_CHIP = font(SANS, 11.5, 500)
-    F_TITLE = font(SANS, 14, 600)
-    F_TINY = font(MONO, 10)
-    F_DAY = font(SANS, 11.5)
-    BAR = {"ok": "#34d399", "warm": "#f5a524", "hot": "#ef6a6a"}
+    def ink(alpha: float = 1.0) -> QColor:
+        return QColor(255, 255, 255, round(255 * alpha))
+
+    def tint(color: str, alpha: float = 0.16) -> QColor:
+        """A tone's background: the tone at 16 % (the Sonoma tonal fill)."""
+        c = QColor(color)
+        c.setAlphaF(alpha)
+        return c
+
+    F_TEXT = font(13)
+    F_SMALL = font(12.5)
+    F_LABEL = font(12.5, 500)
+    F_EYE = font(11, 600, spacing=2.2)
+    F_CLOCK = font(30, display=True, tnum=True, spacing=-1.0)
+    F_CHIP = font(12, 500)
+    F_TITLE = font(15, 600)
+    F_PILL = font(11, 600, spacing=0.3)
+    F_TINY = font(11, tnum=True)
+    F_DAY = font(12, tnum=True)
+    F_VALUE = font(13, tnum=True)
+    BAR = {"ok": GREEN, "warm": AMBER, "hot": CORAL}
     RIGHT_MID = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
 
     class Island(QWidget):
@@ -517,8 +576,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             self.page = 0
             self.wheel_acc, self.wheel_at = 0.0, 0.0
             self.media: dict | None = None
-            self.art: Any = None  # the album art (QImage) and its colour
-            self.art_tone = QColor("#4cc2ff")
+            self.art: Any = None  # the album art (QImage)
             self.art_key: Any = None
             self.hw: dict = {}
             self.priv: dict = {"mic": [], "camera": []}
@@ -543,7 +601,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
 
         def hover_text(self) -> str:
             label = hover_label(self.ari.game, self.ari.off, self.priv, self.media)
-            return "" if label == "a r i" else label
+            return "" if label == "Ari" else label
 
         def pages(self) -> list[str]:
             return pages_of(self.info.widgets)
@@ -579,7 +637,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             if not self.anim.isActive():
                 self.last_frame = time.monotonic()
                 self.anim.start()
-            busy = self.mode() == "active" or self.ari.phase == "following"  # the follow-up ring moves
+            # the indicators, the follow-up ring and Talk's breathing ring move
+            busy = self.mode() in ("active", "details") or self.ari.phase == "following"
             if busy and not self.pulse.isActive():
                 self.pulse.start()
             elif not busy and self.pulse.isActive():
@@ -629,14 +688,6 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                         img = QImage.fromData(data["art"])
                         if not img.isNull():
                             self.art = img
-                            c = img.scaled(1, 1, Qt.AspectRatioMode.IgnoreAspectRatio,
-                                           Qt.TransformationMode.SmoothTransformation).pixelColor(0, 0)
-                            h, sat, v, _a = c.getHsvF()
-                            self.art_tone = QColor.fromHsvF(max(0.0, h), max(0.45, sat), max(0.75, v))
-                        else:
-                            self.art_tone = QColor("#4cc2ff")
-                    else:
-                        self.art_tone = QColor("#4cc2ff")
             elif kind == "hw":
                 self.hw = data or {}
             elif kind == "priv":
@@ -717,10 +768,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 p.closeSubpath()
             return p
 
-        def shadow(self, mode: str, tone: Any) -> Any:
+        def shadow(self) -> Any:
             """The shadow under the island, blurred by drawing it at 1/SH_SCALE size and scaling it back up
             (twice, so the edge fades smoothly). Kept while the size doesn't change."""
-            key = (round(self.spring.w), round(self.spring.h), mode, tone.name())
+            key = (round(self.spring.w), round(self.spring.h), self.mode() == "details")
             if self._shadow_key == key:
                 return self._shadow
             k = SH_SCALE
@@ -733,11 +784,6 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             sp.setPen(Qt.PenStyle.NoPen)
             sp.setBrush(QColor(0, 0, 0, SH_ALPHA))
             sp.drawPath(self.path())
-            if mode in ("active", "done"):
-                c = QColor(tone)
-                c.setAlpha(40)
-                sp.setBrush(c)
-                sp.drawPath(self.path())
             sp.end()
             smooth = Qt.TransformationMode.SmoothTransformation
             ratio = Qt.AspectRatioMode.IgnoreAspectRatio
@@ -752,42 +798,31 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             qp.setRenderHint(QPainter.RenderHint.TextAntialiasing)
             path = self.path()
             mode = self.mode()
-            tone = QColor(TONE.get(self.ari.phase, "#f5a524"))
+            tone = QColor(TONE.get(self.ari.phase, AMBER))
             # soft shadow: the shape drawn small and scaled up smoothly (a cheap blur that fades to nothing, no
-            # hard ends); in Ari's colour too while it talks
-            qp.drawImage(0, 0, self.shadow(mode, tone))
-            # the shape itself
+            # hard ends)
+            qp.drawImage(0, 0, self.shadow())
+            # the shape itself: the Sonoma surface, with the lit top edge (white at 7 %)
             r = self.shape_rect()
-            g = QLinearGradient(0, 0, 0, r.height())
-            g.setColorAt(0, QColor("#000000"))
-            g.setColorAt(0.6, QColor("#030303"))
-            g.setColorAt(1, QColor("#0b0b0c"))
             qp.setPen(Qt.PenStyle.NoPen)
-            qp.setBrush(QBrush(g))
+            qp.setBrush(QColor(SURFACE))
             qp.drawPath(path)
             qp.setClipPath(path)
+            qp.fillRect(QRectF(r.x(), 0, r.width(), 1), ink(0.07))
             body = QRectF(r.x() + shoulder_w(self.spring.h), 0, self.spring.w, self.spring.h)
             self.buttons = []
             if mode == "idle":
                 mic, cam = bool(self.priv.get("mic")), bool(self.priv.get("camera"))
                 if self.hover and self.spring.h > 16:
-                    label = hover_label(self.ari.game, self.ari.off, self.priv, self.media)
-                    used = label.startswith(("mic:", "camera:"))
-                    qp.setPen(QColor("#f5a524" if self.ari.game else "#ef6a6a" if self.ari.off else
-                                     "#fb923c" if used and mic else "#4ade80" if used else
-                                     "#c4c8ce" if label.startswith("♪") else "#5d6670"))
-                    qp.setFont(F_LABEL if label.startswith("a r i") or used else F_SMALL)
-                    fm = QFontMetrics(qp.font())
-                    qp.drawText(body.adjusted(12, 0, -12, 0), Qt.AlignmentFlag.AlignCenter,
-                                fm.elidedText(label, Qt.TextElideMode.ElideRight, int(body.width() - 24)))
+                    self.draw_hover(qp, body, mic, cam)
                 else:
                     if self.ari.off:  # a small dot on the lip: Ari is off (amber: game mode)
                         qp.setPen(Qt.PenStyle.NoPen)
-                        qp.setBrush(QColor("#f5a524" if self.ari.game else "#ef6a6a"))
+                        qp.setBrush(QColor(AMBER if self.ari.game else CORAL))
                         qp.drawEllipse(QPointF(body.center().x(), body.center().y()), 2.2, 2.2)
                     # privacy: orange while an app has the mic, green while one has the camera (still dots: no
                     # redraws while you sit in a call)
-                    dots = [c for c, on in (("#fb923c", mic), ("#4ade80", cam)) if on]
+                    dots = [c for c, on in ((MIC_DOT, mic), (CAM_DOT, cam)) if on]
                     for i, col in enumerate(dots):
                         qp.setPen(Qt.PenStyle.NoPen)
                         qp.setBrush(QColor(col))
@@ -797,6 +832,38 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             elif mode == "details":
                 self.draw_details(qp, body)
             qp.end()
+
+        def draw_hover(self, qp: Any, body: Any, mic: bool, cam: bool) -> None:
+            """The one line on hover: a dot for who has the mic or camera, a note for the song, else "Ari"."""
+            label = hover_label(self.ari.game, self.ari.off, self.priv, self.media)
+            used = label.startswith(("mic:", "camera:"))
+            song = label.startswith("♪")
+            text = label[2:] if song else label
+            lead_w = 14 if used or song else 0
+            color = ink(0.85) if used or song else QColor(AMBER) if self.ari.game else QColor(CORAL) \
+                if self.ari.off else ink(FAINT)
+            qp.setFont(F_CHIP)
+            fm = QFontMetrics(qp.font())
+            text = fm.elidedText(text, Qt.TextElideMode.ElideRight, int(body.width() - 24 - lead_w))
+            tw = fm.horizontalAdvance(text)
+            x = body.center().x() - (tw + lead_w) / 2
+            cy = body.center().y()
+            if used:
+                qp.setPen(Qt.PenStyle.NoPen)
+                qp.setBrush(QColor(MIC_DOT if label.startswith("mic:") else CAM_DOT))
+                qp.drawEllipse(QPointF(x + 3, cy), 3, 3)
+            elif song:
+                self.symbol(qp, "music_note", x + 5, cy, 14, ink(DIM))
+            qp.setFont(F_CHIP)
+            qp.setPen(color)
+            qp.drawText(QRectF(x + lead_w, body.y(), tw + 4, body.height()), Qt.AlignmentFlag.AlignVCenter, text)
+
+        def symbol(self, qp: Any, name: str, cx: float, cy: float, px: float, color: Any,
+                   filled: bool = False) -> None:
+            """A Material Symbols Rounded icon, centred on (cx, cy), px tall."""
+            qp.setFont(symbol_font(px, filled))
+            qp.setPen(color)
+            qp.drawText(QRectF(cx - px, cy - px, 2 * px, 2 * px), Qt.AlignmentFlag.AlignCenter, name)
 
         def draw_indicator(self, qp: Any, cx: float, cy: float, tone: Any) -> None:
             t = time.monotonic()
@@ -812,11 +879,13 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             elif ph in ("thinking", "working"):
                 speed = 0.8 if ph == "working" else 1.1
                 start = -((t / speed) % 1.0) * 360
-                grad = QPen(tone, 2.2)
-                grad.setCapStyle(Qt.PenCapStyle.RoundCap)
-                qp.setPen(grad)
                 qp.setBrush(Qt.BrushStyle.NoBrush)
-                qp.drawArc(QRectF(cx - 7, cy - 7, 14, 14), int(start * 16), int(-250 * 16))
+                qp.setPen(QPen(ink(0.15), 2.0))  # the track, then the moving arc
+                qp.drawEllipse(QPointF(cx, cy), 6.5, 6.5)
+                arc = QPen(tone, 2.0)
+                arc.setCapStyle(Qt.PenCapStyle.RoundCap)
+                qp.setPen(arc)
+                qp.drawArc(QRectF(cx - 6.5, cy - 6.5, 13, 13), int(start * 16), int(-250 * 16))
             else:
                 if ph == "following":  # still listening for a follow-up: a ring that runs down with the time left
                     left = max(0.0, 1.0 - (t - self.ari.since) / FOLLOW_S)
@@ -827,15 +896,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                     qp.setOpacity(0.35 + 0.65 * left)
                     qp.drawArc(QRectF(cx - 8.5, cy - 8.5, 17, 17), 90 * 16, int(left * 360 * 16))
                     qp.setOpacity(1)
-                glow = QRadialGradient(QPointF(cx, cy), 9)
-                c = QColor(tone)
-                glow.setColorAt(0, c)
-                c2 = QColor(tone)
-                c2.setAlpha(0)
-                glow.setColorAt(1, c2)
                 qp.setPen(Qt.PenStyle.NoPen)
-                qp.setBrush(QBrush(glow))
-                qp.drawEllipse(QPointF(cx, cy), 9, 9)
+                qp.setBrush(tint(tone.name(), 0.16))
+                qp.drawEllipse(QPointF(cx, cy), 8, 8)
                 qp.setBrush(tone)
                 qp.drawEllipse(QPointF(cx, cy), 3.8, 3.8)
 
@@ -848,9 +911,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             x += 28
             right = body.right() - 16
             if mode == "active" and self.ari.phase in STOPPABLE:  # a round Stop key at the right end
-                stop = QRectF(right - 22, body.y() + 7, 22, 22)
+                stop = QRectF(right - 26, body.y() + 5, 26, 26)
                 self.stop_key(qp, stop)
-                right -= 30
+                right -= 34
             if mode == "active":
                 label = WORDS.get(self.ari.phase, "")
                 qp.setFont(F_LABEL)
@@ -859,46 +922,34 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 qp.drawText(QRectF(x, body.y(), lw + 2, 36), Qt.AlignmentFlag.AlignVCenter, label)
                 x += lw + 10
                 qp.setFont(F_TEXT)
-                qp.setPen(QColor("#e4e6e8"))
+                qp.setPen(ink(0.85))
                 text = self.shown_text()
                 text = QFontMetrics(F_TEXT).elidedText(text, Qt.TextElideMode.ElideRight, int(right - x))
                 qp.drawText(QRectF(x, body.y(), right - x, 36), Qt.AlignmentFlag.AlignVCenter, text)
             else:  # done: the same line, the answer instead of the label (the whole answer is in Helios)
                 qp.setFont(F_TEXT)
-                qp.setPen(QColor("#e4e6e8"))
+                qp.setPen(ink(0.85))
                 text = QFontMetrics(F_TEXT).elidedText(" ".join(self.ari.text.split()), Qt.TextElideMode.ElideRight,
                                                        int(right - x))
                 qp.drawText(QRectF(x, body.y(), right - x, 36), Qt.AlignmentFlag.AlignVCenter, text)
             qp.setOpacity(1)
 
-        def button(self, qp: Any, rect: Any, key: str, text: str, *, fill: str = "#141618", color: str = "#e4e6e8",
-                   f: Any = None, radius: float = 13) -> None:
-            hot = self.hot == key
-            qp.setPen(Qt.PenStyle.NoPen)
-            qp.setBrush(QColor("#1f2225" if hot and fill == "#141618" else fill))
-            qp.drawRoundedRect(rect, radius, radius)
-            qp.setPen(QColor(color))
-            qp.setFont(f or F_CHIP)
-            qp.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
-            self.buttons.append((rect, key))
-
         def stop_key(self, qp: Any, rect: Any) -> None:
-            """A round Stop key: a small square in a ring (Ari stops talking and drops what it is working on)."""
+            """A round Stop key: a coral square on a coral tint (Ari stops talking and drops what it is on)."""
             hot = self.hot == "stop"
-            qp.setPen(QPen(QColor(248, 113, 113, 150 if hot else 90), 1))
-            qp.setBrush(QColor("#2a1416" if hot else "#1c1213"))
-            qp.drawEllipse(rect.adjusted(0.5, 0.5, -0.5, -0.5))
-            c = rect.center()
             qp.setPen(Qt.PenStyle.NoPen)
-            qp.setBrush(QColor("#f87171" if hot else "#ef6a6a"))
-            qp.drawRoundedRect(QRectF(c.x() - 4, c.y() - 4, 8, 8), 1.6, 1.6)
+            qp.setBrush(tint(CORAL, 0.26 if hot else 0.16))
+            qp.drawEllipse(rect)
+            c = rect.center()
+            qp.setBrush(QColor(CORAL))
+            qp.drawRoundedRect(QRectF(c.x() - 4.5, c.y() - 4.5, 9, 9), 2, 2)
             self.buttons.append((rect.adjusted(-4, -4, 4, 4), "stop"))  # a bit larger to hit
 
         def draw_details(self, qp: Any, body: Any) -> None:
             fade = max(0.0, min(1.0, (self.spring.h - 70) / 40))
             qp.setOpacity(fade)
-            x0, x1 = body.x() + 16, body.right() - 16
-            y = body.y() + 12
+            x0, x1 = body.x() + 20, body.right() - 20
+            y = body.y() + 18
             pid = self.page_id()
             if pid == "media":
                 y = self.draw_media(qp, x0, x1, y)
@@ -910,12 +961,12 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 y = self.draw_ari(qp, x0, x1, y)
             if self.flash_text:
                 qp.setFont(F_SMALL)
-                qp.setPen(QColor("#39ff9c"))
+                qp.setPen(QColor(GREEN))
                 qp.drawText(QRectF(x0, y + 2, x1 - x0, 18), Qt.AlignmentFlag.AlignLeft, self.flash_text)
                 y += 22
             y = self.draw_dots(qp, body, y)
             qp.setOpacity(1)
-            h = y - body.y() + 6
+            h = y - body.y() + 8
             if abs(h - self.details_h) > 1:
                 self.details_h = h
                 QTimer.singleShot(0, self.kick)
@@ -925,268 +976,266 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             n = len(self.pages())
             if n < 2:
                 return y
-            gap = 12
+            gap = 11
+            y += 4
             cx0 = body.center().x() - gap * (n - 1) / 2
             for i in range(n):
                 c = QPointF(cx0 + i * gap, y + 6)
                 on = i == self.page
                 qp.setPen(Qt.PenStyle.NoPen)
-                qp.setBrush(QColor("#e4e6e8" if on else "#3a3f46" if self.hot != f"page:{i}" else "#6f7680"))
+                qp.setBrush(ink(1.0 if on else 0.5 if self.hot == f"page:{i}" else 0.35))
                 if on:
-                    qp.drawRoundedRect(QRectF(c.x() - 5, c.y() - 2.5, 10, 5), 2.5, 2.5)
+                    qp.drawRoundedRect(QRectF(c.x() - 7, c.y() - 2.5, 14, 5), 2.5, 2.5)
                 else:
                     qp.drawEllipse(c, 2.5, 2.5)
                 self.buttons.append((QRectF(c.x() - 6, c.y() - 7, 12, 14), f"page:{i}"))
             return y + 14
 
-        def page_head(self, qp: Any, x0: float, x1: float, y: float, title: str) -> float:
-            """A quiet header for the extra pages: the page's name on the left, the time on the right."""
-            qp.setFont(F_LABEL)
-            qp.setPen(QColor("#6f7680"))
-            qp.drawText(QRectF(x0, y, 200, 18), Qt.AlignmentFlag.AlignVCenter, title)
-            qp.drawText(QRectF(x1 - 80, y, 80, 18), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                        time.strftime("%H:%M"))
-            return y + 24
+        def pill(self, qp: Any, x: float, y: float, text: str, tone: str) -> float:
+            """A status tag: 22 px, the tone at 16 % with the tone's text. Returns its right edge."""
+            qp.setFont(F_PILL)
+            w = QFontMetrics(F_PILL).horizontalAdvance(text) + 18
+            qp.setPen(Qt.PenStyle.NoPen)
+            qp.setBrush(tint(tone))
+            qp.drawRoundedRect(QRectF(x, y, w, 22), 11, 11)
+            qp.setPen(QColor(tone))
+            qp.drawText(QRectF(x, y, w, 22), Qt.AlignmentFlag.AlignCenter, text)
+            return x + w
+
+        def tile(self, qp: Any, x: float, y: float, icon: str, tone: str) -> None:
+            """A leading tile: 36 px, radius 12, the tone at 16 % with a filled glyph in the tone."""
+            qp.setPen(Qt.PenStyle.NoPen)
+            qp.setBrush(tint(tone))
+            qp.drawRoundedRect(QRectF(x, y, 36, 36), 12, 12)
+            self.symbol(qp, icon, x + 18, y + 18, 20, QColor(tone), filled=True)
 
         def draw_ari(self, qp: Any, x0: float, x1: float, y: float) -> float:
             info = self.info
             on = {w["id"] for w in info.widgets if w.get("on")}
             order = [w["id"] for w in info.widgets if w.get("on")]
-            # header: the time and date on the left; Talk (a round mic key) and "···" (Helios) on the right
-            talk = QRectF(x1 - 30, y, 30, 30)
-            more = QRectF(talk.x() - 36, y, 30, 30)
-            power = QRectF(more.x() - 36, y, 30, 30)
-            gamek = QRectF(power.x() - 36, y, 30, 30)
+            # header: the time (minutes dimmer, the colon in the accent) over the date; Talk on the right
+            talk = QRectF(x1 - 40, y + 6, 40, 40)
             if "clock" in on:
                 now = time.localtime()
                 qp.setFont(F_CLOCK)
-                qp.setPen(QColor("#f4f5f6"))
-                tstr = time.strftime("%H:%M", now)
-                tw = QFontMetrics(F_CLOCK).horizontalAdvance(tstr)
-                qp.drawText(QRectF(x0, y, tw + 4, 30), Qt.AlignmentFlag.AlignVCenter, tstr)
-                qp.setFont(F_SMALL)
-                qp.setPen(QColor("#6f7680"))
-                qp.drawText(QRectF(x0 + tw + 9, y + 1, gamek.x() - x0 - tw - 12, 30), Qt.AlignmentFlag.AlignVCenter,
-                            time.strftime("%a %d %b", now))
+                fm = QFontMetrics(F_CLOCK)
+                cx = x0
+                for part, color in ((time.strftime("%H", now), ink()), (":", QColor(ACCENT)),
+                                    (time.strftime("%M", now), ink(0.6))):
+                    pw = fm.horizontalAdvance(part)
+                    qp.setPen(color)
+                    qp.drawText(QRectF(cx, y - 2, pw + 4, 34), Qt.AlignmentFlag.AlignVCenter, part)
+                    cx += pw
+                qp.setFont(F_EYE)
+                qp.setPen(QColor(ACCENT))
+                qp.drawText(QRectF(x0, y + 31, talk.x() - x0 - 8, 16), Qt.AlignmentFlag.AlignVCenter,
+                            time.strftime("%a %d %b", now).upper())
             else:
-                qp.setFont(F_TEXT)
-                qp.setPen(QColor("#e4e6e8"))
-                qp.drawText(QRectF(x0, y, 120, 30), Qt.AlignmentFlag.AlignVCenter, "Ari")
-            self.round_key(qp, gamek, "game", "game-on" if self.ari.game else "game")
-            self.round_key(qp, power, "power", "start" if self.ari.off else "power")
-            self.round_key(qp, more, "helios:#ari", "more")
+                qp.setFont(F_TITLE)
+                qp.setPen(ink())
+                qp.drawText(QRectF(x0, y, 120, 46), Qt.AlignmentFlag.AlignVCenter, "Ari")
             self.round_key(qp, talk, "talk", "mic")
-            y += 42
-            # status rows in one quiet card
+            y += 58
+            # status rows: a tonal dot, the line, and what goes with it
             st = info.status or {}
             jobs = st.get("jobs") or {}
             rows: list[tuple[str, str, str, str | None]] = []  # dot, text, right, click key
-            rows.append(("#f5a524" if self.ari.game else "#4b5058",
+            rows.append((AMBER if self.ari.game else "#8c8c92",
                          "Game mode on" if self.ari.game else "Game mode off",
-                         "auto ✓" if self.ari.game_auto else "auto off", "gameauto"))
+                         "auto" if self.ari.game_auto else "manual", "gameauto"))
             for wid in order:
                 if wid == "status":
                     running = (jobs.get("running") or 0) + (jobs.get("leased") or 0)
                     queued = (jobs.get("queued") or 0) + (jobs.get("retry") or 0)
                     ok = st.get("status") == "ok"
-                    right = "idle" if not running and not queued else \
+                    right = "Idle" if not running and not queued else \
                         " · ".join(x for x in (f"{running} running" if running else "",
                                                f"{queued} queued" if queued else "") if x)
-                    rows.append(("#34d399" if ok else "#f5a524", "All good" if ok else "Needs a look", right, None))
+                    rows.append((GREEN if ok else AMBER, "All good" if ok else "Needs a look", right, None))
                 elif wid == "inbox" and info.waiting:
-                    rows.append(("#f5a524", f"{info.waiting} waiting for you", "›", "show:inbox"))
+                    rows.append((AMBER, f"{info.waiting} waiting for you", "›", "show:inbox"))
                 elif wid == "next" and info.next and info.next.get("next_run_at"):
                     nxt = info.next
                     at = time.localtime(nxt["next_run_at"])
                     same_day = time.strftime("%Y%m%d", at) == time.strftime("%Y%m%d")
-                    rows.append(("#60a5fa", nxt.get("label") or f"{nxt['plugin']} · {nxt['workflow']}",
+                    rows.append((ACCENT, nxt.get("label") or f"{nxt['plugin']} · {nxt['workflow']}",
                                  time.strftime("%H:%M" if same_day else "%a %H:%M", at), None))
-            if rows:
-                ch = 30 * len(rows)
-                card = QRectF(x0 - 4, y, x1 - x0 + 8, ch)
-                qp.setPen(QPen(QColor(255, 255, 255, 14), 1))
-                qp.setBrush(QColor("#0f1012"))
-                qp.drawRoundedRect(card, 12, 12)
-                for i, (dot, text, right, key) in enumerate(rows):
-                    ry = y + 30 * i
-                    if i:
-                        qp.setPen(QPen(QColor(255, 255, 255, 10), 1))
-                        qp.drawLine(QPointF(x0 + 8, ry), QPointF(x1 - 4, ry))
-                    if key:
-                        r = QRectF(card.x(), ry, card.width(), 30)
-                        self.buttons.append((r, key))
-                        if self.hot == key:
-                            qp.setPen(Qt.PenStyle.NoPen)
-                            qp.setBrush(QColor(255, 255, 255, 8))
-                            qp.drawRoundedRect(r.adjusted(2, 2, -2, -2), 9, 9)
-                    self.line(qp, x0 + 6, x1 - 4, ry + 4, dot, text, right, hot=self.hot == key and key is not None)
-                y += ch + 10
+            for dot, text, right, key in rows:
+                if key:
+                    r = QRectF(x0 - 8, y, x1 - x0 + 16, 30)
+                    self.buttons.append((r, key))
+                    if self.hot == key:
+                        qp.setPen(Qt.PenStyle.NoPen)
+                        qp.setBrush(ink(0.06))
+                        qp.drawRoundedRect(r, 10, 10)
+                self.line(qp, x0, x1, y, dot, text, right, hot=self.hot == key and key is not None)
+                y += 30
+            y += 8
             if "last" in on and info.last:
                 qp.setFont(F_SMALL)
-                qp.setPen(QColor("#a9afb6"))
+                qp.setPen(ink(DIM))
                 qp.drawText(QRectF(x0, y, x1 - x0, 34), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
                             two_lines("Ari: " + info.last, QFontMetrics(F_SMALL), int(x1 - x0)))
-                y += 40
+                y += 42
+            # the keys: game mode, power, Helios
+            keys = (("game", "game-on" if self.ari.game else "game"), ("power", "start" if self.ari.off else "power"),
+                    ("helios:#ari", "more"))
+            kx = (x0 + x1) / 2 - (len(keys) * 40 + (len(keys) - 1) * 8) / 2
+            for i, (key, icon) in enumerate(keys):
+                self.round_key(qp, QRectF(kx + i * 48, y, 40, 40), key, icon)
+            y += 40 + 12
             if "shortcuts" in on and info.shortcuts:
                 fm = QFontMetrics(F_CHIP)
                 cx = x0 - 4
                 for sc in info.shortcuts:
                     label = fm.elidedText(sc["label"], Qt.TextElideMode.ElideRight, 110)
-                    cw = fm.horizontalAdvance(label) + 40
+                    cw = fm.horizontalAdvance(label) + 42
                     if cx + cw > x1 + 4 and cx > x0:
-                        cx, y = x0 - 4, y + 32
-                    self.chip(qp, QRectF(cx, y, cw, 26), "sc:" + sc["action"], label)
+                        cx, y = x0 - 4, y + 36
+                    self.chip(qp, QRectF(cx, y, cw, 30), "sc:" + sc["action"], label)
                     cx += cw + 6
-                y += 32
+                y += 38
             return y
 
         def draw_media(self, qp: Any, x0: float, x1: float, y: float) -> float:
             """What's playing: the cover, title and artist, where it is in the song, and back / play / next."""
             m = self.media or {}
-            y = self.page_head(qp, x0, x1, y, "now playing" + (f" · {m['app'].lower()}" if m.get("app") else ""))
-            art = QRectF(x0, y, 64, 64)
+            app = str(m.get("app") or "")
+            tx = x0
+            if app:  # Spotify's tag is green; any other player's is the accent
+                tx = self.pill(qp, x0, y, app, GREEN if "spotify" in app.lower() else ACCENT) + 8
+            qp.setFont(F_LABEL)
+            qp.setPen(ink(0.6))
+            qp.drawText(QRectF(tx, y, 150, 22), Qt.AlignmentFlag.AlignVCenter, "Now playing")
+            y += 34
+            art = QRectF(x0, y, 60, 60)
             clip = QPainterPath()
-            clip.addRoundedRect(art, 10, 10)
+            clip.addRoundedRect(art, 14, 14)
             qp.save()
             qp.setClipPath(clip, Qt.ClipOperation.IntersectClip)
             if self.art is not None:
                 qp.drawImage(art, self.art)
             else:
-                qp.fillRect(art, QColor("#15171a"))
-                qp.setPen(QColor("#3a3f46"))
-                qp.setFont(font(SANS, 26))
-                qp.drawText(art, Qt.AlignmentFlag.AlignCenter, "♪")
+                qp.fillRect(art, QColor(CARD))
+                self.symbol(qp, "music_note", art.center().x(), art.center().y(), 26, ink(0.35), filled=True)
             qp.restore()
-            tx = x0 + 78
+            tx = x0 + 74
             if m.get("title"):
                 qp.setFont(F_TITLE)
-                qp.setPen(QColor("#f4f5f6"))
-                qp.drawText(QRectF(tx, y + 6, x1 - tx, 20), Qt.AlignmentFlag.AlignVCenter,
+                qp.setPen(ink())
+                qp.drawText(QRectF(tx, y + 8, x1 - tx, 22), Qt.AlignmentFlag.AlignVCenter,
                             QFontMetrics(F_TITLE).elidedText(m["title"], Qt.TextElideMode.ElideRight, int(x1 - tx)))
-                qp.setFont(F_SMALL)
-                qp.setPen(QColor("#9aa1aa"))
+                qp.setFont(F_TEXT)
+                qp.setPen(ink(DIM))
                 who = " · ".join(x for x in (m.get("artist"), m.get("album")) if x)
-                qp.drawText(QRectF(tx, y + 28, x1 - tx, 18), Qt.AlignmentFlag.AlignVCenter,
-                            QFontMetrics(F_SMALL).elidedText(who, Qt.TextElideMode.ElideRight, int(x1 - tx)))
-                qp.setFont(F_TINY)
-                qp.setPen(QColor(self.art_tone) if m.get("playing") else QColor("#6f7680"))
-                qp.drawText(QRectF(tx, y + 46, x1 - tx, 16), Qt.AlignmentFlag.AlignVCenter,
-                            "playing" if m.get("playing") else "paused" if m.get("paused") else "")
+                qp.drawText(QRectF(tx, y + 32, x1 - tx, 20), Qt.AlignmentFlag.AlignVCenter,
+                            QFontMetrics(F_TEXT).elidedText(who, Qt.TextElideMode.ElideRight, int(x1 - tx)))
             else:
                 qp.setFont(F_TEXT)
-                qp.setPen(QColor("#9aa1aa"))
-                qp.drawText(QRectF(tx, y, x1 - tx, 64), Qt.AlignmentFlag.AlignVCenter,
+                qp.setPen(ink(DIM))
+                qp.drawText(QRectF(tx, y, x1 - tx, 60), Qt.AlignmentFlag.AlignVCenter,
                             "Nothing playing" if self.media is not None or sys.platform == "win32" else "No media here")
-            y += 76
+            y += 74
             pos = position_now(m.get("pos"), m.get("end"), m.get("updated"), bool(m.get("playing")))
             end = m.get("end")
-            if pos is not None and end:  # the song's progress, in the cover's colour
-                bar = QRectF(x0, y + 4, x1 - x0, 4)
+            if pos is not None and end:  # the song's progress
+                bar = QRectF(x0, y, x1 - x0, 4)
                 qp.setPen(Qt.PenStyle.NoPen)
-                qp.setBrush(QColor(255, 255, 255, 22))
+                qp.setBrush(ink(0.12))
                 qp.drawRoundedRect(bar, 2, 2)
-                qp.setBrush(self.art_tone)
+                qp.setBrush(QColor(ACCENT))
                 qp.drawRoundedRect(QRectF(bar.x(), bar.y(), bar.width() * max(0.0, min(1.0, pos / end)), 4), 2, 2)
                 qp.setFont(F_TINY)
-                qp.setPen(QColor("#6f7680"))
-                qp.drawText(QRectF(x0, y + 10, 80, 14), Qt.AlignmentFlag.AlignLeft, clock(pos))
-                qp.drawText(QRectF(x1 - 80, y + 10, 80, 14), Qt.AlignmentFlag.AlignRight, clock(end))
-                y += 28
+                qp.setPen(ink(FAINT))
+                qp.drawText(QRectF(x0, y + 8, 80, 16), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                            clock(pos))
+                qp.drawText(QRectF(x1 - 80, y + 8, 80, 16), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                            clock(end))
+                y += 30
             # back / play-pause / next
             cx = (x0 + x1) / 2
-            for key, dx, big in (("media:previous", -52, False), ("media:play_pause", 0, True),
-                                 ("media:next", 52, False)):
-                r = 19 if big else 15
-                rect = QRectF(cx + dx - r, y + 2 + (19 - r), 2 * r, 2 * r)
+            for key, dx, big in (("media:previous", -64, False), ("media:play_pause", 0, True),
+                                 ("media:next", 64, False)):
+                r = 23 if big else 20
+                rect = QRectF(cx + dx - r, y + (23 - r), 2 * r, 2 * r)
                 self.media_key(qp, rect, key, playing=bool(m.get("playing")))
             return y + 46
 
         def media_key(self, qp: Any, rect: Any, key: str, playing: bool) -> None:
+            """Previous / next are quiet keys, play-pause is the one white key."""
             hot = self.hot == key
             big = key == "media:play_pause"
-            qp.setPen(QPen(QColor(255, 255, 255, 26 if hot else 14), 1))
-            qp.setBrush(QColor("#f4f5f6" if big and hot else "#e4e6e8" if big else "#1c1e22" if hot else "#141518"))
-            qp.drawEllipse(rect.adjusted(0.5, 0.5, -0.5, -0.5))
-            c = rect.center()
-            ink = QColor("#0b0b0c" if big else "#e4e6e8" if hot else "#c4c8ce")
             qp.setPen(Qt.PenStyle.NoPen)
-            qp.setBrush(ink)
+            if big:
+                qp.setBrush(QColor("#ffffff"))
+                qp.drawEllipse(rect)
+            if hot:  # the M3 state layer: +8 % white
+                qp.setBrush(QColor(20, 20, 24, 20) if big else ink(0.08))
+                qp.drawEllipse(rect)
             act = key.split(":", 1)[1]
-            if act == "play_pause" and playing:  # pause: two bars
-                qp.drawRoundedRect(QRectF(c.x() - 5, c.y() - 6, 3.6, 12), 1, 1)
-                qp.drawRoundedRect(QRectF(c.x() + 1.4, c.y() - 6, 3.6, 12), 1, 1)
-            elif act == "play_pause":  # play: a triangle
-                tri = QPainterPath()
-                tri.moveTo(c.x() - 4, c.y() - 6.5)
-                tri.lineTo(c.x() + 6.5, c.y())
-                tri.lineTo(c.x() - 4, c.y() + 6.5)
-                tri.closeSubpath()
-                qp.drawPath(tri)
-            else:  # previous / next: a triangle and a bar
-                d = 1 if act == "next" else -1
-                tri = QPainterPath()
-                tri.moveTo(c.x() - 4 * d, c.y() - 5)
-                tri.lineTo(c.x() + 3 * d, c.y())
-                tri.lineTo(c.x() - 4 * d, c.y() + 5)
-                tri.closeSubpath()
-                qp.drawPath(tri)
-                qp.drawRect(QRectF(c.x() + 3 * d - (1.6 if d > 0 else 0), c.y() - 5, 1.6, 10))
+            name = ("pause" if playing else "play_arrow") if act == "play_pause" else "skip_" + act
+            self.symbol(qp, name, rect.center().x(), rect.center().y(), 24 if big else 22,
+                        QColor(ON_ACCENT) if big else ink(), filled=True)
             self.buttons.append((rect.adjusted(-3, -3, 3, 3), key))
 
         def draw_system(self, qp: Any, x0: float, x1: float, y: float) -> float:
-            """The PC's load: a bar per part, amber past 75 %, red past 90 %."""
+            """The PC's load: a bar per part, amber past 75 %, coral past 90 %."""
             hw = self.hw
-            y = self.page_head(qp, x0, x1, y, "system")
+            self.tile(qp, x0, y, "memory", ACCENT)
+            qp.setFont(F_LABEL)
+            qp.setPen(ink(0.6))
+            qp.drawText(QRectF(x0 + 46, y, 150, 36), Qt.AlignmentFlag.AlignVCenter, "PC")
+            y += 48
             rows: list[tuple[str, str, float | None]] = []
             if "cpu" in hw:
                 rows.append(("CPU", f"{hw['cpu']:.0f}%", hw["cpu"]))
             if "ram" in hw:
-                rows.append(("Memory", f"{hw['ram_used']:.1f} / {hw['ram_total']:.0f} GB", hw["ram"]))
+                rows.append(("Memory", f"{hw['ram_used']:.1f} of {hw['ram_total']:.0f} GB", hw["ram"]))
             g = hw.get("gpu")
             if g:
                 temp = f" · {g['temp']:.0f}°" if g.get("temp") is not None else ""
                 rows.append(("GPU", f"{g['util']:.0f}%{temp}", g["util"]))
-                rows.append(("Video memory", f"{g['mem_used']:.1f} / {g['mem_total']:.0f} GB", g.get("mem")))
+                rows.append(("Video memory", f"{g['mem_used']:.1f} of {g['mem_total']:.0f} GB", g.get("mem")))
             if "disk" in hw:
                 rows.append(("Disk", f"{hw['disk_free']:.0f} GB free", hw["disk"]))
             if not rows:
                 qp.setFont(F_TEXT)
-                qp.setPen(QColor("#9aa1aa"))
+                qp.setPen(ink(DIM))
                 qp.drawText(QRectF(x0, y, x1 - x0, 30), Qt.AlignmentFlag.AlignVCenter, "Reading…")
                 return y + 34
             for label, value, pct in rows:
-                qp.setFont(F_SMALL)
-                qp.setPen(QColor("#c4c8ce"))
-                qp.drawText(QRectF(x0, y, 140, 16), Qt.AlignmentFlag.AlignVCenter, label)
-                qp.setFont(F_TINY)
-                qp.setPen(QColor("#9aa1aa"))
-                qp.drawText(QRectF(x1 - 160, y, 160, 16), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                qp.setFont(F_TEXT)
+                qp.setPen(ink())
+                qp.drawText(QRectF(x0, y, 140, 18), Qt.AlignmentFlag.AlignVCenter, label)
+                qp.setFont(F_VALUE)
+                qp.setPen(ink(DIM))
+                qp.drawText(QRectF(x1 - 160, y, 160, 18), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                             value)
-                bar = QRectF(x0, y + 19, x1 - x0, 4)
+                bar = QRectF(x0, y + 24, x1 - x0, 4)
                 qp.setPen(Qt.PenStyle.NoPen)
-                qp.setBrush(QColor(255, 255, 255, 18))
+                qp.setBrush(ink(0.12))
                 qp.drawRoundedRect(bar, 2, 2)
                 if pct is not None:
                     qp.setBrush(QColor(BAR[level(pct)]))
                     qp.drawRoundedRect(QRectF(bar.x(), bar.y(), bar.width() * max(0.02, min(1.0, pct / 100)), 4),
                                        2, 2)
-                y += 31
+                y += 36
             if "down" in hw:
-                qp.setFont(F_SMALL)
-                qp.setPen(QColor("#c4c8ce"))
+                qp.setFont(F_TEXT)
+                qp.setPen(ink())
                 qp.drawText(QRectF(x0, y, 100, 18), Qt.AlignmentFlag.AlignVCenter, "Network")
-                qp.setFont(F_TINY)
-                qp.setPen(QColor("#9aa1aa"))
+                qp.setFont(F_VALUE)
+                qp.setPen(ink(DIM))
                 qp.drawText(QRectF(x1 - 200, y, 200, 18), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                             f"↓ {rate(hw['down'])}   ↑ {rate(hw['up'])}")
-                y += 24
+                y += 26
             return y + 2
 
         def draw_calendar(self, qp: Any, x0: float, x1: float, y: float) -> float:
             """This month, today marked; today's weather (Helios > Settings > weather town) above it."""
             now = time.localtime()
             qp.setFont(F_TITLE)
-            qp.setPen(QColor("#f4f5f6"))
+            qp.setPen(ink())
             qp.drawText(QRectF(x0, y, 200, 24), Qt.AlignmentFlag.AlignVCenter, time.strftime("%B %Y", now))
             w = self.weather
             if w.get("place"):
@@ -1195,7 +1244,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 tw = QFontMetrics(F_TITLE).horizontalAdvance(temp)
                 qp.drawText(QRectF(x1 - tw - 2, y, tw + 2, 24), Qt.AlignmentFlag.AlignVCenter, temp)
                 qp.setFont(F_SMALL)
-                qp.setPen(QColor("#9aa1aa"))
+                qp.setPen(ink(DIM))
                 line = ", ".join(x for x in (
                     w.get("sky"), f"{round(w['low'])}–{round(w['high'])}°" if w.get("low") is not None else "",
                     f"{round(w['rain'])}% rain" if (w.get("rain") or 0) >= 30 else "") if x)
@@ -1204,14 +1253,14 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                                                               int(x1 - x0)))
             else:
                 qp.setFont(F_SMALL)
-                qp.setPen(QColor("#5d6670"))
+                qp.setPen(ink(FAINT))
                 qp.drawText(QRectF(x0, y + 24, x1 - x0, 18), RIGHT_MID,
-                            "weather: set your town in Helios > Settings")
+                            "Weather: set your town in Helios > Settings")
             y += 50
             first = 0  # Monday, as Sri Lanka's calendars do
             cw = (x1 - x0) / 7
             qp.setFont(F_TINY)
-            qp.setPen(QColor("#5d6670"))
+            qp.setPen(ink(FAINT))
             for i, d in enumerate(weekday_letters(first)):
                 qp.drawText(QRectF(x0 + i * cw, y, cw, 14), Qt.AlignmentFlag.AlignCenter, d)
             y += 18
@@ -1223,167 +1272,87 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                     today = d == now.tm_mday
                     if today:
                         qp.setPen(Qt.PenStyle.NoPen)
-                        qp.setBrush(QColor("#4cc2ff"))
+                        qp.setBrush(QColor(ACCENT))
                         qp.drawEllipse(cell.center(), 10.5, 10.5)
-                    qp.setFont(F_DAY)
-                    qp.setPen(QColor("#0b0b0c" if today else "#6f7680" if i >= 5 else "#d4d7dc"))
+                    qp.setFont(font(12, 600, tnum=True) if today else F_DAY)
+                    qp.setPen(QColor(ON_ACCENT) if today else ink(FAINT) if i >= 5 else ink(0.85))
                     qp.drawText(cell, Qt.AlignmentFlag.AlignCenter, str(d))
                 y += 24
             return y + 4
 
         def line(self, qp: Any, x0: float, x1: float, y: float, dot: str, text: str, right: str,
                  hot: bool = False) -> float:
+            cy = y + 15
             qp.setPen(Qt.PenStyle.NoPen)
+            qp.setBrush(ink(0.07))
+            qp.drawEllipse(QPointF(x0 + 4, cy), 6.5, 6.5)  # the soft ring round the dot
             qp.setBrush(QColor(dot))
-            qp.drawEllipse(QPointF(x0 + 3, y + 11), 3, 3)
-            qp.setFont(F_SMALL)
-            fs = QFontMetrics(F_SMALL)
-            rw = fs.horizontalAdvance(right) + 4
-            qp.setPen(QColor("#e4e6e8" if hot else "#6f7680"))
-            qp.drawText(QRectF(x1 - rw - 4, y, rw, 22), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                        right)
+            qp.drawEllipse(QPointF(x0 + 4, cy), 3.5, 3.5)
+            qp.setFont(F_VALUE)
+            fm = QFontMetrics(F_VALUE)
+            if right == "›":  # a chevron: this row opens something
+                rw = 22
+                self.symbol(qp, "chevron_right", x1 - 9, cy, 18, ink(0.8 if hot else 0.5))
+            else:
+                rw = fm.horizontalAdvance(right) + 4
+                qp.setPen(ink(0.85 if hot else DIM))
+                qp.drawText(QRectF(x1 - rw, y, rw, 30), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                            right)
             qp.setFont(F_TEXT)
-            qp.setPen(QColor("#e8eaec"))
-            left = QFontMetrics(F_TEXT).elidedText(text, Qt.TextElideMode.ElideRight, int(x1 - x0 - 16 - rw - 10))
-            qp.drawText(QRectF(x0 + 14, y, x1 - x0 - 14 - rw, 22), Qt.AlignmentFlag.AlignVCenter, left)
-            return y + 26
+            qp.setPen(ink())
+            left = QFontMetrics(F_TEXT).elidedText(text, Qt.TextElideMode.ElideRight, int(x1 - x0 - 22 - rw - 8))
+            qp.drawText(QRectF(x0 + 20, y, x1 - x0 - 20 - rw, 30), Qt.AlignmentFlag.AlignVCenter, left)
+            return y + 30
 
         def chip(self, qp: Any, rect: Any, key: str, text: str) -> None:
+            """A shortcut: a filter chip (30 px, white at 7 %, no outline) with its icon."""
             hot = self.hot == key
-            qp.setPen(QPen(QColor(255, 255, 255, 26 if hot else 16), 1))
-            qp.setBrush(QColor("#1c1e22" if hot else "#141518"))
-            qp.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), rect.height() / 2, rect.height() / 2)
-            ink = QColor("#f1f2f3" if hot else "#c4c8ce")
-            self.glyph(qp, QPointF(rect.x() + 15, rect.center().y()), icon_for(key[3:]), QColor("#9aa1aa") if not hot
-                       else ink)
-            qp.setPen(ink)
+            qp.setPen(Qt.PenStyle.NoPen)
+            qp.setBrush(ink(0.15 if hot else 0.07))
+            qp.drawRoundedRect(rect, rect.height() / 2, rect.height() / 2)
+            self.symbol(qp, ICON_NAMES.get(icon_for(key[3:]), "circle"), rect.x() + 17, rect.center().y(), 17,
+                        ink(0.85 if hot else DIM))
+            qp.setPen(ink(0.85))
             qp.setFont(F_CHIP)
-            qp.drawText(rect.adjusted(28, 0, -10, 0), Qt.AlignmentFlag.AlignVCenter, text)
+            qp.drawText(rect.adjusted(31, 0, -12, 0), Qt.AlignmentFlag.AlignVCenter, text)
             self.buttons.append((rect, key))
-
-        def glyph(self, qp: Any, c: Any, kind: str, color: Any) -> None:
-            """A 12 px line icon centred on c."""
-            qp.save()
-            qp.translate(c)
-            pen = QPen(color, 1.3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
-            qp.setPen(pen)
-            qp.setBrush(Qt.BrushStyle.NoBrush)
-            path = QPainterPath()
-            if kind == "inbox":
-                path.moveTo(-5.5, 0.5)
-                path.lineTo(-3.5, -4.5)
-                path.lineTo(3.5, -4.5)
-                path.lineTo(5.5, 0.5)
-                path.lineTo(5.5, 4.5)
-                path.lineTo(-5.5, 4.5)
-                path.closeSubpath()
-                path.moveTo(-5.5, 0.5)
-                path.lineTo(-2, 0.5)
-                path.lineTo(-1, 2)
-                path.lineTo(1, 2)
-                path.lineTo(2, 0.5)
-                path.lineTo(5.5, 0.5)
-            elif kind == "grid":
-                for dx, dy in ((-5, -5), (1, -5), (-5, 1), (1, 1)):
-                    path.addRoundedRect(QRectF(dx, dy, 4, 4), 1, 1)
-            elif kind == "chat":
-                path.addRoundedRect(QRectF(-5.5, -4.5, 11, 8), 3, 3)
-                path.moveTo(-2.5, 3.5)
-                path.lineTo(-3.5, 6)
-                path.lineTo(0, 3.5)
-            elif kind == "page":
-                path.addRoundedRect(QRectF(-4.5, -5.5, 9, 11), 1.5, 1.5)
-                path.moveTo(-2, -2)
-                path.lineTo(2, -2)
-                path.moveTo(-2, 1)
-                path.lineTo(2, 1)
-            elif kind == "moon":
-                path.moveTo(2.5, -5)
-                path.cubicTo(-5, -5.5, -6, 5.5, 0.5, 5.5)
-                path.cubicTo(3, 5.5, 5, 3.5, 5.5, 2)
-                path.cubicTo(1, 3, -1.5, -2, 2.5, -5)
-            elif kind == "power":
-                path.moveTo(0, -5.5)
-                path.lineTo(0, 0)
-                path.arcMoveTo(QRectF(-5, -4.5, 10, 10), 60)
-                path.arcTo(QRectF(-5, -4.5, 10, 10), 60, -300)
-            elif kind == "spark":
-                path.moveTo(0, -5.5)
-                path.cubicTo(0.5, -1, 1, -0.5, 5.5, 0)
-                path.cubicTo(1, 0.5, 0.5, 1, 0, 5.5)
-                path.cubicTo(-0.5, 1, -1, 0.5, -5.5, 0)
-                path.cubicTo(-1, -0.5, -0.5, -1, 0, -5.5)
-            elif kind == "bolt":
-                path.moveTo(1, -5.5)
-                path.lineTo(-3.5, 1)
-                path.lineTo(0, 1)
-                path.lineTo(-1, 5.5)
-                path.lineTo(3.5, -1)
-                path.lineTo(0, -1)
-                path.closeSubpath()
-            elif kind == "globe":
-                path.addEllipse(QPointF(0, 0), 5.5, 5.5)
-                path.addEllipse(QPointF(0, 0), 2.3, 5.5)
-                path.moveTo(-5.5, 0)
-                path.lineTo(5.5, 0)
-            elif kind == "bell":
-                path.moveTo(-4.5, 3)
-                path.cubicTo(-3.5, 2, -3.5, 0, -3.5, -1)
-                path.cubicTo(-3.5, -6, 3.5, -6, 3.5, -1)
-                path.cubicTo(3.5, 0, 3.5, 2, 4.5, 3)
-                path.closeSubpath()
-                path.moveTo(-1.2, 5)
-                path.lineTo(1.2, 5)
-            else:
-                path.addEllipse(QPointF(0, 0), 2, 2)
-            qp.drawPath(path)
-            qp.restore()
 
         def round_key(self, qp: Any, rect: Any, key: str, icon: str) -> None:
-            """A round key: Talk (a green mic) or "···" (Helios)."""
+            """A round key (40 px): Talk is the accent's one filled key and breathes; game mode is amber while on,
+            Ari's power green when it would turn it back on, coral when you hover the off switch."""
             hot = self.hot == key
-            talk = icon == "mic"
-            edge = QColor(52, 211, 153, 110 if hot else 70) if talk else QColor(255, 255, 255, 26 if hot else 16)
-            qp.setPen(QPen(edge, 1))
-            qp.setBrush(QColor("#11261c" if talk and hot else "#0e1d16" if talk else "#1c1e22" if hot else "#141518"))
-            qp.drawEllipse(rect.adjusted(0.5, 0.5, -0.5, -0.5))
             c = rect.center()
-            if talk:
-                pen = QPen(QColor("#4ade80" if hot else "#34d399"), 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
-                qp.setPen(pen)
-                qp.setBrush(Qt.BrushStyle.NoBrush)
-                qp.drawRoundedRect(QRectF(c.x() - 3, c.y() - 7.5, 6, 10), 3, 3)
-                arc = QPainterPath()
-                arc.moveTo(c.x() - 5.5, c.y() - 0.5)
-                arc.cubicTo(c.x() - 5.5, c.y() + 5.5, c.x() + 5.5, c.y() + 5.5, c.x() + 5.5, c.y() - 0.5)
-                qp.drawPath(arc)
-                qp.drawLine(QPointF(c.x(), c.y() + 4), QPointF(c.x(), c.y() + 7))
-            elif icon in ("game", "game-on"):  # a game pad: game mode (amber while on)
-                col = QColor("#f5a524" if icon == "game-on" else ("#d4d7dc" if hot else "#8b929b"))
-                qp.setPen(QPen(col, 1.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-                qp.setBrush(Qt.BrushStyle.NoBrush)
-                qp.drawRoundedRect(QRectF(c.x() - 8, c.y() - 4.5, 16, 9), 4.5, 4.5)
-                qp.drawLine(QPointF(c.x() - 5.5, c.y()), QPointF(c.x() - 2.5, c.y()))
-                qp.drawLine(QPointF(c.x() - 4, c.y() - 1.5), QPointF(c.x() - 4, c.y() + 1.5))
+            qp.setPen(Qt.PenStyle.NoPen)
+            if icon == "mic":  # the soft accent ring that grows out every 2.6 s
+                p = (time.monotonic() % 2.6) / 2.6
+                grow = 1 - (1 - p) ** 3
+                spread = 14 * grow
+                if spread > 0.5:
+                    ring = QColor(ACCENT)
+                    ring.setAlphaF(0.5 * (1 - grow))
+                    qp.setPen(QPen(ring, spread))
+                    qp.setBrush(Qt.BrushStyle.NoBrush)
+                    qp.drawEllipse(c, rect.width() / 2 + spread / 2, rect.width() / 2 + spread / 2)
                 qp.setPen(Qt.PenStyle.NoPen)
-                qp.setBrush(col)
-                qp.drawEllipse(QPointF(c.x() + 3.2, c.y() - 0.8), 1.1, 1.1)
-                qp.drawEllipse(QPointF(c.x() + 5.4, c.y() + 1.2), 1.1, 1.1)
-            elif icon in ("power", "start"):  # power: turn Ari off; start (green): turn it back on
-                col = QColor("#34d399" if icon == "start" else ("#f87171" if hot else "#8b929b"))
-                pen = QPen(col, 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
-                qp.setPen(pen)
-                qp.setBrush(Qt.BrushStyle.NoBrush)
-                qp.drawArc(QRectF(c.x() - 6, c.y() - 5.5, 12, 12), 120 * 16, 300 * 16)
-                qp.drawLine(QPointF(c.x(), c.y() - 7), QPointF(c.x(), c.y() - 1))
+                qp.setBrush(QColor(ACCENT))
+                glyph, name, filled = QColor(ON_ACCENT), "mic", True
+            elif icon == "game-on":
+                qp.setBrush(tint(AMBER))
+                glyph, name, filled = QColor(AMBER), "sports_esports", True
+            elif icon == "start":
+                qp.setBrush(tint(GREEN))
+                glyph, name, filled = QColor(GREEN), "power_settings_new", False
             else:
-                qp.setPen(Qt.PenStyle.NoPen)
-                qp.setBrush(QColor("#d4d7dc" if hot else "#8b929b"))
-                for dx in (-5, 0, 5):
-                    qp.drawEllipse(QPointF(c.x() + dx, c.y()), 1.4, 1.4)
+                qp.setBrush(QColor(KEY))
+                glyph = QColor(CORAL) if icon == "power" and hot else ink()
+                name = {"game": "sports_esports", "power": "power_settings_new", "more": "hub"}[icon]
+                filled = False
+            qp.drawEllipse(rect)
+            if hot:  # the M3 state layer: +8 % white
+                qp.setBrush(ink(0.08))
+                qp.drawEllipse(rect)
+            self.symbol(qp, name, c.x(), c.y(), 22, glyph, filled=filled)
             self.buttons.append((rect, key))
-
-        # -------------------------------------------------------------- mouse
 
         def key_at(self, pos: Any) -> str | None:
             for rect, key in self.buttons:
@@ -1587,16 +1556,47 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
 
         return bool(ctypes.windll.user32.GetAsyncKeyState(0x01) & 0x8000)
 
+    PAD = 22  # room round a box for its shadow
+
+    def paint_card(w: Any, radius: float = 22) -> None:
+        """A box in the island's look: the surface, the lit top edge, a soft shadow (layers of black fading out)."""
+        qp = QPainter(w)
+        qp.setRenderHint(QPainter.RenderHint.Antialiasing)
+        card = QRectF(w.rect()).adjusted(PAD, PAD, -PAD, -PAD)
+        qp.setPen(Qt.PenStyle.NoPen)
+        for i in range(9):  # the shadow: widest and faintest first, sitting 5 px low
+            grow = 17 - i * 2
+            qp.setBrush(QColor(0, 0, 0, 8 + i))
+            qp.drawRoundedRect(card.adjusted(-grow, -grow + 5, grow, grow + 5), radius + grow, radius + grow)
+        path = QPainterPath()
+        path.addRoundedRect(card, radius, radius)
+        qp.setBrush(QColor(SURFACE))
+        qp.drawPath(path)
+        qp.setClipPath(path)
+        qp.fillRect(QRectF(card.x(), card.y(), card.width(), 1), ink(0.07))
+        qp.end()
+
+    FIELD_QSS = ("QLineEdit{background:transparent;color:#ffffff;border:none;border-bottom:1px solid "
+                 "rgba(255,255,255,0.26);padding:8px 4px;font-family:'Inter';font-size:16px;"
+                 "selection-background-color:rgba(166,200,255,0.35)}"
+                 "QLineEdit:focus{border-bottom:2px solid #a6c8ff}")
+
     class AskBox(QWidget):
         """Ari's task needs you: the question under the island, with a text box, choices, or Yes / No. Answering
         here is the same as in Helios or on the phone; answered elsewhere, it goes away."""
 
-        STYLE = ("QWidget#ask{background:#0e1012;border:1px solid #2a2f36;border-radius:14px}"
-                 "QLabel{color:#e4e6e8;font-size:13px} QLabel#t{font-weight:600}"
-                 "QLineEdit{background:#16191d;color:#e4e6e8;border:1px solid #2a2f36;border-radius:8px;padding:6px}"
-                 "QPushButton{background:#1c2026;color:#e4e6e8;border:1px solid #2a2f36;border-radius:8px;"
-                 "padding:5px 12px} QPushButton#go{background:#2f6fed;border-color:#2f6fed}"
-                 "QCheckBox{color:#9aa3b5}")
+        STYLE = ("QLabel{color:#ffffff;font-family:'Inter';font-size:13px;background:transparent}"
+                 "QLabel#t{font-family:'Inter SemiBold';font-size:15px}"
+                 + FIELD_QSS +
+                 "QPushButton{background:rgba(255,255,255,0.07);color:rgba(255,255,255,0.85);border:none;"
+                 "border-radius:14px;padding:7px 16px;min-height:18px;font-family:'Inter Medium';font-size:13px}"
+                 "QPushButton:hover{background:rgba(255,255,255,0.15)}"
+                 "QPushButton:pressed{background:rgba(255,255,255,0.19)}"
+                 "QPushButton#go{background:#a6c8ff;color:#141418;font-family:'Inter SemiBold'}"
+                 "QPushButton#go:hover{background:#b4d0ff} QPushButton#go:pressed{background:#bfd7ff}"
+                 "QCheckBox{color:rgba(255,255,255,0.68);font-family:'Inter';font-size:12.5px;spacing:8px}"
+                 "QCheckBox::indicator{width:18px;height:18px;border-radius:6px;background:rgba(255,255,255,0.12)}"
+                 "QCheckBox::indicator:checked{background:#a6c8ff}")
 
         def __init__(self) -> None:
             super().__init__()
@@ -1604,11 +1604,14 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
                                 | Qt.WindowType.Tool)
             self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-            self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)  # round corners, nothing behind them
             self.setStyleSheet(self.STYLE)
             self.parts: dict = {}
             bus.ask.connect(self.show_ask)
             bus.answered.connect(self.answered)
+
+        def paintEvent(self, _e: Any) -> None:  # noqa: N802 - Qt's name
+            paint_card(self)
 
         def show_ask(self, d: dict) -> None:
             for c in self.findChildren(QWidget):
@@ -1617,7 +1620,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 QWidget().setLayout(self.layout())  # drop the old layout
             self.parts = p = ask_parts(d)
             box = QVBoxLayout(self)
-            box.setContentsMargins(14, 12, 14, 12)
+            box.setContentsMargins(PAD + 20, PAD + 18, PAD + 20, PAD + 16)
+            box.setSpacing(10)
             t = QLabel(p["title"])
             t.setObjectName("t")
             box.addWidget(t)
@@ -1655,10 +1659,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             row.addWidget(no)
             row.addWidget(go)
             box.addLayout(row)
-            self.setFixedWidth(420)
+            self.setFixedWidth(420 + 2 * PAD)
             self.adjustSize()
             g = QApplication.primaryScreen().geometry()
-            self.move(g.x() + (g.width() - self.width()) // 2, g.y() + 64)
+            self.move(g.x() + (g.width() - self.width()) // 2, g.y() + 64 - PAD)
             self.show()
 
         def load_picture(self, label: Any, aid: str | None) -> None:
@@ -1671,7 +1675,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             if not q.isNull():
                 from PySide6.QtGui import QPixmap  # type: ignore[import-not-found]
 
-                QTimer.singleShot(0, lambda: (label.setPixmap(QPixmap.fromImage(q).scaledToWidth(390)),
+                QTimer.singleShot(0, lambda: (label.setPixmap(QPixmap.fromImage(q).scaledToWidth(380)),
                                               self.adjustSize()))
 
         def send(self, text: str | None, yes: bool = True) -> None:
@@ -1691,11 +1695,11 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
         """Ctrl+Alt+Space: a box under the island to type to Ari. Enter sends it (the island shows Ari thinking and
         the answer, as when you speak), Esc or a click elsewhere closes it. What you copied is one click away."""
 
-        STYLE = ("QWidget#quick{background:#0b0c0e;border:1px solid #2a2f36;border-radius:16px}"
-                 "QLineEdit{background:transparent;color:#f1f2f3;border:none;font-size:15px;padding:4px 2px}"
-                 "QPushButton{background:#15181c;color:#9aa1aa;border:1px solid #23272d;border-radius:10px;"
-                 "padding:4px 10px;text-align:left;font-size:12px} QPushButton:hover{color:#e4e6e8}"
-                 "QLabel{color:#5d6670;font-size:11px}")
+        STYLE = (FIELD_QSS +
+                 "QPushButton{background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.75);border:none;"
+                 "border-radius:14px;padding:7px 14px;min-height:16px;font-family:'Inter';font-size:12px}"
+                 "QPushButton:hover{background:rgba(255,255,255,0.15)}"
+                 "QLabel{color:rgba(255,255,255,0.5);font-family:'Inter';font-size:11px;background:transparent}")
 
         def __init__(self) -> None:
             super().__init__()
@@ -1703,25 +1707,24 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                                 | Qt.WindowType.Tool)
             self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)  # round corners, nothing behind them
             self.setStyleSheet(self.STYLE)
-            outer = QVBoxLayout(self)
-            outer.setContentsMargins(0, 0, 0, 0)
-            frame = QWidget()
-            frame.setObjectName("quick")
-            frame.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
-            outer.addWidget(frame)
-            box = QVBoxLayout(frame)
-            box.setContentsMargins(16, 10, 16, 10)
-            box.setSpacing(6)
+            box = QVBoxLayout(self)
+            box.setContentsMargins(PAD + 24, PAD + 22, PAD + 24, PAD + 18)
+            box.setSpacing(14)
             self.edit = QLineEdit()
-            self.edit.setPlaceholderText("Ask Ari…")
+            self.edit.setPlaceholderText("Ask Ari")
+            self.edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.edit.returnPressed.connect(self.send)
             box.addWidget(self.edit)
             self.copied = QPushButton()
             self.copied.clicked.connect(self.use_copied)
-            box.addWidget(self.copied)
+            box.addWidget(self.copied, alignment=Qt.AlignmentFlag.AlignHCenter)
             self.hint = QLabel("Enter to send · Esc to close")
+            self.hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
             box.addWidget(self.hint)
-            self.setFixedWidth(460)
+            self.setFixedWidth(400 + 2 * PAD)
+
+        def paintEvent(self, _e: Any) -> None:  # noqa: N802 - Qt's name
+            paint_card(self)
 
         def open(self) -> None:
             text = (QApplication.clipboard().text() or "").strip()
@@ -1729,11 +1732,11 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             self.copied.setVisible(bool(self.clip))
             if self.clip:
                 fm = QFontMetrics(self.copied.font())
-                self.copied.setText(fm.elidedText(f"What you copied: “{self.clip}”", Qt.TextElideMode.ElideRight, 400))
+                self.copied.setText(fm.elidedText(f"What you copied: “{self.clip}”", Qt.TextElideMode.ElideRight, 330))
             self.edit.clear()
             self.adjustSize()
             g = QApplication.primaryScreen().geometry()
-            self.move(g.x() + (g.width() - self.width()) // 2, g.y() + 46)
+            self.move(g.x() + (g.width() - self.width()) // 2, g.y() + 46 - PAD)
             self.show()
             self.raise_()
             self.activateWindow()
@@ -1774,11 +1777,17 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 QTimer.singleShot(150, lambda: None if self.isActiveWindow() else self.hide())
             super().changeEvent(e)
 
-    app = QApplication(sys.argv[:1])
-    app.setQuitOnLastWindowClosed(False)
     island = Island()
     island.asker = AskBox()  # kept alive with the island
     quick = QuickAsk()
+    if args.preview and args.question:
+        island.asker.show_ask({"title": "Which account should I use?", "approval": "a1",
+                               "summary": ["The invoice export found two matching accounts.",
+                                           "Choices: Personal, Work"],
+                               "fields": ["answer", "remember"]})
+        island.asker.grab()
+        island.asker.grab().save(args.preview)
+        return 0
     if args.preview and args.ask:
         QApplication.clipboard().setText("the router keeps dropping the 5 GHz band every evening")
         quick.open()
