@@ -31,3 +31,15 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
+
+## Inter (Rasmus Andersson / The Inter Project Authors)
+
+- Helios's phone view uses Inter 4.1, the official `InterVariable.woff2` from the rsms/inter release (helios/src/fonts/InterVariable.woff2,
+  built into core/argus/helios_dist), so its `ss01` and `cv11` alternates work. Licence text: helios/src/fonts/LICENSE-Inter.txt.
+- Licence: SIL Open Font License 1.1 (https://openfontlicense.org). Copyright 2016 The Inter Project Authors (https://github.com/rsms/inter).
+
+## Material Symbols Rounded (Google)
+
+- Helios's phone view uses a cut-down copy of Material Symbols Rounded (helios/src/fonts/symbols-rounded.woff2, made by
+  helios/scripts/icons.py from the npm package `material-symbols`).
+- Licence: Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Copyright Google LLC.

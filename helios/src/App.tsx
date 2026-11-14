@@ -9,12 +9,13 @@ import { useArgus } from "./live";
 import { FitPad, mainParts, MapView, mergeEdges, Selection } from "./MapView";
 import { MapFull } from "./MapFull";
 import { CommandLayer, Layout, LayoutSwitch, loadLayout, saveLayout } from "./Desk";
-import { PhoneHeader, PhoneHome, PhoneMore, PhoneOffline, PhoneTab, PhoneTabs } from "./Phone";
+import { PhoneHeader, PhoneHome, PhoneMore, PhoneOffline, PhoneTab, PhoneTabs, SonomaHome } from "./Phone";
+import { PhoneCtx } from "./sonoma";
 import { Sheet } from "./Sheet";
 import { useInboxCount } from "./inboxCount";
 import { pref, setPref, setVoiceStatus, VoiceStatus, WakeListener } from "./voice";
 import { ariFromEvents, ariSet, ariTell, earsPaused, loadEars } from "./ariState";
-import { PageBoundary, PageHead, pageMeta, Skeleton, usePauseWhenHidden, Vitals } from "./kit";
+import { PageBoundary, PageHead, pageMeta, PAGES, Skeleton, usePauseWhenHidden, Vitals } from "./kit";
 import { Palette, PaletteItem } from "./Palette";
 
 // Pages load when first opened, so the first paint stays small.
@@ -267,22 +268,26 @@ export function App() {
   </>;
   const closeMap = useCallback(() => setBigMap(false), []);
   const mapFull = bigMap && a.map ? (
-    <MapFull map={a.map} pulses={a.pulses} active={a.active} status={a.status} events={a.events} onClose={closeMap}
-      onPlugins={() => { setBigMap(false); setFullView(true); go("plugins"); }} />
+    <MapFull phone={phone} map={a.map} pulses={a.pulses} active={a.active} status={a.status} events={a.events} onClose={closeMap}
+      // On the phone the map's Plugins link opens the phone's Plugins page. It used to switch to the full dashboard
+      // (and remember it), which left the phone app stuck in the desktop layout. Only More's "Open the full
+      // dashboard" switches views.
+      onPlugins={() => { setBigMap(false); if (!phone) setFullView(true); go("plugins"); }} />
   ) : null;
 
   if (a.phase === "login") return <Login bad={triedLogin} onDone={() => { setTriedLogin(true); a.reconnect(); }} />;
 
   const st = a.status;
   const ok = st?.status === "ok" && a.conn === "live";
-  if (phone) {  // the phone: terminal widgets (Phone.tsx), a floating tab bar, details in a bottom sheet
+  if (phone) {  // the phone: Sonoma panels (Phone.tsx), a floating tab bar, details in a bottom sheet
     const proot = view.split("/")[0];
     const tab: PhoneTab = proot === "map" ? "home" : proot === "ari" ? "ari" : proot === "plugins" ? "plug" : "more";
     const open = (v: string) => go(v);
+    const title = proot === "map" ? null : proot === "more" ? "More" : PAGES[proot]?.title ?? null;
     return (
+      <PhoneCtx.Provider value={true}>
       <div className="phone2">
-        <div className="glow g1" aria-hidden="true" /><div className="glow g2" aria-hidden="true" />
-        <PhoneHeader status={st} live={a.conn === "live"} />
+        <PhoneHeader status={st} live={a.conn === "live"} title={title} down={a.phase === "down"} />
         {a.phase === "down" && <PhoneOffline onRetry={() => a.reconnect()} />}
         <main key={view} className="pmain2">
           <Suspense fallback={<Skeleton rows={4} />}>
@@ -303,8 +308,8 @@ export function App() {
           : proot === "settings" ? <SettingsView />
           : proot === "voice" ? <VoiceTrain />
           : proot === "models" ? <ModelsView events={a.events} />
-          : proot === "more" ? <PhoneMore onOpen={open} onFull={() => setFullView(true)} />
-          : <PhoneHome status={st} events={a.events} onSelect={setSel} onOpen={open} onInbox={() => go("inbox")}
+          : proot === "more" ? <PhoneMore onOpen={open} onFull={() => setFullView(true)} waiting={waiting} />
+          : <SonomaHome status={st} events={a.events} onSelect={setSel} onOpen={open} onInbox={() => go("inbox")} onAsk={askAri}
               onAri={(mic) => { if (mic) { try { sessionStorage.setItem("ari.mic", "1"); } catch { /* private */ } } go("ari"); }} />}
           </Suspense>
         </main>
@@ -317,6 +322,7 @@ export function App() {
         {mapFull}
         {heardBadge}
       </div>
+      </PhoneCtx.Provider>
     );
   }
   const root = view.split("/")[0];

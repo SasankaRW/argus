@@ -5,6 +5,9 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Phone view in the Sonoma look:** Helios on the phone now uses the new design (Inter, tonal panels, a live clock home, hold-to-confirm for power actions), matching the other Sonoma apps; the desktop is unchanged.
+- **Fix:** tapping Plugins on the phone's full-screen map no longer leaves the phone app stuck in the desktop layout.
+
 - **Type check:** `python -m mypy` checks the models, database and API loosely; CI shows the error count (33 today) in its summary and doesn't fail on it yet.
 
 - **Same packages everywhere:** `constraints.txt` pins every package for Windows and Linux; CI, the laptop's updater and install script and dev.ps1 install with it. `python scripts/lock.py` keeps it (`--upgrade`, `--check`), and a monthly `deps` workflow lists what's newer.

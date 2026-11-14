@@ -6,6 +6,9 @@ import "@fontsource/geist-mono/latin-500.css";
 import "@xyflow/react/dist/style.css";
 import "./styles.css";
 import "./kit.css";
+// The phone view (Sonoma): its styles (all under .phone2), with Inter 4.1 (@font-face in sonoma-phone.css). Browsers
+// fetch a font only when a page uses it, so the desktop never downloads Inter.
+import "./sonoma-phone.css";
 
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -18,6 +21,11 @@ adoptTokenFromUrl();
 {
   const q = new URLSearchParams(location.search);
   if (q.has("app") || q.has("mic")) {
+    // Once, in the phone app: forget a "full dashboard" choice saved before the map's Plugins link stopped making it
+    // (that link left the app stuck in the desktop layout). A real choice is one tap away again under More.
+    try {
+      if (!localStorage.getItem("helios.full.reset")) { localStorage.removeItem("helios.full"); localStorage.setItem("helios.full.reset", "1"); }
+    } catch { /* private */ }
     let hash = location.hash;
     if (q.get("mic") === "1") {
       try { sessionStorage.setItem("ari.mic", "1"); } catch { /* private */ }
