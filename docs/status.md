@@ -1,30 +1,30 @@
 # Argus code status
 
-Made by `scripts/status.py` from commit `unknown`. Don't edit by hand: run `python scripts/status.py --write` (the release tool does it for every release).
+Made by `scripts/status.py` from commit `23bb40d`. Don't edit by hand: run `python scripts/status.py --write` (the release tool does it for every release).
 
 | | |
 | --- | --- |
-| Version | 0.7.0 |
-| Database schema | v18 |
+| Version | 0.9.0 |
+| Database schema | v19 |
 | Plugins | 28 |
-| Tests | not counted |
-| API routes | 161 |
-| Python lines | 55,353 (core 29,026, plugins 9,642, tests 15,820, scripts 865) |
-| Modules directly in core/argus | 61 |
-| Helios lines | 6,338 (0 test files) |
+| Tests | 947 |
+| API routes | 162 |
+| Python lines | 57,035 (core 29,855, plugins 9,648, tests 16,414, scripts 1,118) |
+| Modules directly in core/argus | 45 |
+| Helios lines | 7,344 (5 test files) |
 
 ## Files over 900 lines
 
 | Lines | File |
 | ---: | --- |
-| 2,614 | `core/argus/api/app.py` |
-| 1,891 | `core/argus/ari_popup.py` |
+| 1,914 | `core/argus/ari/ari_popup.py` |
 | 1,571 | `plugins/fixer/plugin.py` |
+| 1,517 | `core/argus/console.py` |
 | 1,497 | `core/argus/worker/think.py` |
-| 1,483 | `core/argus/console.py` |
-| 1,199 | `core/argus/voice_live.py` |
+| 1,199 | `core/argus/voice/voice_live.py` |
 | 952 | `plugins/vault/plugin.py` |
-| 922 | `plugins/workstation/plugin.py` |
+| 928 | `plugins/workstation/plugin.py` |
+| 902 | `core/argus/ari/ari_listen.py` |
 
 ## Plugins
 
