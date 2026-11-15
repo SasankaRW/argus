@@ -3,9 +3,9 @@ import type { ArgusEvent, ArgusMap, Job, MapNode, Status } from "./api";
 import { useClaude } from "./chips";
 import { Layout, LayoutSwitch, PAGES } from "./Desk";
 import { startOfDay, useJobs } from "./jobsFeed";
-import type { Pulse } from "./live";
 import { Ms } from "./m3";
-import { boxInfo, Ctx, mainParts, MapView, mergeEdges, PLUGINS, Selection, sub } from "./MapView";
+import { MapView } from "./MapView";
+import { boxInfo, Ctx, foldPlugins, Selection, sub } from "./mapInfo";
 
 // The phone's Map: its own screen between the greeting and the nav bar (design/material3/boards/Map.dc.html). The map
 // fills the screen; a Live chip, the Desk/Command switch and a zoom column float over it, and a tapped box opens a
@@ -30,8 +30,8 @@ function tiles(n: MapNode, ctx: Ctx, jobs: Job[], claude: { calls_today: number;
   return [r ? [r[0], r[1]] : ["State", sub(n)]];
 }
 
-export function PhoneMap({ map, pulses, active, status, events, layout, onLayout, onPlugins, onDetails, onAsk, onView }: {
-  map: ArgusMap; pulses: Pulse[]; active: Record<string, number>; status: Status | null; events: ArgusEvent[];
+export function PhoneMap({ map, status, events, layout, onLayout, onPlugins, onDetails, onAsk, onView }: {
+  map: ArgusMap; status: Status | null; events: ArgusEvent[];
   layout: Layout; onLayout: (l: Layout) => void; onPlugins: () => void; onDetails: (s: Selection) => void;
   onAsk: (text: string) => void; onView: (v: string) => void;
 }) {
@@ -39,7 +39,7 @@ export function PhoneMap({ map, pulses, active, status, events, layout, onLayout
   const [q, setQ] = useState("");
   const jobs = useJobs(events);
   const claude = useClaude();
-  const main = mainParts(map, [], {}).map;
+  const main = foldPlugins(map);
   const j = status?.jobs ?? {};
   const queue = { running: (j.running ?? 0) + (j.leased ?? 0), queued: (j.queued ?? 0) + (j.retry ?? 0) };
   const byWorker: Record<string, number> = {};
@@ -57,11 +57,11 @@ export function PhoneMap({ map, pulses, active, status, events, layout, onLayout
   return (
     <div className="phonemap" role="region" aria-label="Live map">
       <div className="pm-canvas">
-        <MapView map={map} pulses={pulses} active={active} selection={sel} onSelect={pick} flow relayoutSignal={0} onPlugins={onPlugins}
+        <MapView map={map} selection={sel} onSelect={pick} flow onPlugins={onPlugins}
           events={events} queue={queue} byWorker={byWorker} vertical fitPad={{ top: "120px", right: "70px", bottom: sel ? "250px" : "110px", left: "20px" }} />
       </div>
       <div className="pm-top">
-        <div className="float pm-live"><span className="sn-dot d-green live" /><b>Live</b><span className="ns">{main.nodes.length} parts · {mergeEdges(main.edges).length} lines</span></div>
+        <div className="float pm-live"><span className="sn-dot d-green live" /><b>Live</b></div>
         <span className="grow" />
         <LayoutSwitch layout={layout} onChange={onLayout} />
       </div>

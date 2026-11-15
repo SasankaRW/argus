@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Live map:** redrawn in four levels (Apps, Argus, Machines and work, Models) with line health, a status line ("Phone is offline" or "All fine") and hover-to-follow; the phone map scrolls with the same graph.
+
 ## 0.9.0 (2026-11-15)
 
 - **Restore:** `argusd --restore latest` skips a backup that fails its check and uses the newest good one, saying so; the dry run shows the full folder the old database moves to. The Android companion app is now version 1.2.

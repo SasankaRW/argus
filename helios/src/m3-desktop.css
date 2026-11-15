@@ -105,7 +105,6 @@
 .shell .stage { position: relative; width: 100%; height: 100%; min-width: 0; padding: 0; border-radius: 28px; background: var(--map); overflow: hidden; animation: m3-rise 520ms var(--sn-out) backwards; }
 .shell .stage .canvas { position: absolute; inset: 0; }
 .shell .stage .empty { color: var(--tx3); font-size: 13px; }
-.shell .zoompad { left: 18px; bottom: 16px; }
 .shell .dl-top { position: absolute; z-index: 6; left: 18px; right: 18px; top: 16px; display: flex; align-items: center; gap: 12px; pointer-events: none; }
 .shell .dl-top > * { pointer-events: auto; }
 .shell .dl-status { height: 52px; padding: 0 16px; display: flex; align-items: center; gap: 10px; min-width: 0; }

@@ -131,7 +131,7 @@ The next attempt skips every finished step, because `ctx.step` returns the saved
 | `core/argus/devices/` | The PC and phone as hardware: power, laptop power, presence, the cooler-screen eyes, focus |
 | `core/argus/worker/` | The worker loop, workflow `ctx`, built-in workflows (Ari think, review, power, health…) |
 | `core/argus/helios_dist/` | The built Helios, served by argusd at `/helios` |
-| `helios/` | Helios source (React 19 + Vite + xyflow + elkjs) |
+| `helios/` | Helios source (React 19 + Vite) |
 | `plugins/` | Your plugins, one folder each (`plugin.yaml` + `plugin.py`) |
 | `tests/` | pytest (about 360 tests), with a fake Ollama and no real Claude calls |
 | `scripts/` | `dev.ps1` (up, down, logs, pr, merge), `release.py`, the PC worker installer |
@@ -534,8 +534,9 @@ React 19 + Vite, built into `core/argus/helios_dist/` and served at `/helios`. O
   reconnect).
 - **Pages:** Map, Ari, Plugins (each with its own controls, settings, runs and learning), Queue, Runs, Share,
   Power, Logs, Rules.
-- **Map:** xyflow + ELK layout. It shows the main parts only (all plugins are one box). Lines pulse for each
-  message. The inspector slides in on the right, and events are a `tail -f` dock at the bottom.
+- **Map:** four fixed levels (Apps, Argus, Machines and work, Models) drawn by `mapGraph.ts` (pure, unit-tested).
+  It shows the essential parts only (all plugins are one box). A line's look is its health (busy, working, quiet,
+  slow, broken, asks a bigger model) and a status line on top says what is wrong. The inspector slides in on the right, and events are a `tail -f` dock at the bottom.
 - **Phone** (≤ 720 px): a simple home (needs you, now, next, saved), the Share menu target, and the map as its
   own sideways full-screen page.
 - **`popup.html`:** just the Ari pill, for the PC popup window.

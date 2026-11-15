@@ -1,7 +1,7 @@
 import { useClaude } from "./chips";
 import { Ms } from "./m3";
 import { avgRun, lastHour, startOfDay } from "./jobsFeed";
-import { boxInfo, sub } from "./MapView";
+import { boxInfo, sub } from "./mapInfo";
 import type { ArgusMap, Job } from "./api";
 
 // The compact inspector for a selected box (the board's top-right card): ring gauges, throughput in the last hour and the

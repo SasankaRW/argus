@@ -3,7 +3,7 @@ import { api, Job } from "./api";
 import { FixerPanel } from "./FixerPanel";
 import { HoldButton, Ms, SectI } from "./m3";
 import { ago, tone } from "./format";
-import type { Selection } from "./MapView";
+import type { Selection } from "./mapInfo";
 
 type PluginInfo = { id: string; name: string; description: string; live: boolean; runs_on: string; workflows: string[];
   rules: string | null; ari_tools?: string[]; group: string | null };

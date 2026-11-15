@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { Job, MapNode } from "./api";
+import type { Job } from "./api";
 import { avgRun, lastHour } from "./jobsFeed";
-import { isDevice, splinePath } from "./layout";
 import { pageMeta } from "./kit";
 import { sentence } from "./m3";
 
@@ -44,34 +43,6 @@ describe("avgRun", () => {
       job({ created_at: t, finished_at: null }),
     ]);
     expect(r).toBeCloseTo(3);
-  });
-});
-
-describe("splinePath", () => {
-  it("is empty for fewer than two points", () => {
-    expect(splinePath([])).toBe("");
-    expect(splinePath([{ x: 1, y: 1 }])).toBe("");
-  });
-
-  it("uses bend points as cubic control points when they fit", () => {
-    const p = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 5 }, { x: 3, y: 5 }];
-    expect(splinePath(p)).toBe("M 0 0 C 1 0 2 5 3 5");
-  });
-
-  it("falls back to a smooth curve through the points", () => {
-    const d = splinePath([{ x: 0, y: 0 }, { x: 10, y: 0 }]);
-    expect(d.startsWith("M 0 0 C ")).toBe(true);
-    expect(d.endsWith("10 0")).toBe(true);
-  });
-});
-
-describe("isDevice", () => {
-  const node = (id: string, kind: MapNode["kind"]): MapNode => ({ id, kind, label: id, group: null, meta: {}, first_seen: 0 });
-  it("treats workers, apps and the phone as devices", () => {
-    expect(isDevice(node("pc", "worker"))).toBe(true);
-    expect(isDevice(node("x", "app"))).toBe(true);
-    expect(isDevice(node("phone", "service"))).toBe(true);
-    expect(isDevice(node("core", "core"))).toBe(false);
   });
 });
 

@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import type { ArgusEvent, Job, Status } from "./api";
 import { cap, niceHost } from "./Phone";
 import { clock, detail, shortId, tone } from "./format";
-import type { Selection } from "./MapView";
+import type { Selection } from "./mapInfo";
 import { Ms } from "./m3";
 
 const FILTERS: [string, string, (k: string) => boolean][] = [

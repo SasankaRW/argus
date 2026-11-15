@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, ArgusEvent } from "./api";
 import { ago, shortId } from "./format";
-import type { Selection } from "./MapView";
+import type { Selection } from "./mapInfo";
 import { Empty, Skeleton } from "./kit";
 
 export type QItem = { id: string; plugin: string; workflow: string; state: string; priority: number; attempt: number;
