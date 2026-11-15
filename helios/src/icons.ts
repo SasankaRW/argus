@@ -8,6 +8,6 @@ export const ICONS = [
   "neurology", "terminal", "settings", "search", "expand_less", "expand_more", "chevron_left", "hourglass_top", "devices",
   "folder_open", "lock", "send", "fit_screen", "visibility", "dashboard", "keyboard_command_key",
   "menu", "schedule", "folder_delete", "done_all", "remove", "dns", "laptop_chromebook", "smartphone", "timer", "token",
-  "pan_tool", "arrow_selector_tool", "layers", "auto_awesome_mosaic", "route", "info",
+  "pan_tool", "arrow_selector_tool", "layers", "auto_awesome_mosaic", "route", "info", "stop", "pause",
 ] as const;
 export type IconName = (typeof ICONS)[number];

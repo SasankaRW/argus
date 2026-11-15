@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Live map:** redrawn in five columns (Apps, Argus, Machines, Plugins, Models) with real line health (green and moving only with traffic in the last minute), a "Needs attention" row (Ring phone, Review, Open logs), and a side panel for every box with Stop / Start / Restart / Pause / Resume (hold to confirm), Pause everything and the box's recent log.
+
 - **Controls (API):** stop, start and restart a plugin, pause, resume and restart a worker, pause or resume everything, and read a component's log with the events that explain it. The map shows what is paused. Argus itself cannot be controlled.
 
 - **Live map:** select Plugins to zoom into what is running: inputs, the plugins with jobs, what they use, idle ones listed below. Back, Escape or the browser's back return.

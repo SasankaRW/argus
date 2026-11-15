@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ArgusEvent, ArgusMap, Status } from "./api";
+import { ControlPanel } from "./ControlPanel";
 import { Inspector } from "./Inspector";
 import { MapView } from "./MapView";
 import type { Selection } from "./mapInfo";
@@ -7,9 +8,9 @@ import { Ms } from "./m3";
 
 // The map as a full-screen overlay, for a narrow window showing the full dashboard (the phone has its own Map screen,
 // PhoneMap.tsx). Held in landscape it fills the screen.
-export function MapFull({ map, status, events, onClose, onPlugins }: {
+export function MapFull({ map, status, events, onClose, onPlugins, onReview, onFullLog, onChanged }: {
   map: ArgusMap; status: Status | null; events: ArgusEvent[];
-  onClose: () => void; onPlugins: () => void;
+  onClose: () => void; onPlugins: () => void; onReview: () => void; onFullLog: () => void; onChanged: () => void;
 }) {
   const [sel, setSel] = useState<Selection>(null);
   const [flow, setFlow] = useState(true);
@@ -27,12 +28,14 @@ export function MapFull({ map, status, events, onClose, onPlugins }: {
       if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     };
   }, [onClose]);
+  const node = sel?.type === "node" ? map.nodes.find((n) => n.id === sel.id) : undefined;
   return (
     <div className="mapfull" role="dialog" aria-label="Live map">
       <div className="mapfull-in">
         <div className="canvas">
           <MapView map={map} events={events} selection={sel} onSelect={setSel} flow={flow}
-            onPlugins={onPlugins} />
+            onPlugins={onPlugins} onReview={onReview} onChanged={onChanged}
+            fitPad={{ top: "140px", right: sel ? "400px" : "20px", bottom: "20px", left: "20px" }} />
         </div>
         <div className="hud hud-tl hud-title"><span className="pt">Live map</span></div>
         <div className="hud hud-tr tools">
@@ -41,7 +44,9 @@ export function MapFull({ map, status, events, onClose, onPlugins }: {
         </div>
         {sel && (
           <aside className="drawer">
-            <Inspector sel={sel} map={map} status={status} events={events} onSelect={setSel} />
+            {node && sel?.type === "node"
+              ? <ControlPanel node={node} logsFirst={sel.logs} onClose={() => setSel(null)} onChanged={onChanged} onFullLog={onFullLog} />
+              : <Inspector sel={sel} map={map} status={status} events={events} onSelect={setSel} />}
           </aside>
         )}
       </div>

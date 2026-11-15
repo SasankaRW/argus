@@ -61,7 +61,7 @@ export function useArgus() {
     const touched: Record<string, number> = {};
     for (const e of evs) {
       if (MAP_KINDS.test(e.kind)) mapChanged = true;
-      if (/^(job|worker|model|approval|outbox)\./.test(e.kind)) jobsChanged = true;
+      if (/^(job|worker|model|approval|outbox|control)\./.test(e.kind)) jobsChanged = true;
       if (!replay && e.from && e.to && e.kind !== "edge.added") {
         newPulses.push({ id: ++pulseId.current, src: e.from, dst: e.to, tone: pulseTone(e.kind), at: now });
       }
@@ -140,5 +140,5 @@ export function useArgus() {
     };
   }, [connect, loadStatus]);
 
-  return { phase, authError, setAuthError, status, map, events, pulses, active, conn, reconnect: connect };
+  return { phase, authError, setAuthError, status, map, events, pulses, active, conn, reconnect: connect, reload: loadMap };
 }

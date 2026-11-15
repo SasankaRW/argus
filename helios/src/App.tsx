@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, ArgusMap, setToken } from "./api";
+import { api, setToken } from "./api";
 import { currentConv } from "./conv";
 import { AskBox } from "./AskBox";
 import { EventsPanel } from "./EventsPanel";
@@ -7,13 +7,13 @@ import { uptime } from "./format";
 import { Inspector } from "./Inspector";
 import { useArgus } from "./live";
 import { FitPad, MapView } from "./MapView";
-import { foldPlugins, Selection } from "./mapInfo";
+import type { Selection } from "./mapInfo";
 import { MapFull } from "./MapFull";
 import { CommandLayer, Layout, LayoutSwitch, loadLayout, saveLayout } from "./Desk";
 import { PhoneHeader, PhoneMore, PhoneOffline, PhoneTab, PhoneTabs, PhoneHome } from "./Phone";
 import { PhoneMap } from "./PhoneMap";
 import { DeskLayer } from "./DeskLayer";
-import { InspectCard } from "./InspectCard";
+import { ControlPanel } from "./ControlPanel";
 import { ClaudeChip, Clock } from "./chips";
 import { useJobs } from "./jobsFeed";
 import { Logo, Ms, PhoneCtx } from "./m3";
@@ -41,9 +41,7 @@ const RunsView = lazy(() => import("./RunsView").then((m) => ({ default: m.RunsV
 const ShareView = lazy(() => import("./ShareView").then((m) => ({ default: m.ShareView })));
 const VoiceTrain = lazy(() => import("./VoiceTrain").then((m) => ({ default: m.VoiceTrain })));
 
-const DESK_PAD: FitPad = { top: "130px", right: "330px", bottom: "150px", left: "90px" };  // between the floating bars, tools, inspector and timeline
-// the inspector card reads the folded map (all plugins one box); a single plugin picked inside the plugin view needs the full one
-const cardMap = (m: ArgusMap, id: string) => { const f = foldPlugins(m); return f.nodes.some((n) => n.id === id) ? f : m; };
+const DESK_PAD: FitPad = { top: "160px", right: "376px", bottom: "150px", left: "90px" };  // between the floating bars, the attention row, tools, side panel and timeline
 const DESK_PAD_FREE: FitPad = { ...DESK_PAD, right: "40px" };  // no inspector drawer open
 const CMD_PAD: FitPad = { top: "340px", right: "40px", bottom: "150px", left: "40px" };  // below the corner cards, above the command bar
 
@@ -234,7 +232,8 @@ export function App() {
   </>;
   const closeMap = useCallback(() => setBigMap(false), []);
   const mapFull = bigMap && a.map && !phone ? (
-    <MapFull map={a.map} status={a.status} events={a.events} onClose={closeMap}
+    <MapFull map={a.map} status={a.status} events={a.events} onClose={closeMap} onChanged={() => { a.reload().catch(() => {}); }}
+      onReview={() => { setBigMap(false); if (!phone) setFullView(true); go("inbox"); }} onFullLog={() => { setBigMap(false); if (!phone) setFullView(true); go("logs"); }}
       // On the phone the map's Plugins link opens the phone's Plugins page. It used to switch to the full dashboard
       // (and remember it), which left the phone app stuck in the desktop layout. Only More's "Open the full
       // dashboard" switches views.
@@ -257,7 +256,7 @@ export function App() {
         {proot === "livemap" ? (
           a.map && a.map.nodes.length > 0
             ? <PhoneMap map={a.map} status={st} events={a.events} layout={layout} onLayout={setLayout}
-                onPlugins={() => go("plugins")} onDetails={setSel} onAsk={askAri} onView={go} />
+                onPlugins={() => go("plugins")} onDetails={setSel} onAsk={askAri} onView={go} onChanged={() => { a.reload().catch(() => {}); }} />
             : <div className="empty pm-empty">{a.phase === "down" ? "Waiting for Argus…" : "Loading the map…"}</div>
         ) : (<>
         <PhoneHeader status={st} live={a.conn === "live"} title={title} down={a.phase === "down"} onBell={() => go("notifications")} />
@@ -333,12 +332,14 @@ export function App() {
     </div>
   );
   const nodeSel = sel?.type === "node" ? sel.id : null;
+  const selNode = a.map && nodeSel ? a.map.nodes.find((n) => n.id === nodeSel) : undefined;
   const inspector = a.map && (sel || info) ? (
-    <aside className={`drawer${nodeSel && !details ? " card-ic" : ""}`} aria-label="Inspector">
-      {nodeSel && !details
-        ? <InspectCard id={nodeSel} map={cardMap(a.map, nodeSel)} jobs={jobs} queue={queue} byWorker={byWorker} onClose={() => { setSel(null); setInfo(false); }} onDetails={() => setDetails(true)} />
+    <aside className={`drawer${selNode && !details ? " card-ic" : ""}`} aria-label="Inspector">
+      {selNode && !details
+        ? <ControlPanel node={selNode} logsFirst={sel?.type === "node" && sel.logs} onClose={() => { setSel(null); setInfo(false); }} onChanged={() => { a.reload().catch(() => {}); }}
+            onFullLog={() => go("logs")} onDetails={() => setDetails(true)} />
         : <>
-            {nodeSel && <button type="button" className="sn-link ic-back" onClick={() => setDetails(false)}>Summary</button>}
+            {selNode && <button type="button" className="sn-link ic-back" onClick={() => setDetails(false)}>Summary</button>}
             <Inspector sel={sel} map={a.map} status={st} events={a.events} onSelect={setSel} onClose={() => { setSel(null); setInfo(false); }} />
           </>}
     </aside>
@@ -347,8 +348,8 @@ export function App() {
     <section className={`stage${cmd ? " cmd" : ""}`} aria-label="Live map">
       <div className="canvas">
         {a.map && a.map.nodes.length > 0 ? (
-          <MapView map={a.map} selection={sel} onSelect={setSel} flow={flow} onPlugins={() => go("plugins")}
-            events={a.events} queue={queue} byWorker={byWorker} fitPad={cmd ? CMD_PAD : sel || info ? DESK_PAD : DESK_PAD_FREE} />
+          <MapView map={a.map} selection={sel} onSelect={setSel} flow={flow} onPlugins={() => go("plugins")} onReview={() => go("inbox")} onChanged={() => { a.reload().catch(() => {}); }}
+            events={a.events} queue={queue} byWorker={byWorker} fitPad={cmd ? CMD_PAD : sel || info ? DESK_PAD : DESK_PAD_FREE} headLeft={cmd ? 360 : undefined} />
         ) : (
           <div className="empty">{a.phase === "down" ? "Waiting for Argus…" : "Loading the map…"}</div>
         )}
@@ -357,7 +358,7 @@ export function App() {
         <CommandLayer status={st} events={a.events} live={a.conn === "live"} onView={go} onAsk={askAri}
           onInbox={() => go("inbox")} onLayout={setLayout} tools={tools} />
       ) : (
-        <DeskLayer status={st} events={a.events} live={a.conn === "live"} down={a.phase === "down"} onInbox={() => go("inbox")}
+        <DeskLayer status={st} events={a.events} live={a.conn === "live"} down={a.phase === "down"}
           layoutSwitch={<LayoutSwitch layout={layout} onChange={setLayout} />} search={search} tools={deskTools} />
       )}
       {inspector}
