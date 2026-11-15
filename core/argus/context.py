@@ -54,6 +54,7 @@ class Argus:
         self.approvals = Approvals(self.store, self.jobs, cfg)
         self.phone = PhoneWatch(self.store, cfg, self.approvals, self.outbox)
         self.plugin_host = PluginHost(cfg)
+        self.approvals.asks_on_island = self.plugin_host.asks_on_island
         self.power = PowerManager(self.store, cfg)
         self.power.jobs = self.jobs
         self.scheduler = Scheduler(self.store, self.jobs, cfg)

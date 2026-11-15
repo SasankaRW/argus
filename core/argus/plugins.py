@@ -179,6 +179,14 @@ class AriInfo(_M):
     tools: list[AriTool] = Field(default_factory=list)
 
 
+class Capabilities(_M):
+    """Behaviour a plugin asks core for, so core never has to name a plugin. All default to false."""
+    # true: when one of its jobs asks you (an approval), Ari says it aloud and shows it on the island too
+    asks_on_island: bool = False
+    # true: its jobs go to Ari's child session (the `childsession` worker) while that worker is online
+    needs_child_session: bool = False
+
+
 class HeliosInfo(_M):
     node: HeliosNode = Field(default_factory=HeliosNode)
     wrong: WrongButton | None = None
@@ -202,6 +210,7 @@ class Manifest(_M):
     helios: HeliosInfo = Field(default_factory=HeliosInfo)
     share: list[ShareTarget] = Field(default_factory=list)
     ari: AriInfo = Field(default_factory=AriInfo)
+    capabilities: Capabilities = Field(default_factory=Capabilities)
 
     @model_validator(mode="after")
     def _checks(self) -> Manifest:
@@ -432,6 +441,16 @@ class PluginHost:
     def needs_for(self, plugin: str) -> list[str]:
         p = self.plugins.get(plugin)
         return p.manifest.job_needs() if p else []
+
+    def asks_on_island(self, plugin: str) -> bool:
+        """Does this plugin's `capabilities.asks_on_island` say its approvals are also said aloud on the island?"""
+        p = self.plugins.get(plugin)
+        return bool(p and p.manifest.capabilities.asks_on_island)
+
+    def needs_child_session(self, plugin: str) -> bool:
+        """Does this plugin's `capabilities.needs_child_session` say its jobs prefer Ari's child session?"""
+        p = self.plugins.get(plugin)
+        return bool(p and p.manifest.capabilities.needs_child_session)
 
     def for_worker(self, capabilities: list[str]) -> list[dict[str, Any]]:
         """Plugins this worker can run (it has every capability their jobs need)."""

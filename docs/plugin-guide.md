@@ -177,6 +177,7 @@ def send_to_cashly(ctx, data):
 | **When the local models can't** | for every plugin: if every tier `ctx.llm` tried fails and Claude wasn't among them (for example `tiers=["V1"]`), Claude gets one try with the same input, pictures and the local models' rejected answers, counted against the plugin's `claude_calls_per_day` (default `claude.plugin_calls_per_day`, 10) and the global cap. `claude_last=False` turns that off for one call (to try a cheaper route first). If Claude fails too, `EscalationExhausted`: skip the item or ask you with `ctx.ask_me`. `ctx.local_tiers()` is the chain without Claude. |
 | `ctx.claude(prompt, input, schema=, check=, images=, advice=)` | direct Claude call (tools off, one turn; it sees `images` too), counted against the plugin's and the global daily cap. |
 | **Tools for Ari** | `ari: tools: [{name, description, workflow, input: {arg: {type, description}}, required, risky}]` in plugin.yaml: Ari can use the plugin (a job of `workflow`, its input = the tool's arguments). `risky: true` makes Ari ask first. A plugin with tools needs no trigger. |
+| **Capabilities** | `capabilities: {asks_on_island, needs_child_session}` in plugin.yaml, both `true`/`false`, default `false`; an unknown name or a non-boolean rejects the manifest. `asks_on_island: true`: when one of its jobs asks you (an approval), Ari also says it aloud and shows it on the island. `needs_child_session: true`: its jobs go to Ari's child session while that worker is online, otherwise to the desktop worker. Core reads these from the loaded manifests and never names a plugin. |
 | `ctx.tool(name, args)` | use one of Ari's tools from a workflow: a built-in answers at once; a plugin's tool runs as its own job while this job waits (no worker held). `ToolFailed` when it failed. |
 | `ctx.saved(seconds, key=)` | this job saved you about `seconds` (Helios "Saved you" this week, the evening summary). Counted once per job and key, even when retried; not in dry-run. |
 | `ctx.ask_me(title, fields, summary=, image=)` | the last resort: ask you to fill in `fields` (Helios and the phone; `image` is a small picture to decide by). Returns the fields as you approved them, or None if you rejected it. The job waits meanwhile, like `ctx.approve`; call it inside `ctx.step`. |
@@ -301,6 +302,7 @@ The plugin API version is what `argus_api` in each manifest refers to. Minor ver
 
 | Version | Date | Change |
 | --- | --- | --- |
+| 1.0 (draft) | 2026-11-15 | Manifest `capabilities` (`asks_on_island`, `needs_child_session`, default false): optional, so existing plugins are unchanged and the version stays 1.0. |
 | 1.0 (draft) | 2026-09-28 | ctx.llm and ctx.claude built (Argus C7): playbook, input, Pydantic schema, check function, optional tier chain; the tier is read from ctx.last\_answer instead of being passed in. |
 | 1.0 (draft) | 2026-09-28 | First design: manifest, 5 triggers, 7 step types, `ctx` services, 3 approval card types. Not built yet. |
 

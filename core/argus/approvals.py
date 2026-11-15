@@ -123,9 +123,6 @@ def _decode(r: sqlite3.Row) -> dict[str, Any]:
     return d
 
 
-ASKS_ON_ISLAND = {"workstation"}
-
-
 def drop_pictures(conn: sqlite3.Connection, job_id: str) -> int:
     """A task's pictures are gone once it ends (they were only there for you to answer): approvals keep the text."""
     n = 0
@@ -144,6 +141,9 @@ class Approvals:
         self.cfg = cfg
         self.clock = clock
         self._key: bytes | None = None
+        # plugin id -> does its manifest say its approvals are also said on the island (capabilities.asks_on_island)?
+        # argusd points this at the plugin host; on its own no plugin asks on the island.
+        self.asks_on_island: Callable[[str], bool] = lambda plugin: False
 
     # -------------------------------------------------------------- tokens
 
@@ -251,7 +251,7 @@ class Approvals:
             a = _decode(conn.execute("SELECT * FROM approvals WHERE id = ?", (aid,)).fetchone())
             insert_event(conn, now, "approval.requested", job_id=job_id, step=step, src=job.plugin,
                          dst="approvals", data={"approval": aid, "type": type_, "title": a["title"]})
-            if job.plugin in ASKS_ON_ISLAND:  # Ari working for you asks: said aloud and on the island too
+            if self.asks_on_island(job.plugin):  # Ari working for you asks: said aloud and on the island too
                 insert_event(conn, now, "ari.ask", job_id=job_id, step=step, src=job.plugin, dst="ari",
                              data={"approval": aid, "title": a["title"], "summary": summary[:6],
                                    "fields": list(fields), "picture": bool(image)})

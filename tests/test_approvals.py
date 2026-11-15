@@ -90,6 +90,24 @@ def test_request_is_idempotent_and_queues_one_message(store, clock):
     assert msg["actions"][2]["url"].startswith("http://phone-reachable:8600/a/")
 
 
+def test_ari_ask_event_only_for_plugins_the_manifest_says_ask_on_the_island(store, clock):
+    jobs, ap, _ = setup(store, clock)
+
+    def asks():
+        sql = "SELECT from_component AS src FROM events WHERE kind = 'ari.ask'"
+        return store.read_sync(lambda c: c.execute(sql).fetchall())
+
+    async def go(key):
+        jid = await _leased(jobs)
+        await ap.request(jid, "w1", f"{jid}:{key}", "entry", "Look", fields={"a": "1"})
+
+    run(go("1"))
+    assert asks() == []  # nothing declared: no island question (the default)
+    ap.asks_on_island = lambda plugin: plugin == "demo"
+    run(go("2"))
+    assert [r["src"] for r in asks()] == ["demo"]
+
+
 def test_buttons_are_relative_links_without_public_url(store, clock):
     """The app puts its own Argus address in front of them, so they work wherever the app reaches Argus."""
     jobs, ap, cfg = setup(store, clock, cfg_with(None))

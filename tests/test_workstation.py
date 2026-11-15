@@ -362,11 +362,22 @@ def test_workstation_jobs_go_to_the_child_session_while_its_worker_is_online():
             return self.w
 
     t = Tools.__new__(Tools)
-    t.argus = type("A", (), {"registry": Reg([{"state": "online", "capabilities": ["workstation", "childsession"]}])})()
-    assert asyncio.run(t.needs_now(["workstation"])) == ["childsession", "workstation"]
-    assert asyncio.run(t.needs_now(["desktop", "session"])) == ["desktop", "session"]  # PC tools: your desktop
+    from argus.plugins import Manifest, Plugin, PluginHost
+
+    host = PluginHost(None)  # type: ignore[arg-type]
+    for pid, caps in (("workstation", {"needs_child_session": True}), ("pc-apps", {})):
+        m = Manifest.model_validate({"id": pid, "name": pid, "version": "1", "kind": "workflow",
+                                     "argus_api": ">=1.0 <2.0", "permissions": {}, "capabilities": caps,
+                                     "ari": {"tools": [{"name": "do_it", "description": "does it", "workflow": "w"}]}})
+        host.plugins[pid] = Plugin(manifest=m, path=Path("."), live=True, config={})
+    t.argus = type("A", (), {"registry": Reg([{"state": "online", "capabilities": ["workstation", "childsession"]}]),
+                             "plugin_host": host})()
+    assert asyncio.run(t.needs_now(["workstation"], "workstation")) == ["childsession", "workstation"]
+    assert asyncio.run(t.needs_now(["desktop", "session"], "pc-apps")) == ["desktop", "session"]  # your desktop
+    assert asyncio.run(t.needs_now(["workstation"], "pc-apps")) == ["workstation"]  # not declared: stays put
+    assert asyncio.run(t.needs_now(["workstation"])) == ["workstation"]
     t.argus.registry = Reg([{"state": "offline", "capabilities": ["workstation", "childsession"]}])
-    assert asyncio.run(t.needs_now(["workstation"])) == ["workstation"]  # it's away: the virtual desktop, as before
+    assert asyncio.run(t.needs_now(["workstation"], "workstation")) == ["workstation"]  # it's away: the virtual desktop
 
 
 def test_in_the_child_session_the_mouse_needs_no_trip_to_another_desktop():
