@@ -8,6 +8,7 @@ The Argus dashboard: React + Vite. `argusd` serves the built copy at `/helios`
 - `src/mapGraph.ts`: the live map's pure parts: which boxes, their state, line health, level layout (unit-tested); `src/attention.ts`: the "needs attention" items
 - `src/MapView.tsx`, `src/MapHead.tsx`, `src/LevelCanvas.tsx`: fit the map to its space and draw it, with the attention row and Pause everything on top
 - `src/ControlPanel.tsx`, `src/controls.ts`: the side panel of a box (status, Stop/Start/Restart/Pause/Resume, logs); controls are in docs/controls.md
+- `src/pluginGraph.ts`, `src/zoomMath.ts`, `src/usePluginZoom.ts`: the plugin view's data, the zoom's maths (one spring-driven progress value for camera, fades and cards) and its DOM, history, focus and Escape handling
 - `src/Inspector.tsx`: details for a box, a line or a job
 - `src/EventsPanel.tsx`: the live event list with filters
 

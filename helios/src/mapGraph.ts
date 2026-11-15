@@ -8,7 +8,7 @@ import type { IconName } from "./icons";
 // ---------------------------------------------------------------- types
 
 export type Tone = "ok" | "warn" | "bad" | "idle";
-export type Skin = "plain" | "core" | "plug" | "model" | "run" | "wait";
+export type Skin = "plain" | "core" | "plug" | "model" | "run" | "wait" | "stop";  // run, wait, stop: the plugin view
 export type Slot = "top" | "mid" | "bl" | "br";
 export type Card = {
   id: string;
