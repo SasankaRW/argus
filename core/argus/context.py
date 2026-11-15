@@ -14,6 +14,7 @@ from . import settings as settings_mod
 from .approvals import Approvals
 from .backup import Backups
 from .config import PRIORITY_BATCH, PRIORITY_INTERACTIVE, Config, ScheduleConfig
+from .controls import Controls
 from .daily import (
     Marker,
     brief_due,
@@ -57,6 +58,7 @@ class Argus:
         self.approvals.asks_on_island = self.plugin_host.asks_on_island
         self.power = PowerManager(self.store, cfg)
         self.power.jobs = self.jobs
+        self.controls = Controls(self.store, cfg, self.plugin_host, self.jobs)
         self.scheduler = Scheduler(self.store, self.jobs, cfg)
         self.scheduler.poke = self.outbox.poke
         self.models.poke = self.outbox.poke

@@ -9,9 +9,11 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 
 from ... import guidance
+from ...controls import plugin_generations
 from ..schemas import Claim, Fail, RegisterWorker, StepReport, Succeed, TraceEvent, Wait, WorkerOnly
 from ._deps import Deps, job_json
 
+CONTROL_HEADER = "X-Argus-Control"  # on a 204 claim: "restart" = finish up and exit with code 75 (docs/controls.md)
 TRACE_KINDS = ("model.", "check.", "log.", "advice.", "plugin.", "file.", "http.")
 CLAIM_POLL = 0.2
 
@@ -21,13 +23,19 @@ def build_router(deps: Deps) -> APIRouter:
     router = APIRouter()
     guarded = deps.guarded
 
+    async def with_generations(infos: list[dict]) -> list[dict]:
+        """Each plugin's restart counter (Helios: Restart), so a worker knows which code it loaded."""
+        gens = await argus.store.read(plugin_generations)
+        return [{**i, "generation": gens.get(i["id"], 0)} for i in infos]
+
     @router.post("/workers/register", dependencies=guarded)
     async def register(body: RegisterWorker) -> dict:
         await argus.registry.register_worker(body.id, body.host, body.capabilities, body.version)
         return {"ok": True, "lease_seconds": argus.cfg.jobs.lease_seconds,
                 "heartbeat_seconds": argus.cfg.jobs.heartbeat_seconds, "models": argus.models.worker_config(),
                 "folders": argus.triggers.folders_for(body.id, body.host, body.capabilities),
-                "plugins": argus.plugin_host.for_worker(body.capabilities), "paths": argus.path_rules()}
+                "plugins": await with_generations(argus.plugin_host.for_worker(body.capabilities)),
+                "paths": argus.path_rules()}
 
     @router.get("/workers", dependencies=guarded)
     async def workers() -> list[dict]:
@@ -39,13 +47,18 @@ def build_router(deps: Deps) -> APIRouter:
         deadline = time.monotonic() + body.wait
         while True:
             job = None
-            if await argus.jobs.has_claimable():
+            paused, restart = await argus.controls.worker_gate(worker_id)  # Helios: pause / restart this worker
+            if restart and await argus.controls.take_restart(worker_id):
+                # No body to carry it (a claim answers with a job or nothing): an older worker sees a plain "no job"
+                return Response(status_code=204, headers={CONTROL_HEADER: "restart"})
+            if not paused and await argus.jobs.has_claimable():  # a paused worker keeps heartbeating, claims nothing
                 job = await argus.jobs.claim(worker_id, body.capabilities, body.plugins, body.min_priority)
             if job is not None:
                 out = job_json(job, await argus.jobs.steps(job.id))
                 p = argus.plugin_host.plugins.get(job.plugin)
                 if p is not None:  # current settings (live, config): argusd may have restarted since register
                     out["plugin_info"] = p.info()
+                    out["plugin_info"]["generation"] = (await argus.store.read(plugin_generations)).get(job.plugin, 0)
                     out["plugin_info"]["lessons"] = await argus.store.read(
                         lambda c, pid=job.plugin: guidance.active_lessons(c, pid))
                     if argus.cfg.guidance.examples:

@@ -21,6 +21,7 @@ from typing import Any
 from . import ask as ask_mod
 from . import daily, logview
 from .config import PRIORITY_INTERACTIVE
+from .jobs import PluginPaused
 
 
 class ToolError(Exception):
@@ -111,11 +112,14 @@ class Tools:
         p = self.argus.plugin_host.plugins.get(tool.plugin)
         if p is None:
             raise ToolError(f"plugin {tool.plugin} is not loaded")
-        return await self.argus.jobs.enqueue(
-            tool.plugin, tool.workflow, {**args, **({"_parent": parent} if parent else {})},
-            needs=await self.needs_now(p.manifest.job_needs(), tool.plugin), priority=PRIORITY_INTERACTIVE,
-            source="ari",
-            dedupe_key=f"tool:{key}" if key else None)
+        try:
+            return await self.argus.jobs.enqueue(
+                tool.plugin, tool.workflow, {**args, **({"_parent": parent} if parent else {})},
+                needs=await self.needs_now(p.manifest.job_needs(), tool.plugin), priority=PRIORITY_INTERACTIVE,
+                source="ari",
+                dedupe_key=f"tool:{key}" if key else None)
+        except PluginPaused as e:  # stopped in Helios: say so to Ari instead of failing
+            raise ToolError(str(e)) from None
 
     async def needs_now(self, needs: list[str], plugin: str | None = None) -> list[str]:
         """A job of a plugin whose manifest says `capabilities.needs_child_session` (Ari's Workstation) goes to Ari's

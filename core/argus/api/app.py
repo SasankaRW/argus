@@ -43,7 +43,9 @@ Scheduler and triggers (C9):
     POST /triggers/file               {worker, trigger, path, sha256, size} from a worker's folder watcher (token)
                                       -> {status: queued|duplicate, job_id}; 429 when the plugin's queue is full
     POST /hooks/{name}                a signed webhook (no Argus token; the signature is the check)
-Errors: 404 unknown job, 409 lease lost or transition not allowed, 429 plugin queue full.
+Controls (token): POST /plugins/{id}/stop|start|restart, POST /workers/{id}/pause|resume|restart,
+    GET /control/state, POST /control/pause-all|resume-all, GET /logs/{component}?level=&since=. See docs/controls.md.
+Errors: 404 unknown job, 409 lease lost, transition not allowed or plugin stopped, 429 plugin queue full.
 """
 
 from __future__ import annotations
@@ -59,7 +61,7 @@ from fastapi.staticfiles import StaticFiles
 
 from ..approvals import ApprovalClosed, ApprovalError, ApprovalNotFound, BadToken
 from ..context import Argus
-from ..jobs import InvalidTransition, JobNotFound, LeaseLost, PluginOff, QueueFull
+from ..jobs import InvalidTransition, JobNotFound, LeaseLost, PluginOff, PluginPaused, QueueFull
 from ..tools import Tools
 from ..triggers import BadSignature, TriggerError, UnknownTrigger
 from . import mcp
@@ -69,6 +71,7 @@ from .routes import (
     ari_memory,
     ari_timeline,
     ask,
+    controls,
     events,
     guidance,
     island,
@@ -170,6 +173,10 @@ def create_app(argus: Argus) -> FastAPI:
     async def _off(request: Request, exc: PluginOff):
         return JSONResponse({"error": "plugin_off", "detail": str(exc)}, status_code=409)
 
+    @app.exception_handler(PluginPaused)
+    async def _paused(request: Request, exc: PluginPaused):
+        return JSONResponse({"error": "plugin_paused", "detail": str(exc)}, status_code=409)
+
     def token_ok(authorization: str | None, query_token: str | None = None) -> bool:
         token = argus.cfg.secrets.worker_token
         if not token:
@@ -200,6 +207,6 @@ def create_app(argus: Argus) -> FastAPI:
     mcp.register(app, argus, mcp_auth, tools)
 
     for area in (tools_routes, island, phone, guidance, models, ari, ari_timeline, ari_memory, voice, plugins,
-                 shares, ops, events, workers, settings, approvals, schedules):
+                 shares, ops, events, workers, settings, approvals, schedules, controls):
         app.include_router(area.build_router(deps))
     return app

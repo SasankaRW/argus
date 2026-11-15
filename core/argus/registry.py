@@ -195,6 +195,10 @@ class Registry:
                 queued = {r[0]: r[1] for r in conn.execute(
                     "SELECT plugin, COUNT(*) FROM jobs WHERE state IN ('queued','retry') GROUP BY plugin")}
                 models = {r["tier"].lower(): dict(r) for r in conn.execute("SELECT * FROM model_state").fetchall()}
+                paused = {"plugin": {r[0]: r[1] for r in conn.execute(
+                              "SELECT plugin, since FROM plugin_control WHERE paused = 1")},
+                          "worker": {r[0]: r[1] for r in conn.execute(
+                              "SELECT worker, since FROM worker_control WHERE paused = 1")}}  # stopped in Helios
             finally:
                 conn.execute("COMMIT")
             alias = _aliases(workers)
@@ -210,6 +214,10 @@ class Registry:
                     lane = workers.get(f"{c['id']}-now")
                     if lane:
                         node["fast_lane"] = lane["state"]
+                if c["kind"] in paused:
+                    node["paused"] = c["id"] in paused[c["kind"]]
+                    if node["paused"]:
+                        node["since"] = paused[c["kind"]][c["id"]]
                 if c["kind"] == "plugin":
                     node["jobs"] = {"active": active.get(c["id"], 0), "queued": queued.get(c["id"], 0),
                                     "waiting": waiting.get(c["id"], 0)}

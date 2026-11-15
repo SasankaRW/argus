@@ -9,7 +9,7 @@ import time
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 
-from ... import daily, logview
+from ... import complogs, daily, logview
 from ._deps import Deps
 
 
@@ -62,12 +62,27 @@ def build_router(deps: Deps) -> APIRouter:
             out.append({"name": name, "size": st.st_size, "modified": st.st_mtime})
         return out
 
-    @router.get("/logs/{name}", dependencies=guarded)
-    async def log_read(name: str, after: int | None = Query(None, ge=0),
-                       lines: int = Query(300, ge=1, le=2000)) -> dict:
+    @router.get("/logs/{name}", dependencies=guarded, response_model=None)
+    async def log_read(name: str, after: int | None = Query(None, ge=0), lines: int | None = Query(None, ge=1),
+                       level: str | None = Query(None, pattern="^(all|error)$"),
+                       since: float | None = Query(None, ge=0)):
+        """Two answers. With `level` or `since` (or for a name that is no log file, e.g. a plugin or worker id) the
+        newest-last JSON lines [{ts, level, source, msg}] of one component: a plugin, a worker or "argus" (log files
+        plus its recent events; lines max 500). Otherwise a log file as before ({entries, offset}: Helios's Logs
+        page)."""
         path = logview.sources(argus.cfg.log_dir).get(name)
-        if path is None:
-            raise HTTPException(status_code=404, detail=f"no log {name!r}")
-        return await asyncio.to_thread(logview.read, path, name, after=after, lines=lines)
+        if after is not None or (path is not None and level is None and since is None):
+            if path is None:
+                raise HTTPException(status_code=404, detail=f"no log {name!r}")
+            return await asyncio.to_thread(logview.read, path, name, after=after, lines=min(lines or 300, 2000))
+        plugins = set(argus.plugin_host.plugins)
+
+        def collect(conn):
+            return complogs.collect(conn, argus.cfg, plugins, name, lines or 200, level or "all", since)
+
+        try:
+            return await argus.store.read(collect)
+        except complogs.UnknownComponent:
+            raise HTTPException(status_code=404, detail=f"no component or log {name!r}") from None
 
     return router

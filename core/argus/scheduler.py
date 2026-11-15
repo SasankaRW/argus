@@ -21,7 +21,7 @@ from .config import Config, ScheduleConfig
 from .cron import next_run
 from .db import Store
 from .events import insert_event
-from .jobs.store import JobStore, PluginOff, QueueFull
+from .jobs.store import JobStore, PluginOff, PluginPaused, QueueFull
 from .outbox import add_message, phone_message
 from .registry import ensure_component
 
@@ -88,6 +88,9 @@ class Scheduler:
                 await self.store.write(lambda conn, sid=sid: self._advance(conn, sid, None))
             except PluginOff as e:  # a schedule of yours (not the plugin's own) for a plugin that is switched off
                 log.warning("schedule skipped: plugin switched off", extra={"schedule": sid, "error": str(e)})
+                await self.store.write(lambda conn, sid=sid: self._advance(conn, sid, None))
+            except PluginPaused as e:  # stopped in Helios: this slot is skipped, the next one runs after Start
+                log.info("schedule skipped: plugin stopped", extra={"schedule": sid, "error": str(e)})
                 await self.store.write(lambda conn, sid=sid: self._advance(conn, sid, None))
         self.queued += queued
         return queued
