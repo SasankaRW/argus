@@ -17,6 +17,7 @@ How it hears (voice_live.py has the details):
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import logging
 import os
@@ -31,6 +32,10 @@ from pathlib import Path
 from typing import Any
 
 log = logging.getLogger("argus.ari_listen")
+
+# What a call to argusd can raise: the connection (OSError covers URLError, HTTPError and timeouts), a body that
+# isn't JSON (ValueError), a response cut short (http.client's own errors, which are not OSErrors).
+_REQ_ERRORS = (OSError, ValueError, http.client.HTTPException)
 RATE = 16000
 BLOCK = 480  # 30 ms
 
@@ -82,7 +87,7 @@ class AriClient:
         loud the loudest sound was in the last minute (the health page warns about a quiet or wrong mic)."""
         try:
             self._req("POST", "/ari/listener", dict(MIC), timeout=5)
-        except Exception:  # argusd restarting
+        except _REQ_ERRORS:  # argusd restarting
             pass
 
     def wakes(self, after: int, kinds: str = "ari.wake", wait: float = 0) -> tuple[list[dict], int]:
@@ -92,7 +97,7 @@ class AriClient:
             more = f"&wait={wait:g}" if wait and after >= 0 else ""
             r = json.loads(self._req("GET", f"/events?kinds={kinds}&after={max(after, 0)}&limit=20{more}", None,
                                      timeout=5 + wait))
-        except Exception:
+        except _REQ_ERRORS:
             return [], after
         if after < 0:  # the first look: only what comes from now on
             return [], int(r.get("seq") or 0)
@@ -125,7 +130,7 @@ class AriClient:
         def go() -> None:
             try:
                 self._req(method, path, body, timeout=5)
-            except Exception:  # noqa: BLE001 - argusd away: the timeline misses one note
+            except _REQ_ERRORS:  # argusd away: the timeline misses one note
                 pass
         threading.Thread(target=go, daemon=True, name="ari-note").start()
 
@@ -174,7 +179,7 @@ class AriClient:
                             seen = max(seen, int(e.get("seq") or 0))
                             d = e.get("data") or {}
                             on_partial(str(d.get("text") or ""), str(d.get("mood") or "neutral"))
-                    except Exception as e:  # noqa: BLE001 - no streaming then; the whole reply still comes
+                    except Exception as e:  # noqa: BLE001  # boundary: on_partial is a UI callback; no streaming then, the whole reply still comes
                         log.debug("no partial reply", extra={"error": str(e)[:120]})
                 if n % 2 and on_partial is not None:
                     continue  # the turn itself every 0.3 s
@@ -191,14 +196,14 @@ class AriClient:
         try:
             d = json.loads(self._req("GET", "/ari/listening", None, timeout=5))
             EARS["until"] = 0.0 if d.get("listening", True) else float(d.get("until") or 1e13)
-        except Exception:
+        except _REQ_ERRORS:
             pass
 
     def vocabulary(self) -> None:
         """The names to expect and the usual mishearings (argus.vocab), into VOCAB. Best effort."""
         try:
             VOCAB.update(json.loads(self._req("GET", "/ari/vocabulary", None, timeout=5)))
-        except Exception:  # argusd restarting: keep what we had
+        except (*_REQ_ERRORS, TypeError):  # argusd restarting (or a reply that isn't a mapping): keep what we had
             pass
 
     def state(self, phase: str, text: str = "") -> None:
@@ -431,8 +436,8 @@ class CommandModel:
                 t = self.make(name)
                 self.name, self.t = name, t
                 log.info("command model ready", extra={"model": name})
-            except Exception as e:  # noqa: BLE001 - keep the one we have
-                log.warning("command model not loaded", extra={"model": name, "error": str(e)[:160]})
+            except Exception as e:  # noqa: BLE001  # boundary: model loading runs in a thread and can fail many ways; keep the one we have
+                log.warning("command model not loaded", extra={"model": name, "error": str(e)[:160]}, exc_info=True)
             finally:
                 self.loading = ""
 
@@ -451,16 +456,16 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device,
     sil = vl.silero_path()
     try:
         vad = vl.Quiet(vl.Silero(sil)) if sil else vl.LoudnessVad()  # Silero only when the room isn't silent
-    except Exception as e:  # noqa: BLE001 - onnxruntime missing or broken: the loudness gate still works
-        log.warning("no Silero VAD", extra={"error": str(e)[:200]})
+    except Exception as e:  # noqa: BLE001  # boundary: onnxruntime missing or broken: the loudness gate still works
+        log.warning("no Silero VAD", extra={"error": str(e)[:200]}, exc_info=True)
         vad = vl.LoudnessVad()
     st_path = vl.ensure_smart_turn(models)
     finished = None
     if st_path:
         try:
             finished = vl.SmartTurn(st_path)
-        except Exception as e:  # noqa: BLE001
-            log.warning("no smart turn", extra={"error": str(e)[:200]})
+        except Exception as e:  # noqa: BLE001  # boundary: onnx model load; Ari still listens without it
+            log.warning("no smart turn", extra={"error": str(e)[:200]}, exc_info=True)
     log.info("live conversation", extra={"vad": type(vad).__name__, "smart_turn": bool(finished)})
 
     def open_stream(rate: int, cb: Callable):
@@ -590,8 +595,8 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device,
         talk.transcribe_wake = lambda audio: ""
     try:
         MIC["mic"] = str(sd.query_devices(device, "input").get("name"))
-    except Exception:  # noqa: BLE001 - only for the log and the health page
-        pass
+    except Exception:  # noqa: BLE001  # boundary: PortAudio's own error type; the mic name is only for the log and the health page
+        log.warning("could not read the mic name", exc_info=True)
     log.info("listening", extra={"mic": MIC["mic"], "playback_guard": guard is not None,
                                  "wake_model": wake_word is not None})
     client.state("idle", "")  # the island's "starting…" ends: Ari can hear now
@@ -625,8 +630,8 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device,
                 wake_word.feed(frame)
             try:
                 talk.frame(frame, voice)
-            except Exception as e:  # noqa: BLE001 - never stop listening because of one turn
-                log.warning("turn failed", extra={"error": str(e)[:200]})
+            except Exception as e:  # noqa: BLE001  # boundary: never stop listening because of one turn
+                log.warning("turn failed", extra={"error": str(e)[:200]}, exc_info=True)
                 talk.turns.reset()
     except KeyboardInterrupt:
         pass
@@ -679,7 +684,7 @@ class LiveLevels:
             if b is not None:
                 try:
                     self.client._req("POST", "/ari/live", b, timeout=3)
-                except Exception:  # noqa: BLE001 - only a view (an older argusd: 404)
+                except _REQ_ERRORS:  # only a view (an older argusd: 404)
                     time.sleep(5)
             time.sleep(0.05)
 
@@ -691,8 +696,8 @@ def loopback(guard: Any, every_s: float = 60.0) -> None:
 
     try:
         import soundcard as sc  # type: ignore[import-not-found]
-    except Exception as e:  # noqa: BLE001 - not installed (pip install -e .[listen]) or no WASAPI
-        log.info("no playback guard (pip install -e .[listen])", extra={"error": str(e)[:120]})
+    except Exception as e:  # noqa: BLE001  # boundary: not installed (pip install -e .[listen]) or no WASAPI: any import-time failure
+        log.info("no playback guard (pip install -e .[listen])", extra={"error": str(e)[:120]}, exc_info=True)
         return
     from ..voice import voice_live as vl
 
@@ -710,7 +715,7 @@ def loopback(guard: Any, every_s: float = 60.0) -> None:
                         if str(sc.default_speaker().name) != str(spk.name):
                             break  # another speaker now (headphones): listen to that one
                         opened = time.monotonic()
-        except Exception as e:  # noqa: BLE001 - the device went away: try again shortly
+        except Exception as e:  # noqa: BLE001  # boundary: audio-driver errors of any kind (device went away): try again shortly
             log.info("playback guard paused", extra={"error": str(e)[:120]})
             time.sleep(5)
 
@@ -745,8 +750,9 @@ class WakeWord:
             from openwakeword.model import Model  # type: ignore[import-not-found]
 
             m = Model(wakeword_models=[str(p)], inference_framework="onnx")
-        except Exception as e:  # noqa: BLE001 - not installed (pip install -e .[wake]) or a bad file
-            log.warning("wake-word model not loaded: Whisper listens for \"Hey Ari\"", extra={"error": str(e)[:160]})
+        except Exception as e:  # noqa: BLE001  # boundary: not installed (pip install -e .[wake]) or a bad file
+            log.warning("wake-word model not loaded: Whisper listens for \"Hey Ari\"", extra={"error": str(e)[:160]},
+                        exc_info=True)
             return None
         log.info("wake-word model", extra={"path": str(p), "threshold": cfg.ari.wake_threshold})
         return cls(m, float(cfg.ari.wake_threshold), talk.wake)
@@ -808,7 +814,7 @@ def keep_warm(cfg, every: float = 240.0, check: float = 15.0, away: Callable[[],
                     (post or (lambda r: urllib.request.urlopen(r, timeout=120).read()))(req)  # noqa: S310 - Ollama
                     if resting:
                         log.info("you're back: model loaded again")
-                except Exception as e:  # noqa: BLE001 - Ollama down: try again later
+                except _REQ_ERRORS as e:  # Ollama down: try again later
                     log.info("could not warm the model", extra={"error": str(e)[:120]})
                 last = time.monotonic()
             resting = now_resting
@@ -886,8 +892,9 @@ def main(argv: list[str] | None = None) -> int:
     if accept and str(cfg.ari.language_model or "").strip():
         try:
             lang_t = language_check(str(cfg.ari.language_model), accept)
-        except Exception as e:  # noqa: BLE001 - no language check: Ari still listens, as before
-            log.warning("no language check", extra={"model": cfg.ari.language_model, "error": str(e)[:160]})
+        except Exception as e:  # noqa: BLE001  # boundary: model load; no language check: Ari still listens, as before
+            log.warning("no language check", extra={"model": cfg.ari.language_model, "error": str(e)[:160]},
+                        exc_info=True)
     return live(cfg, client, wake_t, cmd_t, device, lang_t, on_vocab=on_vocab)
 
 

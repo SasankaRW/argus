@@ -18,6 +18,7 @@ The virtual desktops come from `pyvda` (pip install -e .[plugins]); windows thro
 
 from __future__ import annotations
 
+import logging
 import os
 import platform
 import re
@@ -31,6 +32,8 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from argus.worker import Context, PermanentError, workflow
+
+log = logging.getLogger("argus.plugins.workstation")
 
 PLUGIN = "workstation"
 NAME = "Ari's Workstation"
@@ -183,7 +186,7 @@ def ari_pids(profile: str) -> set[int]:  # pragma: no cover - needs the processe
             if (p.info["name"] or "").lower() in ("chrome.exe", "msedge.exe", "chrome", "msedge") and any(
                     profile.lower() in str(a).lower() for a in p.info["cmdline"] or []):
                 out.add(p.pid)
-        except Exception:  # noqa: BLE001 - gone meanwhile
+        except psutil.Error:  # gone meanwhile (NoSuchProcess), or not ours to look at (AccessDenied)
             continue
     return out
 
@@ -278,7 +281,7 @@ class WindowsDesk:  # pragma: no cover - Windows only
             u.GetWindowThreadProcessId(h, ct.byref(pid))
             try:
                 exe = psutil.Process(pid.value).name().lower().removesuffix(".exe")
-            except Exception:  # noqa: BLE001
+            except psutil.Error:  # gone meanwhile, or not ours to look at
                 exe = ""
             if buf.value:
                 out.append(Win(int(h), buf.value, exe, int(pid.value)))
@@ -304,16 +307,16 @@ class WindowsDesk:  # pragma: no cover - Windows only
                 if getattr(d, "name", "") == NAME:
                     self.state["id"] = self._id(d)
                     return self.state["id"]
-            except Exception:  # noqa: BLE001 - Windows 10 has no names
-                pass
+            except Exception:  # noqa: BLE001  # boundary: pyvda's COM errors have no common base; Windows 10 has no names
+                log.debug("virtual desktop has no readable name", exc_info=True)
         for d in ds:  # by the id kept from last time
             if self._id(d) == self.state.get("id"):
                 return self.state["id"]
         d = VirtualDesktop.create()
         try:
             d.rename(NAME)
-        except Exception:  # noqa: BLE001 - Windows 10
-            pass
+        except Exception:  # noqa: BLE001  # boundary: pyvda's COM errors have no common base; Windows 10 can't rename
+            log.debug("virtual desktop not renamed", exc_info=True)
         self.state["id"] = self._id(d)
         return self.state["id"]
 
@@ -322,7 +325,8 @@ class WindowsDesk:  # pragma: no cover - Windows only
 
         try:
             return self._id(AppView(hwnd).desktop)
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001  # boundary: pyvda's COM errors have no common base (the window may be gone)
+            log.debug("desktop of window not found", extra={"hwnd": hwnd}, exc_info=True)
             return None
 
     def move(self, hwnd: int, desk: str) -> None:
@@ -601,7 +605,8 @@ def pick_surface(ctx: Context, hwnd: int) -> Any:
             if enough or tries == 3:
                 break
             sleep(1.5)
-    except Exception:  # noqa: BLE001 - no UI Automation at all
+    except Exception:  # noqa: BLE001  # boundary: UI Automation is COM and fails in many ways; fall back to looking at the screen
+        log.warning("no UI Automation snapshot", exc_info=True)
         enough, uia = False, None
     look = str((getattr(ctx, "config", None) or {}).get("always_look")).lower() in ("true", "1", "yes")
     if enough and not look and not mostly_unnamed(items):
@@ -725,7 +730,8 @@ def spotify_first(page: Any) -> dict:  # pragma: no cover - a real page
     """Play the first track of the search results already open."""
     try:
         page.wait_for_selector(f'{SPOTIFY_ROW}, [data-testid="login-button"]', timeout=15000)
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001  # boundary: playwright's TimeoutError is not an OSError; say what happened instead
+        log.warning("spotify results didn't load", exc_info=True)
         return {"ok": False, "why": "the results didn't load"}
     rows = page.locator(SPOTIFY_ROW)
     if rows.count() == 0:
@@ -779,7 +785,7 @@ def spotify(ctx: Context):
                 out = in_app(SimpleCtx(ctx, {"app": "Spotify", "goal": goal}, own_steps=True))
             except PermanentError:
                 raise
-            except Exception as e:  # noqa: BLE001 - say what broke, instead of the job being retried blind
+            except Exception as e:  # noqa: BLE001  # boundary: plugin job step; say what broke (logged below), instead of the job being retried blind
                 ctx.log.error("spotify in the app failed", extra={"error": f"{type(e).__name__}: {e}",
                                                                   "trace": traceback.format_exc(limit=6)})
                 return {"done": False, "problem": f"I couldn't drive the Spotify app ({type(e).__name__}: {e})"}

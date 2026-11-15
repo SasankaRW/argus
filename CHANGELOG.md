@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Fewer hidden faults:** the biggest background loops now name the errors they expect and log the unexpected ones instead of swallowing everything.
+
 - **Tidier API code:** the HTTP API's routes now live in `core/argus/api/routes/`, one file per area. Nothing else changes.
 
 - **Tidier code layout:** Ari, voice and device modules now live in `core/argus/ari/`, `voice/` and `devices/`; run them as `python -m argus.ari.ari_eval`, `argus.voice.voice_train` and so on. Nothing else changes.

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import logging
 import os
@@ -24,10 +25,16 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from .config import parse_env_file
+from .config import ConfigError, parse_env_file
 from .logs import setup_logging
 
 log = logging.getLogger("argus.supervisor")
+
+# load_config raises ConfigError for anything wrong with the file (unreadable YAML, bad values, missing secrets);
+# OSError and ValueError are the file read itself.
+_CONFIG_ERRORS = (ConfigError, OSError, ValueError)
+# A call to our own Argus / Ollama: the connection, a body that isn't JSON, a response cut short.
+_HTTP_ERRORS = (OSError, ValueError, http.client.HTTPException)
 ROOT = Path.cwd()
 WIN = os.name == "nt"
 
@@ -51,7 +58,7 @@ def marker_path() -> Path:
         from .config import load_config
 
         return load_config(ROOT / "argus.yaml").db_path.parent / "argus.running"
-    except Exception:
+    except _CONFIG_ERRORS:
         return ROOT / "data" / "argus.running"
 
 
@@ -61,7 +68,7 @@ def ari_on(what: str) -> bool:
         from .config import load_config
 
         return bool(getattr(load_config(ROOT / "argus.yaml").ari, what))
-    except Exception:
+    except _CONFIG_ERRORS:
         return False
 
 
@@ -76,7 +83,7 @@ def expressive_on() -> bool:
     try:
         a = load_ari()
         return (ROOT / a.expressive_python).exists()
-    except Exception:
+    except _CONFIG_ERRORS:
         return False
 
 
@@ -96,7 +103,7 @@ def workstation_where() -> str:
         from .config import load_config
 
         return str(load_config(ROOT / "argus.yaml").ari.workstation)
-    except Exception:
+    except _CONFIG_ERRORS:
         return "desktop"
 
 
@@ -109,7 +116,7 @@ def eyes_on() -> bool:
         from .config import load_config
 
         return bool(load_config(ROOT / "argus.yaml").eyes.enabled)
-    except Exception:
+    except _CONFIG_ERRORS:
         return False
 
 
@@ -220,7 +227,7 @@ class OllamaKeeper:
         try:
             with urllib.request.urlopen(self.url + "/api/tags", timeout=3) as r:  # noqa: S310 - our own Ollama
                 return r.status == 200
-        except Exception:  # noqa: BLE001 - not answering
+        except _HTTP_ERRORS:  # not answering
             return False
 
     def _start(self) -> bool:
@@ -259,7 +266,7 @@ def busy(url: str, token: str | None) -> bool:
     try:
         with urllib.request.urlopen(req, timeout=5) as r:
             return bool(json.loads(r.read())["running"])
-    except Exception:
+    except (*_HTTP_ERRORS, KeyError, TypeError):
         return False
 
 
@@ -273,7 +280,7 @@ def api_call(url: str, token: str | None, path: str, body: dict | None = None) -
     try:
         with urllib.request.urlopen(req, timeout=8) as r:  # noqa: S310 - our own Argus
             return json.loads(r.read() or b"{}")
-    except Exception:  # noqa: BLE001 - restarting or out of reach
+    except _HTTP_ERRORS:  # restarting or out of reach
         return None
 
 
@@ -289,7 +296,7 @@ def game_watch(url: str, token: str | None, children: list[Child]) -> Any:
 
         cfg = load_config(ROOT / "argus.yaml")
         ollama, a = os.environ.get("ARGUS_OLLAMA_URL") or cfg.ollama.url, cfg.ari
-    except Exception as e:  # noqa: BLE001
+    except (*_CONFIG_ERRORS, AttributeError) as e:
         log.info("no game mode here", extra={"error": str(e)[:120]})
         return None
     return GameWatch(lambda: api_call(url, token, "/ari/game"), lambda b: api_call(url, token, "/ari/game", b),
@@ -411,7 +418,7 @@ def main(argv: list[str] | None = None) -> int:
 
             keeper = OllamaKeeper(os.environ.get("ARGUS_OLLAMA_URL") or load_config(ROOT / "argus.yaml").ollama.url,
                                   paused=lambda: bool((api_call(args.url, token, "/ari/game") or {}).get("on")))
-        except Exception as e:  # noqa: BLE001 - no config here: nothing to keep
+        except (*_CONFIG_ERRORS, AttributeError) as e:  # no config here: nothing to keep
             log.info("not watching Ollama", extra={"error": str(e)[:120]})
     try:
         while True:
@@ -425,8 +432,8 @@ def main(argv: list[str] | None = None) -> int:
                 game_at = time.monotonic()
                 try:
                     games.tick()
-                except Exception as e:  # noqa: BLE001 - never stop supervising for this
-                    log.warning("game mode check failed", extra={"error": str(e)[:200]})
+                except Exception as e:  # noqa: BLE001  # boundary: GameWatch probes GPUs and processes; never stop supervising for this
+                    log.warning("game mode check failed", extra={"error": str(e)[:200]}, exc_info=True)
             if time.monotonic() - last_look >= args.interval:
                 last_look = time.monotonic()
                 if keeper is not None:

@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import argparse
 import calendar
+import http.client
 import json
+import logging
 import math
 import os
 import shlex
@@ -36,6 +38,24 @@ from pathlib import Path
 from typing import Any
 
 from .ari.ari_popup import AriState
+
+log = logging.getLogger("argus.console")
+log.addHandler(logging.NullHandler())  # a TUI: a stray stderr line would garble it; a configured root still sees these
+
+# What a call to argusd can raise: the connection (OSError covers URLError, HTTPError and timeouts), a body that
+# isn't JSON (ValueError), a response cut short (http.client's own errors, which are not OSErrors).
+_API_ERRORS = (OSError, ValueError, http.client.HTTPException)
+# ...and a reply of another shape than we expect (an older or newer argusd).
+_SHAPE_ERRORS = (KeyError, TypeError, AttributeError, IndexError)
+_FAULT_AT: dict[str, float] = {}
+
+
+def _log_fault(what: str) -> None:
+    """Log the exception being handled, at most once a minute per place (the loops here run every second or two)."""
+    now = time.monotonic()
+    if now - _FAULT_AT.get(what, -1e9) >= 60:
+        _FAULT_AT[what] = now
+        log.warning("%s failed", what, exc_info=True)
 
 # ------------------------------------------------------------------ look
 
@@ -285,7 +305,10 @@ class Feed:
                 if evs:
                     seq = max(int(e["seq"]) for e in evs)
                     self._emit(evs)
-            except Exception:  # noqa: BLE001 - argusd restarting: look again in a moment
+            except (*_API_ERRORS, *_SHAPE_ERRORS):  # argusd restarting: look again in a moment
+                time.sleep(3)
+            except Exception:  # noqa: BLE001  # boundary: the feed thread must outlive any one bad event
+                _log_fault("event feed")
                 time.sleep(3)
 
     def _emit(self, evs: list[dict]) -> None:
@@ -335,13 +358,13 @@ class Deck:
                               ("game", "/ari/game")):
                 try:
                     d[key] = self.api.get(path)
-                except Exception:  # noqa: BLE001
+                except _API_ERRORS:
                     d[key] = None
             if time.monotonic() - self._activity_at > 30:  # the hour-by-hour chart: every half minute is plenty
                 try:
                     self.activity = self.api.get("/timeline/activity?hours=24") or {}
                     self._activity_at = time.monotonic()
-                except Exception:  # noqa: BLE001 - an older argusd
+                except _API_ERRORS:  # an older argusd
                     pass
             try:
                 import psutil
@@ -349,7 +372,10 @@ class Deck:
                 self.cpu.append(psutil.cpu_percent(interval=None))
                 vm = psutil.virtual_memory()
                 d["host"] = {"mem": vm.percent, "temp": _temp(psutil)}
-            except Exception:  # noqa: BLE001 - psutil missing
+            except (ImportError, OSError, AttributeError, NotImplementedError):  # psutil missing or not on this OS
+                d["host"] = {}
+            except Exception:  # noqa: BLE001  # boundary: psutil.Error and friends; the deck shows without host numbers
+                _log_fault("host numbers")
                 d["host"] = {}
             self.data = d
             time.sleep(2)
@@ -664,7 +690,7 @@ def problem_lines(Text: Any, problems: list[dict], n: int = 8) -> Any:
 def _temp(psutil: Any) -> float | None:
     try:
         temps = psutil.sensors_temperatures()
-    except Exception:  # noqa: BLE001 - not on this OS
+    except (AttributeError, OSError, NotImplementedError):  # not on this OS
         return None
     for key in ("coretemp", "k10temp", "acpitz", "cpu_thermal"):
         if temps.get(key):
@@ -704,8 +730,10 @@ class AriView:
                         for c in chats[1:4]:
                             earlier = ((self.api.get(f"/ari/{c['conv']}") or {}).get("turns") or []) + earlier
                         self.earlier = earlier
-            except Exception:  # noqa: BLE001
+            except (*_API_ERRORS, *_SHAPE_ERRORS):
                 pass
+            except Exception:  # noqa: BLE001  # boundary: the poll thread must outlive a bad reply
+                _log_fault("Ari chat poll")
             time.sleep(2)
 
     def busy(self) -> bool:
@@ -717,13 +745,13 @@ class AriView:
             n += 1
             try:
                 self.live = self.api.get("/live") or {}
-            except Exception:  # noqa: BLE001 - an older argusd
+            except _API_ERRORS:  # an older argusd
                 self.live = {}
             job = self.ari.think_job
             if job and self.ari.phase in ("thinking", "working", "speaking") and n % 3 == 0:
                 try:
                     self.trace = self.api.get(f"/ari/trace/{urllib.parse.quote(job)}")
-                except Exception:  # noqa: BLE001
+                except _API_ERRORS:
                     pass
             time.sleep(0.2 if self.busy() else 1.0)
 
@@ -970,14 +998,14 @@ class EventsView:
         while True:
             try:
                 self.lanes = self.api.get(f"/timeline/lanes?minutes={self.minutes}") or {}
-            except Exception:  # noqa: BLE001 - an older argusd, or restarting
+            except _API_ERRORS:  # an older argusd, or restarting
                 pass
             n = getattr(self, "_n", 0)
             self._n = n + 1
             if n % 6 == 0:
                 try:
                     self.activity = self.api.get("/timeline/activity?hours=24") or {}
-                except Exception:  # noqa: BLE001
+                except _API_ERRORS:
                     pass
             time.sleep(5)
 
@@ -1102,15 +1130,17 @@ class LogsView:
                     got = self.api.get(f"/logs/{urllib.parse.quote(name)}{q}")
                     self.at[name] = got.get("offset")
                     self.rows.extend(got.get("entries") or [])
-            except Exception:  # noqa: BLE001
+            except (*_API_ERRORS, *_SHAPE_ERRORS):
                 pass
+            except Exception:  # noqa: BLE001  # boundary: the log poll thread must outlive a bad reply
+                _log_fault("log poll")
             try:
                 self.stories = (self.api.get("/ari/timeline?limit=80") or {}).get("requests") or []
-            except Exception:  # noqa: BLE001 - an older argusd
+            except _API_ERRORS:  # an older argusd
                 pass
             try:
                 self.calls = (self.api.get("/models/calls?limit=60") or {}).get("calls") or []
-            except Exception:  # noqa: BLE001
+            except _API_ERRORS:
                 pass
             time.sleep(1.5)
 
@@ -1151,7 +1181,7 @@ class LogsView:
     def _load_trace(self, ref: str, r: dict) -> None:
         try:
             self.trace = self.api.get(f"/ari/trace/{urllib.parse.quote(ref)}")
-        except Exception:  # noqa: BLE001
+        except _API_ERRORS:
             self.trace = {**r, "steps": [], "error": "couldn't load the trace"}
 
     # ---- what shows
@@ -1347,7 +1377,10 @@ class Keys:
             old = termios.tcgetattr(fd)
             tty.setcbreak(fd)
             atexit.register(lambda: termios.tcsetattr(fd, termios.TCSADRAIN, old))
-        except Exception:  # noqa: BLE001 - not a terminal we can read keys from
+        except (ImportError, OSError, ValueError, AttributeError):  # not a terminal we can read keys from
+            return
+        except Exception:  # noqa: BLE001  # boundary: termios.error is not an OSError (and termios may not import)
+            _log_fault("key reader setup")
             return
         threading.Thread(target=self._run, args=(fd,), daemon=True, name="keys").start()
 
@@ -1400,11 +1433,12 @@ def run_view(name: str, api: Api, fps: float = 6) -> int:
                 if hasattr(view, "key"):
                     try:
                         view.key(k)
-                    except Exception:  # noqa: BLE001 - a key never breaks the view
-                        pass
+                    except Exception:  # noqa: BLE001  # boundary: a key handler is a UI callback and never breaks the view
+                        _log_fault("key handler")
             try:
                 r = frame(name, view, t, console.size.width, console.size.height)
-            except Exception as e:  # noqa: BLE001 - never die on one bad frame
+            except Exception as e:  # noqa: BLE001  # boundary: never die on one bad frame (the error shows in its place)
+                _log_fault("frame")
                 r = Text(f"  (view error: {type(e).__name__}: {e})", style=BAD)
             live.update(r, refresh=True)
             time.sleep(1 / fps)
