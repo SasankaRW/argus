@@ -16,9 +16,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .. import logview
+from ..events import _COLS, event_row
 from . import ari as ari_mod
-from . import logview
-from .events import _COLS, event_row
 
 PRIVATE = {"look_at_screen", "summarise_clipboard", "phone_screen_text"}  # plus every tool marked private
 CLIP = 700          # one tool argument or result

@@ -126,6 +126,9 @@ The next attempt skips every finished step, because `ctx.step` returns the saved
 | `core/argus/jobs/` | The job state machine, the job store (every job operation), the watchdog |
 | `core/argus/db/` | The SQLite store and numbered migrations (`0001`…`0012`) |
 | `core/argus/models/` | Model providers (Ollama, Claude CLI), the tier router, `doctor` |
+| `core/argus/ari/` | Ari: `ari.py`, the listener, the popup, the test set and export |
+| `core/argus/voice/` | The voice server, live hearing, Whisper training, recorded samples |
+| `core/argus/devices/` | The PC and phone as hardware: power, laptop power, presence, the cooler-screen eyes, focus |
 | `core/argus/worker/` | The worker loop, workflow `ctx`, built-in workflows (Ari think, review, power, health…) |
 | `core/argus/helios_dist/` | The built Helios, served by argusd at `/helios` |
 | `helios/` | Helios source (React 19 + Vite + xyflow + elkjs) |
@@ -414,7 +417,7 @@ answers are the one exception: `WebSearch` and `WebFetch` only, read-only.
 - **The job waits, the worker doesn't.** The job is `waiting`, and the worker takes other work.
 - **One-time signed buttons.** The ntfy message's Approve / Reject buttons carry `HMAC(install key, approval id)`,
   valid only while the approval is pending. By default they call Argus over Tailscale. If the phone is off
-  Tailscale, `presence.py` re-sends when it's back. With `approvals.buttons: ntfy` they go through a private reply
+  Tailscale, `devices/presence.py` re-sends when it's back. With `approvals.buttons: ntfy` they go through a private reply
   topic that `relay.py` listens to.
 - **Money is computed in code.** A batch's count and total are added up with `Decimal`, never taken from a model,
   and money always needs your yes.
@@ -439,7 +442,7 @@ default:** only approvals and failures reach the phone at once. The rest waits f
   - **Webhooks** arrive at `/hooks/{name}`.
   - **Buttons** in Helios.
   - **Share menu:** the phone shares into a plugin (`shares.py`).
-- **Power** (`power.py`). The PC is woken (Wake-on-LAN) when GPU or desktop work is queued, and shut down after a
+- **Power** (`devices/power.py`). The PC is woken (Wake-on-LAN) when GPU or desktop work is queued, and shut down after a
   quiet period. While developing on the PC it is **simulated**: it logs `power.would_shutdown` so the rules can be
   watched before they ever switch anything off.
 
@@ -449,7 +452,7 @@ default:** only approvals and failures reach the phone at once. The rest waits f
 <summary><b>▸ Ari: the assistant</b></summary>
 
 You talk to Ari from Helios (typing or the mic), the phone, or "Hey Ari" on the PC. A message goes through, in
-order (`ari.py`, then `worker/think.py`):
+order (`ari/ari.py`, then `worker/think.py`):
 
 1. **A pending question?** "yes" / "no" answers it.
 2. **"remember that…"** → `ari_memory` (full-text searchable). "forget…" removes a memory.
@@ -470,17 +473,17 @@ for quick asks, the bigger one first for harder ones), and Claude only after all
 **Voice:**
 
 - **Hearing:** the browser's speech recognition, or Whisper on the PC (private).
-- **Speaking:** one voice: Chatterbox on the PC's GPU (`voice_server.py`). The server owns the voice (taken from
+- **Speaking:** one voice: Chatterbox on the PC's GPU (`voice/voice_server.py`). The server owns the voice (taken from
   one clip at start), so the listener, Helios and the phone all get the same one. If it can't speak, Ari shows the
   words and stays silent; there is no second voice.
-- **`ari_listen.py` + `voice_live.py`:** "Hey Ari" on the PC mic with no browser; nothing leaves the PC. Silero VAD
+- **`ari/ari_listen.py` + `voice/voice_live.py`:** "Hey Ari" on the PC mic with no browser; nothing leaves the PC. Silero VAD
   and Smart Turn cut your sentences; tiny Whisper (no hints) checks for the wake phrase; the better model writes
   down the request with your names as hotwords. After an answer you can carry on without "Hey Ari" for a few
   seconds, except while the PC plays sound or for a long stream of words.
 - **Ari speaks only when spoken to.** Notices go to the island and the phone; `ari.speak_up` can say them aloud.
 
 **The Ari pill.** Ari reports what it's doing as `ari.state` events (listening, thinking, working with the tool
-name, speaking, done). Helios shows a pill at the top (pulse or comet look), and `ari_popup.py` shows the same pill
+name, speaking, done). Helios shows a pill at the top (pulse or comet look), and `ari/ari_popup.py` shows the same pill
 over the whole PC screen. Both follow the event stream, so a question typed on the phone lights up the PC.
 
 </details>

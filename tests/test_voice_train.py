@@ -9,9 +9,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from argus import voice_train as vt
-from argus.voice_corpus import sentences
-from argus.voice_samples import Samples
+from argus.voice import voice_train as vt
+from argus.voice.voice_corpus import sentences
+from argus.voice.voice_samples import Samples
 from test_brief_weather import make
 from test_worker import Server, client
 
@@ -107,8 +107,8 @@ def test_the_real_training_code_runs_end_to_end(tmp_path):
 import sys, numpy as np
 from pathlib import Path
 sys.path[:0] = [{str(here.parent / "core")!r}]
-from argus import voice_train as vt
-from argus.voice_corpus import sentences
+from argus.voice import voice_train as vt
+from argus.voice.voice_corpus import sentences
 tmp = Path({str(tmp_path)!r}); base = tmp / "tiny"
 vt.convert(base, tmp / "tiny-ct2")
 rng = np.random.default_rng(0)

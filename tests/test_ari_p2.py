@@ -7,10 +7,10 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from argus import ari_listen as al
 from argus import health
-from argus import voice_live as vl
+from argus.ari import ari_listen as al
 from argus.config import Config
+from argus.voice import voice_live as vl
 
 
 @pytest.mark.parametrize("said,rest", [

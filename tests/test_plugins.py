@@ -10,8 +10,8 @@ import pytest
 
 from argus.config import Config, PowerConfig, load_config
 from argus.context import Argus
+from argus.devices.power import PowerManager
 from argus.plugins import PluginHost
-from argus.power import PowerManager
 from argus.worker import Worker
 from argus.worker.plugins import Files, PermissionDenied, Secrets
 from conftest import run

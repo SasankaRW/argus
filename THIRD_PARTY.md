@@ -37,7 +37,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 - Helios no longer uses Inter (it uses Roboto Flex, below). The official `InterVariable.woff2` from the rsms/inter release stays in
   helios/src/fonts only as the source `scripts/island_fonts.py` cuts the island's fonts from; it is not built into core/argus/helios_dist.
   Licence text: helios/src/fonts/LICENSE-Inter.txt.
-- Ari's island on the PC (core/argus/ari_popup.py) draws with four cut-down static instances of the same font
+- Ari's island on the PC (core/argus/ari/ari_popup.py) draws with four cut-down static instances of the same font
   (core/argus/island_fonts/Inter-*.ttf, made by scripts/island_fonts.py: weights 400, 500, 600 and a 640 display cut, with
   `ss01` and `cv11` baked in). The font is renamed per file (Inter, Inter Medium, Inter SemiBold, Inter Display);
   the licence text above travels with it (the OFL allows modified versions without a Reserved Font Name; Inter has none).

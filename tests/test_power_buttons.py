@@ -8,9 +8,9 @@ from pathlib import Path
 import pytest
 
 import argus.worker.power as wpower
-from argus import laptop_power, power
 from argus.config import load_config
 from argus.context import Argus
+from argus.devices import laptop_power, power
 from argus.worker import Worker
 from argus.worker.client import ApiError
 from test_worker import Server, client, wait_for
@@ -84,8 +84,8 @@ def test_shutdown_runs_on_the_pc_and_cancel_drops_what_has_not_started(tmp_path,
 # ------------------------------------------------------------------ automatic power (real mode, on the laptop)
 
 from argus.config import Config, PowerConfig  # noqa: E402
+from argus.devices.power import PowerManager  # noqa: E402
 from argus.jobs import JobStore  # noqa: E402
-from argus.power import PowerManager  # noqa: E402
 from argus.registry import Registry  # noqa: E402
 from conftest import run  # noqa: E402
 

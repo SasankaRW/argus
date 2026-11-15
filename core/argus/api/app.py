@@ -71,32 +71,34 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .. import ari as ari_mod
-from .. import ari_export as export_mod
 from .. import ask as ask_mod
 from .. import calls as calls_mod
-from .. import daily, guidance, laptop_power, logview, vocab, voice_corpus
+from .. import daily, guidance, logview, vocab
 from .. import island as island_mod
 from .. import settings as settings_mod
 from .. import thread as thread_mod
 from .. import timeline as timeline_mod
 from .. import usage as usage_mod
 from ..approvals import ApprovalClosed, ApprovalError, ApprovalNotFound, BadToken
+from ..ari import ari as ari_mod
+from ..ari import ari_export as export_mod
 from ..config import PRIORITY_BATCH, PRIORITY_INTERACTIVE
 from ..context import Argus
 from ..cron import next_run
+from ..devices import laptop_power
+from ..devices.power import PowerError
+from ..devices.presence import describe_phone
 from ..events import EventFilter, insert_event, read_events
 from ..expressive import plain
 from ..ids import new_id
 from ..jobs import InvalidTransition, Job, JobNotFound, JobState, LeaseLost, PluginOff, QueueFull, Step
 from ..outbox import PRIORITIES, add_message, phone_message
-from ..power import PowerError
-from ..presence import describe_phone
 from ..shares import ShareError, ShareStore, kinds_of
 from ..tools import Tool, ToolError, Tools
 from ..triggers import BadSignature, TriggerError, UnknownTrigger
-from ..voice import Expressive
-from ..voice_samples import Samples
+from ..voice import voice_corpus
+from ..voice.voice import Expressive
+from ..voice.voice_samples import Samples
 from ..weather import CODES as weather_codes
 from ..worker import think as think_mod
 from . import approval_page, mcp
@@ -235,7 +237,7 @@ class AriStateIn(BaseModel):
 
 
 class ConvScore(BaseModel):
-    """A run of the scripted conversations (python -m argus.ari_eval --conversations)."""
+    """A run of the scripted conversations (python -m argus.ari.ari_eval --conversations)."""
     at: float | None = None
     model: str = Field("", max_length=120)
     right: int = Field(ge=0)
@@ -918,7 +920,7 @@ def create_app(argus: Argus) -> FastAPI:
 
     @app.get("/guidance/ari-cases", dependencies=guarded)
     async def ari_cases() -> list[dict]:
-        """Ari's picks you marked Correct, as cases for `python -m argus.ari_eval` (it adds them to its own)."""
+        """Ari's picks you marked Correct, as cases for `python -m argus.ari.ari_eval` (it adds them to its own)."""
         return await argus.store.read(guidance.ari_cases)
 
     @app.post("/guidance/followups", dependencies=guarded)
@@ -1776,7 +1778,7 @@ def create_app(argus: Argus) -> FastAPI:
 
     @app.get("/voice-train-samples", dependencies=guarded)
     async def voice_train_samples() -> dict:
-        """Every recording with its sentence (for `python -m argus.voice_train --from <argus url>`)."""
+        """Every recording with its sentence (for `python -m argus.voice.voice_train --from <argus url>`)."""
         return samples.all()
 
     @app.post("/ari/{conv}/answer", dependencies=guarded)

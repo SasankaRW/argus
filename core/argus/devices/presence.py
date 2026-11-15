@@ -21,12 +21,12 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from .approvals import Approvals
-from .config import Config
-from .db import Store
-from .events import insert_event
-from .outbox import Outbox
-from .registry import _upsert_component
+from ..approvals import Approvals
+from ..config import Config
+from ..db import Store
+from ..events import insert_event
+from ..outbox import Outbox
+from ..registry import _upsert_component
 
 log = logging.getLogger("argus.presence")
 

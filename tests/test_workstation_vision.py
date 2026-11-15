@@ -118,7 +118,7 @@ def test_which_vision_model_finds_the_button(tmp_path):
 # ---------------------------------------------------------------- part 5: asking you, stuck, the real mouse
 
 def test_the_island_shows_the_question_and_answers_it():
-    from argus.ari_popup import ask_parts, decision
+    from argus.ari.ari_popup import ask_parts, decision
 
     p = ask_parts({"approval": "A1", "title": "Ari needs something to go on", "fields": ["answer", "remember"],
                    "summary": ["book a table", "Which time?", "Choices: 7 pm, 8 pm", "Tick remember to ..."]})
@@ -133,7 +133,7 @@ def test_the_island_shows_the_question_and_answers_it():
 
 
 def test_what_ari_says_when_it_needs_you():
-    from argus.ari_listen import ask_text
+    from argus.ari.ari_listen import ask_text
 
     assert ask_text({"title": "Ari needs something to go on", "summary": ["x", "Which time?"]}) == \
         "Quick question: Which time? It's on the island."

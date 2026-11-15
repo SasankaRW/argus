@@ -15,7 +15,7 @@ def make(tmp_path: Path) -> Argus:
 
 
 def test_live_levels_from_the_listener():
-    from argus.ari_listen import LiveLevels, level
+    from argus.ari.ari_listen import LiveLevels, level
 
     assert level(1e-9) == 0.0 and level(1.0) == 1.0 and 0 < level(0.01) < 1
     t, busy = [0.0], [False]

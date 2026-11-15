@@ -1,6 +1,6 @@
 """Ari's island on the PC: a dark shape grown out of the top edge of the main screen, over every app.
 
-    python -m argus.ari_popup     (dev.ps1 up starts it when ari.popup is on; needs: pip install -e .[popup])
+    python -m argus.ari.ari_popup     (dev.ps1 up starts it when ari.popup is on; needs: pip install -e .[popup])
 
 Native Qt (no browser inside), in the Sonoma look (Inter, Material Symbols Rounded, the five tones): a few MB of
 memory, and nothing runs while it sits idle. It follows Ari through Argus's event stream (a light poll):
@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .island_live import (
+from ..island_live import (
     Hardware,
     Media,
     clock,
@@ -88,7 +88,7 @@ ICON_NAMES = {"inbox": "inbox", "grid": "grid_view", "chat": "chat_bubble", "pag
               "power": "power_settings_new", "spark": "auto_awesome", "bolt": "bolt", "globe": "language",
               "bell": "notifications", "dot": "circle"}
 # Inter and Material Symbols Rounded, cut by scripts/island_fonts.py
-FONT_DIR = Path(__file__).resolve().parent / "island_fonts"
+FONT_DIR = Path(__file__).resolve().parent.parent / "island_fonts"
 FONT_FILES = ("Inter-Regular.ttf", "Inter-Medium.ttf", "Inter-SemiBold.ttf", "Inter-Display.ttf",
               "Symbols-Rounded.ttf", "Symbols-Rounded-Filled.ttf")
 
@@ -367,7 +367,7 @@ def fetch_info(api: Api) -> Info:
 # ------------------------------------------------------------------ the window
 
 def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, drawn by hand
-    from .config import parse_env_file
+    from ..config import parse_env_file
 
     p = argparse.ArgumentParser(prog="ari-popup", description="Ari's island at the top of the screen")
     p.add_argument("--url", default=os.environ.get("ARGUS_URL", "http://127.0.0.1:8600"))

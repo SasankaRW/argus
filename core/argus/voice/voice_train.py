@@ -2,8 +2,8 @@
 voice), on this PC's GPU. Run it on the PC:
 
     pip install -e .[train]                      (and PyTorch for CUDA, see docs/setup.md)
-    python -m argus.voice_train                  (about 20-60 minutes on an RTX 5070)
-    python -m argus.voice_train --apply          (... and switch Ari to the new model when it is better)
+    python -m argus.voice.voice_train                  (about 20-60 minutes on an RTX 5070)
+    python -m argus.voice.voice_train --apply          (... and switch Ari to the new model when it is better)
 
 What it does:
 1. Reads your recordings (data/voice-train, or `--from http://laptop:8600` when Argus runs elsewhere).
@@ -104,7 +104,7 @@ def load_remote(url: str, token: str | None, cache: Path) -> list[dict]:
 
 
 def audio_of(item: dict):
-    from .worker.hear import decode
+    from ..worker.hear import decode
 
     return decode(Path(item["path"]).read_bytes())
 
@@ -114,7 +114,7 @@ def audio_of(item: dict):
 def transcribe_all(model_name: str, items: list[dict], audio: dict[str, Any]) -> list[str]:
     """faster-whisper on the test sentences: the GPU when CTranslate2 finds CUDA's libraries (PyTorch's own are
     used), else the CPU (fine for a test set)."""
-    from .worker import hear
+    from ..worker import hear
 
     m = hear.model(model_name)
     out = []
@@ -313,7 +313,7 @@ def run(items: list[dict], base: str, out: Path, *, epochs: int = 6, lr: float =
 
 
 def main(argv: list[str] | None = None) -> int:
-    from .config import load_config, parse_env_file
+    from ..config import load_config, parse_env_file
 
     p = argparse.ArgumentParser(prog="argus-voice-train", description="Fine-tune Whisper on your voice")
     p.add_argument("--base", default=None, help="Whisper to start from (default: ari.whisper_model, e.g. small.en)")

@@ -3,7 +3,7 @@ name: Eyes clip maker
 version: 0.1.0
 kind: workflow
 argus_api: ">=1.0 <2.0"
-description: 'Makes a robot-eyes clip for each app you use (the cooler screen, see argus.eyes). Once an app has been in front about 2 minutes in total, Claude first looks for an existing clip that fits (another code editor -> the code clip); otherwise it writes a short calm story for the eyes in a studio folder on this PC, looks at a contact sheet, fixes it and renders it. Argus checks the clip (loops cleanly, starts and ends on the shared resting pose, eyes only) before the player gets it. YouTube, GitHub and Gmail always get their own clip.'
+description: 'Makes a robot-eyes clip for each app you use (the cooler screen, see argus.devices.eyes). Once an app has been in front about 2 minutes in total, Claude first looks for an existing clip that fits (another code editor -> the code clip); otherwise it writes a short calm story for the eyes in a studio folder on this PC, looks at a contact sheet, fixes it and renders it. Argus checks the clip (loops cleanly, starts and ends on the shared resting pose, eyes only) before the player gets it. YouTube, GitHub and Gmail always get their own clip.'
 runs_on: desktop             # the clips live next to the cooler
 
 triggers:

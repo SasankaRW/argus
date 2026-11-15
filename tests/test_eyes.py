@@ -6,9 +6,10 @@ import argparse
 
 import pytest
 
-from argus import eyes, lm360, supervisor
-from argus import focus as fo
-from argus.eyes import Clip, Player, pack
+from argus import lm360, supervisor
+from argus.devices import eyes
+from argus.devices import focus as fo
+from argus.devices.eyes import Clip, Player, pack
 from argus.lm360 import BLACK, FRAME_BYTES
 
 

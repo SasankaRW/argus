@@ -1,8 +1,8 @@
 """Ari's test set: does it pick the right tool, and how fast? Nothing is done for real (no tool runs).
 
-    python -m argus.ari_eval              (Argus running: it lists Ari's tools; the local model decides)
-    python -m argus.ari_eval --cases my-cases.yaml
-    python -m argus.ari_eval --conversations    (scripted conversations: does Ari keep the thread? see
+    python -m argus.ari.ari_eval              (Argus running: it lists Ari's tools; the local model decides)
+    python -m argus.ari.ari_eval --cases my-cases.yaml
+    python -m argus.ari.ari_eval --conversations    (scripted conversations: does Ari keep the thread? see
                                                  argus/ari_conversations.py; the score shows in Helios)
 
 Each case is something you'd say and what should happen: a tool's name, "chat" (small talk), "reply" (answered
@@ -92,9 +92,9 @@ def first_pick(text: str, tools: list[dict], decide: Any, now: str = "", info: d
                history: list[dict] | None = None, thread: dict | None = None) -> tuple[str, dict, float]:
     """first_step with the tool's arguments, in a conversation: `history` the turns so far and `thread` where it
     stands (as argusd would hand them to Ari)."""
-    from . import thread as thread_mod
+    from .. import thread as thread_mod
+    from ..worker.think import PHONE_VOLUME, chatty, follow_on, meaning, offered, quick_math, situation, straight_to
     from .ari import weather_ask
-    from .worker.think import PHONE_VOLUME, chatty, follow_on, meaning, offered, quick_math, situation, straight_to
 
     if quick_math(text) or (PHONE_VOLUME.search(text) and "phone_volume" not in {t["name"] for t in tools}):
         return "reply", {}, 0.0
@@ -131,7 +131,7 @@ EMBED: dict[str, Any] = {"fn": None}  # texts -> vectors (the local embedding mo
 
 def ollama_embedder(url: str, model: str = "nomic-embed-text") -> Any:
     """The local embedding model as a function, or None when it isn't there (then tools are picked by words)."""
-    from .models.providers import OllamaProvider
+    from ..models.providers import OllamaProvider
 
     p = OllamaProvider(url, model)
 
@@ -145,9 +145,9 @@ def ollama_embedder(url: str, model: str = "nomic-embed-text") -> Any:
 
 
 def ollama_decider(url: str, model: str, num_ctx: int = 8192) -> Any:
-    from .models.providers import OllamaProvider
-    from .models.router import parse_json
-    from .worker.think import PERSONA, PLAYBOOK, Step
+    from ..models.providers import OllamaProvider
+    from ..models.router import parse_json
+    from ..worker.think import PERSONA, PLAYBOOK, Step
 
     p = OllamaProvider(url, model, keep_alive="10m", num_ctx=num_ctx)
     system = (PLAYBOOK + "\n\n" + PERSONA + "\n\nReply with only a JSON object that matches the given schema. "
@@ -208,7 +208,7 @@ def conversation_can_run(conv: dict, names: set[str]) -> bool:
 
 def run_conversations(convs: list[dict], tools: list[dict], decide: Any, log=print) -> dict:
     """Each conversation step by step, with the history and thread the scripted turns before it leave behind."""
-    from . import thread as thread_mod
+    from .. import thread as thread_mod
 
     names = {t["name"] for t in tools}
     rows, times, skipped = [], [], []
@@ -274,7 +274,7 @@ def summary(out: dict, model: str) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
-    from .config import load_config, parse_env_file
+    from ..config import load_config, parse_env_file
 
     ap = argparse.ArgumentParser(prog="ari-eval", description="Does Ari pick the right tool? (nothing runs)")
     ap.add_argument("--url", default=os.environ.get("ARGUS_URL", "http://127.0.0.1:8600"))

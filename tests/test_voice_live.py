@@ -9,8 +9,8 @@ import zipfile
 
 import numpy as np
 
-from argus import voice_live as vl
-from argus.ari_listen import wake_rest
+from argus.ari.ari_listen import wake_rest
+from argus.voice import voice_live as vl
 
 F = np.zeros(vl.FRAME, dtype=np.float32)
 DT = vl.FRAME / vl.RATE
@@ -389,7 +389,7 @@ def test_a_silent_room_does_not_run_the_voice_model():
 def test_the_model_is_let_go_while_you_are_away_and_loaded_when_you_are_back(monkeypatch):
     import threading as th
 
-    from argus import ari_listen
+    from argus.ari import ari_listen
     from argus.config import Config
 
     pings = []

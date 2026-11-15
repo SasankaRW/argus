@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from argus.eyes import Clip, check_clip, pack
+from argus.devices.eyes import Clip, check_clip, pack
 from argus.lm360 import FRAME_BYTES
 from argus.worker import PermanentError
 
@@ -169,7 +169,7 @@ def test_reuse_maps_the_key_and_a_bad_clip_gets_one_more_try(clips, monkeypatch)
         return {**got, "problems": ["the loop jumps (test)"]} if len(calls) == 1 else got
 
     monkeypatch.setattr(mk, "run_claude", bad_then_good)
-    import argus.eyes as ae
+    import argus.devices.eyes as ae
     monkeypatch.setattr(ae, "check_clip", check)
     out = mk.run_one(Ctx(), clips, "steam")
     assert out.get("attempts") == 2 and "the loop jumps (test)" in calls[1]

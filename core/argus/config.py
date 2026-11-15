@@ -346,7 +346,7 @@ class AriConfig(_Strict):
     # better with accents; the browser is used while the PC is off).
     hearing: Literal["browser", "whisper"] = "browser"
     whisper_model: str = "small.en"  # tiny.en, base.en, small.en, medium.en, large-v3 (bigger: better, slower)
-    # "Hey Ari" on the PC's microphone, no browser (python -m argus.ari_listen; `dev.ps1 up` starts it when on).
+    # "Hey Ari" on the PC's microphone, no browser (python -m argus.ari.ari_listen; `dev.ps1 up` starts it when on).
     listen: bool = False
     listen_wake_model: str = "tiny.en"  # listens for the wake phrase (small and fast; the command uses whisper_model)
     # Only these languages are for Ari: talk in other languages (Sinhala with friends, a video) is ignored instead
@@ -387,7 +387,7 @@ class AriConfig(_Strict):
     # the phone, and Ari only speaks when you've spoken to it.
     speak_up: bool = False
     speak_hours: str = Field("08:00-22:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d$")
-    # Ari's popup over the whole screen while Ari listens, thinks or talks (python -m argus.ari_popup; needs
+    # Ari's popup over the whole screen while Ari listens, thinks or talks (python -m argus.ari.ari_popup; needs
     # pip install -e .[popup]; `dev.ps1 up` starts it when on).
     popup: bool = False
     # The Ari pill's look: "pulse" (a soft light that breathes with the voice) or "comet" (a soft light travelling
@@ -396,7 +396,8 @@ class AriConfig(_Strict):
 
 
 class EyesConfig(_Strict):
-    # Robot eyes on the cooler's screen (DeepCool LM360): python -m argus.eyes run; `dev.ps1 up` starts it when on.
+    # Robot eyes on the cooler's screen (DeepCool LM360): python -m argus.devices.eyes run;
+    # `dev.ps1 up` starts it when on.
     # Needs pip install -e .[eyes] and DeepCool's own app closed (only one program can hold the screen).
     enabled: bool = False
     away_after_s: int = Field(600, ge=30, le=86400)  # nobody at the PC this long (or it's locked): the screen goes dark

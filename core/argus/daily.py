@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from .ari import clock
+from .ari.ari import clock
 from .modelboard import CLAUDE_BUDGET
 
 

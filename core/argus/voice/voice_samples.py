@@ -1,5 +1,5 @@
 """Your recordings for training Ari on your voice: data/voice-train/<sentence id>.<ext> plus samples.json (which
-sentence each one reads, how long it is). Recorded in Helios, used by `python -m argus.voice_train` on the PC.
+sentence each one reads, how long it is). Recorded in Helios, used by `python -m argus.voice.voice_train` on the PC.
 They never leave your machines."""
 
 from __future__ import annotations

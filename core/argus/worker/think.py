@@ -1214,7 +1214,7 @@ def _clip(v: Any, n: int = 1500) -> Any:
 
 
 # Ari's first pick of each message is a sample of the "ari" playbook: the same learning loop as plugins (your
-# "no, I meant …" or Wrong marks it; the nightly review writes lessons; python -m argus.ari_eval replays them).
+# "no, I meant …" or Wrong marks it; the nightly review writes lessons; python -m argus.ari.ari_eval replays them).
 LEARN = {"owner": "ari", "playbook": PLAYBOOK, "fields": ["tool", "args", "need_web"]}
 
 

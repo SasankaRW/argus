@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .expressive import phrases
+from ..expressive import phrases
 
 log = logging.getLogger("argus.voice_live")
 RATE = 16000
@@ -191,7 +191,7 @@ class SmartTurn:
     def __call__(self, audio) -> float:
         import numpy as np
 
-        from .whisper_features import compute_whisper_log_mel_features
+        from ..whisper_features import compute_whisper_log_mel_features
 
         a = np.asarray(audio, dtype=np.float32)
         n = 8 * RATE

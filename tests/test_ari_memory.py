@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import time
 
-from argus import ari
+from argus.ari import ari
 from argus.worker import Worker
 from argus.worker.recall import made_up_names
 from conftest import run
