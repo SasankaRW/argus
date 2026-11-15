@@ -1,17 +1,17 @@
 # Argus code status
 
-Made by `scripts/status.py` from commit `ea5af34`. Don't edit by hand: run `python scripts/status.py --write` (the release tool does it for every release).
+Made by `scripts/status.py` from commit `c7b299c`. Don't edit by hand: run `python scripts/status.py --write` (the release tool does it for every release).
 
 | | |
 | --- | --- |
-| Version | 0.10.0 |
+| Version | 0.10.1 |
 | Database schema | v20 |
 | Plugins | 28 |
 | Tests | 981 |
 | API routes | 171 |
 | Python lines | 58,480 (core 30,602, plugins 9,648, tests 17,112, scripts 1,118) |
 | Modules directly in core/argus | 48 |
-| Helios lines | 8,975 (10 test files) |
+| Helios lines | 9,178 (11 test files) |
 
 ## Files over 900 lines
 
