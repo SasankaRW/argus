@@ -164,3 +164,49 @@ def test_argusd_restore_shows_the_plan_then_restores(tmp_path, capsys):
         assert main(["--config", cfg, "--restore", "nope.db", "--yes"]) == 4
     finally:
         backup_mod.argusd_listening = real
+
+
+def test_argusd_restore_latest_skips_a_bad_newer_backup(tmp_path, capsys):
+    from argus import backup as backup_mod
+    from argus.daemon import main
+
+    a, backup = _backup_of(tmp_path, jobs=2)
+    a.store.close()
+    bad = backup.with_name("argus-29991231-235959.db")  # sorts newest, but is not a database
+    bad.write_bytes(b"not a database at all" * 100)
+    cfg = str(tmp_path / "argus.yaml")
+    real = backup_mod.argusd_listening
+    backup_mod.argusd_listening = lambda host, p: False
+    try:
+        assert main(["--config", cfg, "--restore", "latest"]) == 0
+        out = capsys.readouterr().out
+        assert f"Skipped {bad.name}" in out and backup.name in out
+        assert "replaced" in out and "argus-<date>" in out
+        assert main(["--config", cfg, "--restore", "latest", "--yes"]) == 0
+        assert _jobs(a.cfg.db_path) == 2
+        bad.unlink()
+        backup.unlink()
+        assert main(["--config", cfg, "--restore", "latest"]) == 4
+    finally:
+        backup_mod.argusd_listening = real
+
+
+def test_argusd_restore_refuses_a_newer_schema(tmp_path, capsys):
+    from argus import backup as backup_mod
+    from argus.daemon import main
+
+    a, backup = _backup_of(tmp_path, jobs=1)
+    a.store.close()
+    conn = sqlite3.connect(backup)
+    conn.execute("INSERT INTO schema_migrations(version, name, applied_at) VALUES (9999, 'x', 0)")
+    conn.commit()
+    conn.close()
+    cfg = str(tmp_path / "argus.yaml")
+    real = backup_mod.argusd_listening
+    backup_mod.argusd_listening = lambda host, p: False
+    try:
+        assert main(["--config", cfg, "--restore", backup.name, "--yes"]) == 4
+        assert "Upgrade Argus first" in capsys.readouterr().err
+        assert _jobs(a.cfg.db_path) == 1
+    finally:
+        backup_mod.argusd_listening = real

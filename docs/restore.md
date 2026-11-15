@@ -11,7 +11,14 @@ each one. The PC's worker keeps a copy in `backup.copy_to`. This page is how to 
 - it refuses while argusd is running;
 - the database it replaces, with its `-wal` and `-shm` files, is moved to `data/replaced/argus-<date>/`.
 
-Without `--yes` it only says what it would do.
+Without `--yes` it only says what it would do, including the `data/replaced/argus-<date>/` folder the old database
+goes to.
+
+`--restore latest` takes the newest backup that passes its check. A newer file that fails is skipped, and the output
+says so ("Skipped ... it fails its check"). To restore one particular file, name it.
+
+Run it from the folder that holds `argus.yaml`, or point at the file with `--config`, for example
+`python -m argus --config /path/to/argus.yaml --restore latest`.
 
 ## On the laptop
 
@@ -67,4 +74,5 @@ write the date here:
 | --- | --- | --- | --- |
 | | | | |
 
-Exit codes of `argusd --restore`: 0 done (or the plan shown), 2 bad config, 4 refused (the reason is printed).
+Exit codes of `argusd --restore`: 0 done (or the plan shown for a good backup), 2 bad config, 4 refused (the reason is
+printed), including a dry run whose backup fails its check.
