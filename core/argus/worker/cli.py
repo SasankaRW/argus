@@ -9,7 +9,8 @@ Capabilities come from --cap and ARGUS_WORKER_CAPS (comma separated, env or .env
 folder are loaded from argusd's list when the worker has what they need.
 
 The token comes from --token, $ARGUS_WORKER_TOKEN, or ARGUS_WORKER_TOKEN in ./.env.
-Exit codes: 0 ok, 2 bad arguments or plugin import failed, 4 argus unreachable.
+Exit codes: 0 ok, 2 bad arguments or plugin import failed, 4 argus unreachable, 75 restart me (Helios asked: the
+worker finished its job and left on purpose; the supervisor or systemd starts it again, docs/controls.md).
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from pathlib import Path
 
 from .. import __version__
 from ..config import parse_env_file
+from ..exitcodes import EXIT_RESTART
 from ..logs import setup_logging
 from .client import ArgusClient, Unreachable
 from .runner import Worker, fast_lane
@@ -87,6 +89,7 @@ def main(argv: list[str] | None = None) -> int:
     worker = Worker(ArgusClient(args.url, token), args.id, capabilities=caps, ollama_url=args.ollama_url)
 
     presses = 0
+    lane_thread: threading.Thread | None = None
 
     def on_signal(signum, frame):
         nonlocal presses
@@ -109,8 +112,16 @@ def main(argv: list[str] | None = None) -> int:
             if not args.no_fast_lane:  # Ari and Ask Argus never wait behind a long job
                 worker.register()
                 lane = fast_lane(worker)
-                threading.Thread(target=lane.run_forever, name="fast-lane", daemon=True).start()
+                lane_thread = threading.Thread(target=lane.run_forever, name="fast-lane", daemon=True)
+                lane_thread.start()
             worker.run_forever()
+            if worker.restart.is_set():  # Helios: Restart worker. Never in the middle of a job: wait for the other lane
+                if lane_thread is not None:
+                    lane_thread.join()
+                log.info("worker restarting as asked", extra={"jobs": worker.jobs_done, "exit_code": EXIT_RESTART})
+                for h in logging.getLogger().handlers:
+                    h.flush()
+                return EXIT_RESTART
     except Unreachable as e:
         print(f"Argus is not reachable at {args.url}: {e}", file=sys.stderr)
         return 4

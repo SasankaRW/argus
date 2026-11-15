@@ -10,6 +10,8 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from ..exitcodes import EXIT_RESTART  # noqa: F401 - re-exported for argus-worker
+
 log = logging.getLogger("argus.worker.client")
 
 # Waits between attempts when Argus is unreachable (e.g. restarting). About 30 s in total.
@@ -32,6 +34,11 @@ class LeaseLostError(ApiError):
     """Argus says this worker no longer owns the job. Stop working on it; someone else will."""
 
 
+class RestartRequested(Exception):
+    """Argus (Helios: Restart worker) asks this worker to finish what it is doing and exit with EXIT_RESTART, so its
+    supervisor or systemd starts it again. Raised by claim(); an older worker just sees "no job"."""
+
+
 class Unreachable(Exception):
     """Argus could not be reached after all retries."""
 
@@ -44,7 +51,8 @@ class ArgusClient:
         self.timeout = timeout
         self.retry_delays = retry_delays
 
-    def _once(self, method: str, path: str, body: Any, timeout: float) -> tuple[int, Any]:
+    def _once(self, method: str, path: str, body: Any, timeout: float,
+              headers_out: dict[str, str] | None = None) -> tuple[int, Any]:
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(self.url + path, data=data, method=method)
         req.add_header("Accept", "application/json")
@@ -55,6 +63,8 @@ class ArgusClient:
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 raw = resp.read()
+                if headers_out is not None:
+                    headers_out.update({k.lower(): v for k, v in resp.headers.items()})
                 return resp.status, json.loads(raw) if raw else None
         except urllib.error.HTTPError as e:
             raw = e.read()
@@ -68,13 +78,13 @@ class ArgusClient:
             raise ApiError(e.code, payload) from None
 
     def call(self, method: str, path: str, body: Any = None, *, timeout: float | None = None,
-             retry: bool = True) -> tuple[int, Any]:
+             retry: bool = True, headers_out: dict[str, str] | None = None) -> tuple[int, Any]:
         """Send one request. Connection problems and 5xx are retried; 4xx answers are raised at once."""
         delays = self.retry_delays if retry else ()
         t = timeout or self.timeout
         for attempt in range(len(delays) + 1):
             try:
-                return self._once(method, path, body, t)
+                return self._once(method, path, body, t, headers_out)
             except ApiError as e:
                 if e.status < 500 or attempt >= len(delays):
                     raise
@@ -141,8 +151,11 @@ class ArgusClient:
         body_in: dict = {"capabilities": capabilities, "plugins": plugins, "wait": wait}
         if min_priority is not None:
             body_in["min_priority"] = min_priority
+        got: dict[str, str] = {}
         status, body = self.call("POST", f"/workers/{worker_id}/claim", body_in,
-                                 timeout=wait + self.timeout)
+                                 timeout=wait + self.timeout, headers_out=got)
+        if got.get("x-argus-control") == "restart":
+            raise RestartRequested()
         return None if status == 204 else body
 
     def start(self, job_id: str, worker: str) -> dict:

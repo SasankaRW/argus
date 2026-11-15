@@ -32,13 +32,19 @@ from . import recall as _recall  # noqa: F401 - Ari's memory over time (summarie
 from . import review as _review  # noqa: F401 - the guidance loop's nightly review
 from . import selftest as _selftest  # noqa: F401 - Ari's tools, tested (Helios > Settings)
 from . import think as _think  # noqa: F401 - Ari's thinking (tools, then an answer)
-from .client import ApiError, ArgusClient, LeaseLostError, Unreachable
+from .client import ApiError, ArgusClient, LeaseLostError, RestartRequested, Unreachable
 from .plugins import Files, Http, LoadedPlugin, Secrets, Store
 from .plugins import load as load_plugins
 from .watcher import start_watchers
 from .workflows import REGISTRY, Context, PermanentError, WaitSignal, WorkflowRegistry
 
 log = logging.getLogger("argus.worker")
+
+
+def supervised() -> bool:
+    """Will something start this worker again when it exits? argus.supervisor and the systemd unit say so
+    (ARGUS_SUPERVISED); systemd also sets INVOCATION_ID for every service, so an older unit file counts too."""
+    return bool(os.environ.get("ARGUS_SUPERVISED") or os.environ.get("INVOCATION_ID"))
 
 
 class JobLog(logging.LoggerAdapter):
@@ -281,6 +287,8 @@ def fast_lane(main: Worker) -> Worker:
                   min_priority=PRIORITY_INTERACTIVE)
     lane.plugins = main.plugins  # same code, same settings: nothing is imported twice
     lane.stopping = main.stopping
+    lane.restart = main.restart  # one process: a restart asked on either lane ends both, each after its job
+    lane.plugin_gen = main.plugin_gen
     lane._claude_checked = float("inf")  # the main lane reports the Claude login
     return lane
 
@@ -303,6 +311,8 @@ class Worker:
         self.providers: dict = providers if providers is not None else {}
         self._fixed_providers = providers is not None  # tests pass their own
         self.stopping = threading.Event()
+        self.restart = threading.Event()  # Helios asked for a restart: finish the job, then exit with EXIT_RESTART
+        self.plugin_gen: dict[str, int] = {}  # each plugin's restart counter as loaded (Helios: Restart plugin)
         self.jobs_done = 0
         self.busy = False  # True while a job runs
         self.watch_folders = watch_folders
@@ -337,6 +347,7 @@ class Worker:
         """Import new plugins; refresh the settings (live, config, permissions) of ones already loaded."""
         new = [i for i in infos if i["id"] not in self.plugins]
         for i in infos:
+            self.plugin_gen.setdefault(i["id"], int(i.get("generation") or 0))
             if i["id"] in self.plugins:
                 self.plugins[i["id"]] = LoadedPlugin(i)
         if new:
@@ -415,6 +426,15 @@ class Worker:
             log.warning("cannot reach argus", extra={"error": str(e)})
             self.stopping.wait(5)
             return False
+        except RestartRequested:  # Helios: Restart worker. Nothing is running here (a claim comes between jobs)
+            if supervised():
+                log.info("restarting as asked: exiting once the other lane is idle", extra={"worker": self.id})
+                self.restart.set()
+                self.stopping.set()
+            else:  # run by hand: nothing would start it again, so stay up
+                log.warning("asked to restart, but nothing here would start this worker again (it is not under the "
+                            "supervisor or systemd); staying up", extra={"worker": self.id})
+            return False
         except ApiError as e:
             if e.status == 404:  # Argus forgot us (fresh database): register again
                 self.register()
@@ -438,6 +458,7 @@ class Worker:
         """Run a claimed job. Returns what happened: succeeded, waiting, failed, dead, or lost."""
         job_id = job["id"]
         jlog = JobLog(log, {"job": job_id, "plugin": job["plugin"], "workflow": job["workflow"]})
+        self._reload_if_restarted(job, jlog)
         wf = self.registry.get(job["plugin"], job["workflow"])
         try:
             self.client.start(job_id, self.id)
@@ -511,6 +532,29 @@ class Worker:
             if ctx._unsent:
                 ctx._flush_trace()
             beat.stop()
+
+    def _reload_if_restarted(self, job: dict[str, Any], jlog: logging.LoggerAdapter) -> None:
+        """Helios's Restart plugin raised the plugin's generation: load its code again before this job runs."""
+        info = job.get("plugin_info")
+        if not info or "generation" not in info:
+            return
+        pid, gen = info["id"], int(info["generation"] or 0)
+        if self.plugin_gen.get(pid, gen) == gen:
+            self.plugin_gen.setdefault(pid, gen)
+            return
+        regs = {id(r): r for r in (self.registry, REGISTRY)}.values()
+        before = {id(r): {k: v for k, v in r.items.items() if k[0] == pid} for r in regs}  # load() drops these first
+        loaded, errors = load_plugins([info], self.registry)
+        self.plugin_gen[pid] = gen
+        if pid in loaded:
+            self.plugins[pid] = loaded[pid]
+            self.plugin_errors.pop(pid, None)
+            jlog.info("plugin reloaded after a restart from Helios", extra={"generation": gen})
+        else:  # the new code does not import: put the old workflows back and carry on with them
+            for r in regs:
+                r.items.update(before[id(r)])
+            self.plugin_errors[pid] = errors.get(pid, "reload failed")
+            jlog.error("plugin reload failed; running the code loaded before", extra={"error": errors.get(pid)})
 
     def _attach(self, ctx: Context, plugin: LoadedPlugin, job_id: str) -> None:
         """Give the job the services its manifest allows, and nothing more."""

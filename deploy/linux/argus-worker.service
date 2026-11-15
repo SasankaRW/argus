@@ -11,6 +11,10 @@ Environment=ARGUS_URL=http://127.0.0.1:8600
 ExecStart=/opt/argus/.venv/bin/python -m argus.worker.cli --cap laptop --no-demo --log-file logs/worker-laptop.log
 Restart=always
 RestartSec=10
+# Helios's Restart worker: the worker finishes its job and exits with 75 on purpose; Restart=always brings it back
+# (not a failure, see docs/controls.md). ARGUS_SUPERVISED tells the worker something will start it again.
+SuccessExitStatus=75
+Environment=ARGUS_SUPERVISED=1
 NoNewPrivileges=true
 ProtectSystem=strict
 ReadWritePaths=/opt/argus/data /opt/argus/logs /home/argus

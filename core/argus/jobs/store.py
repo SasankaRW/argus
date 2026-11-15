@@ -33,6 +33,9 @@ from .states import (
 
 S = JobState
 
+# A paused plugin's jobs stay queued but are not handed out (plugin_control, set from Helios).
+NOT_PAUSED = " AND plugin NOT IN (SELECT plugin FROM plugin_control WHERE paused = 1)"
+
 
 class JobError(Exception):
     """Base class for job errors."""
@@ -56,6 +59,10 @@ class QueueFull(JobError):
 
 class PluginOff(JobError):
     """The plugin is switched off in plugins.off: no job is queued for it."""
+
+
+class PluginPaused(JobError):
+    """The plugin is paused at runtime (Helios: Stop): no job is queued for it until it is started again."""
 
 
 @dataclass(frozen=True)
@@ -271,6 +278,8 @@ class JobStore:
         transaction. Returns (job_id, created)."""
         if plugin in self.off:
             raise PluginOff(f"plugin {plugin} is switched off in plugins.off (take it out of that list to use it)")
+        if conn.execute("SELECT 1 FROM plugin_control WHERE plugin = ? AND paused = 1", (plugin,)).fetchone():
+            raise PluginPaused(f"plugin {plugin} is stopped (paused); start it again in Helios to queue jobs for it")
         needs_list = sorted(set(needs))
         if dedupe_key is not None:
             row = conn.execute(
@@ -347,7 +356,7 @@ class JobStore:
 
         def fn(conn: sqlite3.Connection) -> Job | None:
             now = self.clock()
-            sql = "SELECT * FROM jobs WHERE state IN (?, ?) AND run_after <= ?"
+            sql = "SELECT * FROM jobs WHERE state IN (?, ?) AND run_after <= ?" + NOT_PAUSED
             args: list[Any] = [*[s.value for s in CLAIMABLE_STATES], now]
             if min_priority is not None:
                 sql += " AND priority >= ?"
@@ -400,7 +409,7 @@ class JobStore:
         now = self.clock()
 
         def fn(conn: sqlite3.Connection) -> bool:
-            return conn.execute("SELECT 1 FROM jobs WHERE state IN (?, ?) AND run_after <= ? LIMIT 1",
+            return conn.execute("SELECT 1 FROM jobs WHERE state IN (?, ?) AND run_after <= ?" + NOT_PAUSED + " LIMIT 1",
                                 (*[s.value for s in CLAIMABLE_STATES], now)).fetchone() is not None
 
         return await self.store.read(fn)
@@ -579,27 +588,37 @@ class JobStore:
     async def cancel(self, job_id: str, reason: str = "cancelled") -> Job:
         return await self.store.write(lambda conn: self.cancel_in(conn, job_id, reason))
 
-    async def expire_leases(self) -> list[str]:
-        """Watchdog: jobs whose worker stopped heartbeating go back to the queue (or dead-letter)."""
+    async def expire_leases(self, plugin: str | None = None, offline_workers: Iterable[str] = ()) -> list[str]:
+        """Watchdog: jobs whose worker stopped heartbeating go back to the queue (or dead-letter).
+
+        `plugin` limits it to one plugin (Helios's Restart). `offline_workers`: jobs leased by these workers count
+        as dead too, even before their lease runs out (the worker is known to be gone)."""
+        gone = set(offline_workers)
 
         def fn(conn: sqlite3.Connection) -> list[str]:
             now = self.clock()
-            rows = conn.execute(
-                "SELECT * FROM jobs WHERE state IN (?, ?) AND lease_until IS NOT NULL AND lease_until < ?",
-                (S.LEASED.value, S.RUNNING.value, now),
-            ).fetchall()
+            sql = "SELECT * FROM jobs WHERE state IN (?, ?) AND lease_until IS NOT NULL"
+            args: list[Any] = [S.LEASED.value, S.RUNNING.value]
+            if plugin is not None:
+                sql += " AND plugin = ?"
+                args.append(plugin)
+            rows = conn.execute(sql, args).fetchall()
             moved = []
             for r in rows:
                 job = Job.from_row(r)
+                expired = job.lease_until is not None and job.lease_until < now
+                if not (expired or job.lease_owner in gone):
+                    continue
+                why = "lease expired" if expired else "worker offline"
                 if job.attempt < job.max_attempts:
                     self._move(conn, job, S.QUEUED, now, src_component="watchdog",
                                lease_owner=None, lease_until=None, run_after=now,
-                               event_data={"reason": "lease expired", "worker": job.lease_owner})
+                               event_data={"reason": why, "worker": job.lease_owner})
                 else:
                     self._move(conn, job, S.DEAD, now, src_component="watchdog",
                                lease_owner=None, lease_until=None, finished_at=now,
-                               error="lease expired and no attempts left",
-                               event_data={"reason": "lease expired", "worker": job.lease_owner})
+                               error=f"{why} and no attempts left",
+                               event_data={"reason": why, "worker": job.lease_owner})
                 moved.append(job.id)
             return moved
 
@@ -664,6 +683,7 @@ class JobStore:
             for j in active:
                 running_by_plugin[j.plugin] = running_by_plugin.get(j.plugin, 0) + 1
             gpu_busy = any("gpu" in j.needs for j in active)
+            paused = {r[0] for r in conn.execute("SELECT plugin FROM plugin_control WHERE paused = 1")}
 
             def brief(j: Job) -> dict[str, Any]:
                 return {"id": j.id, "plugin": j.plugin, "workflow": j.workflow, "state": j.state.value,
@@ -683,6 +703,8 @@ class JobStore:
                     why, until = ("retry" if j.state.value == "retry" else "later"), j.run_after
                 elif j.run_window and j.run_window in self.windows and not in_window(self.windows[j.run_window], now):
                     why, until = "window", window_opens(self.windows[j.run_window], now)
+                elif j.plugin in paused:
+                    why = "paused"  # stopped in Helios: it waits until the plugin is started again
                 elif not any(set(j.needs) <= caps for caps in online):
                     why = "no_worker"
                 elif running_by_plugin.get(j.plugin, 0) >= self.cfg.limit_for(j.plugin):

@@ -586,6 +586,7 @@ Single user, home network. The rules:
 | If you want to… | Read |
 | --- | --- |
 | Write a plugin | [plugin-guide.md](plugin-guide.md) |
+| Stop, start, restart or pause a plugin or worker, read a component's log | [controls.md](controls.md) |
 | Set it up on a PC | [setup.md](setup.md) |
 | See every design decision | [core-design.md](core-design.md), [orchestrator-plan.md](orchestrator-plan.md) |
 | Know what's next | [roadmap.md](roadmap.md) |

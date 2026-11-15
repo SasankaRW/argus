@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import ConfigError, parse_env_file
+from .exitcodes import EXIT_RESTART
 from .logs import setup_logging
 
 log = logging.getLogger("argus.supervisor")
@@ -120,7 +121,6 @@ def eyes_on() -> bool:
         return False
 
 
-EXIT_RESTART = 75  # a child's "start me again now" (not a crash: no waiting, not counted)
 
 
 class Child:
@@ -142,8 +142,8 @@ class Child:
             # "exe:<path>" first: another Python (the expressive voice's own environment)
             argv = ([str(ROOT / self.args[0][4:]), *self.args[1:]] if self.args and self.args[0].startswith("exe:")
                     else [sys.executable, *self.args])
-            self.proc = subprocess.Popen(argv, cwd=ROOT, stdout=out, stderr=err,
-                                         creationflags=flags)
+            self.proc = subprocess.Popen(argv, cwd=ROOT, stdout=out, stderr=err, creationflags=flags,
+                                         env={**os.environ, "ARGUS_SUPERVISED": "1"})  # a worker may restart itself
         finally:  # the child has its own handles now
             out.close()
             err.close()

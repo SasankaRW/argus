@@ -119,7 +119,7 @@ class FolderWatcher(threading.Thread):
                                                         "path": key, "sha256": digest, "size": st.st_size},
                                      retry=False)
             except ApiError as e:
-                if e.status == 429:  # the plugin has enough waiting: hold the rest back for a while
+                if e.status == 429 or e.code == "plugin_paused":  # enough waiting, or stopped in Helios: offer it later
                     self.backoff_until = now + BACKOFF
                     out["waiting"] += 1
                     continue

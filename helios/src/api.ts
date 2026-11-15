@@ -26,6 +26,8 @@ export type MapNode = {
   unsent?: number;
   failed?: number;
   implicit?: boolean;
+  paused?: boolean; // plugins and workers: stopped from Helios (POST /plugins/{id}/stop, /workers/{id}/pause)
+  since?: number; // when it was paused (epoch seconds)
 };
 
 export type TimeSaved = { seconds: number; text: string; plugins: { plugin: string; seconds: number; jobs: number }[] };

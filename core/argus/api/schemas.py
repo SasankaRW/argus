@@ -197,6 +197,10 @@ class RunPlugin(BaseModel):
     input: dict[str, Any] = Field(default_factory=dict)
 
 
+class ControlBody(BaseModel):
+    reason: str | None = Field(None, max_length=200)  # shown in the log and the event
+
+
 class StateValue(BaseModel):
     value: Any = None
 
