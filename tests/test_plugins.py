@@ -227,3 +227,40 @@ def test_worker_follows_live_switch_without_registering_again(tmp_path, monkeypa
         assert w.run_once(wait=2)
         done = wait_for(lambda: (j := cl.get(f"/jobs/{job['id']}"))["state"] == "succeeded" and j)
     assert done["result"]["dry_run"] is False and list(inbox.iterdir()) == []
+
+
+def test_manifest_capabilities_default_false_and_are_validated():
+    from pydantic import ValidationError
+
+    from argus.plugins import Manifest
+
+    base = {"id": "demo", "name": "Demo", "version": "1", "kind": "connector", "argus_api": ">=1.0 <2.0",
+            "permissions": {}}
+    caps = Manifest.model_validate(base).capabilities
+    assert caps.asks_on_island is False and caps.needs_child_session is False
+    caps = Manifest.model_validate({**base, "capabilities": {"asks_on_island": True}}).capabilities
+    assert caps.asks_on_island is True and caps.needs_child_session is False
+    with pytest.raises(ValidationError):
+        Manifest.model_validate({**base, "capabilities": {"asks_on_isle": True}})  # unknown name
+    with pytest.raises(ValidationError):
+        Manifest.model_validate({**base, "capabilities": {"needs_child_session": "sometimes"}})
+
+
+def test_plugin_host_answers_capabilities_from_loaded_manifests(tmp_path):
+    argus, _, _ = setup(tmp_path, capabilities={"asks_on_island": True})
+    argus.plugin_host.load()
+    assert argus.plugin_host.asks_on_island("tidy") is True
+    assert argus.plugin_host.needs_child_session("tidy") is False
+    assert argus.plugin_host.asks_on_island("nobody") is False
+    assert argus.approvals.asks_on_island("tidy") is True
+
+
+def test_the_workstation_plugin_declares_its_capabilities():
+    import yaml
+
+    from argus.plugins import Manifest
+
+    raw = yaml.safe_load((Path(__file__).parent.parent / "plugins" / "workstation" / "plugin.yaml")
+                         .read_text(encoding="utf-8-sig"))
+    caps = Manifest.model_validate(raw).capabilities
+    assert caps.asks_on_island and caps.needs_child_session

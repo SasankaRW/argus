@@ -9,6 +9,10 @@ runs_on: any
 # the worker inside Ari's child session (ari.workstation: child), which argusd prefers while it is online.
 needs: [workstation]
 
+capabilities:
+  asks_on_island: true       # Ari working for you asks: said aloud and on the island too
+  needs_child_session: true  # its jobs go to Ari's child session while that worker is online
+
 workflows: [search, browse, do, spotify, in_app, fill, open_app, give, take, status]
 
 permissions:
