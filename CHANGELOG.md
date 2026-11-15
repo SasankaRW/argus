@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Live map:** the "Needs you" card (Approve, Not now, All) is back at the top left of the desktop map. Two workers on the same machine are one box. Hovering a box dims the unconnected ones less, and more smoothly. In the plugin view, many running plugins now spread over extra columns instead of overlapping. A page left open across an update reloads itself instead of showing "Failed to fetch dynamically imported module".
+
 - **Live map:** select Plugins to zoom the camera into it: the box becomes the view, running plugins come out of the middle, inputs and outputs drift in, idle plugins are listed below; select a plugin to start, stop or restart it and read its log. Back, Escape or the browser's back reverse it at any moment.
 
 - **Live map:** redrawn in five columns (Apps, Argus, Machines, Plugins, Models) with real line health (green and moving only with traffic in the last minute), a "Needs attention" row (Ring phone, Review, Open logs), and a side panel for every box with Stop / Start / Restart / Pause / Resume (hold to confirm), Pause everything and the box's recent log.

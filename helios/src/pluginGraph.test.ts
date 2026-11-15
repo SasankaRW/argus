@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ArgusEvent, ArgusMap, MapEdge, MapNode } from "./api";
-import { layoutLevels } from "./mapGraph";
-import { buildPluginView, PL, pluginCard } from "./pluginGraph";
+import { buildPluginView, layoutPluginView, PL, pluginCard } from "./pluginGraph";
 
 const NOW = 1_000_000;
 const node = (id: string, kind: MapNode["kind"], over: Partial<MapNode> = {}): MapNode =>
@@ -147,13 +146,40 @@ describe("line health", () => {
 
 describe("layout", () => {
   it("lays out three columns, left to right, with the plugins in the middle", () => {
-    const v = view();
-    const dims = (c: { skin: string }) => (["run", "wait", "stop"].includes(c.skin) ? { w: 210, h: 60 } : { w: 176, h: 54 });
-    const l = layoutLevels(v.cards, v.lines, { orient: "h", dims, xs: [170, 600, 1030], top: 60, bottom: 430, width: 1200, height: 600, locked: [PL.outputs] });
+    const l = layoutPluginView(view());
     const xs = (lv: number) => Object.values(l.placed).filter((c) => c.level === lv).map((c) => c.x);
     expect(new Set(xs(PL.inputs))).toEqual(new Set([170]));
     expect(new Set(xs(PL.plugins))).toEqual(new Set([600]));
     expect(new Set(xs(PL.outputs))).toEqual(new Set([1030]));
     for (const c of Object.values(l.placed)) { expect(c.y - c.h / 2).toBeGreaterThanOrEqual(0); expect(c.y + c.h / 2).toBeLessThanOrEqual(600 - 120); }
+  });
+
+  // n running plugins, each fed by the scheduler and using the local model
+  const crowded = (n: number): ArgusMap => ({
+    seq: 1,
+    nodes: [
+      node("argus", "core"), node("scheduler", "service"), node("t1", "model", { state: "closed", meta: { tier: "T1", provider: "ollama", model: "qwen" } }),
+      ...Array.from({ length: n }, (_, i) => node(`p${i}`, "plugin", { jobs: jobs(1) })),
+    ],
+    edges: Array.from({ length: n }, (_, i) => [edge("scheduler", `p${i}`), edge(`p${i}`, "t1")]).flat(),
+    events_total: 0,
+  } as unknown as ArgusMap);
+
+  it("never lets two boxes overlap, however many plugins are running", () => {
+    for (let n = 1; n <= 30; n++) {
+      const l = layoutPluginView(buildPluginView(crowded(n), { now: NOW, events: [] }));
+      const all = Object.values(l.placed);
+      for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) {
+        const a = all[i], b = all[j];
+        const hit = Math.abs(a.x - b.x) < (a.w + b.w) / 2 && Math.abs(a.y - b.y) < (a.h + b.h) / 2;
+        expect(hit, `${n} running: ${a.id} touches ${b.id}`).toBe(false);
+      }
+      for (const c of all) { expect(c.y - c.h / 2).toBeGreaterThanOrEqual(0); expect(c.y + c.h / 2).toBeLessThanOrEqual(480); }
+    }
+  });
+
+  it("stays in one column up to 5 plugins, then goes wider", () => {
+    const cols = (n: number) => new Set(Object.values(layoutPluginView(buildPluginView(crowded(n), { now: NOW, events: [] })).placed).filter((c) => c.level === PL.plugins).map((c) => c.x)).size;
+    expect([cols(1), cols(5), cols(6), cols(10), cols(11), cols(21), cols(30)]).toEqual([1, 1, 2, 2, 2, 3, 3]);
   });
 });

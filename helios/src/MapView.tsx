@@ -14,7 +14,7 @@ import { Ms } from "./m3";
 import { buildLevels, Card, Dim, L, layoutLevels, PLUGINS } from "./mapGraph";
 import { MapHead } from "./MapHead";
 import type { Selection } from "./mapInfo";
-import { buildPluginView, PL } from "./pluginGraph";
+import { buildPluginView, layoutPluginView, PL } from "./pluginGraph";
 import { usePluginZoom } from "./usePluginZoom";
 
 export type FitPad = { top: `${number}px`; right: `${number}px`; bottom: `${number}px`; left: `${number}px` };
@@ -43,8 +43,6 @@ export const PHONE = { width: 346 };
 export const HEAD_H = 64;  // the attention row
 
 // The plugin view: three columns on the same canvas; the idle plugins sit in a panel along the bottom.
-const PLUG = { xs: [170, 600, 1030], top: 60, bottom: 430 };
-const plugDim = (c: Card): Dim => (c.skin === "run" || c.skin === "wait" || c.skin === "stop" ? { w: 210, h: 60 } : { w: c.skin === "model" ? 196 : 176, h: 54 });
 const MAX_IDLE = 30;  // names shown in the idle panel
 
 const px = (s?: string) => (s ? parseFloat(s) || 0 : 0);
@@ -116,7 +114,7 @@ export function MapView(p: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [p.map, now, p.events, jobs]);
   const plugLayout = useMemo(
-    () => layoutLevels(pv.cards, pv.lines, { orient: "h", dims: plugDim, xs: PLUG.xs, top: PLUG.top, bottom: PLUG.bottom, width: DESK.width, height: DESK.height, locked: [PL.outputs] }),
+    () => layoutPluginView(pv),
     [pv],
   );
   const pb = layout.placed[PLUGINS];

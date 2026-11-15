@@ -116,6 +116,26 @@ describe("machines, apps and meters", () => {
   });
 });
 
+describe("one machine, several workers", () => {
+  it("shows two workers on the same host as one box, following the one that is online", () => {
+    const m = sample({ nodes: [node("worker-saspc", "worker", { state: "online", group: "SasPC" }), node("desktop-saspc", "worker", { state: "offline", group: "SasPC" })], edges: [edge("desktop-saspc", "argus", { count: 4 })] });
+    const b = buildLevels(m, ctx());
+    const pcs = b.cards.filter((c) => c.label === "SasPC");
+    expect(pcs.map((c) => c.id)).toEqual(["worker-saspc"]);
+    expect(pcs[0].tone).toBe("ok");
+    expect(pcs[0].status).toContain("1 offline");
+    expect(b.problems.some((p) => /SasPC/.test(p.text))).toBe(false);
+    expect(boxOf(m)("desktop-saspc")).toBe("worker-saspc");
+  });
+
+  it("follows the offline one when none is online, so the box still says so", () => {
+    const m = sample({ nodes: [node("worker-saspc", "worker", { state: "offline", group: "SasPC" }), node("desktop-saspc", "worker", { state: "offline", group: "SasPC" })] });
+    const b = buildLevels(m, ctx());
+    expect(b.cards.filter((c) => c.label === "SasPC")).toHaveLength(1);
+    expect(b.problems.some((p) => /SasPC is offline/.test(p.text))).toBe(true);
+  });
+});
+
 describe("line health", () => {
   it("ranks broken over slow over busy over quiet", () => {
     expect(lineKind({ tone: "bad", recent: 9 })).toBe("broken");

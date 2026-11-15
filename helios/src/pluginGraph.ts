@@ -4,12 +4,28 @@
 
 import type { ArgusEvent, ArgusMap, MapNode } from "./api";
 import type { IconName } from "./icons";
-import { buildLevels, Card, Line, lineKind, RECENT, Tone } from "./mapGraph";
+import { buildLevels, Card, Dim, Layout, layoutLevels, Line, lineKind, RECENT, Tone } from "./mapGraph";
 
 export type PluginView = { cards: Card[]; lines: Line[]; idle: string[]; running: number; stopped: number };
 
 // The three columns of the plugin view (Card.level)
 export const PL = { inputs: 0, plugins: 1, outputs: 2 } as const;
+
+// Where the plugin view puts its boxes on the 1200 x 600 canvas. The idle panel takes the bottom, so the columns share
+// y 60 to 430. Up to 5 running plugins stand in one column; more go two or three columns wide (the cards are 210 wide,
+// the middle has room for three), and past 10 the cards get shorter (past 21 smaller still, three columns), so none touch however many are running.
+const PLUG = { xs: [170, 600, 1030], top: 60, bottom: 430, width: 1200, height: 600 };
+export function pluginDims(running: number) {
+  const tall = running <= 10 ? 60 : running <= 21 ? 46 : 34;
+  return (c: Card): Dim => (c.skin === "run" || c.skin === "wait" || c.skin === "stop" ? { w: running <= 10 ? 210 : 196, h: tall } : { w: c.skin === "model" ? 196 : 176, h: 54 });
+}
+export function layoutPluginView(pv: PluginView): Layout {
+  const running = pv.cards.filter((c) => c.level === PL.plugins).length;
+  return layoutLevels(pv.cards, pv.lines, {
+    orient: "h", dims: pluginDims(running), xs: PLUG.xs, top: PLUG.top, bottom: PLUG.bottom, width: PLUG.width, height: PLUG.height,
+    locked: [PL.outputs], grid: { level: PL.plugins, perCol: running <= 10 ? 5 : running <= 21 ? 7 : Math.ceil(running / 3), dx: running <= 10 ? 225 : 212 },
+  });
+}
 
 // Boxes that are the way in (they start or feed work). Anything else is an input only when it sends to a plugin and
 // never receives from it.
