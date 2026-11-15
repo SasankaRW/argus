@@ -15,6 +15,7 @@ import { buildLevels, Card, Dim, L, layoutLevels, PLUGINS } from "./mapGraph";
 import { MapHead } from "./MapHead";
 import type { Selection } from "./mapInfo";
 import { buildPluginView, layoutPluginView, PL } from "./pluginGraph";
+import { useMapNav } from "./useMapNav";
 import { usePluginZoom } from "./usePluginZoom";
 
 export type FitPad = { top: `${number}px`; right: `${number}px`; bottom: `${number}px`; left: `${number}px` };
@@ -41,6 +42,7 @@ const deskDim = (c: Card): Dim => (c.big ? { w: 196, h: c.meter !== undefined ? 
 const phoneDim = (c: Card): Dim => (c.big ? { w: 150, h: 70 } : { w: 102, h: 74 });
 export const PHONE = { width: 346 };
 export const HEAD_H = 64;  // the attention row
+const PHONE_HEAD_TOP = 68;  // the phone: the attention strip starts under the Live chip
 
 // The plugin view: three columns on the same canvas; the idle plugins sit in a panel along the bottom.
 const MAX_IDLE = 30;  // names shown in the idle panel
@@ -136,14 +138,17 @@ export function MapView(p: Props) {
   const headRef = zoom.refs.head as React.RefObject<HTMLDivElement | null>;
   const headSize = useBox(headRef);
   const pad = { t: px(p.fitPad?.top), r: px(p.fitPad?.right), b: px(p.fitPad?.bottom), l: px(p.fitPad?.left) };
-  const headTop = Math.max(8, pad.t - HEAD_H - 6);
+  const headTop = vertical ? PHONE_HEAD_TOP : Math.max(8, pad.t - HEAD_H - 6);
   if (!vertical) pad.t = Math.max(pad.t, headTop + headSize.h + 8);  // the map starts below the row, however tall it grew (a narrow window wraps it)
 
   // fit: desktop contains the whole canvas in the space left by the floating cards; the phone fits the width and scrolls
   let scale = 1, x = 0, y = 0;
   if (size.w && size.h) {
-    if (vertical) scale = Math.min(1.5, size.w / layout.width);
-    else {
+    if (vertical) {  // the phone fits the width, starts under the attention strip, and is moved with a finger from there
+      scale = Math.min(1.3, (size.w - 24) / layout.width);
+      x = (size.w - layout.width * scale) / 2;
+      y = headTop + headSize.h + 14;
+    } else {
       const aw = Math.max(200, size.w - pad.l - pad.r), ah = Math.max(160, size.h - pad.t - pad.b);
       scale = Math.min(aw / layout.width, ah / layout.height, 1.45);
       x = pad.l + (aw - layout.width * scale) / 2;
@@ -151,33 +156,41 @@ export function MapView(p: Props) {
     }
   }
 
+  const nav = useMapNav({ ref: wrap, fit: { x, y, s: scale }, content: { w: layout.width, h: layout.height }, enabled: !inPlugins && !!size.w, ignore: ".lm-head, .lm-nav" });
+  const V = nav.view;
+  const stageStyle = { transform: `translate(${V.x}px, ${V.y}px) scale(${V.s})`, width: layout.width, height: layout.height };
+  const stageCls = `lm-stage${anim && !nav.dragging && (nav.smooth || !nav.moved) ? " anim" : ""}`;
+  const navBtns = (
+    <div className="lm-nav" role="group" aria-label="Move the map" style={vertical ? undefined : { bottom: pad.b + 14 }}>
+      <button type="button" aria-label="Zoom in" onClick={nav.zoomIn}><Ms n="add" /></button>
+      <button type="button" aria-label="Zoom out" onClick={nav.zoomOut}><Ms n="remove" /></button>
+      <button type="button" aria-label="Fit the whole map" className={nav.moved ? "on" : undefined} onClick={nav.reset}><Ms n="fit_screen" /></button>
+    </div>
+  );
   const sel = p.selection?.type === "node" ? p.selection.id : null;
-  const pick = (c: Card) => (c.id === PLUGINS ? (vertical ? p.onPlugins?.() : zoom.open()) : p.onSelect({ type: "node", id: c.select }));
-  const headStyle = { top: headTop, left: p.headLeft ?? Math.max(18, pad.l), right: Math.max(18, pad.r - 12) };
+  const pick = (c: Card) => (c.id === PLUGINS ? (vertical ? p.onPlugins?.() : (nav.reset(), zoom.open())) : p.onSelect({ type: "node", id: c.select }));
+  const headStyle = vertical ? { top: headTop, left: 12, right: 12 } : { top: headTop, left: p.headLeft ?? Math.max(18, pad.l), right: Math.max(18, pad.r - 12) };
   const head = (
     <MapHead ref={headRef} items={items} anyPaused={p.map.nodes.some((n) => !!n.paused)} onReview={() => p.onReview?.()} onLogs={(id) => p.onSelect({ type: "node", id, logs: true })} onChanged={() => p.onChanged?.()}
       className={vertical ? "stack" : undefined}
-      style={vertical ? undefined : headStyle} />
+      style={headStyle} />
   );
   return (
-    <div ref={wrap} className={`lm${vertical ? " scroll" : ""}`} onClick={(e) => { if (e.target === e.currentTarget) p.onSelect(null); }}>
-      {vertical ? (
-        <div style={{ paddingBottom: pad.b, boxSizing: "border-box" }}>
-          <div style={{ marginTop: Math.max(8, pad.t - 50) }}>{head}</div>
-          <div style={{ width: layout.width * scale, height: layout.height * scale, margin: "0 auto" }}>
-            <div style={{ transform: `scale(${scale})`, transformOrigin: "0 0", width: layout.width, height: layout.height }}>
-              <LevelCanvas layout={layout} flow={p.flow} selected={sel} onPick={pick} label="Live map" />
-            </div>
-          </div>
+    <div ref={wrap} className={`lm lm-pan${nav.dragging ? " drag" : ""}`} onClick={(e) => { if (e.target === e.currentTarget) p.onSelect(null); }}>
+      {vertical ? (<>
+        {head}
+        <div className={stageCls} style={stageStyle}>
+          <LevelCanvas layout={layout} flow={p.flow} selected={sel} onPick={pick} label="Live map" />
         </div>
-      ) : (<>
+        {navBtns}
+      </>) : (<>
         {head}
         <div ref={zoom.refs.bar} className="lm-head lm-bar" style={{ ...headStyle, opacity: 0, pointerEvents: "none" }} aria-hidden={!inPlugins}>
           <button ref={zoom.refs.back} type="button" className="lm-go lm-back" onClick={zoom.back}><Ms n="arrow_back" />Back to map</button>
           <span className="lm-note">{pv.running ? `${pv.running} working now.` : "Nothing is running right now."}{pv.stopped ? ` ${pv.stopped} stopped.` : ""} Idle plugins are listed below.</span>
           <button type="button" className="lm-go lm-back" onClick={() => p.onPlugins?.()}><Ms n="extension" />All plugins</button>
         </div>
-        <div className={`lm-stage${anim ? " anim" : ""}`} style={{ transform: `translate(${x}px, ${y}px) scale(${scale})`, width: layout.width, height: layout.height }}>
+        <div className={stageCls} style={stageStyle}>
           <div ref={zoom.refs.clip} className="lm-clip">
             <div ref={zoom.refs.cam} className="lm-cam">
               <LevelCanvas layout={layout} flow={p.flow} selected={sel} onPick={pick} label="Live map" />
@@ -192,6 +205,7 @@ export function MapView(p: Props) {
             </div>
           </div>
         </div>
+        {navBtns}
       </>)}
     </div>
   );
