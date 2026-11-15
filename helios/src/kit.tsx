@@ -177,11 +177,25 @@ export function usePauseWhenHidden() {
   }, []);
 }
 
+// After Argus updates itself, a page that was already open still points at the old build's files, which are gone: the next page
+// it loads fails with "Failed to fetch dynamically imported module". Reloading fetches the new build. Done once per minute at
+// most, so a real outage cannot loop.
+export const isStaleBuild = (e: Error) => /dynamically imported module|Importing a module script failed|error loading dynamically/i.test(e.message);
+function reloadOnce(): boolean {
+  try {
+    const last = Number(sessionStorage.getItem("helios.reload") ?? 0);
+    if (Date.now() - last < 60_000) return false;
+    sessionStorage.setItem("helios.reload", String(Date.now()));
+  } catch { return false; }
+  location.reload();
+  return true;
+}
+
 // One page failing shows a card with a retry, instead of a black screen for the whole app.
 export class PageBoundary extends Component<{ children: ReactNode; name: string }, { err: Error | null }> {
   state = { err: null as Error | null };
   static getDerivedStateFromError(err: Error) { return { err }; }
-  componentDidCatch(err: Error, info: ErrorInfo) { console.error(`[helios] ${this.props.name} failed`, err, info.componentStack); }
+  componentDidCatch(err: Error, info: ErrorInfo) { console.error(`[helios] ${this.props.name} failed`, err, info.componentStack); if (isStaleBuild(err)) reloadOnce(); }
   componentDidUpdate(prev: { name: string }) { if (prev.name !== this.props.name && this.state.err) this.setState({ err: null }); }
   render() {
     if (!this.state.err) return this.props.children;
@@ -189,7 +203,7 @@ export class PageBoundary extends Component<{ children: ReactNode; name: string 
       <div className="panel errcard" role="alert">
         <b>This page hit a problem.</b>
         <code>{this.state.err.message}</code>
-        <button type="button" className="btn" onClick={() => this.setState({ err: null })}>Try again</button>
+        <button type="button" className="btn" onClick={() => { if (isStaleBuild(this.state.err!)) location.reload(); else this.setState({ err: null }); }}>Try again</button>
       </div>
     );
   }

@@ -35,7 +35,7 @@ export const LevelCanvas = memo(function LevelCanvas({ layout, flow, selected, o
           key={c.id}
           type="button"
           data-card={c.id}
-          className={`lm-n ${c.skin} t-${c.tone}${c.big ? " big" : ""}${selected === c.select ? " sel" : ""}${focus && !near.has(c.id) ? " dim" : ""}`}
+          className={`lm-n ${c.skin} t-${c.tone}${c.big ? " big" : ""}${c.h < 44 ? " tight" : ""}${selected === c.select ? " sel" : ""}${focus && !near.has(c.id) ? " dim" : ""}`}
           style={{ left: c.x - c.w / 2, top: c.y - c.h / 2, width: c.w, height: c.h }}
           onClick={() => onPick(c)}
           onMouseEnter={() => setFocus(c.id)}

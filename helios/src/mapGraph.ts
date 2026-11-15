@@ -93,16 +93,31 @@ function modelIcon(n: MapNode): IconName {
 
 // A raw component id -> the id of the box it is drawn in, or null when it is not on the map. The map shows a short
 // list; everything else (island, outbox, watchdog, GitHub ...) keeps its data but gets no box.
+// Workers that are one machine: several workers on the same host (a boot-time one and a session one, a fast lane, an old
+// registration that went offline) are ONE box. The box follows the one that is online (else the first).
+export function machineOf(map: ArgusMap): Map<string, MapNode[]> {
+  const byLabel = new Map<string, MapNode[]>();
+  for (const n of map.nodes) if (n.kind === "worker" && !caps(n).includes("phone")) byLabel.set(workerLabel(n), [...(byLabel.get(workerLabel(n)) ?? []), n]);
+  const out = new Map<string, MapNode[]>();
+  for (const group of byLabel.values()) {
+    const keep = group.find((n) => n.state === "online") ?? group[0];
+    out.set(keep.id, [keep, ...group.filter((n) => n !== keep)]);
+  }
+  return out;
+}
+
 export function boxOf(map: ArgusMap): (id: string) => string | null {
   const byId = new Map(map.nodes.map((n) => [n.id, n]));
   const phoneWorker = map.nodes.find((n) => n.kind === "worker" && caps(n).includes("phone"))?.id;
   const keep = new Set(["helios", "ari", "scheduler", "approvals", "backup"]);
+  const merged = new Map<string, string>();
+  for (const [k, g] of machineOf(map)) for (const n of g) merged.set(n.id, k);
   return (id) => {
     const n = byId.get(id);
     if (id === "phone" || id === "phone-app" || id === phoneWorker) return "phone";
     if (n?.kind === "plugin") return PLUGINS;
     if (n?.kind === "core") return CORE;
-    if (n?.kind === "worker") return id;
+    if (n?.kind === "worker") return merged.get(id) ?? id;
     if (n?.kind === "model" || n?.kind === "app") return id;
     if (keep.has(id) && n) return id;
     return null;
@@ -196,10 +211,12 @@ export function buildLevels(map: ArgusMap, ctx: LevelCtx): Built {
   }
 
   // --- machines: every worker host (the laptop first), then ONE Plugins box
-  const workers = map.nodes.filter((n) => n.kind === "worker" && !caps(n).includes("phone"))
+  const machines = machineOf(map);
+  const workers = [...machines.values()].map((g) => g[0])
     .sort((a, b) => Number(isLaptop(b)) - Number(isLaptop(a)) || workerLabel(a).localeCompare(workerLabel(b)));
   for (const w of workers) {
-    const run = ctx.byWorker?.[w.id] ?? 0;
+    const same = machines.get(w.id) ?? [w];
+    const run = same.reduce((t, x) => t + (ctx.byWorker?.[x.id] ?? 0), 0);
     const state = w.state ?? "unknown";
     const label = workerLabel(w);
     const load = w.meta?.load;  // only when the worker's heartbeat reports it
@@ -208,7 +225,7 @@ export function buildLevels(map: ArgusMap, ctx: LevelCtx): Built {
     add({ id: w.id, select: w.id, label, icon: isLaptop(w) ? "laptop_chromebook" : "desktop_windows", level: L.machines, skin: "plain", tone, paused: w.paused, meter,
       problem: tone === "bad" ? `${label} is offline` : tone === "warn" ? `${label} is slow to answer` : undefined,
       detail: tone === "bad" || tone === "warn" ? `worker ${state}` : undefined,
-      status: w.paused ? (run ? `paused · ${run} finishing` : "paused") : state !== "online" ? state : run ? `${run} running` : "ready" });
+      status: w.paused ? (run ? `paused · ${run} finishing` : "paused") : state !== "online" ? state : run ? `${run} running` : same.length > 1 && same.some((x) => x.state !== "online") ? "ready · 1 offline" : "ready" });
   }
   const plugins = map.nodes.filter((n) => n.kind === "plugin");
   if (plugins.length) {
@@ -380,6 +397,9 @@ export type LayoutOpt = {
   slotDx?: [number, number];  // h: where Approvals and Backups sit, left and right of the Argus column's centre
   locked?: number[];  // level numbers whose order stays as given (the models: their order is the escalation chain)
   compact?: number[];  // level numbers stacked close around the middle instead of spread over the whole height
+  // h: a level with more than `perCol` boxes is laid out in several columns `dx` apart (every other column half a row lower)
+  // instead of squeezing the boxes together until they overlap
+  grid?: { level: number; perCol: number; dx: number };
 };
 
 type Side = "l" | "r" | "t" | "b";
@@ -414,6 +434,16 @@ export function layoutLevels(cards: Card[], lines: Line[], opt: LayoutOpt): Layo
     const compact = new Set(opt.compact ?? []);
     for (const [i, lv] of levels.entries()) {
       const n = order[i].length, pitch = Math.min(130, (bottom - top) / n);
+      const g = opt.grid && opt.grid.level === lv && n > opt.grid.perCol ? opt.grid : null;
+      if (g) {
+        const cols = Math.ceil(n / g.perCol), rows = Math.ceil(n / cols), gp = (bottom - top) / (rows + (cols > 1 ? 0.5 : 0));
+        const dx = cols > 1 ? Math.min(g.dx, 470 / (cols - 1)) : 0;
+        order[i].forEach((id, k) => {
+          const col = k % cols, row = Math.floor(k / cols), c = byId.get(id)!;
+          placed[id] = { ...c, ...dimOf(id), x: xs[lv] + (col - (cols - 1) / 2) * dx, y: top + gp * (row + 0.5 + (col % 2 ? 0.5 : 0)) };
+        });
+        continue;
+      }
       order[i].forEach((id, k) => {
         const c = byId.get(id)!, d = dimOf(id);
         placed[id] = { ...c, ...d, x: fixedX[id] ?? xs[lv], y: compact.has(lv) ? mid + (k - (n - 1) / 2) * pitch : r.ys[id] };

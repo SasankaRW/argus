@@ -115,6 +115,12 @@
 .shell .dl-search { width: 300px; height: 52px; border-radius: 26px; display: flex; align-items: center; padding: 0 6px 0 16px; gap: 6px; flex: none; position: relative; }
 .shell .dl-search .ask { flex: 1; width: auto; height: 100%; padding: 0; background: none; box-shadow: none; }
 .shell .dl-left { position: absolute; z-index: 5; left: 18px; top: 84px; display: flex; flex-direction: column; gap: 14px; align-items: flex-start; }
+.shell .dl-wait { width: 290px; padding: 16px; display: flex; flex-direction: column; gap: 12px; background: var(--c-ter); color: var(--c-ter-on); }
+.shell .dl-wait-h { display: flex; gap: 12px; align-items: center; }
+.shell .dl-wait-tile { width: 42px; height: 42px; border-radius: 14px; background: #f8d8fe; color: #573e5c; display: flex; align-items: center; justify-content: center; flex: none; }
+.shell .dl-wait-l { font-size: 12px; opacity: .85; }
+.shell .dl-wait-t { font-size: 15.5px; font-weight: 600; line-height: 1.25; }
+.shell .dl-wait-a { display: flex; gap: 8px; flex-wrap: wrap; }
 .shell .dl-yes { height: 38px; padding: 0 18px; border: 0; border-radius: 999px; background: #f8d8fe; color: #3b2541; font: 600 13.5px/1 var(--sans); cursor: pointer; }
 .shell .dl-yes:disabled { opacity: .5; }
 .shell .dl-later { height: 38px; padding: 0 16px; border: 1px solid #c4a9c9; border-radius: 999px; background: transparent; color: #f8d8fe; font: 600 13.5px/1 var(--sans); cursor: pointer; }

@@ -344,12 +344,15 @@ export function App() {
           </>}
     </aside>
   ) : null;
+  // the waiting card (desktop layout) takes the top left corner: the map and the attention row keep clear of it
+  const cardUp = !cmd && (a.map?.nodes.find((n) => n.id === "approvals")?.pending ?? 0) > 0;
+  const deskPad: FitPad = { ...(sel || info ? DESK_PAD : DESK_PAD_FREE), ...(cardUp ? { left: "340px" } : {}) };
   const stage = (
     <section className={`stage${cmd ? " cmd" : ""}`} aria-label="Live map">
       <div className="canvas">
         {a.map && a.map.nodes.length > 0 ? (
           <MapView map={a.map} selection={sel} onSelect={setSel} flow={flow} onPlugins={() => go("plugins")} onReview={() => go("inbox")} onChanged={() => { a.reload().catch(() => {}); }}
-            events={a.events} queue={queue} byWorker={byWorker} fitPad={cmd ? CMD_PAD : sel || info ? DESK_PAD : DESK_PAD_FREE} headLeft={cmd ? 360 : undefined} />
+            events={a.events} queue={queue} byWorker={byWorker} fitPad={cmd ? CMD_PAD : deskPad} headLeft={cmd ? 360 : cardUp ? 330 : undefined} />
         ) : (
           <div className="empty">{a.phase === "down" ? "Waiting for Argus…" : "Loading the map…"}</div>
         )}
@@ -358,7 +361,7 @@ export function App() {
         <CommandLayer status={st} events={a.events} live={a.conn === "live"} onView={go} onAsk={askAri}
           onInbox={() => go("inbox")} onLayout={setLayout} tools={tools} />
       ) : (
-        <DeskLayer status={st} events={a.events} live={a.conn === "live"} down={a.phase === "down"}
+        <DeskLayer status={st} events={a.events} live={a.conn === "live"} down={a.phase === "down"} onInbox={() => go("inbox")}
           layoutSwitch={<LayoutSwitch layout={layout} onChange={setLayout} />} search={search} tools={deskTools} />
       )}
       {inspector}
