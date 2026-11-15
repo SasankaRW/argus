@@ -234,6 +234,15 @@ def test_claude_daily_cap_and_reset(store, clock):
     run(scenario())
 
 
+def test_helios_ari_and_backups_are_on_the_map(tmp_path):
+    """The live map shows Helios, Ari and the backups as boxes: registered at start, not only seen in events."""
+    argus = make(tmp_path).open()
+    with TestClient(create_app(argus)) as c:
+        nodes = {n["id"]: n for n in c.get("/map").json()["nodes"]}
+        assert (nodes["helios"]["kind"], nodes["ari"]["kind"], nodes["backup"]["kind"]) == ("app", "app", "service")
+        assert not nodes["backup"].get("implicit")
+
+
 def test_models_on_the_map(tmp_path):
     argus = make(tmp_path).open()
     with TestClient(create_app(argus)) as c:

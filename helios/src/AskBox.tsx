@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, Job } from "./api";
-import type { Selection } from "./MapView";
+import type { Selection } from "./mapInfo";
 import { HoldButton, Ms } from "./m3";
 
 type Answer = { reply: string; action: string | null; label?: string | null; via: string; tier?: string };

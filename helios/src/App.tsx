@@ -1,12 +1,13 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, setToken } from "./api";
+import { api, ArgusMap, setToken } from "./api";
 import { currentConv } from "./conv";
 import { AskBox } from "./AskBox";
 import { EventsPanel } from "./EventsPanel";
 import { uptime } from "./format";
 import { Inspector } from "./Inspector";
 import { useArgus } from "./live";
-import { FitPad, mainParts, MapView, mergeEdges, Selection } from "./MapView";
+import { FitPad, MapView } from "./MapView";
+import { foldPlugins, Selection } from "./mapInfo";
 import { MapFull } from "./MapFull";
 import { CommandLayer, Layout, LayoutSwitch, loadLayout, saveLayout } from "./Desk";
 import { PhoneHeader, PhoneMore, PhoneOffline, PhoneTab, PhoneTabs, PhoneHome } from "./Phone";
@@ -41,6 +42,9 @@ const ShareView = lazy(() => import("./ShareView").then((m) => ({ default: m.Sha
 const VoiceTrain = lazy(() => import("./VoiceTrain").then((m) => ({ default: m.VoiceTrain })));
 
 const DESK_PAD: FitPad = { top: "130px", right: "330px", bottom: "150px", left: "90px" };  // between the floating bars, tools, inspector and timeline
+// the inspector card reads the folded map (all plugins one box); a single plugin picked inside the plugin view needs the full one
+const cardMap = (m: ArgusMap, id: string) => { const f = foldPlugins(m); return f.nodes.some((n) => n.id === id) ? f : m; };
+const DESK_PAD_FREE: FitPad = { ...DESK_PAD, right: "40px" };  // no inspector drawer open
 const CMD_PAD: FitPad = { top: "340px", right: "40px", bottom: "150px", left: "40px" };  // below the corner cards, above the command bar
 
 const NAV: { id: string; label: string; icon: IconName }[] = [
@@ -95,7 +99,6 @@ export function App() {
   const a = useArgus();
   const [sel, setSel] = useState<Selection>(null);
   const [flow, setFlow] = useState(true);
-  const [relayout, setRelayout] = useState(0);
   const [info, setInfo] = useState(false);
   const [bigMap, setBigMap] = useState(false);
   const [layout, setLayoutState] = useState<Layout>(loadLayout);  // the PC's home: map + tiles, or map + command bar
@@ -231,7 +234,7 @@ export function App() {
   </>;
   const closeMap = useCallback(() => setBigMap(false), []);
   const mapFull = bigMap && a.map && !phone ? (
-    <MapFull map={a.map} pulses={a.pulses} active={a.active} status={a.status} events={a.events} onClose={closeMap}
+    <MapFull map={a.map} status={a.status} events={a.events} onClose={closeMap}
       // On the phone the map's Plugins link opens the phone's Plugins page. It used to switch to the full dashboard
       // (and remember it), which left the phone app stuck in the desktop layout. Only More's "Open the full
       // dashboard" switches views.
@@ -253,7 +256,7 @@ export function App() {
       <div className={`phone2${proot === "livemap" ? " pm-on" : ""}`}>
         {proot === "livemap" ? (
           a.map && a.map.nodes.length > 0
-            ? <PhoneMap map={a.map} pulses={a.pulses} active={a.active} status={st} events={a.events} layout={layout} onLayout={setLayout}
+            ? <PhoneMap map={a.map} status={st} events={a.events} layout={layout} onLayout={setLayout}
                 onPlugins={() => go("plugins")} onDetails={setSel} onAsk={askAri} onView={go} />
             : <div className="empty pm-empty">{a.phase === "down" ? "Waiting for Argus…" : "Loading the map…"}</div>
         ) : (<>
@@ -312,7 +315,6 @@ export function App() {
   const tools = (
     <>
       <button type="button" className="btn" aria-pressed={flow} onClick={() => setFlow(!flow)}>Flow</button>
-      <button type="button" className="btn" onClick={() => setRelayout((x) => x + 1)}>Auto layout</button>
       {narrow && <button type="button" className="btn" onClick={() => setBigMap(true)}>Full screen</button>}
       <button type="button" className="btn" aria-pressed={info || !!sel} onClick={() => (sel || info ? (setSel(null), setInfo(false)) : setInfo(true))}>Inspector</button>
     </>
@@ -320,7 +322,6 @@ export function App() {
   const deskTools = (
     <>
       <button type="button" className="tb" aria-label="Flow" title="Flow" aria-pressed={flow} onClick={() => setFlow(!flow)}><Ms n="route" fill={flow} size={20} /></button>
-      <button type="button" className="tb" aria-label="Auto layout" title="Auto layout" onClick={() => setRelayout((x) => x + 1)}><Ms n="auto_awesome_mosaic" size={20} /></button>
       <button type="button" className="tb" aria-label="Inspector" title="Inspector" aria-pressed={info || !!sel} onClick={() => (sel || info ? (setSel(null), setInfo(false)) : setInfo(true))}><Ms n="info" fill={info || !!sel} size={20} /></button>
       {narrow && <button type="button" className="tb" aria-label="Full screen" title="Full screen" onClick={() => setBigMap(true)}><Ms n="fit_screen" size={20} /></button>}
     </>
@@ -335,7 +336,7 @@ export function App() {
   const inspector = a.map && (sel || info) ? (
     <aside className={`drawer${nodeSel && !details ? " card-ic" : ""}`} aria-label="Inspector">
       {nodeSel && !details
-        ? <InspectCard id={nodeSel} map={mainParts(a.map, [], {}).map} jobs={jobs} queue={queue} byWorker={byWorker} onClose={() => { setSel(null); setInfo(false); }} onDetails={() => setDetails(true)} />
+        ? <InspectCard id={nodeSel} map={cardMap(a.map, nodeSel)} jobs={jobs} queue={queue} byWorker={byWorker} onClose={() => { setSel(null); setInfo(false); }} onDetails={() => setDetails(true)} />
         : <>
             {nodeSel && <button type="button" className="sn-link ic-back" onClick={() => setDetails(false)}>Summary</button>}
             <Inspector sel={sel} map={a.map} status={st} events={a.events} onSelect={setSel} onClose={() => { setSel(null); setInfo(false); }} />
@@ -346,8 +347,8 @@ export function App() {
     <section className={`stage${cmd ? " cmd" : ""}`} aria-label="Live map">
       <div className="canvas">
         {a.map && a.map.nodes.length > 0 ? (
-          <MapView map={a.map} pulses={a.pulses} active={a.active} selection={sel} onSelect={setSel} flow={flow} relayoutSignal={relayout} onPlugins={() => go("plugins")}
-            events={a.events} queue={queue} byWorker={byWorker} fitPad={cmd ? CMD_PAD : DESK_PAD} />
+          <MapView map={a.map} selection={sel} onSelect={setSel} flow={flow} onPlugins={() => go("plugins")}
+            events={a.events} queue={queue} byWorker={byWorker} fitPad={cmd ? CMD_PAD : sel || info ? DESK_PAD : DESK_PAD_FREE} />
         ) : (
           <div className="empty">{a.phase === "down" ? "Waiting for Argus…" : "Loading the map…"}</div>
         )}

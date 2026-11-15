@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, ArgusEvent, Job } from "./api";
 import { ago, shortId, tone } from "./format";
-import type { Selection } from "./MapView";
+import type { Selection } from "./mapInfo";
 import { Empty } from "./kit";
 
 const STATES: [string, string][] = [["", "All"], ["running", "Running"], ["queued", "Queued"], ["waiting", "Waiting"], ["succeeded", "Done"], ["retry", "Retry"], ["dead", "Failed"], ["cancelled", "Cancelled"]];

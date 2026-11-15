@@ -32,7 +32,7 @@ from .jobs import JobStore, Watchdog
 from .modelboard import ModelBoard
 from .outbox import Outbox, add_message, phone_message
 from .plugins import PluginHost
-from .registry import Registry
+from .registry import Registry, ensure_component
 from .scheduler import Scheduler
 from .triggers import Triggers
 from .usage import rollup as usage_rollup
@@ -102,6 +102,9 @@ class Argus:
         """Async part of startup: background tasks."""
         group = "laptop" if self.cfg.instance.host == "laptop" else "pc"
         await self.registry.component("argus", "core", "Argus", group, {"version": self.version})
+        # Helios, Ari and the backups appear in events but nothing registered them: the live map shows them as boxes
+        parts = (("helios", "app", "Helios"), ("ari", "app", "Ari"), ("backup", "service", "Backups"))
+        await self.store.write(lambda conn: [ensure_component(conn, time.time(), *p) for p in parts])
         await self.models.register()
         await self.approvals.start()
         stopped_at = self.marker.start()

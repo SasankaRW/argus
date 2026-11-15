@@ -1,12 +1,12 @@
 # Helios
 
-The Argus dashboard: React + Vite + React Flow + ELK. `argusd` serves the built copy at `/helios`
+The Argus dashboard: React + Vite. `argusd` serves the built copy at `/helios`
 (and `/` redirects there), so using Helios needs no Node.js.
 
 - `src/api.ts`: REST calls and the event stream (reconnects with `since=<seq>`, never loses an event)
 - `src/live.ts`: `useArgus()`: map snapshot + live events, pulses, job counts
-- `src/layout.ts`: ELK layout (left to right), pinned positions kept in the browser
-- `src/MapView.tsx`: the live map (boxes, lines, a dot per message)
+- `src/mapGraph.ts`: the live map's pure parts: which boxes, their state, line health, the status line, level layout (unit-tested)
+- `src/MapView.tsx`, `src/LevelCanvas.tsx`: fit the map to its space and draw it
 - `src/Inspector.tsx`: details for a box, a line or a job
 - `src/EventsPanel.tsx`: the live event list with filters
 

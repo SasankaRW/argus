@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, Approval, ArgusEvent, ArgusMap, Job, Status } from "./api";
 import { ago, clock, pretty, shortId, tone, uptime } from "./format";
 import { JobCalls } from "./Calls";
-import type { Selection } from "./MapView";
+import type { Selection } from "./mapInfo";
 
 type Props = {
   sel: Selection;

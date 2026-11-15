@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Empty } from "./kit";
 import { newConv } from "./conv";
 import { api, getToken } from "./api";
-import type { Selection } from "./MapView";
+import type { Selection } from "./mapInfo";
 import { powerAri, useAri, useEars } from "./ariState";
 import { listen, pref, setPref, speak, Speech, stopSpeaking, voiceStatus, VoiceStatus } from "./voice";
 import { plain } from "./spoken";
