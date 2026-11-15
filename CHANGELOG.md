@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Helios tests:** Helios now has unit tests for its formatting, API client and Ari state logic, run in CI.
+
 - **Fewer hidden faults:** the biggest background loops now name the errors they expect and log the unexpected ones instead of swallowing everything.
 
 - **Tidier API code:** the HTTP API's routes now live in `core/argus/api/routes/`, one file per area. Nothing else changes.
