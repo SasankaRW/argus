@@ -47,7 +47,9 @@ core/argus/        the argusd package
   modelboard.py    circuit breakers and the daily Claude budget, shared by all workers
   approvals.py     approvals: signed one-time phone tokens, reminders, expiry
   outbox.py        messages that leave Argus (phone app), sent exactly once with retries
-  presence.py      phone on Tailscale: push waiting approvals when it comes back
+  devices/         PC and phone hardware: power (wake, sleep), presence (phone on Tailscale), eyes, focus
+  ari/             Ari: the assistant, the "Hey Ari" listener, the popup, the test set
+  voice/           the voice: server, live hearing, training, samples
   registry.py      workers, components and edges (the Helios map)
   events.py        event log, edges, live stream hub, retention
   tail.py          argus-events: live events in the terminal

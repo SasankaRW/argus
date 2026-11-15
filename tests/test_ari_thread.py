@@ -5,9 +5,9 @@ from __future__ import annotations
 import copy
 import json
 
-from argus import ari_eval
 from argus import thread as th
-from argus.ari_conversations import CONVERSATIONS
+from argus.ari import ari_eval
+from argus.ari.ari_conversations import CONVERSATIONS
 from argus.worker import Worker
 from argus.worker.think import follow_on
 from fakes import FakeOllama
@@ -147,7 +147,7 @@ def test_conversation_scores_are_kept_for_helios(tmp_path):
 
 
 def test_argusd_answers_keep_the_thread_too_and_the_listener_note_keeps_it(tmp_path):
-    from argus import ari as ari_mod
+    from argus.ari import ari as ari_mod
 
     argus = make(tmp_path).open()
     with Server(argus) as srv:

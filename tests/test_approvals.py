@@ -495,7 +495,7 @@ def _status(online: bool) -> dict:
 
 
 def test_phone_online_matches_host_or_dns_name():
-    from argus.presence import phone_online
+    from argus.devices.presence import phone_online
 
     assert phone_online(_status(True), "pixel-8") is True
     assert phone_online(_status(False), "pixel-8.tail1234.ts.net") is False
@@ -503,7 +503,7 @@ def test_phone_online_matches_host_or_dns_name():
 
 
 def test_phone_back_online_pushes_what_is_waiting_once(store, clock):
-    from argus.presence import PhoneWatch
+    from argus.devices.presence import PhoneWatch
 
     cfg = cfg_with()
     cfg.approvals.phone, cfg.approvals.back_online_cooldown_minutes = "pixel-8", 15
@@ -547,7 +547,7 @@ def test_phone_back_online_pushes_what_is_waiting_once(store, clock):
 
 
 def test_phone_watch_is_off_without_a_phone(store, clock):
-    from argus.presence import PhoneWatch
+    from argus.devices.presence import PhoneWatch
 
     cfg = cfg_with()
     jobs, ap, _ = setup(store, clock, cfg)

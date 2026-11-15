@@ -318,7 +318,7 @@ def playbook_input(conn: sqlite3.Connection, key: str) -> dict[str, Any] | None:
 
 
 def ari_cases(conn: sqlite3.Connection, limit: int = 60) -> list[dict[str, str]]:
-    """Ari's first picks you marked Correct, as test cases for `python -m argus.ari_eval` ({say, expect})."""
+    """Ari's first picks you marked Correct, as test cases for `python -m argus.ari.ari_eval` ({say, expect})."""
     out = []
     for r in conn.execute("SELECT input, output, correction FROM samples WHERE plugin = 'ari' AND verdict = 'correct'"
                           " ORDER BY id DESC LIMIT ?", (limit,)):

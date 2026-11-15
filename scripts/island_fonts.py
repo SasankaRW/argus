@@ -25,7 +25,7 @@ OUT = ROOT / "core" / "argus" / "island_fonts"
 INTER = ROOT / "helios" / "src" / "fonts" / "InterVariable.woff2"
 SYMBOLS = ROOT / "helios" / "node_modules" / "material-symbols" / "material-symbols-rounded.woff2"
 
-# Every icon the island draws (core/argus/ari_popup.py, ICON_* and icon_for).
+# Every icon the island draws (core/argus/ari/ari_popup.py, ICON_* and icon_for).
 ICONS = ["mic", "hub", "sports_esports", "power_settings_new", "play_arrow", "pause", "skip_previous", "skip_next",
          "chevron_right", "memory", "music_note", "inbox", "grid_view", "chat_bubble", "description",
          "bedtime", "auto_awesome", "bolt", "language", "notifications", "circle"]

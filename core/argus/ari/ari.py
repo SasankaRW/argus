@@ -23,8 +23,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from .cron import next_run
-from .ids import new_id
+from ..cron import next_run
+from ..ids import new_id
 
 YES = re.compile(r"^\s*(yes|yeah|yep|yup|sure|ok|okay|do it|go ahead|please do|confirm|correct|right|sounds good)\b",
                  re.I)
@@ -224,7 +224,7 @@ REMIND = re.compile(r"^(?:remind me|tell me|ping me|notify me)\s*(?:to|about|tha
 
 def action_for(rest: str, actions: list[dict[str, Any]]) -> tuple[str, dict[str, Any]] | None:
     """What to do at that time: (action id, extra input), from the text left after the time words."""
-    from .ask import POWER, POWER_WORDS, rules
+    from ..ask import POWER, POWER_WORDS, rules
 
     m = REMIND.match(rest)
     if m:
@@ -261,7 +261,7 @@ def add_turn(conn: sqlite3.Connection, conv: str, role: str, text: str | None, *
 def mark_corrected(conn: sqlite3.Connection, conv: str, text: str, now: float, within: float = 300) -> list[int]:
     """You corrected Ari's last answer: the model answers of the job behind it (if any, in the last 5 minutes)
     count as wrong, with what you said (the guidance loop learns from them)."""
-    from . import guidance
+    from .. import guidance
 
     r = conn.execute("SELECT job_id, created_at FROM ari_turns WHERE conv = ? AND role = 'ari' ORDER BY id DESC"
                      " LIMIT 1", (conv,)).fetchone()

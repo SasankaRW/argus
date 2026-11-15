@@ -1,4 +1,4 @@
-"""Scripted conversations for `python -m argus.ari_eval --conversations`: does Ari keep the thread?
+"""Scripted conversations for `python -m argus.ari.ari_eval --conversations`: does Ari keep the thread?
 
 Each conversation is a few things you'd say in a row. For every step: what Ari should do first (a tool, or "reply",
 "chat", "web"; several allowed: "a|b"), the arguments that matter (each a word or two that must be in it, "a|b" for

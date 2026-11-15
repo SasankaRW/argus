@@ -158,8 +158,8 @@ def listener(cfg: Config, seen: float, now: float, info: dict | None = None) -> 
 
 
 def routing(cfg: Config, tools: list[dict], decide: Callable | None = None) -> Check | None:
-    """Does the local model still pick the right tool? (a short version of `python -m argus.ari_eval`)"""
-    from .ari_eval import first_step, ollama_decider
+    """Does the local model still pick the right tool? (a short version of `python -m argus.ari.ari_eval`)"""
+    from .ari.ari_eval import first_step, ollama_decider
 
     first = cfg.models.tiers.get(cfg.models.chain[0]) if cfg.models.chain else None
     if decide is None:
@@ -190,7 +190,7 @@ def routing(cfg: Config, tools: list[dict], decide: Callable | None = None) -> C
     detail = f"{right} of {len(cases)} right, a model step takes {p50:.1f} s"
     if wrong:
         detail += "; wrong: " + "; ".join(wrong[:3])
-    fix = "" if level == "ok" else "run .\\.venv\\Scripts\\python -m argus.ari_eval: the misses and times"
+    fix = "" if level == "ok" else "run .\\.venv\\Scripts\\python -m argus.ari.ari_eval: the misses and times"
     out = row("tool picking", level, detail, fix)
     out["data"] = {"right": right, "total": len(cases), "p50": round(p50, 2), "direct": len(cases) - len(times)}
     return out

@@ -35,7 +35,7 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
-from .ari_popup import AriState
+from .ari.ari_popup import AriState
 
 # ------------------------------------------------------------------ look
 

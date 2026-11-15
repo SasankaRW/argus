@@ -5,8 +5,9 @@ from __future__ import annotations
 
 import pytest
 
-from argus import ari_listen, vocab
-from argus.ari_listen import follow_ok, notice_text, speak_hours_ok, wake_rest
+from argus import vocab
+from argus.ari import ari_listen
+from argus.ari.ari_listen import follow_ok, notice_text, speak_hours_ok, wake_rest
 
 
 @pytest.mark.parametrize("said,rest", [
@@ -104,7 +105,7 @@ def test_important_phone_messages_become_notices(tmp_path):
 
 
 def test_accepted_share_adds_the_accepted_languages():
-    from argus.ari_listen import accepted_share
+    from argus.ari.ari_listen import accepted_share
 
     probs = {"si": 0.7, "en": 0.2, "ta": 0.1}
     assert accepted_share(probs, ["en"]) == 0.2
@@ -113,7 +114,7 @@ def test_accepted_share_adds_the_accepted_languages():
 
 
 def test_the_trained_model_is_used_once_argus_answers_later():
-    from argus.ari_listen import CommandModel
+    from argus.ari.ari_listen import CommandModel
 
     made = []
     cmd = CommandModel("small.en", lambda a: "small", lambda name: made.append(name) or (lambda a: name),

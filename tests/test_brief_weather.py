@@ -106,7 +106,7 @@ TWO_DAYS = {"daily": {"weather_code": [95, 0], "temperature_2m_min": [21.4, 20.2
 
 
 def test_ari_answers_the_weather_at_once_today_or_tomorrow(tmp_path):
-    from argus.ari import weather_ask
+    from argus.ari.ari import weather_ask
     from argus.weather import spoken
 
     assert weather_ask("How's the weather today?") == ("", 0)

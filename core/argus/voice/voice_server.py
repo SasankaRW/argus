@@ -3,7 +3,7 @@
 It runs in its own Python environment (Chatterbox pins its own PyTorch, NumPy and Transformers), so argusd talks to
 it over HTTP. The supervisor starts it where its Python environment exists (docs/setup.md has the setup):
 
-    .venv-voice\\Scripts\\python core\\argus\\voice_server.py        (listens on 127.0.0.1:8611)
+    .venv-voice\\Scripts\\python core\\argus\\voice\\voice_server.py        (listens on 127.0.0.1:8611)
 
 POST /say {"text": "[cheerful] Oh nice! [laugh] ..."} -> WAV
   The mood sets how lively it sounds, [laugh] / [sigh] / [chuckle] / [gasp] / [groan] / [clear throat] are real
@@ -35,7 +35,7 @@ import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # core/, for argus.expressive (plain Python)
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # core/, for argus.expressive (plain Python)
 from argus.expressive import STYLE, for_voice, phrases  # noqa: E402
 
 log = logging.getLogger("argus.voice_server")

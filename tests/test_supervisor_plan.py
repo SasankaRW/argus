@@ -70,7 +70,7 @@ def test_the_expressive_voice_runs_in_its_own_python(monkeypatch):
     args = argparse.Namespace(no_worker=False, no_session=False, no_argusd=False, desk_only=False)
     monkeypatch.setattr(supervisor, "expressive_on", lambda: True)
     argv = dict(supervisor.plan(args))["ari-voice"]
-    assert argv[0] == "exe:.venv-voice/Scripts/python.exe" and argv[1] == "core/argus/voice_server.py"
+    assert argv[0] == "exe:.venv-voice/Scripts/python.exe" and argv[1] == "core/argus/voice/voice_server.py"
     assert argv[argv.index("--port") + 1] == "8611"
     assert "--clip" not in argv  # no ari.voice_clip: the server's own data/voices/ari-clip.wav
     monkeypatch.setattr(supervisor, "load_ari", lambda: AriConfig(voice_clip="data/voices/me.wav"))

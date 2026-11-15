@@ -337,19 +337,20 @@ def plan(args: argparse.Namespace) -> list[tuple[str, list[str]]]:
         out = [] if args.no_argusd else [("argusd", ["-m", "argus"])]
         desk = not args.no_worker and not args.no_session
     if desk and listen_on():  # "Hey Ari" on this PC's microphone
-        out.append(("ari-listen", ["-m", "argus.ari_listen", "--log-file", "logs/ari.log"]))
+        out.append(("ari-listen", ["-m", "argus.ari.ari_listen", "--log-file", "logs/ari.log"]))
     if desk and expressive_on():  # Ari's expressive voice (Chatterbox, in its own Python environment)
         a = load_ari()
-        out.append(("ari-voice", [f"exe:{a.expressive_python}", "core/argus/voice_server.py", "--model",
+        out.append(("ari-voice", [f"exe:{a.expressive_python}", "core/argus/voice/voice_server.py", "--model",
                                   a.expressive_model, "--port", str(port_of(a.expressive_url)), "--warm",
                                   *(["--clip", a.voice_clip] if a.voice_clip else []),
                                   *(["--host", "0.0.0.0"] if a.expressive_share else [])]))  # noqa: S104
     if desk and ari_on("popup"):  # Ari's island at the top of the screen
-        out.append(("ari-popup", ["-m", "argus.ari_popup"]))
+        out.append(("ari-popup", ["-m", "argus.ari.ari_popup"]))
     if desk and workstation_where() == "child":  # the window that holds Ari's child session (its own worker in there)
         out.append(("workstation-host", ["-m", "argus.child_session", "host"]))
     if desk and eyes_on():  # the robot eyes on the cooler's screen (tiny: plain Python and pyusb)
-        out.append(("eyes", ["-m", "argus.eyes", "run", "--log-file", "logs/eyes.log", "--stop-file", EYES_STOP]))
+        out.append(("eyes", ["-m", "argus.devices.eyes", "run", "--log-file", "logs/eyes.log",
+                             "--stop-file", EYES_STOP]))
     if not args.no_worker and not args.desk_only:
         caps = ["--cap", "desktop", "--cap", "gpu"] + ([] if args.no_session else ["--cap", "session", "--cap",
                                                                                  "workstation"])

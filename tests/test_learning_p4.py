@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from argus import ari as ari_mod
 from argus import guidance
+from argus.ari import ari as ari_mod
 from argus.config import load_config
 from argus.context import Argus
 from argus.worker import Worker

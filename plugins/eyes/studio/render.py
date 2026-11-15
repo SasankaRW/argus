@@ -9,7 +9,7 @@ from pathlib import Path
 
 import eyecore as C  # noqa: F401 - clipkit's engine
 
-from argus.eyes import check_clip, pack
+from argus.devices.eyes import check_clip, pack
 from argus.lm360 import to_rgb565
 
 HERE = Path(__file__).resolve().parent

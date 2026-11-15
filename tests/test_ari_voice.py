@@ -30,7 +30,7 @@ def fake_voice():
     """A voice server that answers (the Chatterbox stand-in); returns it and its url."""
     import numpy as np
 
-    from argus import voice_server as vs
+    from argus.voice import voice_server as vs
 
     class Engine:
         kind, device, m = "turbo", "cpu", None

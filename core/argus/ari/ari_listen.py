@@ -1,6 +1,6 @@
 """Ari on the PC: "Hey Ari" on the microphone, without a browser and without sending sound anywhere.
 
-    python -m argus.ari_listen            (dev.ps1 up starts it when ari.listen is on)
+    python -m argus.ari.ari_listen            (dev.ps1 up starts it when ari.listen is on)
 
 How it hears (voice_live.py has the details):
 1. Silero VAD finds speech in the microphone stream and Smart Turn says when you've finished a sentence.
@@ -222,7 +222,7 @@ def local_voice(cfg: Any) -> Callable[[str], bytes | None]:
     """Ari's voice made here, where you hear it: the expressive voice server on this PC's GPU. Otherwise every
     sentence goes to argusd and back, and after the move argusd is on the laptop, which has neither the GPU nor
     the voice server. If the voice can't speak, the answer is None and the words are shown instead."""
-    from .voice import Expressive
+    from ..voice.voice import Expressive
 
     expr = Expressive(cfg.ari.expressive_url)
     threading.Thread(target=expr.warm, daemon=True, name="voice-warm").start()
@@ -314,7 +314,7 @@ def check_busy(client: AriClient, every: float = 10.0, look: Callable[[], Any] |
     if time.monotonic() - _BUSY_AT[0] < every:
         return
     _BUSY_AT[0] = time.monotonic()
-    from . import busy
+    from .. import busy
 
     a = getattr(cfg, "ari", None)
     if a is not None and not getattr(a, "quiet_in_calls", True):
@@ -346,8 +346,8 @@ def whisper(name: str, names: bool = True) -> Callable[[object], str]:
     """Whisper `name` as a function: audio -> what you said. `names`: biased towards the names Ari should expect
     (writing down a request); off for the wake check. A transcript that only reads those names back (Whisper on
     noise) comes back empty."""
-    from . import vocab
-    from .worker.hear import model, on_gpu_now
+    from .. import vocab
+    from ..worker.hear import model, on_gpu_now
 
     m = model(name)
     lock = threading.Lock()
@@ -382,7 +382,7 @@ def language_check(name: str, accept: list[str]) -> Callable[[object], dict]:
     language it thinks most likely, top_p}. English-only models can't tell: they write any speech down as English,
     which is how Sinhala became made-up questions. Accented English spreads its guess over several languages, so the
     decision (voice_live.not_for_ari) only drops speech that is clearly another language."""
-    from .worker.hear import model
+    from ..worker.hear import model
 
     m = model(name)
     lock = threading.Lock()
@@ -445,7 +445,7 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device,
     import numpy as np
     import sounddevice as sd  # type: ignore[import-not-found]
 
-    from . import voice_live as vl
+    from ..voice import voice_live as vl
 
     models = cfg.db_path.parent / "models"
     sil = vl.silero_path()
@@ -494,7 +494,7 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device,
             player.thinking(True)
 
     def ask(text: str, partial: Callable[[str, str], None] | None = None) -> dict:
-        from .worker.think import chatty
+        from ..worker.think import chatty
 
         chat = chatty(text)
         t = threading.Timer(1.2 if chat else 0.8, wait_sound, args=(chat,))  # a task: "hmm, let me check" sooner
@@ -694,7 +694,7 @@ def loopback(guard: Any, every_s: float = 60.0) -> None:
     except Exception as e:  # noqa: BLE001 - not installed (pip install -e .[listen]) or no WASAPI
         log.info("no playback guard (pip install -e .[listen])", extra={"error": str(e)[:120]})
         return
-    from . import voice_live as vl
+    from ..voice import voice_live as vl
 
     while True:
         try:
@@ -838,8 +838,8 @@ def only_one():
 
 
 def main(argv: list[str] | None = None) -> int:
-    from .config import load_config, parse_env_file
-    from .logs import setup_logging
+    from ..config import load_config, parse_env_file
+    from ..logs import setup_logging
 
     p = argparse.ArgumentParser(prog="ari-listen", description="Hey Ari on this PC's microphone")
     p.add_argument("--url", default=os.environ.get("ARGUS_URL", "http://127.0.0.1:8600"))

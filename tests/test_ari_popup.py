@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from argus.ari_popup import (
+from argus.ari.ari_popup import (
     AriState,
     Spring,
     W,
@@ -88,14 +88,14 @@ def test_helios_leaves_the_pill_to_the_popup_on_its_pc(tmp_path, monkeypatch):
 
 
 def test_shortcut_icons_follow_what_they_do():
-    from argus.ari_popup import icon_for
+    from argus.ari.ari_popup import icon_for
     assert [icon_for(a) for a in ("show:inbox", "show:map", "routine:work mode", "run:downloads-organizer:sort",
                                   "power:sleep", "power:shutdown", "url:https://x.y", "phone:ring", "odd")] == \
         ["inbox", "grid", "spark", "bolt", "moon", "power", "globe", "bell", "dot"]
 
 
 def test_after_answering_the_island_shows_it_still_listens():
-    from argus.ari_popup import FOLLOW_S
+    from argus.ari.ari_popup import FOLLOW_S
 
     st = AriState()
     st.apply([{"kind": "ari.state", "data": {"phase": "done", "text": "It's 31 degrees."}}], 0.0)
@@ -107,7 +107,7 @@ def test_after_answering_the_island_shows_it_still_listens():
 def test_talk_reports_the_follow_up_window_once_the_answer_is_spoken():
     import numpy as np
 
-    from argus import voice_live as vl
+    from argus.voice import voice_live as vl
 
     said = []
 
@@ -140,9 +140,9 @@ def test_talk_reports_the_follow_up_window_once_the_answer_is_spoken():
 
 
 def test_the_stop_button_quietens_ari_and_drops_the_answer(tmp_path, monkeypatch):
-    from argus import ari_listen
-    from argus.ari_listen import AriClient
-    from argus.ari_popup import STOPPABLE
+    from argus.ari import ari_listen
+    from argus.ari.ari_listen import AriClient
+    from argus.ari.ari_popup import STOPPABLE
 
     assert "speaking" in STOPPABLE and "thinking" in STOPPABLE and "listening" not in STOPPABLE
     with Server(make(tmp_path, monkeypatch).open()) as srv:
@@ -173,7 +173,7 @@ def test_the_stop_button_quietens_ari_and_drops_the_answer(tmp_path, monkeypatch
 
 
 def test_the_island_flips_pages_and_says_whats_on_hover():
-    from argus.ari_popup import hover_label, pages_of
+    from argus.ari.ari_popup import hover_label, pages_of
 
     widgets = [{"id": "clock", "on": True}, {"id": "calendar", "on": True}, {"id": "media", "on": True},
                {"id": "system", "on": False}, {"id": "privacy", "on": True}]
@@ -229,7 +229,7 @@ def test_the_island_ships_its_fonts_and_every_icon_it_names():
 
     import pytest
 
-    from argus import ari_popup
+    from argus.ari import ari_popup
 
     for name in ari_popup.FONT_FILES:
         assert (ari_popup.FONT_DIR / name).stat().st_size > 1000

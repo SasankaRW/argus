@@ -12,10 +12,10 @@ from http.server import ThreadingHTTPServer
 
 import numpy as np
 
-from argus import voice_live as vl
-from argus import voice_server as vs
 from argus.expressive import for_voice, mood_of, plain, tidy
-from argus.voice import Expressive
+from argus.voice import voice_live as vl
+from argus.voice import voice_server as vs
+from argus.voice.voice import Expressive
 
 
 def test_moods_and_sounds():

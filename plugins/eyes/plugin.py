@@ -11,7 +11,7 @@ Claude Code runs in it with a short tool list: read, write and edit files there,
 It either reuses a clip (result.json {"reuse": name}: the key is added to map.json; never for `own_clip` keys) or
 writes <key>.py, looks at contact sheets, fixes it and renders it (result.json {"clip": file, "about": line}).
 
-Argus then puts fresh copies of the kit back, renders the clip itself and checks it (argus.eyes.check_clip: the
+Argus then puts fresh copies of the kit back, renders the clip itself and checks it (argus.devices.eyes.check_clip: the
 loop joins, it starts on the shared resting pose and comes home at least every 15 s, eyes only, 20-90 s). A clip
 with problems goes back to Claude once with the list; then it is saved as clips/<key>.eyes (the player picks it up
 within a second) or the key is left on `default`. The studio folder stays for a look (claude.log, sheets).
@@ -88,7 +88,7 @@ def norm_model(name: str) -> str:
 
 def clips_list(clips: Path) -> list[tuple[str, str]]:
     """(name, about) of the saved clips (not `new`: that one is only for apps the eyes haven't met yet)."""
-    from argus.eyes import Clip
+    from argus.devices.eyes import Clip
 
     out = []
     for f in sorted(clips.glob("*.eyes")):
@@ -171,7 +171,7 @@ def read_json(path: Path) -> dict:
 
 def clips_dir(ctx: Context) -> Path:
     from argus.config import load_config
-    from argus.eyes import clips_dir as where
+    from argus.devices.eyes import clips_dir as where
 
     return where(load_config())
 
@@ -224,7 +224,7 @@ def render(work: Path, clip: str, timeout: float = 600) -> bytes:
 
 
 def setup(clips: Path, key: str) -> Path:
-    from argus.eyes import Clip
+    from argus.devices.eyes import Clip
 
     base = clips.parent / "studio" / f"{key}-{time.strftime('%Y%m%d-%H%M%S')}"
     work, n = base, 1
@@ -245,7 +245,7 @@ def setup(clips: Path, key: str) -> Path:
 
 
 def make_clip(ctx: Context, clips: Path, key: str, note: str = "") -> dict:
-    from argus.eyes import check_clip, repack
+    from argus.devices.eyes import check_clip, repack
 
     own = key in {str(k).lower() for k in ctx.config.get("own_clip") or []}
     model = norm_model(str(ctx.config.get("model") or "opus"))

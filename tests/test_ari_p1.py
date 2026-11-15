@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 import threading
 
-from argus import ari_listen
-from argus import voice_live as vl
+from argus.ari import ari_listen
 from argus.supervisor import OllamaKeeper
+from argus.voice import voice_live as vl
 from argus.worker import Worker
 from fakes import FakeOllama
 from test_ari_think import make, settle
@@ -189,7 +189,7 @@ def test_fillers_are_made_again_when_the_voice_changes():
 
 
 def test_the_island_shows_ari_off():
-    from argus.ari_popup import AriState
+    from argus.ari.ari_popup import AriState
 
     a = AriState(phase="speaking", text="hi")
     assert a.apply([{"kind": "ari.listening", "data": {"listening": False}}], 1.0)

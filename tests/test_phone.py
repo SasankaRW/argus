@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from argus.presence import describe_phone, phone_info
+from argus.devices.presence import describe_phone, phone_info
 from conftest import run
 from test_ask import make
 from test_worker import Server, client

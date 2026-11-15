@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from argus import ari_eval
+from argus.ari import ari_eval
 
 
 def test_the_test_set_scores_ari_first_decision():

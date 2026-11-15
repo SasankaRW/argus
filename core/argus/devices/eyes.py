@@ -1,9 +1,9 @@
 """Robot eyes on the cooler's screen (DeepCool LM360): plays saved clips, light enough to run all day.
 
-    python -m argus.eyes run [--clip NAME]             the player (`dev.ps1 up` starts it when eyes.enabled);
+    python -m argus.devices.eyes run [--clip NAME]             the player (`dev.ps1 up` starts it when eyes.enabled);
                                                        --clip plays one clip instead of following the front app
-    python -m argus.eyes pack in.gif out.eyes          turn a GIF into a clip (needs Pillow and numpy)
-    python -m argus.eyes brightness up|down [--steps]  try the screen's brightness buttons
+    python -m argus.devices.eyes pack in.gif out.eyes          turn a GIF into a clip (needs Pillow and numpy)
+    python -m argus.devices.eyes brightness up|down [--steps]  try the screen's brightness buttons
 
 **A clip** (`data/eyes/clips/<name>.eyes`) is stored ready to send: every frame already in the screen's format
 (RGB565), compressed. Playing one is read, decompress, send; no image decoding and no numpy. A frame equal to the
@@ -40,7 +40,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
-from .lm360 import BLACK, FRAME_BYTES, Screen
+from ..lm360 import BLACK, FRAME_BYTES, Screen
 
 log = logging.getLogger("argus.eyes")
 
@@ -416,7 +416,7 @@ def pack_gif(src: Path, dst: Path, about: str = "", neutral_every: float = 0.0) 
     """A GIF (any size, resized to the screen) as a clip. Returns the number of frames."""
     from PIL import Image, ImageSequence
 
-    from .lm360 import to_rgb565
+    from ..lm360 import to_rgb565
 
     gif = Image.open(src)
     frames, fps = [], 20.0
@@ -494,13 +494,13 @@ def main(argv: list[str] | None = None) -> int:
         s.close()
         return 0 if ok else 1
 
-    from .config import load_config
+    from ..config import load_config
 
     cfg = load_config()
     if args.cmd == "check":
         return check(cfg)
 
-    from .logs import setup_logging
+    from ..logs import setup_logging
 
     setup_logging("INFO", Path(args.log_file))
     after = cfg.eyes.away_after_s

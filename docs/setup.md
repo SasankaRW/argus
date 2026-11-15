@@ -175,12 +175,12 @@ pip install -e .[listen]
 
 ```yaml
 ari:
-  listen: true            # dev.ps1 up starts it (logs\ari.log); or run: python -m argus.ari_listen
+  listen: true            # dev.ps1 up starts it (logs\ari.log); or run: python -m argus.ari.ari_listen
 ```
 
 Say "Hey Ari, what's running?" or "Hey Ari" (a chime), then what you want. When Ari asks "Shall I?", just say yes
 or no. A small Whisper model (`ari.listen_wake_model`, tiny.en) listens for the wake phrase on the GPU; the command
-uses `ari.whisper_model`. Pick another microphone with `python -m argus.ari_listen --device <n>` (`python -m
+uses `ari.whisper_model`. Pick another microphone with `python -m argus.ari.ari_listen --device <n>` (`python -m
 sounddevice` lists them).
 
 **Fewer false starts.** "Hey Ari" only counts at the start of what you say, so a video or someone mentioning
@@ -215,7 +215,7 @@ pip install -e .[popup]
 
 ```yaml
 ari:
-  popup: true             # dev.ps1 up starts it; or run: python -m argus.ari_popup
+  popup: true             # dev.ps1 up starts it; or run: python -m argus.ari.ari_popup
 ```
 
 It follows Ari everywhere: "Hey Ari" on the PC, a question typed in Helios on the phone, the tool Ari is using, the
@@ -332,13 +332,13 @@ daily cap.
   put right ("open what's up" -> WhatsApp). The "Hey Ari" check gets no names, and when Whisper only reads the names
   back on noise ("about Do Not, Disturb, PC, Zoom"), it is thrown away.
   Add your own: `vocabulary: [Kaancha, Nimali]`, `heard_as: {kancha: Kaancha}`.
-- **Ari's test set**: `python -m argus.ari_eval` (with Argus running) says 40 everyday things to Ari's first
+- **Ari's test set**: `python -m argus.ari.ari_eval` (with Argus running) says 40 everyday things to Ari's first
   decision and checks it picks the right tool, with how long the model took; nothing is done for real. Each run is
   kept in `data/ari-eval/` and compared with the last one. Your own cases: `--cases my-cases.yaml`
   (`- {say: "open brave", expect: open_app}`; several allowed: `expect: "weather|web_search"`).
   `--conversations` runs 30 scripted conversations instead ("open Spotify" → "play Famous" → "louder"): each step
   must pick the right tool and arguments in the light of the turns before it. The score shows in Helios > Ari >
-  check ari; the conversations are in `core/argus/ari_conversations.py`.
+  check ari; the conversations are in `core/argus/ari/ari_conversations.py`.
 - **Ari's Workstation in its own session** (Windows 10/11 Pro): as administrator
   `.\scripts\workstation-setup.ps1 install https://<laptop>.<tailnet>.ts.net`, then `ari: {workstation: child}` in
   argus.yaml and `.\scripts\pc-worker.ps1 restart`. An "Ari's Workstation" window holds Ari's own Windows session
@@ -393,14 +393,14 @@ daily cap.
   ```powershell
   pip install torch --index-url https://download.pytorch.org/whl/cu128   # PyTorch for the RTX 50 series
   pip install -e .[train]
-  python -m argus.voice_train --apply
+  python -m argus.voice.voice_train --apply
   ```
 
   It fine-tunes Whisper (`ari.whisper_model`, small.en) with LoRA on the GPU (Ollama's models are unloaded
   first), tests it on sentences it didn't learn from, and keeps it only if it makes fewer mistakes than before:
   `data/models/whisper-mine`, which `--apply` makes Ari use (Helios > Settings > Ari's Whisper model; restart
   ari-listen for the microphone). Record more and run it again any time; the recordings stay in
-  `data/voice-train`. With Argus on the laptop: `python -m argus.voice_train --from http://laptop:8600`.
+  `data/voice-train`. With Argus on the laptop: `python -m argus.voice.voice_train --from http://laptop:8600`.
 - **Just talking**: "how are you?", "I'm bored", "tell me a joke": Ari chats back like a friend, no tools.
 - **WhatsApp** (`pc-apps`): "text Kaancha hi on WhatsApp" opens WhatsApp with the message typed (after your yes);
   you press Enter. Tell Ari their number once ("remember Kaancha's WhatsApp is +94...") to go straight to the chat.

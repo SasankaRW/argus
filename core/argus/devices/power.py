@@ -27,11 +27,11 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from .config import Config
-from .db import Store
-from .events import insert_event
-from .outbox import add_message, phone_message
-from .registry import _upsert_component
+from ..config import Config
+from ..db import Store
+from ..events import insert_event
+from ..outbox import add_message, phone_message
+from ..registry import _upsert_component
 
 log = logging.getLogger("argus.power")
 

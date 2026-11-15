@@ -25,13 +25,13 @@ from .daily import (
     say_brief,
 )
 from .db import Store
+from .devices.power import PowerManager
+from .devices.presence import PhoneWatch
 from .events import EventHub, insert_event, prune_events
 from .jobs import JobStore, Watchdog
 from .modelboard import ModelBoard
 from .outbox import Outbox, add_message, phone_message
 from .plugins import PluginHost
-from .power import PowerManager
-from .presence import PhoneWatch
 from .registry import Registry
 from .scheduler import Scheduler
 from .triggers import Triggers

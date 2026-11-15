@@ -15,7 +15,7 @@ import argparse
 import sys
 import time
 
-from argus.eyes import Stopper
+from argus.devices.eyes import Stopper
 from argus.lm360 import H, Screen, W, to_rgb565
 
 

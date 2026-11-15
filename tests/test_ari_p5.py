@@ -6,9 +6,9 @@ from __future__ import annotations
 import time
 from types import SimpleNamespace
 
-from argus import ari as ari_mod
-from argus import ari_listen
 from argus import busy as busy_mod
+from argus.ari import ari as ari_mod
+from argus.ari import ari_listen
 from argus.worker import Worker
 from argus.worker import think as th
 from fakes import FakeOllama
@@ -71,7 +71,7 @@ def test_in_a_call_the_answer_is_shown_not_spoken():
 
 
 def th_talk(p, heard, shown, quiet):
-    from argus import voice_live as vl
+    from argus.voice import voice_live as vl
 
     return vl.Talk(turns=vl.Turns(), transcribe=lambda a: heard.pop(0), wake_rest=wake_rest,
                    ask=lambda q: {"reply": "It's five."}, player=p, clock=Clock(),
@@ -198,7 +198,7 @@ def test_a_voice_hiccup_is_retried_not_swapped_for_a_second_voice(monkeypatch, t
     import io
     import urllib.request
 
-    from argus.voice import Expressive
+    from argus.voice.voice import Expressive
 
     calls = []
 

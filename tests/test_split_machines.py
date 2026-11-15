@@ -9,7 +9,7 @@ from pathlib import Path
 
 import yaml
 
-from argus import ari_listen
+from argus.ari import ari_listen
 from argus.config import Config, load_config
 from argus.plugins import discover, placement_warnings
 from argus.worker import Worker
@@ -127,7 +127,7 @@ def test_ari_health_checks_the_pcs_services_on_the_pc(tmp_path, monkeypatch):
 
 
 def test_a_hiccup_is_retried_not_swapped_for_a_second_voice(tmp_path, monkeypatch):
-    from argus import voice as voice_mod
+    from argus.voice import voice as voice_mod
 
     tried: list[tuple[float | None, bool]] = []
     monkeypatch.setattr(voice_mod.Expressive, "warm", lambda self: True)
@@ -174,7 +174,7 @@ def test_the_worker_picks_up_new_settings_without_a_restart(tmp_path, monkeypatc
 def test_the_pcs_expressive_voice_is_shared_with_the_laptop_safely(tmp_path, monkeypatch):
     import importlib.util
 
-    spec = importlib.util.spec_from_file_location("voice_server", ROOT / "core/argus/voice_server.py")
+    spec = importlib.util.spec_from_file_location("voice_server", ROOT / "core/argus/voice/voice_server.py")
     vs = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(vs)
     assert vs.allowed("127.0.0.1", None, "t")  # this PC: as before

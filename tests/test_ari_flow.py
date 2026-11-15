@@ -137,8 +137,8 @@ def test_old_chats_and_old_questions_dont_leak(tmp_path):
     import sqlite3
     import time as _t
 
-    from argus import ari as ari_mod
-    from argus.ari_listen import AriClient
+    from argus.ari import ari as ari_mod
+    from argus.ari.ari_listen import AriClient
     from argus.db.store import available_migrations
 
     c = sqlite3.connect(":memory:")
@@ -162,7 +162,7 @@ def test_old_chats_and_old_questions_dont_leak(tmp_path):
 
 
 def test_pausing_ari_s_ears(tmp_path):
-    from argus import ari_listen
+    from argus.ari import ari_listen
 
     with Server(make(tmp_path).open()) as srv:
         cl = client(srv.url)
@@ -181,7 +181,7 @@ def test_pausing_ari_s_ears(tmp_path):
 def test_times_said_in_words_like_a_transcript_writes_them():
     import time as _t
 
-    from argus.ari import digits, parse_when
+    from argus.ari.ari import digits, parse_when
 
     now = _t.mktime((2026, 10, 1, 15, 0, 0, 0, 0, -1))  # a fixed afternoon: "tonight" must not depend on the clock
     assert parse_when("remind me to call mum tomorrow at five pm", now).say == "tomorrow at 5 pm"
@@ -383,7 +383,7 @@ def test_a_chat_exports_as_one_file_with_secrets_and_private_results_left_out(tm
     import urllib.error
     import urllib.request
 
-    from argus.ari_export import scrub
+    from argus.ari.ari_export import scrub
 
     assert "abc123def456ghi789" not in scrub("Authorization: Bearer abc123def456ghi789 and token=abc123def456ghi789")
     assert "0123456789abcdef0123456789abcdef" not in scrub("/approvals/x/decide?t=0123456789abcdef0123456789abcdef")

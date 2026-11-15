@@ -7,7 +7,7 @@ from datetime import datetime
 
 import pytest
 
-from argus.ari import parse_when
+from argus.ari.ari import parse_when
 from argus.worker import Worker
 from conftest import run
 from fakes import FakeOllama
@@ -68,7 +68,7 @@ def test_schedule_by_talking_needs_your_yes(tmp_path, monkeypatch):
 
 def test_a_reminder_goes_to_the_phone_at_its_time(tmp_path, monkeypatch):
     a = make(tmp_path, monkeypatch).open()
-    from argus import ari
+    from argus.ari import ari
 
     w = ari.parse_when("remind me to drink water in 5 minutes", NOW)
     run(a.store.write(lambda c: ari.add_schedule(c, NOW, w, "remind:drink water", plugin="argus",
@@ -115,7 +115,7 @@ def test_actions_wait_for_yes_and_the_model_gets_the_conversation(tmp_path, monk
 
 
 def test_remember_recall_forget(tmp_path, monkeypatch):
-    from argus import ari
+    from argus.ari import ari
 
     a = make(tmp_path, monkeypatch)
     with Server(a.open()) as srv:

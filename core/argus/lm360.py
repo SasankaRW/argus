@@ -99,7 +99,7 @@ class Screen:
             return False
         if self._write(pixels):
             return True
-        log.warning("a frame was cut short: if the screen stays black, try `python -m argus.eyes unstick`")
+        log.warning("a frame was cut short: if the screen stays black, try `python -m argus.devices.eyes unstick`")
         return False
 
     def unstick(self) -> bool:
