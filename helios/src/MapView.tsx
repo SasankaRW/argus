@@ -1,15 +1,21 @@
 // The live map: the essential parts in five columns (Apps | Argus | Machines | Plugins | Models) joined by lines that
-// show health, with what needs attention above. The layout and the health come from mapGraph.ts and attention.ts (pure,
-// tested); this file fits the drawing to its space, feeds it the live data and handles picking a box.
+// show health, with what needs attention above. Selecting the Plugins box zooms the camera into it until the plugin
+// view (what is working inside) takes its place. The layout and the health come from mapGraph.ts, attention.ts and
+// pluginGraph.ts (pure, tested), the zoom from zoomMath.ts and usePluginZoom.ts; this file fits the drawing to its
+// space, feeds it the live data and handles picking a box.
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, type Approval, type ArgusEvent, type ArgusMap } from "./api";
 import { attentionItems } from "./attention";
 import { useClaude } from "./chips";
+import { useJobs } from "./jobsFeed";
 import { LevelCanvas } from "./LevelCanvas";
+import { Ms } from "./m3";
 import { buildLevels, Card, Dim, L, layoutLevels, PLUGINS } from "./mapGraph";
 import { MapHead } from "./MapHead";
 import type { Selection } from "./mapInfo";
+import { buildPluginView, PL } from "./pluginGraph";
+import { usePluginZoom } from "./usePluginZoom";
 
 export type FitPad = { top: `${number}px`; right: `${number}px`; bottom: `${number}px`; left: `${number}px` };
 
@@ -35,6 +41,11 @@ const deskDim = (c: Card): Dim => (c.big ? { w: 196, h: c.meter !== undefined ? 
 const phoneDim = (c: Card): Dim => (c.big ? { w: 150, h: 70 } : { w: 102, h: 74 });
 export const PHONE = { width: 346 };
 export const HEAD_H = 64;  // the attention row
+
+// The plugin view: three columns on the same canvas; the idle plugins sit in a panel along the bottom.
+const PLUG = { xs: [170, 600, 1030], top: 60, bottom: 430 };
+const plugDim = (c: Card): Dim => (c.skin === "run" || c.skin === "wait" || c.skin === "stop" ? { w: 210, h: 60 } : { w: c.skin === "model" ? 196 : 176, h: 54 });
+const MAX_IDLE = 30;  // names shown in the idle panel
 
 const px = (s?: string) => (s ? parseFloat(s) || 0 : 0);
 
@@ -97,6 +108,26 @@ export function MapView(p: Props) {
   );
   const wrap = useRef<HTMLDivElement>(null);
   const size = useBox(wrap);
+  const jobs = useJobs(events);
+  const pv = useMemo(() => {
+    const workflows: Record<string, string> = {};
+    for (const j of jobs) if ((j.state === "running" || j.state === "leased") && !workflows[j.plugin]) workflows[j.plugin] = j.workflow;
+    return buildPluginView(p.map, { now, events, workflows });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.map, now, p.events, jobs]);
+  const plugLayout = useMemo(
+    () => layoutLevels(pv.cards, pv.lines, { orient: "h", dims: plugDim, xs: PLUG.xs, top: PLUG.top, bottom: PLUG.bottom, width: DESK.width, height: DESK.height, locked: [PL.outputs] }),
+    [pv],
+  );
+  const pb = layout.placed[PLUGINS];
+  const column = (lv: number) => Object.values(plugLayout.placed).filter((c) => c.level === lv).sort((a, b) => a.y - b.y).map((c) => c.id);
+  const zoom = usePluginZoom({
+    enabled: !vertical && !!pb, box: pb ? { cx: pb.x, cy: pb.y, w: pb.w, h: pb.h } : null, canvas: { w: layout.width, h: layout.height },
+    groups: { src: column(PL.inputs), mid: column(PL.plugins), snk: column(PL.outputs) },
+    at: Object.fromEntries(Object.values(plugLayout.placed).map((c) => [c.id, { x: c.x, y: c.y }])),
+    root: wrap, hasSelection: !!p.selection, clearSelection: () => p.onSelect(null),
+  });
+  const inPlugins = zoom.phase === "view";
   const [anim, setAnim] = useState(false);  // fitting animates only after the first fit, not from nothing
   const measured = size.w > 0;
   useEffect(() => {
@@ -104,7 +135,7 @@ export function MapView(p: Props) {
     const id = requestAnimationFrame(() => setAnim(true));
     return () => cancelAnimationFrame(id);
   }, [measured]);
-  const headRef = useRef<HTMLDivElement>(null);
+  const headRef = zoom.refs.head as React.RefObject<HTMLDivElement | null>;
   const headSize = useBox(headRef);
   const pad = { t: px(p.fitPad?.top), r: px(p.fitPad?.right), b: px(p.fitPad?.bottom), l: px(p.fitPad?.left) };
   const headTop = Math.max(8, pad.t - HEAD_H - 6);
@@ -123,11 +154,12 @@ export function MapView(p: Props) {
   }
 
   const sel = p.selection?.type === "node" ? p.selection.id : null;
-  const pick = (c: Card) => (c.id === PLUGINS ? p.onPlugins?.() : p.onSelect({ type: "node", id: c.select }));
+  const pick = (c: Card) => (c.id === PLUGINS ? (vertical ? p.onPlugins?.() : zoom.open()) : p.onSelect({ type: "node", id: c.select }));
+  const headStyle = { top: headTop, left: p.headLeft ?? Math.max(18, pad.l), right: Math.max(18, pad.r - 12) };
   const head = (
     <MapHead ref={headRef} items={items} onReview={() => p.onReview?.()} onLogs={(id) => p.onSelect({ type: "node", id, logs: true })} onChanged={() => p.onChanged?.()}
       className={vertical ? "stack" : undefined}
-      style={vertical ? undefined : { top: headTop, left: p.headLeft ?? Math.max(18, pad.l), right: Math.max(18, pad.r - 12) }} />
+      style={vertical ? undefined : headStyle} />
   );
   return (
     <div ref={wrap} className={`lm${vertical ? " scroll" : ""}`} onClick={(e) => { if (e.target === e.currentTarget) p.onSelect(null); }}>
@@ -142,8 +174,25 @@ export function MapView(p: Props) {
         </div>
       ) : (<>
         {head}
+        <div ref={zoom.refs.bar} className="lm-head lm-bar" style={{ ...headStyle, opacity: 0, pointerEvents: "none" }} aria-hidden={!inPlugins}>
+          <button ref={zoom.refs.back} type="button" className="lm-go lm-back" onClick={zoom.back}><Ms n="arrow_back" />Back to map</button>
+          <span className="lm-note">{pv.running ? `${pv.running} working now.` : "Nothing is running right now."}{pv.stopped ? ` ${pv.stopped} stopped.` : ""} Idle plugins are listed below.</span>
+          <button type="button" className="lm-go lm-back" onClick={() => p.onPlugins?.()}><Ms n="extension" />All plugins</button>
+        </div>
         <div className={`lm-stage${anim ? " anim" : ""}`} style={{ transform: `translate(${x}px, ${y}px) scale(${scale})`, width: layout.width, height: layout.height }}>
-          <LevelCanvas layout={layout} flow={p.flow} selected={sel} onPick={pick} label="Live map" />
+          <div ref={zoom.refs.clip} className="lm-clip">
+            <div ref={zoom.refs.cam} className="lm-cam">
+              <LevelCanvas layout={layout} flow={p.flow} selected={sel} onPick={pick} label="Live map" />
+            </div>
+            <div ref={zoom.refs.view} className="lm-plug" aria-label="Inside the plugins" aria-hidden={!inPlugins} style={{ opacity: 0, pointerEvents: "none" }}>
+              <div ref={zoom.refs.pbg} className="lm-pbg" />
+              <LevelCanvas layout={plugLayout} flow={p.flow} selected={sel} onPick={(c) => p.onSelect({ type: "node", id: c.select })} label="Inside the plugins" />
+              <div ref={zoom.refs.idle} className="lm-idle">
+                <b>{pv.idle.length} idle plugin{pv.idle.length === 1 ? "" : "s"}</b>
+                <div>{pv.idle.slice(0, MAX_IDLE).map((n) => <span key={n}>{n}</span>)}{pv.idle.length > MAX_IDLE && <span>+{pv.idle.length - MAX_IDLE} more</span>}</div>
+              </div>
+            </div>
+          </div>
         </div>
       </>)}
     </div>
