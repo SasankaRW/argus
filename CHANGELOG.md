@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Live map:** drag to move the map and use the wheel, a pinch or the + / - / fit buttons to zoom, on the desktop and the phone. The phone's map now fills the screen: the attention cards are one strip that slides sideways, with Pause everything under it, instead of a stack that pushed the map off the screen.
+
 - **Live map:** "Resume everything" only shows while something is paused.
 
 ## 0.10.0 (2026-11-15)

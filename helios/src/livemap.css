@@ -72,9 +72,20 @@ svg.lm-l { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
 .lm-all { display: flex; gap: 14px; align-items: center; flex: none; flex-wrap: wrap; justify-content: flex-end; }
 .lm-note { color: var(--tx2); font-size: 12.5px; max-width: 240px; }
 .lm-note.t-bad, .cp-msg.t-bad { color: var(--bad); }
-.lm-head.stack { position: relative; z-index: auto; flex-wrap: wrap; margin: 0 14px 14px; align-items: flex-start; }
-.lm-head.stack .lm-att { flex-wrap: wrap; overflow: visible; }
-.lm-head.stack .lm-card { min-width: 0; flex: 1 1 100%; max-width: none; }
+.lm-head.stack { flex-direction: column; flex-wrap: nowrap; align-items: stretch; justify-content: flex-start; gap: 8px; min-height: 0; }
+/* the phone: one strip of small cards that slides sideways, and the Pause row under it, so the map keeps the screen */
+.lm-head.stack .lm-att { flex: none; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; margin: 0 -12px; padding: 0 12px; scroll-snap-type: x proximity; scroll-padding: 0 12px; scrollbar-width: none; overscroll-behavior-x: contain; }
+.lm-head.stack .lm-att::-webkit-scrollbar { display: none; }
+.lm-head.stack .lm-card { flex: 0 0 auto; min-width: 236px; max-width: 280px; scroll-snap-align: start; padding: 7px 8px 7px 7px; gap: 10px; border-radius: 18px; }
+.lm-head.stack .lm-ci { width: 34px; height: 34px; border-radius: 12px; }
+.lm-head.stack .lm-nm { font-size: 13.5px; }
+.lm-head.stack .lm-st { font-size: 11.5px; }
+.lm-head.stack .lm-go { padding: 6px 12px; font-size: 12.5px; }
+.lm-head.stack .lm-all { justify-content: flex-start; flex-wrap: nowrap; gap: 10px; }
+.lm-head.stack .sn-holdwrap { flex-direction: row; gap: 8px; align-items: center; }
+.lm-head.stack .sn-hold { width: 40px; height: 40px; }
+.lm-head.stack .sn-holdcap { font-size: 12.5px; }
+.lm-head.stack .lm-note { max-width: none; font-size: 12px; }
 .phone2 .lm-n { gap: 4px 6px; padding: 6px; border-radius: 16px; flex-wrap: wrap; align-content: center; }
 .phone2 .lm-t { display: contents; }
 .phone2 .lm-nm { flex: 1 1 0; min-width: 0; white-space: normal; overflow-wrap: anywhere; font-size: 12px; line-height: 1.2; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
@@ -142,3 +153,16 @@ svg.lm-l { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
 .lm-idle b { font-weight: 500; color: var(--tx2); font-size: 12.5px; }
 .lm-idle div { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .lm-idle span { border-radius: 999px; background: var(--s2); color: var(--tx3); padding: 3px 10px; font-size: 12px; }
+
+/* Moving around: drag to pan, wheel or pinch to zoom, three buttons for the same */
+.lm.lm-pan { touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none; }
+.lm.lm-pan.drag, .lm.lm-pan.drag * { cursor: grabbing; }
+.lm.lm-pan .lm-n { cursor: pointer; }
+.lm.lm-pan.drag .lm-n { cursor: grabbing; }
+.lm-nav { position: absolute; z-index: 4; left: 18px; display: flex; gap: 4px; padding: 4px; border-radius: 999px; background: var(--s2); touch-action: manipulation; }
+.lm-nav button { width: 40px; height: 40px; border: 0; border-radius: 50%; display: grid; place-items: center; background: transparent; color: var(--tx); cursor: pointer; font: inherit; }
+.lm-nav button:hover { background: var(--s3); }
+.lm-nav button:focus-visible { outline: 2px solid var(--ac); outline-offset: 1px; }
+.lm-nav button.on { background: var(--c-pri); }
+.lm-nav .ms { font-size: 22px; }
+.phone2 .lm-nav { z-index: 2; left: auto; right: 12px; bottom: 16px; flex-direction: column; border-radius: 26px; }
