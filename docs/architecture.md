@@ -122,7 +122,7 @@ The next attempt skips every finished step, because `ctx.step` returns the saved
 | Folder | What it is |
 | --- | --- |
 | `core/argus/` | argusd, the worker, the model router, Ari: all the Python |
-| `core/argus/api/` | The HTTP API (`app.py`), the MCP server (`mcp.py`), the approval page for the phone |
+| `core/argus/api/` | The HTTP API (`app.py` wires one router per area in `routes/`), the MCP server (`mcp.py`), the approval page for the phone |
 | `core/argus/jobs/` | The job state machine, the job store (every job operation), the watchdog |
 | `core/argus/db/` | The SQLite store and numbered migrations (`0001`…`0012`) |
 | `core/argus/models/` | Model providers (Ollama, Claude CLI), the tier router, `doctor` |

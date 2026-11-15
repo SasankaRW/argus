@@ -52,7 +52,14 @@ def routes(root: Path = ROOT) -> int | None:
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / "argus.yaml").write_text("logging:\n  file: null\n", encoding="utf-8")
             app = create_app(Argus(load_config(Path(tmp) / "argus.yaml")))
-            return sum(1 for r in app.routes if getattr(r, "path", "").startswith("/")
+            def flat(routes):  # the routers are included lazily: look inside them
+                for r in routes:
+                    if hasattr(r, "original_router"):
+                        yield from flat(r.original_router.routes)
+                    else:
+                        yield r
+
+            return sum(1 for r in flat(app.routes) if getattr(r, "path", "").startswith("/")
                        and not r.path.startswith(("/docs", "/redoc", "/openapi")))
     except Exception as e:  # a status page should still come out
         print(f"warning: could not build the app to count routes: {e}", file=sys.stderr)
