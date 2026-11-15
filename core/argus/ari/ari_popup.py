@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import argparse
 import base64
+import http.client
 import json
+import logging
 import math
 import os
 import sys
@@ -48,6 +50,14 @@ from ..island_live import (
     rate,
     weekday_letters,
 )
+
+log = logging.getLogger("argus.ari_popup")
+
+# What a call to argusd can raise: the connection (OSError covers URLError, HTTPError and timeouts), a body that
+# isn't JSON (ValueError), a response cut short (http.client's own errors, which are not OSErrors).
+_API_ERRORS = (OSError, ValueError, http.client.HTTPException)
+# ...and a reply of another shape than we expect (an older or newer Argus).
+_SHAPE_ERRORS = (KeyError, TypeError, AttributeError, IndexError)
 
 # ------------------------------------------------------------------ sizes (logical px)
 
@@ -350,7 +360,7 @@ def fetch_info(api: Api) -> Info:
     ):
         try:
             fn(api.call("GET", path))
-        except Exception:  # one part missing is fine
+        except (*_API_ERRORS, *_SHAPE_ERRORS):  # one part missing is fine
             pass
     if any(w.get("id") == "last" and w.get("on") for w in info.widgets):
         try:
@@ -359,7 +369,7 @@ def fetch_info(api: Api) -> Info:
                 turns = api.call("GET", f"/ari/{chats[0]['conv']}")["turns"]
                 last = next((t["text"] for t in reversed(turns) if t["role"] == "ari" and t.get("text")), None)
                 info.last = last.strip() if last else None
-        except Exception:
+        except (*_API_ERRORS, *_SHAPE_ERRORS):
             pass
     return info
 
@@ -458,7 +468,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                     self.last[kind] = now
                     try:
                         data = self.read(kind)
-                    except Exception:  # noqa: BLE001 - try again in a minute (Argus restarting, say)
+                    except Exception:  # noqa: BLE001  # boundary: a reader is any call (Argus, psutil, Qt); try again in a minute
+                        log.warning("live read failed: %s", kind, exc_info=True)
                         self.last[kind] = now - self.EVERY[kind] + 60
                         continue
                     bus.live.emit(kind, data)
@@ -1469,7 +1480,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             def go() -> None:
                 try:
                     api.call("POST", "/ari/stop", {"job": job or ""})
-                except Exception:  # noqa: BLE001 - Argus out of reach: say so
+                except _API_ERRORS:  # Argus out of reach: say so
                     bus.flash.emit("Stop didn't reach Argus")
             threading.Thread(target=go, daemon=True).start()
 
@@ -1482,7 +1493,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             def go() -> None:
                 try:
                     api.call("POST", "/ari/game", {"on": on, "by": "you"})
-                except Exception:  # noqa: BLE001
+                except _API_ERRORS:
                     bus.flash.emit("Couldn't reach Argus")
             threading.Thread(target=go, daemon=True).start()
 
@@ -1494,7 +1505,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             def go() -> None:
                 try:
                     api.call("POST", "/ari/game", {"auto": auto})
-                except Exception:  # noqa: BLE001
+                except _API_ERRORS:
                     bus.flash.emit("Couldn't reach Argus")
             threading.Thread(target=go, daemon=True).start()
 
@@ -1507,7 +1518,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             def go() -> None:
                 try:
                     api.call("POST", "/ari/power", {"on": on})
-                except Exception:  # noqa: BLE001 - Argus out of reach: say so
+                except _API_ERRORS:  # Argus out of reach: say so
                     bus.flash.emit("Couldn't reach Argus")
             threading.Thread(target=go, daemon=True).start()
 
@@ -1515,7 +1526,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             def go() -> None:
                 try:
                     r = api.call("POST", "/ari/wake")
-                except Exception:
+                except _API_ERRORS:
                     r = {"listener": False}
                 if not r.get("listener"):  # no "Hey Ari" listener on this PC: Helios's mic instead
                     webbrowser.open(f"{args.url.rstrip('/')}/helios/?app=1&mic=1#ari")
@@ -1535,7 +1546,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 try:
                     api.call("POST", "/island/run", {"action": action}, timeout=15)
                     bus.flash.emit(f"{label} ✓")
-                except Exception as e:  # noqa: BLE001 - shown on the island
+                except _API_ERRORS as e:  # shown on the island
                     bus.flash.emit(f"{label}: {str(e)[:60]}")
             threading.Thread(target=go, daemon=True).start()
 
@@ -1669,7 +1680,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             try:
                 img = str(api.call("GET", f"/approvals/{aid}")["payload"].get("image") or "")
                 raw = base64.b64decode(img.split(",", 1)[1]) if "," in img else b""
-            except Exception:  # noqa: BLE001
+            except (*_API_ERRORS, *_SHAPE_ERRORS):
                 return
             q = QImage.fromData(raw)
             if not q.isNull():
@@ -1760,7 +1771,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             def go() -> None:
                 try:
                     api.call("POST", "/ari", {"text": text, "source": "island"}, timeout=60)
-                except Exception:  # noqa: BLE001
+                except _API_ERRORS:
                     bus.flash.emit("Couldn't reach Argus")
             threading.Thread(target=go, daemon=True).start()
 
@@ -1848,8 +1859,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                     bus.info.emit(info)
                     bus.keys.emit(info.keys)
                     return
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception:  # noqa: BLE001  # boundary: thread top level; fetch_info handles Argus being away itself
+                log.warning("first look at Argus failed", exc_info=True)
             time.sleep(5)
 
     threading.Thread(target=first_info, daemon=True, name="island-info").start()
@@ -1871,7 +1882,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                     bus.events.emit([{"kind": "ari.listening", "data": ears}])
                     try:
                         bus.events.emit([{"kind": "ari.game", "data": api.call("GET", "/ari/game")}])
-                    except Exception:  # noqa: BLE001 - an older Argus without game mode
+                    except _API_ERRORS:  # an older Argus without game mode
                         pass
                 r = api.call("GET", "/events?kinds=ari.state,ari.listening,ari.game,step.running,ari.ask,"
                              f"approval.approved,approval.rejected,approval.expired&after={seq}&limit=200&wait=20",
@@ -1888,7 +1899,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                                                                          "step.running")])
                 elif time.monotonic() - t0 < 1:  # an older Argus that doesn't wait: don't ask in a tight loop
                     time.sleep(1.2)
-            except Exception:  # Argus restarting or out of reach: look again later
+            except (*_API_ERRORS, *_SHAPE_ERRORS):  # Argus restarting or out of reach: look again later
+                time.sleep(4)
+            except Exception:  # noqa: BLE001  # boundary: the feed thread must outlive a Qt signal or handler fault
+                log.warning("Ari feed failed", exc_info=True)
                 time.sleep(4)
 
     threading.Thread(target=feed, daemon=True, name="ari-feed").start()
