@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Monthly use per plugin:** `GET /models/usage/monthly` gives model calls, hand-ups and job runs per plugin per month, kept for five years.
+
 - **Helios:** the phone's bottom bar is the floating pill dock again.
 
 - **New Helios icon:** the browser tab and the installed app use the Argus icon from the shared set.

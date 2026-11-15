@@ -80,6 +80,7 @@ from .. import island as island_mod
 from .. import settings as settings_mod
 from .. import thread as thread_mod
 from .. import timeline as timeline_mod
+from .. import usage as usage_mod
 from ..approvals import ApprovalClosed, ApprovalError, ApprovalNotFound, BadToken
 from ..config import PRIORITY_BATCH, PRIORITY_INTERACTIVE
 from ..context import Argus
@@ -2211,6 +2212,15 @@ def create_app(argus: Argus) -> FastAPI:
             return {"days": days, "daily": [dict(r) for r in daily_rows], "plugins": [dict(r) for r in per]}
 
         return await argus.store.read(fn)
+
+    @app.get("/models/usage/monthly", dependencies=guarded)
+    async def models_usage_monthly(months: int = Query(12, ge=1, le=usage_mod.MAX_MONTHS)) -> dict:
+        """Month by month, per plugin: model calls, hand-ups and job runs. Kept far longer than `/models/usage`."""
+        def fn(c):
+            usage_mod.rollup(c)
+            return usage_mod.monthly(c, months)
+
+        return await argus.store.write(fn)
 
     @app.get("/models/ollama", dependencies=guarded)
     async def models_ollama() -> dict:

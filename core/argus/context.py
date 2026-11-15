@@ -35,6 +35,7 @@ from .presence import PhoneWatch
 from .registry import Registry
 from .scheduler import Scheduler
 from .triggers import Triggers
+from .usage import rollup as usage_rollup
 from .weather import Weather, words
 from .weather import spoken as weather_spoken
 
@@ -523,7 +524,11 @@ class Argus:
         if now < self._next_prune:
             return 0
         cutoff = now - self.cfg.events.retention_days * 86400
-        n = await self.store.write(lambda conn: prune_events(conn, cutoff))
+        def prune(conn):
+            usage_rollup(conn, now)  # count the month-by-month use before the events go
+            return prune_events(conn, cutoff)
+
+        n = await self.store.write(prune)
         self.pruned_events += n
         if n == 0:
             self._next_prune = now + 3600
