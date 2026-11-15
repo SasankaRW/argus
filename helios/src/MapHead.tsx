@@ -1,5 +1,5 @@
 // The strip above the map: what needs you, each with its action ("All fine" when nothing does), and Pause everything /
-// Resume everything. The items come from attention.ts.
+// Resume everything (only while something is paused). The items come from attention.ts.
 
 import { forwardRef, useState } from "react";
 import { api } from "./api";
@@ -9,9 +9,9 @@ import { Control } from "./ControlPanel";
 import { Ms } from "./m3";
 
 export const MapHead = forwardRef<HTMLDivElement, {
-  items: Item[]; onReview: () => void; onLogs: (target: string) => void; onChanged: () => void;
+  items: Item[]; anyPaused: boolean; onReview: () => void; onLogs: (target: string) => void; onChanged: () => void;
   className?: string; style?: React.CSSProperties;
-}>(function MapHead({ items, onReview, onLogs, onChanged, className, style }, ref) {
+}>(function MapHead({ items, anyPaused, onReview, onLogs, onChanged, className, style }, ref) {
   const [said, setSaid] = useState<Record<string, string>>({});  // what a card says after its button was used
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
@@ -42,7 +42,7 @@ export const MapHead = forwardRef<HTMLDivElement, {
       </div>
       <div className="lm-all">
         <Control b={PAUSE_ALL} busy={busy} onFire={() => all(PAUSE_ALL)} />
-        <Control b={RESUME_ALL} busy={busy} onFire={() => all(RESUME_ALL)} />
+        {anyPaused && <Control b={RESUME_ALL} busy={busy} onFire={() => all(RESUME_ALL)} />}
         {note && <span className={`lm-note${note.ok ? "" : " t-bad"}`} role="status">{note.text}</span>}
       </div>
     </div>

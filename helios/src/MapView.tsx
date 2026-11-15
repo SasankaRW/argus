@@ -155,7 +155,7 @@ export function MapView(p: Props) {
   const pick = (c: Card) => (c.id === PLUGINS ? (vertical ? p.onPlugins?.() : zoom.open()) : p.onSelect({ type: "node", id: c.select }));
   const headStyle = { top: headTop, left: p.headLeft ?? Math.max(18, pad.l), right: Math.max(18, pad.r - 12) };
   const head = (
-    <MapHead ref={headRef} items={items} onReview={() => p.onReview?.()} onLogs={(id) => p.onSelect({ type: "node", id, logs: true })} onChanged={() => p.onChanged?.()}
+    <MapHead ref={headRef} items={items} anyPaused={p.map.nodes.some((n) => !!n.paused)} onReview={() => p.onReview?.()} onLogs={(id) => p.onSelect({ type: "node", id, logs: true })} onChanged={() => p.onChanged?.()}
       className={vertical ? "stack" : undefined}
       style={vertical ? undefined : headStyle} />
   );
