@@ -73,6 +73,7 @@ jobs:
           cache-dependency-path: helios/package-lock.json
       - run: npm ci
       - run: npm run typecheck
+      - run: npm test
       - run: npm run build
       - name: The committed Helios build matches the source
         run: |
