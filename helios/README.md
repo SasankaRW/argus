@@ -5,8 +5,9 @@ The Argus dashboard: React + Vite. `argusd` serves the built copy at `/helios`
 
 - `src/api.ts`: REST calls and the event stream (reconnects with `since=<seq>`, never loses an event)
 - `src/live.ts`: `useArgus()`: map snapshot + live events, pulses, job counts
-- `src/mapGraph.ts`: the live map's pure parts: which boxes, their state, line health, the status line, level layout (unit-tested)
-- `src/MapView.tsx`, `src/LevelCanvas.tsx`: fit the map to its space and draw it
+- `src/mapGraph.ts`: the live map's pure parts: which boxes, their state, line health, level layout (unit-tested); `src/attention.ts`: the "needs attention" items
+- `src/MapView.tsx`, `src/MapHead.tsx`, `src/LevelCanvas.tsx`: fit the map to its space and draw it, with the attention row and Pause everything on top
+- `src/ControlPanel.tsx`, `src/controls.ts`: the side panel of a box (status, Stop/Start/Restart/Pause/Resume, logs); controls are in docs/controls.md
 - `src/Inspector.tsx`: details for a box, a line or a job
 - `src/EventsPanel.tsx`: the live event list with filters
 

@@ -316,15 +316,8 @@
 .phone2 .pm-live { height: 44px; padding: 0 14px; display: flex; align-items: center; gap: 8px; border-radius: 22px; }
 .phone2 .pm-live b { font-size: 14px; font-weight: 600; }
 .phone2 .pm-live .ns { font-size: 12.5px; }
-.phone2 .pm-sheet { position: absolute; z-index: 3; left: 0; right: 0; bottom: 0; border-radius: 28px 28px 0 0; padding: 8px 18px 12px; animation: m3-rise 560ms var(--sn-out) backwards; }
+.phone2 .pm-sheet { max-height: 70%; overflow-y: auto; position: absolute; z-index: 3; left: 0; right: 0; bottom: 0; border-radius: 28px 28px 0 0; padding: 8px 18px 12px; animation: m3-rise 560ms var(--sn-out) backwards; }
 .phone2 .pm-grip { width: 36px; height: 4px; border-radius: 2px; background: #44444c; margin: 0 auto 10px; }
-.phone2 .pm-sh { display: flex; align-items: center; gap: 12px; }
-.phone2 .pm-sh .ni { width: 40px; height: 40px; border-radius: 13px; }
-.phone2 .pm-t { font-size: 16px; font-weight: 600; }
-.phone2 .pm-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
-.phone2 .pm-tile { background: var(--s3); border-radius: 16px; padding: 10px 12px; min-width: 0; }
-.phone2 .pm-v { font-size: 18px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.phone2 .pm-more { display: block; margin: 8px 0 0 auto; }
 .phone2 .pm-cmd { position: absolute; z-index: 3; left: 14px; right: 14px; bottom: 14px; height: 52px; border-radius: 26px; display: flex; align-items: center; gap: 10px; padding: 0 6px 0 16px; }
 .phone2 .pm-cmd .ms { color: var(--tx2); }
 .phone2 .pm-cmd input { flex: 1; min-width: 0; background: transparent !important; box-shadow: none !important; padding: 0; font-size: 16px; }
@@ -377,26 +370,7 @@
 :is(.phone2, .shell, .login) .sn-spark path { fill: none; stroke: var(--ac); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 0; }
 
 /* ---- the compact inspector card (desktop) */
-.shell .ic { display: flex; flex-direction: column; gap: 12px; }
-.shell .ic-h { display: flex; align-items: center; gap: 10px; }
-.shell .ic-h .ni { width: 38px; height: 38px; }
-.shell .ic-t { font-size: 15px; font-weight: 600; }
-.shell .ic-gauges { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-.shell .ic-gauge { background: var(--s3); border-radius: 14px; padding: 8px 4px; text-align: center; }
-.shell .ic-gauge svg { display: block; margin: 0 auto; }
-.shell .ic-gauge .ring { transition: stroke-dashoffset 600ms var(--sn-std); }
 .shell .ring.pri { stroke: var(--ac); } .shell .ring.ter { stroke: var(--violet); } .shell .ring.ok { stroke: var(--ok); }
-.shell .ic-v { font-size: 14px; font-weight: 600; }
-.shell .ic-k { font-size: 11px; color: var(--tx2); }
-.shell .ic-card { background: var(--s3); border-radius: 14px; padding: 10px 12px; }
-.shell .ic-row { display: flex; justify-content: space-between; align-items: baseline; font-size: 12.5px; color: var(--tx2); }
-.shell .ic-spark { display: block; margin-top: 4px; }
-.shell .ic-spark path { fill: none; stroke: var(--ac); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 0; animation: sn-draw 1.6s var(--sn-out) .3s backwards; }
-.shell .ic-job { display: flex; align-items: center; gap: 10px; padding: 6px 0; font-size: 13px; min-width: 0; }
-.shell .ic-job .grow { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.shell .ic-job .mono { color: var(--tx2); font-size: 12px; }
-.shell .ic-job .dot { width: 8px; height: 8px; }
-.shell .ic-foot { display: flex; align-items: center; gap: 8px; }
 .shell .ic-back { margin: 0 0 8px; }
 
 @keyframes m3-rise { from { opacity: 0; transform: translateY(24px); } }

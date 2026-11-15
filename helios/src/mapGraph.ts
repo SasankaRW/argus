@@ -1,6 +1,6 @@
 // The live map as levels: which boxes are shown (a short whitelist), what state each one is in, how healthy each line
-// is, what the top status line says, and where everything goes. Pure (no React, no clock of its own: `now` is passed
-// in, in seconds like the events' `at`), so the unit tests can run it. MapView.tsx draws the result.
+// is, and where everything goes. Pure (no React, no clock of its own: `now` is passed in, in seconds like the events'
+// `at`), so the unit tests can run it. MapView.tsx draws the result; attention.ts turns the problems into the row on top.
 
 import type { ArgusEvent, ArgusMap, MapNode } from "./api";
 import type { IconName } from "./icons";
@@ -19,12 +19,15 @@ export type Card = {
   level: number;  // the column (the row on the phone)
   skin: Skin;
   tone: Tone;
-  problem?: string;  // "Phone is offline": what the status line says when this box is not fine
+  problem?: string;  // "Phone is offline": what the attention row says when this box is not fine
+  detail?: string;  // a second line for the attention row ("since 09:12 · 3 messages waiting")
+  meter?: number;  // 0..1, only where real data exists (the queue, Claude's daily budget, a machine's load)
+  paused?: boolean;  // stopped or paused from Helios
   slot?: Slot;  // a fixed place inside the Argus level
   big?: boolean;
 };
-// busy: working with traffic in the last minute; ok: working; quiet: nothing lately; slow; broken; esc: asks a bigger model
-export type LineKind = "busy" | "ok" | "quiet" | "slow" | "broken" | "esc";
+// busy: traffic in the last minute (the only lit line); quiet: connected, nothing lately; slow; broken; esc: asks a bigger model
+export type LineKind = "busy" | "quiet" | "slow" | "broken" | "esc";
 export type Line = { a: string; b: string; kind: LineKind };
 export type Problem = { tone: "bad" | "warn"; text: string };
 
@@ -33,12 +36,14 @@ export type LevelCtx = {
   events: ArgusEvent[];
   queue?: { running: number; queued: number } | null;
   byWorker?: Record<string, number>;
+  claude?: { calls_today: number; calls_per_day: number } | null;  // Claude's budget today (GET /models)
 };
 
 export const RECENT = 60;  // seconds of traffic that make a line "busy"
 export const CORE = "argus";
 export const PLUGINS = "plugins";
-export const LEVEL_HEADS = ["Apps", "Argus", "Machines and work", "Models"];
+// the columns, left to right
+export const L = { apps: 0, argus: 1, machines: 2, plugins: 3, models: 4 } as const;
 
 // ---------------------------------------------------------------- small helpers
 
@@ -53,12 +58,22 @@ export function ago(sec: number): string {
   return `${Math.round(sec / 86400)} d ago`;
 }
 
+// The laptop is Calypso; any other machine goes by its host name ("PC"), or by its id when it has none.
 export function workerLabel(n: MapNode): string {
-  const raw = `${n.id} ${n.group ?? ""}`.toLowerCase();
-  if (/laptop/.test(raw)) return "Laptop";
-  if (/\bpc\b|desktop|gpu|-pc/.test(raw)) return "PC";
-  return cap(n.id.replace(/^(worker|desktop)-/, ""));
+  const raw = `${n.id} ${n.group ?? ""} ${caps(n).join(" ")}`.toLowerCase();
+  if (/laptop|calypso/.test(raw)) return "Calypso";
+  const host = (n.group ?? "").trim() || n.id.replace(/^(worker|desktop)-/, "");
+  return /^[a-z]{1,3}$/i.test(host) ? host.toUpperCase() : /^[a-z]/.test(host) && host === host.toLowerCase() ? cap(host) : host;
 }
+
+// The name a box goes by on the map and in its panel.
+export function labelOf(n: MapNode): string {
+  if (n.kind === "worker") return caps(n).includes("phone") ? "Phone" : workerLabel(n);
+  if (n.kind === "model") return modelLabel(n);
+  return n.label || n.id;
+}
+
+const isLaptop = (n: MapNode) => /laptop|calypso/.test(`${n.id} ${n.group ?? ""} ${caps(n).join(" ")}`.toLowerCase());
 
 export function modelLabel(n: MapNode): string {
   const m = n.meta as { provider?: string; model?: string };
@@ -88,7 +103,7 @@ export function boxOf(map: ArgusMap): (id: string) => string | null {
     if (n?.kind === "plugin") return PLUGINS;
     if (n?.kind === "core") return CORE;
     if (n?.kind === "worker") return id;
-    if (n?.kind === "model") return id;
+    if (n?.kind === "model" || n?.kind === "app") return id;
     if (keep.has(id) && n) return id;
     return null;
   };
@@ -108,24 +123,24 @@ export function recentTraffic(events: ArgusEvent[], now: number, of: (id: string
 
 // ---------------------------------------------------------------- line health
 
-// A line is as bad as the box at its far end: broken beats slow beats traffic beats history.
-export function lineKind(o: { tone: Tone; recent: number; seen: boolean }): LineKind {
+// A line is as bad as the box at its far end: broken beats slow beats traffic. Only traffic in the last minute lights it;
+// a connection with nothing lately is plain grey, however healthy.
+export function lineKind(o: { tone: Tone; recent: number }): LineKind {
   if (o.tone === "bad") return "broken";
   if (o.tone === "warn") return "slow";
-  if (o.recent > 0) return "busy";
-  return o.seen ? "ok" : "quiet";
+  return o.recent > 0 ? "busy" : "quiet";
 }
 
 // ---------------------------------------------------------------- the boxes
 
 type Built = { cards: Card[]; lines: Line[]; problems: Problem[] };
 
+const APP_ICONS: Record<string, IconName> = { lifehub: "home", "life-hub": "home", tracker: "done_all" };
+
 export function buildLevels(map: ArgusMap, ctx: LevelCtx): Built {
   const of = boxOf(map);
   const nodes = new Map(map.nodes.map((n) => [n.id, n]));
   const { byBox, byPair } = recentTraffic(ctx.events, ctx.now, of);
-  const seenBox = new Set<string>();  // boxes with any line in the registry, ever
-  for (const e of map.edges) for (const x of [of(e.src), of(e.dst)]) if (x) seenBox.add(x);
   const edgeOf = (a: string, b: string) => map.edges.find((e) => e.src === a && e.dst === b);
   const cards: Card[] = [];
   const lines: Line[] = [];
@@ -133,91 +148,113 @@ export function buildLevels(map: ArgusMap, ctx: LevelCtx): Built {
   const add = (c: Card) => { cards.push(c); if (c.problem && (c.tone === "bad" || c.tone === "warn")) problems.push({ tone: c.tone, text: c.problem }); return c; };
   const core = map.nodes.find((n) => n.kind === "core");
 
-  // --- apps
+  // --- apps: the phone, Helios, Ari, then any other app the registry knows (Life Hub, Tracker ...)
   const phone = nodes.get("phone"), phoneApp = nodes.get("phone-app");
   const phoneW = map.nodes.find((n) => n.kind === "worker" && caps(n).includes("phone"));
   if (phone || phoneApp || phoneW) {
     const online = phoneW ? phoneW.state === "online" : (phone?.meta as { online?: boolean | null } | undefined)?.online;
     const since = (phone?.meta as { since?: number | null } | undefined)?.since;
     const failed = phoneApp?.failed ?? 0, unsent = phoneApp?.unsent ?? 0;
-    let tone: Tone = "ok", status = "online", problem: string | undefined;
-    if (online === false) { tone = "bad"; status = since ? `offline since ${new Date(since * 1000).toTimeString().slice(0, 5)}` : "offline"; problem = "Phone is offline"; }
-    else if (failed > 0) { tone = "bad"; status = `${failed} not delivered`; problem = "Phone is not getting its messages"; }
-    else if (unsent > 0) { tone = "warn"; status = `${unsent} waiting for it`; problem = "Phone is slow to receive"; }
+    const at = since ? new Date(since * 1000).toTimeString().slice(0, 5) : "";
+    let tone: Tone = "ok", status = "online", problem: string | undefined, detail: string | undefined;
+    if (online === false) {
+      tone = "bad"; status = at ? `offline since ${at}` : "offline"; problem = "Phone is offline";
+      detail = [at ? `since ${at}` : "", unsent ? `${unsent} message${unsent === 1 ? "" : "s"} waiting` : ""].filter(Boolean).join(" · ") || undefined;
+    } else if (failed > 0) { tone = "bad"; status = `${failed} not delivered`; problem = "Phone is not getting its messages"; detail = status; }
+    else if (unsent > 0) { tone = "warn"; status = `${unsent} waiting for it`; problem = "Phone is slow to receive"; detail = status; }
     else if (online == null) { tone = "idle"; status = "checking"; }
-    add({ id: "phone", select: phoneW?.id ?? "phone", label: "Phone", icon: "smartphone", status, level: 0, skin: "plain", tone, problem });
+    add({ id: "phone", select: phoneW?.id ?? "phone", label: "Phone", icon: "smartphone", status, level: L.apps, skin: "plain", tone, problem, detail, paused: phoneW?.paused });
   }
   if (nodes.has("helios")) {
-    const n = byBox.get("helios") ?? 0;
-    add({ id: "helios", select: "helios", label: "Helios", icon: "dashboard", status: n ? "in use" : "dashboard", level: 0, skin: "plain", tone: "ok" });
+    add({ id: "helios", select: "helios", label: "Helios", icon: "dashboard", status: (byBox.get("helios") ?? 0) ? "in use" : "dashboard", level: L.apps, skin: "plain", tone: "ok" });
   }
   if (nodes.has("ari")) {
     const last = Math.max(0, ...ctx.events.filter((e) => /^ari\./.test(e.kind)).map((e) => e.at));
-    add({ id: "ari", select: "ari", label: "Ari", icon: "mic", status: last ? `heard ${ago(ctx.now - last)}` : "assistant", level: 0, skin: "plain", tone: "ok" });
+    add({ id: "ari", select: "ari", label: "Ari", icon: "mic", status: last ? `heard ${ago(ctx.now - last)}` : "assistant", level: L.apps, skin: "plain", tone: "ok" });
+  }
+  for (const a of map.nodes.filter((n) => n.kind === "app" && !["helios", "ari", "phone", "phone-app"].includes(n.id))) {
+    add({ id: a.id, select: a.id, label: a.label || cap(a.id), icon: APP_ICONS[a.id] ?? "devices", status: (byBox.get(a.id) ?? 0) ? "in use" : "connected", level: L.apps, skin: "plain", tone: "ok" });
   }
 
-  // --- Argus
-  if (nodes.has("scheduler")) add({ id: "scheduler", select: "scheduler", label: "Scheduler", icon: "schedule", status: "cron and triggers", level: 1, skin: "plain", tone: "ok", slot: "top" });
+  // --- Argus, with the Scheduler above and Approvals and Backups below
+  if (nodes.has("scheduler")) add({ id: "scheduler", select: "scheduler", label: "Scheduler", icon: "schedule", status: "cron and triggers", level: L.argus, skin: "plain", tone: "ok", slot: "top" });
   if (core) {
     const q = ctx.queue;
-    add({ id: CORE, select: core.id, label: "Argus", icon: "hub", level: 1, skin: "core", tone: "ok", slot: "mid", big: true,
-      status: q ? (q.running + q.queued ? `${q.running} running · ${q.queued} waiting` : "idle") : "core" });
+    const busy = q ? q.running + q.queued : 0;
+    add({ id: CORE, select: core.id, label: "Argus", icon: "hub", level: L.argus, skin: "core", tone: "ok", slot: "mid", big: true,
+      status: q ? (busy ? `${q.running} running · ${q.queued} waiting` : "idle") : "core", meter: q && busy ? q.running / busy : undefined });
   }
   const appr = nodes.get("approvals");
-  if (appr) add({ id: "approvals", select: "approvals", label: "Approvals", icon: "pending_actions", level: 1, skin: "plain", tone: "ok", slot: "bl",
+  if (appr) add({ id: "approvals", select: "approvals", label: "Approvals", icon: "pending_actions", level: L.argus, skin: "plain", tone: "ok", slot: "bl",
     status: appr.pending ? `${appr.pending} waiting for you` : "nothing to decide" });
   if (nodes.has("backup")) {
     const e = edgeOf("argus", "backup");
     const failed = e?.last_kind === "backup.failed";
-    add({ id: "backup", select: "backup", label: "Backups", icon: "dns", level: 1, skin: "plain", slot: "br",
+    add({ id: "backup", select: "backup", label: "Backups", icon: "dns", level: L.argus, skin: "plain", slot: "br",
       tone: failed ? "bad" : e ? "ok" : "idle", problem: failed ? "Backups are failing" : undefined,
       status: failed ? "last one failed" : e ? `last one ${ago(ctx.now - e.last_seen)}` : "none yet" });
   }
 
-  // --- machines and work
-  for (const w of map.nodes.filter((n) => n.kind === "worker" && !caps(n).includes("phone"))) {
+  // --- machines: every worker host (the laptop first), then ONE Plugins box
+  const workers = map.nodes.filter((n) => n.kind === "worker" && !caps(n).includes("phone"))
+    .sort((a, b) => Number(isLaptop(b)) - Number(isLaptop(a)) || workerLabel(a).localeCompare(workerLabel(b)));
+  for (const w of workers) {
     const run = ctx.byWorker?.[w.id] ?? 0;
     const state = w.state ?? "unknown";
     const label = workerLabel(w);
-    const tone: Tone = state === "online" ? "ok" : state === "offline" ? "bad" : "warn";
-    add({ id: w.id, select: w.id, label, icon: label === "Laptop" ? "laptop_chromebook" : "desktop_windows", level: 2, skin: "plain", tone,
+    const load = w.meta?.load;  // only when the worker's heartbeat reports it
+    const meter = typeof load === "number" && load >= 0 ? Math.min(1, load > 1 ? load / 100 : load) : undefined;
+    const tone: Tone = w.paused ? "idle" : state === "online" ? "ok" : state === "offline" ? "bad" : "warn";
+    add({ id: w.id, select: w.id, label, icon: isLaptop(w) ? "laptop_chromebook" : "desktop_windows", level: L.machines, skin: "plain", tone, paused: w.paused, meter,
       problem: tone === "bad" ? `${label} is offline` : tone === "warn" ? `${label} is slow to answer` : undefined,
-      status: state !== "online" ? state : run ? `${run} running` : "ready" });
+      detail: tone === "bad" || tone === "warn" ? `worker ${state}` : undefined,
+      status: w.paused ? (run ? `paused · ${run} finishing` : "paused") : state !== "online" ? state : run ? `${run} running` : "ready" });
   }
   const plugins = map.nodes.filter((n) => n.kind === "plugin");
   if (plugins.length) {
-    const working = plugins.filter((p) => (p.jobs?.active ?? 0) > 0).length;
-    const queued = plugins.reduce((a, p) => a + (p.jobs?.queued ?? 0), 0);
+    const live = plugins.filter((p) => !p.paused);
+    const working = live.filter((p) => (p.jobs?.active ?? 0) > 0).length;
+    const queued = live.reduce((a, p) => a + (p.jobs?.queued ?? 0), 0);
+    const stopped = plugins.length - live.length;
     const stuck = !working && queued > 0;
-    add({ id: PLUGINS, select: PLUGINS, label: "Plugins", icon: "extension", level: 2, skin: "plug", tone: stuck ? "warn" : "ok",
-      problem: stuck ? "Plugins are waiting for a worker" : undefined,
-      status: working ? `${working} working` : queued ? `${queued} waiting` : "idle" });
+    const base = working ? `${working} working` : queued ? `${queued} waiting` : "idle";
+    add({ id: PLUGINS, select: PLUGINS, label: "Plugins", icon: "extension", level: L.plugins, skin: "plug", tone: stuck ? "warn" : "ok",
+      problem: stuck ? "Plugins are waiting for a worker" : undefined, detail: stuck ? `${queued} job${queued === 1 ? "" : "s"} queued, none running` : undefined,
+      status: stopped ? `${base} · ${stopped} stopped` : base });
   }
 
-  // --- models
+  // --- models: every configured tier, Claude among them
   const models = map.nodes.filter((n) => n.kind === "model").sort((a, b) => modelRank(a).localeCompare(modelRank(b), "en", { numeric: true }));
   for (const m of models) {
     const label = modelLabel(m);
     const tone: Tone = m.state === "open" ? "bad" : m.state === "half_open" ? "warn" : "ok";
-    const tier = String((m.meta as { tier?: string }).tier ?? "").toUpperCase();
+    const meta = m.meta as { tier?: string; provider?: string };
+    const tier = String(meta.tier ?? "").toUpperCase();
     const st = m.state === "open" ? "paused" : m.state === "half_open" ? "trying again" : "ready";
-    add({ id: m.id, select: m.id, label, icon: modelIcon(m), level: 3, skin: "model", tone,
+    const cl = meta.provider === "claude" && ctx.claude && ctx.claude.calls_per_day > 0 ? ctx.claude : null;
+    add({ id: m.id, select: m.id, label, icon: modelIcon(m), level: L.models, skin: "model", tone,
       problem: tone === "bad" ? `${label} is paused` : tone === "warn" ? `${label} is slow to recover` : undefined,
-      status: tier ? `${tier} · ${st}` : st });
+      detail: tone === "bad" ? "its circuit is open" : tone === "warn" ? "trying again after errors" : undefined,
+      meter: cl ? Math.min(1, cl.calls_today / cl.calls_per_day) : undefined,
+      status: cl && tone === "ok" ? `${cl.calls_today} of ${cl.calls_per_day} calls today` : tier ? `${tier} · ${st}` : st });
   }
 
-  // --- lines: every box joins Argus; the plugins join each model; a model joins the next one when it escalates
+  // --- lines: every box joins Argus (lit by its own traffic); Argus joins each machine, each machine joins Plugins,
+  // Plugins joins each model, and a model joins the next one when it escalates
   const have = new Map(cards.map((c) => [c.id, c]));
-  const tone = (id: string) => have.get(id)?.tone ?? "idle";
+  const tone = (id: string): Tone => have.get(id)?.tone ?? "idle";
   if (have.has(CORE)) {
     for (const c of cards) {
-      if (c.id === CORE || c.level === 3) continue;
-      lines.push({ a: c.id, b: CORE, kind: lineKind({ tone: tone(c.id), recent: byBox.get(c.id) ?? 0, seen: seenBox.has(c.id) || (c.id === PLUGINS && (c.status !== "idle")) }) });
+      if (c.id === CORE || c.level === L.models || c.id === PLUGINS) continue;
+      lines.push({ a: c.id, b: CORE, kind: lineKind({ tone: tone(c.id), recent: byBox.get(c.id) ?? 0 }) });
     }
   }
   if (have.has(PLUGINS)) {
+    for (const c of cards.filter((x) => x.level === L.machines)) {
+      lines.push({ a: c.id, b: PLUGINS, kind: lineKind({ tone: tone(c.id), recent: byPair.get(pairKey(c.id, PLUGINS)) ?? 0 }) });
+    }
     for (const m of models) {
-      lines.push({ a: PLUGINS, b: m.id, kind: lineKind({ tone: tone(m.id), recent: byPair.get(pairKey(PLUGINS, m.id)) ?? 0, seen: seenBox.has(m.id) }) });
+      lines.push({ a: PLUGINS, b: m.id, kind: lineKind({ tone: tone(m.id), recent: byPair.get(pairKey(PLUGINS, m.id)) ?? 0 }) });
     }
   }
   const esc = new Set<string>();
@@ -228,7 +265,6 @@ export function buildLevels(map: ArgusMap, ctx: LevelCtx): Built {
     esc.add(k);
     lines.push({ a: e.src, b: e.dst, kind: "esc" });
   }
-  // broken boxes first in the status line
   problems.sort((x, y) => (x.tone === y.tone ? 0 : x.tone === "bad" ? -1 : 1));
   return { cards, lines, problems };
 }
@@ -238,15 +274,6 @@ function modelRank(n: MapNode): string {
   const m = n.meta as { provider?: string; tier?: string };
   const special = /vision|embed|vl|nomic|llava/i.test(`${(n.meta as { model?: string }).model} ${m.tier} ${n.id}`) || /^[ve]\d/i.test(m.tier ?? "");
   return `${special ? "y" : m.provider === "claude" ? "x" : "a"}${m.tier ?? n.id}`;
-}
-
-// ---------------------------------------------------------------- the status line
-
-export type Status = { tone: "ok" | "bad" | "warn"; text: string; items: Problem[] };
-export function statusLine(problems: Problem[]): Status {
-  if (!problems.length) return { tone: "ok", text: "All fine", items: [] };
-  const ps = [...problems].sort((x, y) => (x.tone === y.tone ? 0 : x.tone === "bad" ? -1 : 1));
-  return { tone: ps[0].tone, text: ps.map((p) => p.text).join(" · "), items: ps };
 }
 
 // ---------------------------------------------------------------- crossings and ordering
@@ -342,17 +369,17 @@ export type Layout = {
   width: number; height: number;
   placed: Record<string, Placed>;
   routes: Routed[];
-  heads: { text: string; x: number; y: number }[];
   crossings: number;
 };
 export type LayoutOpt = {
   orient: "h" | "v";
   dims: (c: Card) => Dim;
-  heads?: string[];
   // h: one x per level number, boxes spread between top and bottom. v: boxes in rows of `perRow`
   xs?: number[]; top?: number; bottom?: number; width: number; height?: number;
-  perRow?: number; rowGap?: number; levelGap?: number; padTop?: number; slotDx?: number;
-  locked?: number[];
+  perRow?: number; rowGap?: number; levelGap?: number; padTop?: number;
+  slotDx?: [number, number];  // h: where Approvals and Backups sit, left and right of the Argus column's centre
+  locked?: number[];  // level numbers whose order stays as given (the models: their order is the escalation chain)
+  compact?: number[];  // level numbers stacked close around the middle instead of spread over the whole height
 };
 
 type Side = "l" | "r" | "t" | "b";
@@ -361,45 +388,45 @@ export function layoutLevels(cards: Card[], lines: Line[], opt: LayoutOpt): Layo
   const levels = [...new Set(cards.map((c) => c.level))].sort((a, b) => a - b);
   const byId = new Map(cards.map((c) => [c.id, c]));
   const placed: Record<string, Placed> = {};
-  const heads: Layout["heads"] = [];
   let order: string[][] = levels.map((lv) => cards.filter((c) => c.level === lv).map((c) => c.id));
   const edges: [string, string][] = lines.map((l) => [l.a, l.b]);
   const lvIndex = new Map(levels.map((lv, i) => [lv, i]));
   const dimOf = (id: string) => opt.dims(byId.get(id)!);
+  const locked = (opt.locked ?? []).map((lv) => lvIndex.get(lv)).filter((i): i is number => i !== undefined);
   let height = opt.height ?? 600;
   let cross = 0;
 
   if (opt.orient === "h") {
-    const xs = opt.xs!, top = opt.top ?? 92, bottom = opt.bottom ?? height - 60, mid = (top + bottom) / 2;
-    const dx = opt.slotDx ?? 96;
+    // a column with many boxes makes the canvas taller (the fixed spots follow the middle)
+    height = Math.max(height, Math.max(...order.map((c) => c.length)) * 64 + 120);
+    const xs = opt.xs!, top = opt.top ?? 60, bottom = opt.bottom ?? height - 60, mid = (top + bottom) / 2;
+    const [dxl, dxr] = opt.slotDx ?? [-40, 145];
     const fixed: Record<string, number> = {}, fixedX: Record<string, number> = {};
     for (const c of cards) {
       if (!c.slot) continue;
       const x = xs[c.level];
-      fixed[c.id] = c.slot === "top" ? top + 20 : c.slot === "mid" ? mid : bottom - 50;
-      fixedX[c.id] = c.slot === "bl" ? x - dx : c.slot === "br" ? x + dx : x;
+      fixed[c.id] = c.slot === "top" ? top + 20 : c.slot === "mid" ? mid : bottom - 5;
+      fixedX[c.id] = c.slot === "bl" ? x + dxl : c.slot === "br" ? x + dxr : x;
     }
-    const r = orderColumns(order, edges.filter(([a, b]) => lvIndex.get(byId.get(a)!.level)! !== lvIndex.get(byId.get(b)!.level)!), { fixed, top, bottom, locked: opt.locked });
+    const r = orderColumns(order, edges.filter(([a, b]) => lvIndex.get(byId.get(a)!.level)! !== lvIndex.get(byId.get(b)!.level)!), { fixed, top, bottom, locked });
     order = r.cols;
     cross = r.crossings;
+    const compact = new Set(opt.compact ?? []);
     for (const [i, lv] of levels.entries()) {
-      for (const id of order[i]) {
+      const n = order[i].length, pitch = Math.min(130, (bottom - top) / n);
+      order[i].forEach((id, k) => {
         const c = byId.get(id)!, d = dimOf(id);
-        placed[id] = { ...c, ...d, x: fixedX[id] ?? xs[lv], y: r.ys[id] };
-      }
-      const head = opt.heads?.[lv];
-      if (head) heads.push({ text: head, x: xs[lv], y: 36 });
+        placed[id] = { ...c, ...d, x: fixedX[id] ?? xs[lv], y: compact.has(lv) ? mid + (k - (n - 1) / 2) * pitch : r.ys[id] };
+      });
     }
   } else {
     // phone: one level per row, a few boxes in a row; a second row of the same level sits under the gaps of the first
     const per = opt.perRow ?? 3, W = opt.width, gap = opt.rowGap ?? 22, lg = opt.levelGap ?? 44;
     let y = opt.padTop ?? 20;
-    const r = orderColumns(order, edges.filter(([a, b]) => lvIndex.get(byId.get(a)!.level)! !== lvIndex.get(byId.get(b)!.level)!), { top: 0, bottom: 1, locked: [...(opt.locked ?? []), ...levels.map((lv, i) => (cards.some((c) => c.level === lv && c.slot) ? i : -1)).filter((i) => i >= 0)] });
+    const r = orderColumns(order, edges.filter(([a, b]) => lvIndex.get(byId.get(a)!.level)! !== lvIndex.get(byId.get(b)!.level)!), { top: 0, bottom: 1, locked: [...locked, ...levels.map((lv, i) => (cards.some((c) => c.level === lv && c.slot) ? i : -1)).filter((i) => i >= 0)] });
     order = r.cols;
     cross = r.crossings;
     for (const [i, lv] of levels.entries()) {
-      const head = opt.heads?.[lv];
-      if (head) { heads.push({ text: head, x: 4, y: y + 2 }); y += 22; }
       const ids = order[i];
       const slotted = ids.some((id) => byId.get(id)!.slot);
       const rowsOf: string[][] = [];
@@ -468,5 +495,5 @@ export function layoutLevels(cards: Card[], lines: Line[], opt: LayoutOpt): Layo
     const cy = (py + qy) / 2;
     return { ...e.l, d: `M${r(px)} ${r(py)} C ${r(px)} ${r(cy)}, ${r(qx)} ${r(cy)}, ${r(qx)} ${r(qy)}`, mx: r((px + qx) / 2), my: r(cy) };
   });
-  return { width: opt.width, height, placed, routes, heads, crossings: cross };
+  return { width: opt.width, height, placed, routes, crossings: cross };
 }

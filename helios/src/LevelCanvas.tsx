@@ -1,5 +1,4 @@
-// One drawing of boxes and lines at a fixed logical size (MapView scales it to fit). Used for the whole system and,
-// in the plugin view, for what is inside Plugins. Pointing at (or tabbing to) a box dims everything it is not connected to.
+// One drawing of boxes and lines at a fixed logical size (MapView scales it to fit). Pointing at (or tabbing to) a box dims everything it is not connected to.
 
 import { memo, useState } from "react";
 import { Ms } from "./m3";
@@ -31,7 +30,6 @@ export const LevelCanvas = memo(function LevelCanvas({ layout, flow, selected, o
           <path key={`${r.a}>${r.b}`} d={r.d} data-a={r.a} data-b={r.b} className={`lm-e ${r.kind}${off(r)}`} />
         ))}
       </svg>
-      {layout.heads.map((h) => <div key={h.text} className="lm-ch" style={{ left: h.x, top: h.y }}>{h.text}</div>)}
       {Object.values(layout.placed).map((c) => (
         <button
           key={c.id}
@@ -46,8 +44,10 @@ export const LevelCanvas = memo(function LevelCanvas({ layout, flow, selected, o
           onBlur={() => setFocus(null)}
         >
           <span className="lm-i"><Ms n={c.icon} fill /></span>
-          <span className="lm-t"><span className="lm-nm">{c.label}</span><span className="lm-st">{c.status}</span></span>
-          {c.skin === "plug" && <span className="lm-go"><Ms n="fit_screen" /></span>}
+          <span className="lm-t">
+            <span className="lm-nm">{c.label}</span><span className="lm-st">{c.status}</span>
+            {c.meter !== undefined && <span className="lm-mb" role="meter" aria-label={`${c.label} load`} aria-valuemin={0} aria-valuemax={1} aria-valuenow={c.meter}><i className={c.meter > 0.85 ? "hi" : undefined} style={{ width: `${Math.round(c.meter * 100)}%` }} /></span>}
+          </span>
         </button>
       ))}
       {layout.routes.filter((r) => BADGE[r.kind]).map((r) => (
