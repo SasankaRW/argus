@@ -164,7 +164,7 @@ class WorkerService : Service() {
             try {
                 if (System.currentTimeMillis() - registeredAt > 10 * 60_000) {
                     val r = api.post("/workers/register", JSONObject().put("id", id).put("host", Build.MODEL ?: "phone")
-                        .put("capabilities", caps).put("version", "app-1.1"))
+                        .put("capabilities", caps).put("version", "app-1.2"))
                     if (r.status == 401 || r.status == 403) {
                         show("the token was refused: open Argus to fix it")
                         workerPause.sleep(60_000)

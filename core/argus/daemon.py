@@ -82,9 +82,11 @@ def restore_cmd(cfg, which: str, yes: bool) -> int:
 
     backups = Backups(cfg.db_path, cfg.backup.keep)
     if which == "latest":
-        found = backups.latest()
+        found, skipped = backups.latest_good()
+        for name in skipped:
+            print(f"Skipped {name}: it fails its check.")
         if found is None:
-            print(f"No backups in {backups.dir}.", file=sys.stderr)
+            print(f"No usable backups in {backups.dir}.", file=sys.stderr)
             return 4
     else:
         found = Path(which)
@@ -97,7 +99,8 @@ def restore_cmd(cfg, which: str, yes: bool) -> int:
     print(f"          {'ok' if check['ok'] else 'FAILED: ' + str(check.get('problem'))}"
           + (f", schema v{check['schema']}, {check['jobs']} jobs" if check["ok"] else ""))
     print(f"Database: {cfg.db_path}" + ("" if cfg.db_path.exists() else " (none yet)"))
-    print(f"          the current one is moved to {cfg.db_path.parent / 'replaced'}, not deleted")
+    print(f"          the current one is moved to "
+          f"{cfg.db_path.parent / 'replaced' / (cfg.db_path.stem + '-<date>')}, not deleted")
     if argusd_listening(cfg.server.host, cfg.server.port):
         print(f"argusd is running on port {cfg.server.port}. Stop it first (on the laptop: "
               "sudo systemctl stop argusd), then run this again.", file=sys.stderr)

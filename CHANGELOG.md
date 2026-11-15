@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Restore:** `argusd --restore latest` skips a backup that fails its check and uses the newest good one, saying so; the dry run shows the full folder the old database moves to. The Android companion app is now version 1.2.
+
 - **Plugins declare what they need from Ari:** `capabilities: {asks_on_island, needs_child_session}` in plugin.yaml replaces the Workstation's name hard-coded in core. Nothing changes for you.
 
 - **Helios tests:** Helios now has unit tests for its formatting, API client and Ari state logic, run in CI.

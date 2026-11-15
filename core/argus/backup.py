@@ -94,6 +94,16 @@ class Backups:
         files = sorted(self.dir.glob("argus-*.db")) if self.dir.is_dir() else []
         return files[-1] if files else None
 
+    def latest_good(self) -> tuple[Path | None, list[str]]:
+        """The newest backup that passes `verify`, and the names of the newer ones skipped because they did not."""
+        files = sorted(self.dir.glob("argus-*.db"), reverse=True) if self.dir.is_dir() else []
+        skipped: list[str] = []
+        for p in files:
+            if self.verify(p)["ok"]:
+                return p, skipped
+            skipped.append(p.name)
+        return None, skipped
+
     def prune(self) -> list[str]:
         files = sorted(self.dir.glob("argus-*.db"))
         old = files[: max(0, len(files) - self.keep)]
