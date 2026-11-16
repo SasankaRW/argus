@@ -1,0 +1,26 @@
+{
+ "note": "Argus Send auth vectors. K = HKDF-SHA256(ikm=X25519(eph), salt=nonce_c||nonce_s, info='argus-send v1'||min(pubC,pubS)||max(pubC,pubS) bytewise, 32 bytes). MAC = hex HMAC-SHA256(K, METHOD|path|query|sha256hex(body)|seq). Receiver sig = Ed25519(nonce_c||eph_s); sender proof = Ed25519(nonce_s||eph_c). All binary values base64.",
+ "ed_seed_c": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
+ "ed_seed_s": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=",
+ "x_priv_c": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=",
+ "x_priv_s": "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=",
+ "pub_c": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w=",
+ "pub_s": "gTl3Dqh9F19Wo1Rmw0x+zMuNipG07jeiXfYPW4/Js5Q=",
+ "eph_c": "Xf7dO2vUf2+ijuFdlp1bsOpTd01Ii9r53xxuASSz7yI=",
+ "eph_s": "rAGyIJ6GNU+4UyN7XeD0+rE8f8v0M6YcAZNpYX/s8Qs=",
+ "nonce_c": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+ "nonce_s": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8=",
+ "shared": "QOR6P1Jb3KxJHUGJeNfbWvYjrHr+diPG14pdT86dD2M=",
+ "K": "2YfSu9YSv/4h+EgVUjdqVjyOaleLDOc2IMuIcRpvXwI=",
+ "sig_s": "XHYO79PP615Y+Lo4h4ho3cU0i8Dalf1y9+Kx9XO8hzO/b4B6cLV+mopJh9YiYRadfmRuwEYjHz7xD1CipC81CQ==",
+ "proof_c": "xWeNIlM76LH9+UJtAmjVOfN5FqhoGJy51XGb6Ym5p85CCy0ufAAo1WmSi2mERlJmEMfETmouQs/p5LbqNBZnAQ==",
+ "mac": {
+  "method": "POST",
+  "path": "/send/offers",
+  "query": "",
+  "body": "{\"offer_id\":\"x\"}",
+  "body_sha256": "ab1e8216ecca7b645c86323e8680b72f20ce4a17eef4c0ff4c6da730af9108cd",
+  "seq": 7,
+  "mac": "d18dc56f27c5a22334799d162081614453788766745897c6f6045d669249526f"
+ }
+}
