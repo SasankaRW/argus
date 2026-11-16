@@ -25,3 +25,9 @@ android/.kotlin/
 plugins/eyes/studio/out/
 plugins/eyes/studio/*.png
 plugins/eyes/studio/rest.frame
+
+# Windows send menu: build output, certificates and keys never go in the repo
+windows/send-menu/build/
+*.pfx
+*.cer
+*.snk
