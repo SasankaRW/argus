@@ -97,3 +97,23 @@ def _no_nightly_backup(monkeypatch, request):
             return None
 
         monkeypatch.setattr(argus.context.Argus, "backup_tick", nothing)
+
+
+@pytest.fixture(autouse=True)
+def _send_tests_leave_no_threads(request):
+    """Argus Send tests start agents (servers, loops, mDNS): none of it may outlive the test."""
+    if not request.node.fspath.basename.startswith("test_send_"):
+        yield
+        return
+    import threading
+    import time
+
+    before = set(threading.enumerate())
+    yield
+    end = time.time() + 3
+    while time.time() < end:
+        extra = [t for t in threading.enumerate() if t not in before and t.is_alive()]
+        if not extra:
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"threads left running after the test: {[t.name for t in extra]}")
