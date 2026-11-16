@@ -37,6 +37,9 @@ class WorkerService : Service() {
             ctx.startForegroundService(Intent(ctx, WorkerService::class.java))
         }
 
+        /** Argus Send needs the service even before an Argus address is set (it works without Argus). */
+        fun startSend(ctx: Context) = ctx.startForegroundService(Intent(ctx, WorkerService::class.java))
+
         fun stop(ctx: Context) = ctx.stopService(Intent(ctx, WorkerService::class.java))
 
         fun channels(ctx: Context) {
@@ -64,13 +67,16 @@ class WorkerService : Service() {
         show(lastText)  // Android wants startForeground after every startForegroundService
         if (!running) {
             running = true
-            if (Prefs(this).worker) loop = thread(name = "argus-worker", isDaemon = true) { work() }
-            inboxLoop = thread(name = "argus-inbox", isDaemon = true) { inbox() }
+            runCatching { dev.argus.companion.send.SendHub.start(this) }.onFailure { Log.w(TAG, "send", it) }
+            if (!Prefs(this).ready) { /* no Argus address yet: only Send runs */ }
+            else if (Prefs(this).worker) loop = thread(name = "argus-worker", isDaemon = true) { work() }
+            if (Prefs(this).ready) inboxLoop = thread(name = "argus-inbox", isDaemon = true) { inbox() }
             // a network came back (wifi, Tailscale, mobile data): don't wait out the back-off
             val cb = object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: Network) {
                     workerPause.kick()
                     inboxPause.kick()
+                    dev.argus.companion.send.SendHub.kick()  // a network came back: retry the queue
                 }
             }
             runCatching { getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(cb) }
@@ -82,6 +88,7 @@ class WorkerService : Service() {
 
     override fun onDestroy() {
         running = false
+        dev.argus.companion.send.SendHub.stop()
         loop?.interrupt()
         inboxLoop?.interrupt()
         netCallback?.let { runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(it) } }
@@ -164,7 +171,7 @@ class WorkerService : Service() {
             try {
                 if (System.currentTimeMillis() - registeredAt > 10 * 60_000) {
                     val r = api.post("/workers/register", JSONObject().put("id", id).put("host", Build.MODEL ?: "phone")
-                        .put("capabilities", caps).put("version", "app-1.2"))
+                        .put("capabilities", caps).put("version", "app-1.3"))
                     if (r.status == 401 || r.status == 403) {
                         show("the token was refused: open Argus to fix it")
                         workerPause.sleep(60_000)

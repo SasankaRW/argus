@@ -13,6 +13,8 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <!-- so the connection (and your notifications) survive deep sleep: the setup page asks for this once -->
+    <!-- Argus Send saves into Download/Argus: MediaStore needs no permission on Android 10+, older versions need this -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!-- to find an app by its name ("open Spotify") -->
@@ -59,6 +61,22 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+
+        <!-- Argus Send: the share sheet entry (and the "Send to Calypso" / "Send to PC" direct-share targets); no UI -->
+        <activity
+            android:name=".send.SendShareActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.NoDisplay"
+            android:excludeFromRecents="true"
+            android:label="Send with Argus">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+        </activity>
+        <receiver android:name=".send.SendActionReceiver" android:exported="false" />
 
         <receiver android:name=".KeepAlive" android:exported="false" />
         <receiver android:name=".ActionReceiver" android:exported="false" />
