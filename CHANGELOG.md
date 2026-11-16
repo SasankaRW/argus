@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Right-click send icons:** plain glyphs without a background, white on dark and dark on light, clearer at small sizes. Run scripts/send-menu-install.ps1 again.
+
 - **Send on the PC:** the logon task no longer exits at start; with no console the agent logs to agent.log in its data folder.
 
 - **Right-click send:** "Send to my phone" and "Send to Calypso" are separate entries in the Windows 11 menu with new icons, named after the device list. Devices can be renamed with `PATCH /send/devices/{id}`. Run `scripts\send-menu-install.ps1` again.

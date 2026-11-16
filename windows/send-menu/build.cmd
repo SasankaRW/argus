@@ -11,7 +11,7 @@ if exist "%OUT%" rmdir /s /q "%OUT%"
 rem the files Explorer loads go in %OUT%\app (the packages' external location); each package holds only a manifest and logo
 mkdir "%OUT%\app" || exit /b 1
 pushd "%OUT%\app"
-cl /nologo /EHsc /O2 /MT /LD /DUNICODE /D_UNICODE /Fe:send_menu.dll "%HERE%send_menu.cpp" /link /DEF:"%HERE%send_menu.def" shell32.lib shlwapi.lib ole32.lib uuid.lib user32.lib || exit /b 1
+cl /nologo /EHsc /O2 /MT /LD /DUNICODE /D_UNICODE /Fe:send_menu.dll "%HERE%send_menu.cpp" /link /DEF:"%HERE%send_menu.def" shell32.lib shlwapi.lib ole32.lib uuid.lib user32.lib advapi32.lib || exit /b 1
 cl /nologo /O2 /MT /Fe:send_stub.exe "%HERE%stub.cpp" || exit /b 1
 del *.obj *.exp *.lib 2>nul
 popd

@@ -24,9 +24,9 @@ static const CLSID CLSID_SendPc      = {0x9056c0b5, 0x5657, 0x4668, {0x8f, 0x04,
 
 // `fallback` is the name used until the engine's devices.json has one (the title is "Send to <name>").
 struct Device { const wchar_t* id; const wchar_t* fallback; const wchar_t* icon; const CLSID* clsid; };
-static const Device kPhone   = {L"phone",   L"my phone", L"send-phone.ico",   &CLSID_SendPhone};
-static const Device kCalypso = {L"calypso", L"Calypso",  L"send-calypso.ico", &CLSID_SendCalypso};
-static const Device kPc      = {L"pc",       L"PC",      L"send-pc.ico",      &CLSID_SendPc};
+static const Device kPhone   = {L"phone",   L"my phone", L"send-phone",   &CLSID_SendPhone};
+static const Device kCalypso = {L"calypso", L"Calypso",  L"send-calypso", &CLSID_SendCalypso};
+static const Device kPc      = {L"pc",       L"PC",      L"send-pc",      &CLSID_SendPc};
 
 static std::wstring ModuleDir() {
     wchar_t p[MAX_PATH]; GetModuleFileNameW(g_module, p, MAX_PATH);
@@ -156,7 +156,11 @@ public:
         return SHStrDupW((std::wstring(L"Send to ") + DeviceName(dev_)).c_str(), name);
     }
     IFACEMETHODIMP GetIcon(IShellItemArray*, PWSTR* icon) override {
-        return SHStrDupW((ModuleDir() + L"\\" + dev_->icon).c_str(), icon);
+        // white glyph for the dark theme, dark glyph for the light one (read each time the menu opens)
+        DWORD light = 0, size = sizeof light;
+        RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+                     L"AppsUseLightTheme", RRF_RT_REG_DWORD, nullptr, &light, &size);
+        return SHStrDupW((ModuleDir() + L"\\" + dev_->icon + (light ? L"-light.ico" : L"-dark.ico")).c_str(), icon);
     }
     IFACEMETHODIMP GetToolTip(IShellItemArray*, PWSTR* tip) override { *tip = nullptr; return E_NOTIMPL; }
     IFACEMETHODIMP GetCanonicalName(GUID* g) override { *g = *dev_->clsid; return S_OK; }
