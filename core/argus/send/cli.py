@@ -42,7 +42,15 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         print(f"queued {oid[:8]}: the agent sends it as soon as {agent.devices.name_of(args.device)} is reachable")
         return 0
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
+    fmt = "%(asctime)s %(name)s %(message)s"
+    if sys.stdout is None or sys.stderr is None:  # pythonw (the logon task on Windows) has no console
+        agent.data.mkdir(parents=True, exist_ok=True)
+        log = open(agent.data / "agent.log", "a", encoding="utf-8", buffering=1)  # noqa: SIM115 (open for the process's life)
+        sys.stdout = sys.stdout or log
+        sys.stderr = sys.stderr or log
+        logging.basicConfig(level=logging.INFO, format=fmt, stream=log)
+    else:
+        logging.basicConfig(level=logging.INFO, format=fmt)
     try:
         asyncio.run(agent.run_forever())
     except KeyboardInterrupt:
