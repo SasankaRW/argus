@@ -8,7 +8,8 @@ $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     [Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $admin) { throw "Run this in PowerShell as Administrator: removing the trusted certificate needs it." }
 
-Get-AppxPackage -Name "Argus.SendMenu" | Remove-AppxPackage
+$Old = @("Argus.SendMenu", "Argus.SendPhone", "Argus.SendCalypso", "Argus.SendPc")
+Get-AppxPackage | Where-Object { $Old -contains $_.Name } | Remove-AppxPackage
 foreach ($store in "Cert:\LocalMachine\TrustedPeople", "Cert:\CurrentUser\My") {
     Get-ChildItem $store | Where-Object { $_.Subject -eq $Subject } | Remove-Item
 }

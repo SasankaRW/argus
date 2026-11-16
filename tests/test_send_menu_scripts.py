@@ -25,28 +25,44 @@ def test_powershell_scripts_parse(path):
     assert r.returncode == 0, r.stdout + r.stderr
 
 
-def test_manifest_clsids_match_the_cpp_and_both_devices_are_listed():
-    manifest = (MENU / "AppxManifest.xml").read_text()
+def test_each_device_is_its_own_package_with_its_own_clsid_and_one_verb():
+    """One verb per package: Windows 11 groups several verbs of a package under a submenu, so no submenu this way."""
+    template = (MENU / "AppxManifest.xml.in").read_text()
     cpp = (MENU / "send_menu.cpp").read_text()
-    ids = set(re.findall(r'Class Id="([0-9a-f-]{36})"', manifest))
-    assert len(ids) == 2
-    for guid in ids:
-        assert guid[:8] in cpp
-        assert manifest.count(f'Clsid="{guid}"') == 2          # files and folders
-    assert 'Type="*"' in manifest and 'Type="Directory"' in manifest
-    assert "Send to my phone" in cpp and "Send to Calypso" in cpp
-    assert 'L" send "' in cpp                                  # runs `argus send <device> <paths>`
+    packages = (MENU / "make-packages.ps1").read_text()
+    assert template.count("<desktop5:Verb ") == 2 and template.count("<com:Class ") == 1   # files + folders
+    assert 'Type="*"' in template and 'Type="Directory"' in template
+    assert "ECF_HASSUBCOMMANDS" not in cpp and "ECF_DEFAULT" in cpp
+    guids = re.findall(r'Clsid = "([0-9a-f-]{36})"', packages)
+    assert len(guids) == 3 and len(set(guids)) == 3
+    for guid in guids:   # the C++ struct initialiser must spell the whole GUID (a wrong byte hid Calypso once)
+        h = guid.replace("-", "")
+        parts = [f"0x{h[:8]}", f"0x{h[8:12]}", f"0x{h[12:16]}"] + [f"0x{h[i:i + 2]}" for i in range(16, 32, 2)]
+        assert ", ".join(parts[:3]) + ", {" + ", ".join(parts[3:]) + "}" in cpp
+    assert 'L" send "' in cpp                                   # runs `argus send <device> <paths>`
+    assert "Send to " in cpp and ".argus-send" in cpp and "devices.json" in cpp   # the title follows the saved name
+
+
+def test_glyphs_cover_the_icons_the_assets_script_draws():
+    glyphs = {line.split("|")[0] for line in (MENU / "glyphs.txt").read_text().splitlines() if line}
+    script = (MENU / "make-assets.ps1").read_text()
+    for name in re.findall(r"SaveIco \"[^\"]+\" '#[0-9a-f]{6}' '([a-z_]+)'", script):
+        assert name in glyphs
 
 
 def test_scripts_use_the_same_identity_and_never_commit_secrets():
-    manifest = (MENU / "AppxManifest.xml").read_text()
-    publisher = re.search(r'Publisher="([^"]+)"', manifest).group(1)
-    name = re.search(r'Identity Name="([^"]+)"', manifest).group(1)
+    template = (MENU / "AppxManifest.xml.in").read_text()
+    publisher = re.search(r'Publisher="([^"]+)"', template).group(1)
     for script in ("send-menu-install.ps1", "send-menu-remove.ps1"):
         text = (SCRIPTS / script).read_text()
-        assert publisher in text and name in text
+        for pkg in ("Argus.SendMenu", "Argus.SendPhone", "Argus.SendCalypso"):   # the old one is cleaned up too
+            assert pkg in text
+    assert publisher in (SCRIPTS / "send-menu-install.ps1").read_text()
+    assert 'Name="Argus.Send@ID@"' in template
     install = (SCRIPTS / "send-menu-install.ps1").read_text()
-    assert "-ExternalLocation" in install and "LocalMachine\\TrustedPeople" in install and "SendTo" in install
-    assert "windows\\send-menu" in install and "ArgusSendMenu.msix" in (MENU / "build.cmd").read_text()
+    assert "-ExternalLocation" in install and "SendTo" in install
+    assert "LocalMachine" + chr(92) + "TrustedPeople" in install
+    assert "send-menu" in install and "ArgusSend-" in install
+    assert "ArgusSend-" in (MENU / "make-packages.ps1").read_text()
     ignore = (ROOT / ".gitignore").read_text()
     assert "windows/send-menu/build/" in ignore and "*.pfx" in ignore

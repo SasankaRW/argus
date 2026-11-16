@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Right-click send:** "Send to my phone" and "Send to Calypso" are separate entries in the Windows 11 menu with new icons, named after the device list. Devices can be renamed with `PATCH /send/devices/{id}`. Run `scripts\send-menu-install.ps1` again.
+
 - **Argus Send (phone):** the Android app receives files into Download/Argus and sends from the share sheet ("Send to Calypso" / "Send to PC") over the LAN or Tailscale, with resume and a queue. App 1.3.
 
 - **Send:** the agent polls Tailscale only when it is configured, and its tests are lighter.

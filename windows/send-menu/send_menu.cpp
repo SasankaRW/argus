@@ -17,11 +17,16 @@ static std::atomic<long> g_locks{0};
 
 // {18078fca-6f80-4237-bb30-b9e3004e444e} phone, {aa8ffa12-3cef-4798-80ed-b1eae89eb6d8} calypso
 static const CLSID CLSID_SendPhone   = {0x18078fca, 0x6f80, 0x4237, {0xbb, 0x30, 0xb9, 0xe3, 0x00, 0x4e, 0x44, 0x4e}};
-static const CLSID CLSID_SendCalypso = {0xaa8ffa12, 0x3cef, 0x4798, {0x80, 0xed, 0xb1, 0xea, 0xb6, 0xd8, 0x89, 0xeb}};
+static const CLSID CLSID_SendCalypso = {0xaa8ffa12, 0x3cef, 0x4798, {0x80, 0xed, 0xb1, 0xea, 0xe8, 0x9e, 0xb6, 0xd8}};
 
-struct Device { const wchar_t* id; const wchar_t* title; const wchar_t* icon; };
-static const Device kPhone   = {L"phone",   L"Send to my phone", L"send-phone.ico"};
-static const Device kCalypso = {L"calypso", L"Send to Calypso",  L"send-calypso.ico"};
+// {9056c0b5-5657-4668-8f04-1a823db93665} pc
+static const CLSID CLSID_SendPc      = {0x9056c0b5, 0x5657, 0x4668, {0x8f, 0x04, 0x1a, 0x82, 0x3d, 0xb9, 0x36, 0x65}};
+
+// `fallback` is the name used until the engine's devices.json has one (the title is "Send to <name>").
+struct Device { const wchar_t* id; const wchar_t* fallback; const wchar_t* icon; const CLSID* clsid; };
+static const Device kPhone   = {L"phone",   L"my phone", L"send-phone.ico",   &CLSID_SendPhone};
+static const Device kCalypso = {L"calypso", L"Calypso",  L"send-calypso.ico", &CLSID_SendCalypso};
+static const Device kPc      = {L"pc",       L"PC",      L"send-pc.ico",      &CLSID_SendPc};
 
 static std::wstring ModuleDir() {
     wchar_t p[MAX_PATH]; GetModuleFileNameW(g_module, p, MAX_PATH);
@@ -39,6 +44,66 @@ static std::string ReadFile(const std::wstring& path) {
 }
 
 static std::wstring SendDir() { return Env(L"LOCALAPPDATA") + L"\\Argus\\send"; }
+
+static std::wstring Utf8(const std::string& t) {
+    if (t.empty()) return L"";
+    int n = MultiByteToWideChar(CP_UTF8, 0, t.c_str(), (int)t.size(), nullptr, 0);
+    std::wstring w(n, 0); MultiByteToWideChar(CP_UTF8, 0, t.c_str(), (int)t.size(), &w[0], n);
+    return w;
+}
+
+// Where the send agent keeps devices.json: send.data_dir from argus.yaml (the installer saves it in data-dir.txt),
+// else ~/.argus-send.
+static std::wstring EngineDataDir() {
+    std::string t = ReadFile(SendDir() + L"\\data-dir.txt");
+    while (!t.empty() && (t.back() == '\r' || t.back() == '\n' || t.back() == ' ')) t.pop_back();
+    if (t.size() >= 3 && (unsigned char)t[0] == 0xEF) t.erase(0, 3);   // UTF-8 BOM
+    if (!t.empty()) return Utf8(t);
+    return Env(L"USERPROFILE") + L"\\.argus-send";
+}
+
+static std::wstring JsonString(const std::string& j, size_t& i) {   // j[i] is just after the opening quote
+    std::wstring out;
+    while (i < j.size() && j[i] != '"') {
+        if (j[i] == '\\' && i + 1 < j.size()) {
+            char c = j[++i];
+            if (c == 'u' && i + 4 < j.size()) { out += (wchar_t)strtol(j.substr(i + 1, 4).c_str(), nullptr, 16); i += 4; }
+            else if (c == 'n' || c == 't') out += L' ';
+            else out += (wchar_t)(unsigned char)c;
+            ++i;
+        } else {
+            size_t start = i;
+            while (i < j.size() && j[i] != '"' && j[i] != '\\') ++i;
+            out += Utf8(j.substr(start, i - start));
+        }
+    }
+    return out;
+}
+
+// devices.json is the engine's list of {"id", "name", "pubkey", "lan", "tailscale"} objects (no nested objects).
+// Returns the saved name for the device, or its fallback. Read on every menu open, so a rename shows up at once.
+static std::wstring DeviceName(const Device* d) {
+    std::string j = ReadFile(EngineDataDir() + L"\\devices.json");
+    const std::string key = "\"id\"";
+    size_t at = 0;
+    while ((at = j.find(key, at)) != std::string::npos) {
+        size_t open = j.rfind('{', at), close = j.find('}', at);
+        at += key.size();
+        if (open == std::string::npos || close == std::string::npos) break;
+        size_t q = j.find('"', at);   // opening quote of the id value, after the colon
+        if (q == std::string::npos || q > close) continue;
+        size_t i = q + 1;
+        if (JsonString(j, i) != d->id) continue;
+        size_t n = j.find("\"name\"", open);
+        if (n == std::string::npos || n > close) break;
+        size_t nq = j.find('"', n + 6);
+        if (nq == std::string::npos || nq > close) break;
+        i = nq + 1;
+        std::wstring name = JsonString(j, i);
+        return name.empty() ? d->fallback : name;
+    }
+    return d->fallback;
+}
 
 // The installer writes the full path of argus.exe here; fall back to PATH.
 static std::wstring ArgusExe() {
@@ -88,13 +153,13 @@ public:
     IFACEMETHODIMP_(ULONG) Release() override { long r = --refs_; if (!r) delete this; return r; }
 
     IFACEMETHODIMP GetTitle(IShellItemArray*, PWSTR* name) override {
-        return SHStrDupW(dev_->title, name);
+        return SHStrDupW((std::wstring(L"Send to ") + DeviceName(dev_)).c_str(), name);
     }
     IFACEMETHODIMP GetIcon(IShellItemArray*, PWSTR* icon) override {
         return SHStrDupW((ModuleDir() + L"\\" + dev_->icon).c_str(), icon);
     }
     IFACEMETHODIMP GetToolTip(IShellItemArray*, PWSTR* tip) override { *tip = nullptr; return E_NOTIMPL; }
-    IFACEMETHODIMP GetCanonicalName(GUID* g) override { *g = (dev_ == &kPhone) ? CLSID_SendPhone : CLSID_SendCalypso; return S_OK; }
+    IFACEMETHODIMP GetCanonicalName(GUID* g) override { *g = *dev_->clsid; return S_OK; }
     IFACEMETHODIMP GetState(IShellItemArray*, BOOL, EXPCMDSTATE* s) override { *s = ECS_ENABLED; return S_OK; }
     IFACEMETHODIMP GetFlags(EXPCMDFLAGS* f) override { *f = ECF_DEFAULT; return S_OK; }
     IFACEMETHODIMP EnumSubCommands(IEnumExplorerCommand** e) override { *e = nullptr; return E_NOTIMPL; }
@@ -144,7 +209,7 @@ public:
 };
 
 STDAPI DllGetClassObject(REFCLSID clsid, REFIID riid, void** ppv) {
-    const Device* d = IsEqualCLSID(clsid, CLSID_SendPhone) ? &kPhone : IsEqualCLSID(clsid, CLSID_SendCalypso) ? &kCalypso : nullptr;
+    const Device* d = IsEqualCLSID(clsid, CLSID_SendPhone) ? &kPhone : IsEqualCLSID(clsid, CLSID_SendCalypso) ? &kCalypso : IsEqualCLSID(clsid, CLSID_SendPc) ? &kPc : nullptr;
     if (!d) { *ppv = nullptr; return CLASS_E_CLASSNOTAVAILABLE; }
     Factory* f = new (std::nothrow) Factory(d);
     if (!f) return E_OUTOFMEMORY;
