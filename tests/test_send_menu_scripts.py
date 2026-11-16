@@ -43,11 +43,15 @@ def test_each_device_is_its_own_package_with_its_own_clsid_and_one_verb():
     assert "Send to " in cpp and ".argus-send" in cpp and "devices.json" in cpp   # the title follows the saved name
 
 
-def test_glyphs_cover_the_icons_the_assets_script_draws():
+def test_icons_are_plain_glyphs_in_two_theme_colours():
     glyphs = {line.split("|")[0] for line in (MENU / "glyphs.txt").read_text().splitlines() if line}
     script = (MENU / "make-assets.ps1").read_text()
-    for name in re.findall(r"SaveIco \"[^\"]+\" '#[0-9a-f]{6}' '([a-z_]+)'", script):
-        assert name in glyphs
+    cpp = (MENU / "send_menu.cpp").read_text()
+    for name in ("smartphone", "laptop_chromebook", "computer"):
+        assert name in glyphs and name + "-w500" in glyphs and f'"{name}"' in script
+    assert "#ffffff" in script and "#1f1f1f" in script
+    assert "FillPath" in script and "#17171c" not in script   # no background squircle
+    assert "AppsUseLightTheme" in cpp and "-light.ico" in cpp and "-dark.ico" in cpp
 
 
 def test_scripts_use_the_same_identity_and_never_commit_secrets():
