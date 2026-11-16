@@ -38,3 +38,24 @@ def test_devices_events_history(tmp_path):
         rows = c.get("/send/history?limit=5", headers=h).json()
         assert [r["kind"] for r in rows] == ["received", "sent"] and rows[1]["bytes"] == 5
         assert c.post("/send/devices", json={**dev, "id": "Bad Id"}, headers=h).status_code == 422
+
+
+def test_rename_device_sticks_and_agents_adopt_it(tmp_path):
+    from argus.send.devices import DeviceBook
+
+    with TestClient(create_app(make(tmp_path))) as c:
+        h = {"Authorization": "Bearer t0ken"}
+        dev = {"id": "phone", "name": "My phone", "pubkey": KEY, "lan": [], "tailscale": None}
+        c.post("/send/devices", json=dev, headers=h)
+        assert c.patch("/send/devices/phone", json={"name": "Sas's Pixel"}).status_code == 401
+        assert c.patch("/send/devices/nope", json={"name": "x"}, headers=h).status_code == 404
+        assert c.patch("/send/devices/phone", json={"name": "  "}, headers=h).status_code == 422
+        assert c.patch("/send/devices/phone", json={"name": " Sas's Pixel "}, headers=h).json()["name"] == "Sas's Pixel"
+        c.post("/send/devices", json=dev, headers=h)  # the agent's 30 s re-register must not undo the rename
+        listed = c.get("/send/devices", headers=h).json()
+        assert listed[0]["name"] == "Sas's Pixel"
+        book = DeviceBook(tmp_path / "devices.json")
+        book.update([{**dev, "name": "My phone"}])
+        assert book.name_of("phone") == "My phone"
+        book.update(listed)  # the next sync
+        assert DeviceBook(tmp_path / "devices.json").name_of("phone") == "Sas's Pixel"

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import time
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Path, Query
 from pydantic import BaseModel, Field
 
 from ._deps import Deps
@@ -17,6 +17,10 @@ class SendDevice(BaseModel):
     pubkey: str = Field(..., min_length=40, max_length=100)
     lan: list[str] = Field(default_factory=list, max_length=8)
     tailscale: str | None = Field(None, max_length=253)
+
+
+class SendDeviceRename(BaseModel):
+    name: str = Field(..., min_length=1, max_length=60)
 
 
 class SendEvent(BaseModel):
@@ -44,12 +48,27 @@ def build_router(deps: Deps) -> APIRouter:
             old = conn.execute("SELECT pubkey FROM send_device WHERE id=?", (body.id,)).fetchone()
             conn.execute(
                 "INSERT INTO send_device(id,name,pubkey,lan,tailscale,seen_at) VALUES(?,?,?,?,?,?) "
-                "ON CONFLICT(id) DO UPDATE SET name=excluded.name, pubkey=excluded.pubkey, lan=excluded.lan, "
+                "ON CONFLICT(id) DO UPDATE SET pubkey=excluded.pubkey, lan=excluded.lan, "
                 "tailscale=excluded.tailscale, seen_at=excluded.seen_at",
                 (body.id, body.name, body.pubkey, json.dumps(body.lan), body.tailscale, now))
             return old is not None and old[0] != body.pubkey
 
         return {"ok": True, "key_changed": await store.write(w)}
+
+    @router.patch("/send/devices/{device_id}", dependencies=guarded)
+    async def rename_device(body: SendDeviceRename, device_id: str = Path(..., pattern=r"^[a-z0-9-]{1,32}$")) -> dict:
+        """Rename a device. The name is only set when a device first registers (the agents re-register every 30 s
+        and must not undo this); every agent picks it up on its next sync and rewrites its devices.json."""
+        name = body.name.strip()
+        if not name:
+            raise HTTPException(422, "the name is empty")
+
+        def w(conn):
+            return conn.execute("UPDATE send_device SET name=? WHERE id=?", (name, device_id)).rowcount
+
+        if not await store.write(w):
+            raise HTTPException(404, "no such device")
+        return {"ok": True, "id": device_id, "name": name}
 
     @router.get("/send/devices", dependencies=guarded)
     async def list_devices() -> list[dict]:

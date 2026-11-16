@@ -9,7 +9,7 @@ Plan: https://claude.ai/artifact/DQLMVJstRFS2EauLgQ6Zo3. This file is the contra
 ## Devices and keys
 - Device ids: `pc`, `calypso`, `phone` (display: "PC", "Calypso", "my phone").
 - Each agent makes an Ed25519 key pair on first start (private key in the agent's data dir, never in the repo).
-- Pairing via Argus: `POST /send/devices` (worker token) registers `{id, name, pubkey, lan: [ip:port], tailscale: "<magicdns name>"}`; `GET /send/devices` returns all. Agent saves the list to `devices.json` and works from it when Argus is down. Re-register every 30 s while Argus is up (addresses stay fresh).
+- Pairing via Argus: `POST /send/devices` (worker token) registers `{id, name, pubkey, lan: [ip:port], tailscale: "<magicdns name>"}`; `GET /send/devices` returns all; `PATCH /send/devices/{id}` `{name}` renames one (the name is only set on first registration, so re-registering never undoes a rename; agents adopt it on their next sync). Agent saves the list to `devices.json` and works from it when Argus is down. Re-register every 30 s while Argus is up (addresses stay fresh).
 - LAN discovery: mDNS/DNS-SD `_argus-send._tcp`, TXT `id=<device id>`. Used when the saved LAN address fails.
 - No hostnames, IPs or tokens in code: they come from config/devices.json.
 
