@@ -30,7 +30,8 @@ type Props = {
   events?: ArgusEvent[];
   queue?: { running: number; queued: number } | null;  // the core's queue, from the status
   byWorker?: Record<string, number>;  // jobs running on each worker
-  vertical?: boolean;  // the phone: levels top to bottom, scrolled
+  vertical?: boolean;  // the phone held upright: levels top to bottom, scrolled
+  compact?: boolean;  // the phone held sideways: the desktop's five columns, drawn smaller and sized for reading
   onPlugins?: () => void;  // the Plugins page
   onReview?: () => void;  // the Approvals page
   onChanged?: () => void;  // a control was used: load the map again
@@ -41,6 +42,9 @@ export const DESK = { width: 1200, height: 600, xs: [100, 385, 615, 850, 1100] }
 const deskDim = (c: Card): Dim => (c.big ? { w: 196, h: c.meter !== undefined ? 86 : 76 } : { w: c.skin === "model" ? 196 : c.skin === "plug" ? 210 : 176, h: c.meter !== undefined ? 68 : 54 });
 const phoneDim = (c: Card): Dim => (c.big ? { w: 150, h: 70 } : { w: 102, h: 74 });
 export const PHONE = { width: 346 };
+// Phone held sideways (about 844 x 390): the same five columns on an 836 x 330 canvas, boxes sized so the text stays 12 px and up.
+export const COMPACT = { width: 836, height: 330, xs: [64, 250, 450, 612, 764] };
+const compactDim = (c: Card): Dim => (c.big ? { w: 132, h: c.meter !== undefined ? 60 : 58 } : { w: c.skin === "model" ? 134 : 120, h: c.meter !== undefined ? 50 : 42 });
 export const HEAD_H = 64;  // the attention row
 const PHONE_HEAD_TOP = 68;  // the phone: the attention strip starts under the Live chip
 
@@ -94,11 +98,14 @@ export function MapView(p: Props) {
     [p.map, now, p.events, p.queue, p.byWorker, claude],
   );
   const vertical = !!p.vertical;
+  const compact = !!p.compact && !vertical;
   const layout = useMemo(
     () => (vertical
       ? layoutLevels(built.cards, built.lines, { orient: "v", dims: phoneDim, width: PHONE.width, perRow: 3, rowGap: 14, levelGap: 40, locked: [L.models] })
+      : compact
+      ? layoutLevels(built.cards, built.lines, { orient: "h", dims: compactDim, xs: COMPACT.xs, top: 36, bottom: 300, rowPitch: 54, rowPad: 70, width: COMPACT.width, height: COMPACT.height, locked: [L.models], compact: [L.models, L.plugins], slotDx: [-60, 68] })
       : layoutLevels(built.cards, built.lines, { orient: "h", dims: deskDim, xs: DESK.xs, width: DESK.width, height: DESK.height, locked: [L.models], compact: [L.models, L.plugins] })),
-    [built, vertical],
+    [built, vertical, compact],
   );
   const waiting = p.map.nodes.find((n) => n.id === "approvals")?.pending ?? 0;
   const oldest = useOldestApproval(events, waiting);
@@ -122,7 +129,7 @@ export function MapView(p: Props) {
   const pb = layout.placed[PLUGINS];
   const column = (lv: number) => Object.values(plugLayout.placed).filter((c) => c.level === lv).sort((a, b) => a.y - b.y).map((c) => c.id);
   const zoom = usePluginZoom({
-    enabled: !vertical && !!pb, box: pb ? { cx: pb.x, cy: pb.y, w: pb.w, h: pb.h } : null, canvas: { w: layout.width, h: layout.height },
+    enabled: !vertical && !compact && !!pb, box: pb ? { cx: pb.x, cy: pb.y, w: pb.w, h: pb.h } : null, canvas: { w: layout.width, h: layout.height },
     groups: { src: column(PL.inputs), mid: column(PL.plugins), snk: column(PL.outputs) },
     at: Object.fromEntries(Object.values(plugLayout.placed).map((c) => [c.id, { x: c.x, y: c.y }])),
     root: wrap, hasSelection: !!p.selection, clearSelection: () => p.onSelect(null),
@@ -138,8 +145,8 @@ export function MapView(p: Props) {
   const headRef = zoom.refs.head as React.RefObject<HTMLDivElement | null>;
   const headSize = useBox(headRef);
   const pad = { t: px(p.fitPad?.top), r: px(p.fitPad?.right), b: px(p.fitPad?.bottom), l: px(p.fitPad?.left) };
-  const headTop = vertical ? PHONE_HEAD_TOP : Math.max(8, pad.t - HEAD_H - 6);
-  if (!vertical) pad.t = Math.max(pad.t, headTop + headSize.h + 8);  // the map starts below the row, however tall it grew (a narrow window wraps it)
+  const headTop = vertical ? PHONE_HEAD_TOP : compact ? 8 : Math.max(8, pad.t - HEAD_H - 6);
+  if (!vertical) pad.t = Math.max(pad.t, headTop + headSize.h + 4);  // the map starts below the row, however tall it grew (a narrow window wraps it)
 
   // fit: desktop contains the whole canvas in the space left by the floating cards; the phone fits the width and scrolls
   let scale = 1, x = 0, y = 0;
@@ -160,23 +167,23 @@ export function MapView(p: Props) {
   const V = nav.view;
   const stageStyle = { transform: `translate(${V.x}px, ${V.y}px) scale(${V.s})`, width: layout.width, height: layout.height };
   const stageCls = `lm-stage${anim && !nav.dragging && (nav.smooth || !nav.moved) ? " anim" : ""}`;
-  const navBtns = (
-    <div className="lm-nav" role="group" aria-label="Move the map" style={vertical ? undefined : { bottom: pad.b + 14 }}>
+  const navBtns = compact ? null : (
+    <div className="lm-nav" role="group" aria-label="Move the map" style={vertical || compact ? undefined : { bottom: pad.b + 14 }}>
       <button type="button" aria-label="Zoom in" onClick={nav.zoomIn}><Ms n="add" /></button>
       <button type="button" aria-label="Zoom out" onClick={nav.zoomOut}><Ms n="remove" /></button>
       <button type="button" aria-label="Fit the whole map" className={nav.moved ? "on" : undefined} onClick={nav.reset}><Ms n="fit_screen" /></button>
     </div>
   );
   const sel = p.selection?.type === "node" ? p.selection.id : null;
-  const pick = (c: Card) => (c.id === PLUGINS ? (vertical ? p.onPlugins?.() : (nav.reset(), zoom.open())) : p.onSelect({ type: "node", id: c.select }));
-  const headStyle = vertical ? { top: headTop, left: 12, right: 12 } : { top: headTop, left: p.headLeft ?? Math.max(18, pad.l), right: Math.max(18, pad.r - 12) };
+  const pick = (c: Card) => (c.id === PLUGINS ? (vertical || compact ? p.onPlugins?.() : (nav.reset(), zoom.open())) : p.onSelect({ type: "node", id: c.select }));
+  const headStyle = vertical ? { top: headTop, left: 12, right: 12 } : compact ? { top: 8, left: 12, right: 64 } : { top: headTop, left: p.headLeft ?? Math.max(18, pad.l), right: Math.max(18, pad.r - 12) };
   const head = (
     <MapHead ref={headRef} items={items} anyPaused={p.map.nodes.some((n) => !!n.paused)} onReview={() => p.onReview?.()} onLogs={(id) => p.onSelect({ type: "node", id, logs: true })} onChanged={() => p.onChanged?.()}
-      className={vertical ? "stack" : undefined}
+      className={vertical ? "stack" : compact ? "compact" : undefined}
       style={headStyle} />
   );
   return (
-    <div ref={wrap} className={`lm lm-pan${nav.dragging ? " drag" : ""}`} onClick={(e) => { if (e.target === e.currentTarget) p.onSelect(null); }}>
+    <div ref={wrap} className={`lm lm-pan${compact ? " lm-compact" : ""}${nav.dragging ? " drag" : ""}`} onClick={(e) => { if (e.target === e.currentTarget) p.onSelect(null); }}>
       {vertical ? (<>
         {head}
         <div className={stageCls} style={stageStyle}>
