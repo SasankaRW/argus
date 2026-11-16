@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Phone map, sideways, zooms into the plugins:** tapping the Plugins box now zooms in to the plugin view like the desktop, with Back to map and All plugins on top. Upright, it still opens the Plugins page.
+
 - **Phone map, sideways:** the Map tab turns the phone to landscape and shows the desktop map at phone size, with spaced boxes, the attention row on top and a drawer for a tapped box. Needs the rebuilt phone app for the landscape lock.
 
 ## 0.10.1 (2026-11-15)

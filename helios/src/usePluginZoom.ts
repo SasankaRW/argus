@@ -18,8 +18,10 @@ export type ZoomIn = {
   enabled: boolean;
   box: Box | null;  // the Plugins box, in canvas coordinates
   canvas: Canvas;
+  plug?: Canvas;  // the plugin view's own canvas, when it differs from the map's (the phone held sideways)
   groups: Record<Kind, string[]>;  // the plugin view's cards by role, in order
   at: Record<string, { x: number; y: number }>;  // where each of them sits
+  fitScreen?: boolean;  // the plugin view is fitted to the whole screen (the phone held sideways): the map's clip lets go once it is in
   root: RefObject<HTMLElement | null>;
   hasSelection: boolean;  // a side panel is open: Escape closes it first
   clearSelection: () => void;
@@ -42,6 +44,7 @@ export function usePluginZoom(o: ZoomIn) {
 
   const apply = useCallback((p: number) => {
     const { box, canvas, groups, at } = live.current;
+    const pc = live.current.plug ?? canvas;
     const r = refs.cam.current, view = refs.view.current;
     if (!box || !r || !view) return;
     const reduced = reducedMotion();
@@ -57,7 +60,7 @@ export function usePluginZoom(o: ZoomIn) {
     set(view, f.view, f.live.view);
     set(refs.head.current, f.head, f.live.head);
     set(refs.bar.current, f.bar, f.live.bar);
-    refs.clip.current?.classList.toggle("zooming", p > 0.001 && !reduced);
+    refs.clip.current?.classList.toggle("zooming", p > 0.001 && !reduced && !(live.current.fitScreen && p > 0.8));
     if (refs.pbg.current) refs.pbg.current.style.background = `color-mix(in srgb, var(--c-sec) ${f.mix}%, var(--map, #111114))`;
     for (const kind of ["mid", "src", "snk"] as const) {
       const ids = groups[kind];
@@ -65,7 +68,7 @@ export function usePluginZoom(o: ZoomIn) {
         const el = view.querySelector<HTMLElement>(`[data-card="${CSS.escape(id)}"]`);
         const a = at[id];
         if (!el || !a) return;
-        const c = cardPose(kind, i, ids.length, p, a, canvas, reduced);
+        const c = cardPose(kind, i, ids.length, p, a, pc, reduced);
         el.style.transform = `translate(${c.tx}px, ${c.ty}px) scale(${c.scale})`;
         el.style.setProperty("--q", String(c.opacity));
       });
