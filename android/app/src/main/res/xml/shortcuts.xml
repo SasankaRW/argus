@@ -12,4 +12,9 @@
         <intent android:action="dev.argus.companion.SETTINGS"
             android:targetPackage="dev.argus.companion" android:targetClass="dev.argus.companion.MainActivity" />
     </shortcut>
+    <!-- direct-share targets: the dynamic shortcuts "Send to Calypso" / "Send to PC" (published by SendHub) land here -->
+    <share-target android:targetClass="dev.argus.companion.send.SendShareActivity">
+        <data android:mimeType="*/*" />
+        <category android:name="dev.argus.companion.category.SEND_TARGET" />
+    </share-target>
 </shortcuts>

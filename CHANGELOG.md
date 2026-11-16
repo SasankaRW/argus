@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Argus Send (phone):** the Android app receives files into Download/Argus and sends from the share sheet ("Send to Calypso" / "Send to PC") over the LAN or Tailscale, with resume and a queue. App 1.3.
+
 - **Send:** the agent polls Tailscale only when it is configured, and its tests are lighter.
 - **Send:** the session key now matches the phone app's byte format.
 

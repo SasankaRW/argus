@@ -32,6 +32,7 @@ object Notifier {
                 nm.createNotificationChannel(NotificationChannel(id, name, importance).apply(block))
             }
         }
+        dev.argus.companion.send.SendNotes.channels(ctx)  // Argus Send: quiet progress + results
         make("argus-min", "Quiet", NotificationManager.IMPORTANCE_MIN) { setShowBadge(false) }
         make("argus-low", "Low", NotificationManager.IMPORTANCE_LOW)
         make("argus-default", "Messages", NotificationManager.IMPORTANCE_DEFAULT)
