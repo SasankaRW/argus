@@ -1,0 +1,21 @@
+[Unit]
+Description=Argus Send agent (files between my devices, TCP 8610)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+User=argus
+Group=argus
+WorkingDirectory=/opt/argus
+# the send: block of /opt/argus/argus.yaml says who this device is, its addresses and where files go
+ExecStart=/opt/argus/.venv/bin/python -m argus.send send-agent
+Restart=always
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=20
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

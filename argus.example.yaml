@@ -141,3 +141,15 @@ plugins:
 paths:
   allowed: []              # folders plugins may touch, e.g. C:/Users/Sas/Downloads
   blocked: []              # never touched, e.g. work folders
+
+send:                      # Argus Send: files between my devices (off by default; contract in docs/send-protocol.md)
+  enabled: false
+  device_id: pc            # pc | calypso | phone
+  name: PC                 # how the others show this device
+  port: 8610
+  argus_url:               # optional helper (pairing, shared history), e.g. the laptop's Argus address
+  lan: []                  # my address on the home network, e.g. ["192.168.1.20:8610"]
+  tailscale:               # my MagicDNS name (the other devices reach me by it away from home)
+  holder:                  # device id that holds shares for offline targets (calypso)
+  # holding: true          # on the holder only: hold up to holding_max_gb for holding_days
+  # root:                  # received files (default ~/Argus Shared)
