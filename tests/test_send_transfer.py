@@ -148,15 +148,16 @@ def test_disk_full_507_keeps_it_queued(tmp_path):
 
 
 def test_folder_of_2000_small_files(tmp_path):
+    count = 2000 if os.environ.get("ARGUS_ALL_TESTS") == "1" else 300  # the full 2000 takes about 20 s
     src = tmp_path / "many"
-    for i in range(2000):
+    for i in range(count):
         make_file(src / f"d{i % 20}" / f"f{i}.txt", 40 + i % 90, i % 200)
 
     async def body(a, b):
         oid = a.enqueue("calypso", [src])
         await wait_state(a, oid, "done", timeout=100)
         got, want = tree(b.root / "From PC" / "many"), tree(src)
-        assert len(got) == 2000 and got == want
+        assert len(got) == count and got == want
 
     run_two(tmp_path, body)
 

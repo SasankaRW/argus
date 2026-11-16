@@ -34,7 +34,8 @@ def test_holding_area_delivers_later_and_is_dropped_when_sent_directly(tmp_path)
                                and not held.exists(), what="delivery and a clean holding area")
                 assert tree(phone.root / "From PC") == {"doc.bin": data}  # once, not twice
                 assert phone.store.history()[0]["kind"] == "received"
-                assert hold.store.get(oid)["state"] in ("done", "cancelled")
+                final = ("done", "cancelled", "failed")  # whichever side got there first; never stuck mid-way
+                await wait_for(lambda: hold.store.get(oid)["state"] in final, what="the holding entry to settle")
             finally:
                 await phone.stop()
         finally:

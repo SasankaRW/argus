@@ -266,7 +266,8 @@ class SendAgent:
         self._tasks = [serve, asyncio.create_task(self._queue_loop()), asyncio.create_task(self._net_loop())]
         if self.cfg.argus_url:
             self._tasks.append(asyncio.create_task(self._argus_loop()))
-        self._tasks.append(asyncio.create_task(self._tailscale_loop()))
+        if self.cfg.tailscale:  # only a device that uses Tailscale polls it
+            self._tasks.append(asyncio.create_task(self._tailscale_loop()))
         if self.cfg.holding:
             self._tasks.append(asyncio.create_task(self._hold_loop()))
         await asyncio.to_thread(self.discovery.start)
