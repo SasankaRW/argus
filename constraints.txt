@@ -14,6 +14,8 @@ certifi==2026.7.22
     # via
     #   httpcore
     #   httpx
+cffi==2.1.1 ; platform_python_implementation != 'PyPy'
+    # via cryptography
 click==8.5.0
     # via uvicorn
 colorama==0.4.6 ; sys_platform == 'win32'
@@ -25,6 +27,8 @@ comtypes==1.4.17 ; sys_platform == 'win32'
     #   uiautomation
 coverage==7.17.3
     # via pytest-cov
+cryptography==50.0.2
+    # via argus (pyproject.toml)
 fastapi==0.141.1
     # via argus (pyproject.toml)
 greenlet==3.5.6 ; sys_platform == 'win32'
@@ -41,6 +45,8 @@ idna==3.20
     # via
     #   anyio
     #   httpx
+ifaddr==0.2.0
+    # via zeroconf
 iniconfig==2.3.0
     # via pytest
 librt==0.16.0 ; platform_python_implementation != 'PyPy'
@@ -75,6 +81,8 @@ pluggy==1.6.0
     #   pytest-cov
 psutil==7.2.2
     # via argus (pyproject.toml)
+pycparser==3.12 ; implementation_name != 'PyPy' and platform_python_implementation != 'PyPy'
+    # via cffi
 pydantic==2.13.5
     # via
     #   argus (pyproject.toml)
@@ -135,4 +143,6 @@ uiautomation==2.0.29 ; sys_platform == 'win32'
 uvicorn==0.54.0
     # via argus (pyproject.toml)
 websockets==17.1
+    # via argus (pyproject.toml)
+zeroconf==0.154.0
     # via argus (pyproject.toml)

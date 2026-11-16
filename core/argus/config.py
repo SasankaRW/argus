@@ -304,6 +304,34 @@ class ShareConfig(_Strict):
     keep_days: float = Field(7, gt=0, le=365)  # shared files are deleted after this
 
 
+class SendConfig(_Strict):
+    """Argus Send: the agent that sends and receives files between my devices (core/argus/send, contract in
+    docs/send-protocol.md). Off unless `enabled`. Addresses and names come from here and devices.json, never code."""
+
+    enabled: bool = False
+    device_id: str | None = Field(None, pattern=r"^[a-z0-9-]{1,32}$")  # pc, calypso, phone
+    name: str | None = None  # shown to the others ("PC", "Calypso")
+    host: str = "0.0.0.0"
+    port: int = Field(8610, ge=1, le=65535)
+    data_dir: str | None = None  # key, devices.json, send-queue.db (default ~/.argus-send)
+    root: str | None = None  # where received files go (default ~/Argus Shared)
+    argus_url: str | None = None  # optional helper; the agent works without it
+    lan: list[str] = Field(default_factory=list)  # my own addresses to advertise, ip:port
+    tailscale: str | None = None  # my MagicDNS name, host or host:port
+    holder: str | None = None  # device id of the holding agent (Calypso) for offline targets
+    holding: bool = False  # this agent is the holding area
+    holding_max_gb: float = Field(20, gt=0)
+    holding_days: float = Field(7, gt=0)
+    keep_waiting_days: float = Field(7, gt=0)
+    mdns: bool = True
+    chunk_bytes: int = Field(8 * 1024 * 1024, ge=1024, le=8 * 1024 * 1024)
+    parallel: int = Field(4, ge=1, le=4)
+    lan_probe_seconds: float = Field(5, gt=0)
+    probe_timeout_seconds: float = Field(2, gt=0)
+    retry_seconds: float = Field(30, gt=0)
+    register_seconds: float = Field(30, gt=0)
+
+
 GONE_ARI = ("voice", "voice_engine", "live", "follow_up")
 
 
@@ -483,6 +511,7 @@ class Config(_Strict):
     power: PowerConfig = Field(default_factory=PowerConfig)
     plugins: PluginsConfig = Field(default_factory=PluginsConfig)
     share: ShareConfig = Field(default_factory=ShareConfig)
+    send: SendConfig = Field(default_factory=SendConfig)
     ari: AriConfig = Field(default_factory=AriConfig)
     eyes: EyesConfig = Field(default_factory=EyesConfig)
     brief: BriefConfig = Field(default_factory=BriefConfig)

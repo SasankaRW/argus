@@ -82,6 +82,7 @@ from .routes import (
     plugins,
     public,
     schedules,
+    send,
     settings,
     shares,
     voice,
@@ -207,6 +208,6 @@ def create_app(argus: Argus) -> FastAPI:
     mcp.register(app, argus, mcp_auth, tools)
 
     for area in (tools_routes, island, phone, guidance, models, ari, ari_timeline, ari_memory, voice, plugins,
-                 shares, ops, events, workers, settings, approvals, schedules, controls):
+                 shares, ops, events, workers, settings, approvals, schedules, controls, send):
         app.include_router(area.build_router(deps))
     return app

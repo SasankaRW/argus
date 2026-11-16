@@ -20,7 +20,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCK = ROOT / "constraints.txt"
-EXTRAS = ("dev", "plugins", "console")  # what CI and the laptop install; the PC's voice extras are left free
+EXTRAS = ("dev", "plugins", "console", "send")  # what CI and the laptop install; the PC's voice extras are left free
 HEADER = (
     "# The package versions Argus installs with (pip install ... -c constraints.txt). Made by scripts/lock.py:\n"
     "# don't edit by hand. Windows and Linux, Python 3.11 and up.\n"
