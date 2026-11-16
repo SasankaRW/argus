@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import type { ArgusEvent, ArgusMap, Status } from "./api";
 import { ControlPanel } from "./ControlPanel";
 import { Layout, LayoutSwitch, PAGES } from "./Desk";
@@ -12,11 +12,37 @@ import type { Selection } from "./mapInfo";
 // fills the screen; a Live chip and the Desk/Command switch float over it, and a tapped box opens a bottom sheet with
 // the same side panel as the desktop (status, controls, logs).
 
-export function PhoneMap({ map, status, events, layout, onLayout, onPlugins, onDetails, onAsk, onView, onChanged }: {
+// Held sideways the map is the desktop's, drawn for a phone. Asking for landscape goes through the Android app
+// (ArgusNative.landscape) because a WebView ignores screen.orientation.lock; a browser gets the standard call.
+function useLandscape(): boolean {
+  const q = "(orientation: landscape) and (max-height: 520px)";
+  const [m, setM] = useState(() => window.matchMedia(q).matches);
+  useEffect(() => {
+    const mm = window.matchMedia(q);
+    const on = () => setM(mm.matches);
+    mm.addEventListener("change", on);
+    return () => mm.removeEventListener("change", on);
+  }, []);
+  return m;
+}
+
+export function PhoneMap({ map, status, events, layout, onLayout, onPlugins, onDetails, onAsk, onView, onChanged, onClose }: {
   map: ArgusMap; status: Status | null; events: ArgusEvent[];
   layout: Layout; onLayout: (l: Layout) => void; onPlugins: () => void; onDetails: (s: Selection) => void;
-  onAsk: (text: string) => void; onView: (v: string) => void; onChanged: () => void;
+  onAsk: (text: string) => void; onView: (v: string) => void; onChanged: () => void; onClose: () => void;
 }) {
+  const land = useLandscape();
+  useEffect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const native = (window as any).ArgusNative as { landscape?: (on: boolean) => void } | undefined;
+    try { native?.landscape?.(true); } catch { /* old app */ }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    try { (screen.orientation as any)?.lock?.("landscape")?.catch?.(() => {}); } catch { /* not supported */ }
+    return () => {
+      try { native?.landscape?.(false); } catch { /* old app */ }
+      try { screen.orientation?.unlock?.(); } catch { /* not supported */ }
+    };
+  }, []);
   const [sel, setSel] = useState<Selection>(null);
   const [q, setQ] = useState("");
   const jobs = useJobs(events);
@@ -37,14 +63,17 @@ export function PhoneMap({ map, status, events, layout, onLayout, onPlugins, onD
     <div className="phonemap" role="region" aria-label="Live map">
       <div className="pm-canvas">
         <MapView map={map} selection={sel} onSelect={pick} flow onPlugins={onPlugins} onReview={() => onView("inbox")} onChanged={onChanged}
-          events={events} queue={queue} byWorker={byWorker} vertical fitPad={{ top: "120px", right: "70px", bottom: sel ? "250px" : "110px", left: "20px" }} />
+          events={events} queue={queue} byWorker={byWorker} vertical={!land} compact={land}
+          fitPad={land ? { top: "60px", right: "12px", bottom: "8px", left: "12px" } : { top: "120px", right: "70px", bottom: sel ? "250px" : "110px", left: "20px" }} />
       </div>
       <div className="pm-top">
-        <div className="float pm-live"><span className="sn-dot d-green live" /><b>Live</b></div>
+        {!land && <div className="float pm-live"><span className="sn-dot d-green live" /><b>Live</b></div>}
         <span className="grow" />
-        <LayoutSwitch layout={layout} onChange={onLayout} />
+        {land
+          ? <button type="button" className="float pm-close" aria-label="Close the map" onClick={onClose}><Ms n="close" /></button>
+          : <LayoutSwitch layout={layout} onChange={onLayout} />}
       </div>
-      {layout === "command" && !node && (
+      {layout === "command" && !land && !node && (
         <form className="float pm-cmd" onSubmit={run}>
           <Ms n="search" />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ask Ari, or type / for a page" aria-label="Ask Ari or open a page" enterKeyHint="send" />
@@ -52,7 +81,7 @@ export function PhoneMap({ map, status, events, layout, onLayout, onPlugins, onD
         </form>
       )}
       {node && (
-        <section className="float pm-sheet" aria-label={`Selected: ${labelOf(node)}`}>
+        <section className={`float pm-sheet${land ? " side" : ""}`} aria-label={`Selected: ${labelOf(node)}`}>
           <div className="pm-grip" aria-hidden="true" />
           <ControlPanel node={node} logsFirst={sel?.type === "node" && sel.logs} onClose={() => setSel(null)} onChanged={onChanged} onFullLog={() => onView("logs")} onDetails={() => onDetails(sel)} />
         </section>

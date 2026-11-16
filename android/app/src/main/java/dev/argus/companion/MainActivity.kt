@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.NotificationManager
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
@@ -21,6 +22,7 @@ import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
@@ -122,6 +124,16 @@ class MainActivity : Activity() {
                 }
             }
         }
+        // Helios's Map holds the phone sideways while it is open (a WebView ignores screen.orientation.lock). Only
+        // pages from the Argus address are loaded in this WebView, so only they can call it.
+        w.addJavascriptInterface(object {
+            @JavascriptInterface
+            fun landscape(on: Boolean) {
+                runOnUiThread {
+                    requestedOrientation = if (on) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                }
+            }
+        }, "ArgusNative")
         val target = path?.trim()?.takeIf { it.isNotEmpty() }?.let { if (it.startsWith("/")) prefs.url + it else it }
         when {
             target != null && target.startsWith(prefs.url) -> w.loadUrl(target)

@@ -541,3 +541,13 @@ html[data-paused="1"] :is(.phone2, .shell, .login) * { animation-play-state: pau
   :is(.phone2, .shell, .login) .sn-hold.on .prg { stroke-dashoffset: 0; }  /* the ring shows full while held; the timer still confirms */
   :is(.phone2, .shell, .login) .sn-meter i { left: 0; width: 100%; opacity: .6; }
 }
+
+/* ---- the phone's Map held sideways: no tab bar, the map fills the screen, a selected box opens a drawer on the right */
+@media (orientation: landscape) and (max-height: 520px) {
+  .phone2.pm-on .sn-tabs { display: none; }
+  .phone2 .phonemap { bottom: 0; }
+  .phone2 .pm-top { left: auto; right: 12px; top: calc(8px + var(--sat)); }
+  .phone2 .pm-close { width: 44px; height: 44px; border: 0; border-radius: 50%; display: grid; place-items: center; background: var(--s3); color: var(--tx); cursor: pointer; }
+  .phone2 .pm-sheet.side { left: auto; right: 8px; top: 8px; bottom: 8px; width: 340px; max-height: none; border-radius: 24px; padding: 14px 16px; }
+  .phone2 .pm-sheet.side .pm-grip { display: none; }
+}

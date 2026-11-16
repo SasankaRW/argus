@@ -166,3 +166,28 @@ svg.lm-l { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
 .lm-nav button.on { background: var(--c-pri); }
 .lm-nav .ms { font-size: 22px; }
 .phone2 .lm-nav { z-index: 2; left: auto; right: 12px; bottom: 16px; flex-direction: column; border-radius: 26px; }
+
+/* phone held sideways: one row of what needs you (scrolls sideways), Pause everything beside it; boxes keep 12 px text */
+.lm-head.compact { flex-wrap: nowrap; min-height: 0; gap: 10px; }
+.lm-head.compact .lm-att { flex: 1 1 0; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+.lm-head.compact .lm-att::-webkit-scrollbar { display: none; }
+.lm-head.compact .lm-card { min-width: 220px; max-width: 260px; padding: 6px 8px 6px 7px; gap: 8px; border-radius: 18px; }
+.lm-head.compact .lm-ci { width: 32px; height: 32px; border-radius: 11px; }
+.lm-head.compact .lm-nm { font-size: 13px; } .lm-head.compact .lm-st { font-size: 11.5px; }
+.lm-head.compact .lm-go { padding: 6px 12px; font-size: 12.5px; }
+.lm-head.compact .lm-all { flex: none; }
+.lm-head.compact .lm-note { display: none; }
+.phone2 .lm-n.compact-n { }
+
+/* the boxes of the sideways map: the desktop's look at phone size (the .phone2 rules above are for the upright map) */
+.phone2 .lm-compact .lm-n { gap: 8px; padding: 0 8px 0 6px; border-radius: 16px; flex-wrap: nowrap; align-content: normal; }
+.phone2 .lm-compact .lm-t { display: block; }
+.phone2 .lm-compact .lm-nm { flex: none; display: block; white-space: nowrap; font-size: 13px; line-height: 1.25; }
+.phone2 .lm-compact .lm-st { flex: none; display: block; white-space: nowrap; font-size: 11.5px; line-height: 1.25; }
+.phone2 .lm-compact .lm-n.big .lm-nm { font-size: 14px; }
+.phone2 .lm-compact .lm-i { width: 28px; height: 28px; border-radius: 10px; }
+.phone2 .lm-compact .lm-i .ms { font-size: 18px; }
+.phone2 .lm-compact .lm-n.big .lm-i { width: 36px; height: 36px; border-radius: 12px; }
+.lm-head.compact .lm-all .sn-holdwrap { flex-direction: row; gap: 8px; align-items: center; }
+.lm-head.compact .lm-all .sn-hold { width: 40px; height: 40px; }
+.lm-head.compact .lm-all .sn-holdcap { font-size: 12.5px; }

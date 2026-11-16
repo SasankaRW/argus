@@ -394,6 +394,7 @@ export type LayoutOpt = {
   // h: one x per level number, boxes spread between top and bottom. v: boxes in rows of `perRow`
   xs?: number[]; top?: number; bottom?: number; width: number; height?: number;
   perRow?: number; rowGap?: number; levelGap?: number; padTop?: number;
+  rowPitch?: number; rowPad?: number;  // h: room per box in the tallest column (default 64) and kept clear around it (120)
   slotDx?: [number, number];  // h: where Approvals and Backups sit, left and right of the Argus column's centre
   locked?: number[];  // level numbers whose order stays as given (the models: their order is the escalation chain)
   compact?: number[];  // level numbers stacked close around the middle instead of spread over the whole height
@@ -418,7 +419,7 @@ export function layoutLevels(cards: Card[], lines: Line[], opt: LayoutOpt): Layo
 
   if (opt.orient === "h") {
     // a column with many boxes makes the canvas taller (the fixed spots follow the middle)
-    height = Math.max(height, Math.max(...order.map((c) => c.length)) * 64 + 120);
+    height = Math.max(height, Math.max(...order.map((c) => c.length)) * (opt.rowPitch ?? 64) + (opt.rowPad ?? 120));
     const xs = opt.xs!, top = opt.top ?? 60, bottom = opt.bottom ?? height - 60, mid = (top + bottom) / 2;
     const [dxl, dxr] = opt.slotDx ?? [-40, 145];
     const fixed: Record<string, number> = {}, fixedX: Record<string, number> = {};

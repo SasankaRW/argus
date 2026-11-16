@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Phone map, sideways:** the Map tab turns the phone to landscape and shows the desktop map at phone size, with spaced boxes, the attention row on top and a drawer for a tapped box. Needs the rebuilt phone app for the landscape lock.
+
 ## 0.10.1 (2026-11-15)
 
 - **Live map:** drag to move the map and use the wheel, a pinch or the + / - / fit buttons to zoom, on the desktop and the phone. The phone's map now fills the screen: the attention cards are one strip that slides sideways, with Pause everything under it, instead of a stack that pushed the map off the screen.

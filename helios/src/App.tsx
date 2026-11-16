@@ -66,7 +66,8 @@ const RAIL_LABEL: Record<string, string> = { map: "Map" };
 
 // Phones (narrow screens) get the simple view; "Open the full dashboard" switches, remembered per browser.
 function useNarrow(): boolean {
-  const q = "(max-width: 720px)";
+  // narrow, or a phone held sideways (short, coarse pointer), so turning the phone doesn't swap to the desktop
+  const q = "(max-width: 720px), (max-height: 520px) and (orientation: landscape) and (pointer: coarse)";
   const [m, setM] = useState(() => window.matchMedia(q).matches);
   useEffect(() => {
     const mm = window.matchMedia(q);
@@ -256,7 +257,7 @@ export function App() {
         {proot === "livemap" ? (
           a.map && a.map.nodes.length > 0
             ? <PhoneMap map={a.map} status={st} events={a.events} layout={layout} onLayout={setLayout}
-                onPlugins={() => go("plugins")} onDetails={setSel} onAsk={askAri} onView={go} onChanged={() => { a.reload().catch(() => {}); }} />
+                onPlugins={() => go("plugins")} onDetails={setSel} onAsk={askAri} onView={go} onClose={() => go("map")} onChanged={() => { a.reload().catch(() => {}); }} />
             : <div className="empty pm-empty">{a.phase === "down" ? "Waiting for Argus…" : "Loading the map…"}</div>
         ) : (<>
         <PhoneHeader status={st} live={a.conn === "live"} title={title} down={a.phase === "down"} onBell={() => go("notifications")} />
