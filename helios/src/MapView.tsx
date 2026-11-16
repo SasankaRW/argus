@@ -129,10 +129,10 @@ export function MapView(p: Props) {
   const pb = layout.placed[PLUGINS];
   const column = (lv: number) => Object.values(plugLayout.placed).filter((c) => c.level === lv).sort((a, b) => a.y - b.y).map((c) => c.id);
   const zoom = usePluginZoom({
-    enabled: !vertical && !compact && !!pb, box: pb ? { cx: pb.x, cy: pb.y, w: pb.w, h: pb.h } : null, canvas: { w: layout.width, h: layout.height },
+    enabled: !vertical && !!pb, box: pb ? { cx: pb.x, cy: pb.y, w: pb.w, h: pb.h } : null, canvas: { w: layout.width, h: layout.height }, plug: { w: plugLayout.width, h: plugLayout.height },
     groups: { src: column(PL.inputs), mid: column(PL.plugins), snk: column(PL.outputs) },
     at: Object.fromEntries(Object.values(plugLayout.placed).map((c) => [c.id, { x: c.x, y: c.y }])),
-    root: wrap, hasSelection: !!p.selection, clearSelection: () => p.onSelect(null),
+    fitScreen: compact, root: wrap, hasSelection: !!p.selection, clearSelection: () => p.onSelect(null),
   });
   const inPlugins = zoom.phase === "view";
   const [anim, setAnim] = useState(false);  // fitting animates only after the first fit, not from nothing
@@ -163,6 +163,23 @@ export function MapView(p: Props) {
     }
   }
 
+  // Sideways phone: the plugin view (laid out on 1200 x 600) is fitted to what is drawn (the cards and the idle panel) and
+  // to the whole screen under the bar, so its text stays as large as the screen allows.
+  const barSize = useBox(zoom.refs.bar), idleSize = useBox(zoom.refs.idle);
+  let plugFit: React.CSSProperties | undefined, idleFit: React.CSSProperties | undefined;
+  if (compact && size.w && size.h) {
+    const cs = Object.values(plugLayout.placed);
+    const x0 = Math.min(...cs.map((c) => c.x - c.w / 2)), x1 = Math.max(...cs.map((c) => c.x + c.w / 2)), y1 = Math.max(...cs.map((c) => c.y + c.h / 2));
+    const y0 = Math.min(...cs.map((c) => c.y - c.h / 2));
+    const iy = y1 + 14, M = 16;
+    const bx0 = x0 - M, bx1 = x1 + M, by0 = y0 - M, by1 = iy + idleSize.h + M;
+    const aw = size.w - 24, top = headTop + barSize.h + 8, ah = size.h - 12 - top;
+    const k = Math.min(aw / (bx1 - bx0), ah / (by1 - by0), 1.2);
+    const left = 12 + (aw - (bx1 - bx0) * k) / 2 - bx0 * k, topW = top + (ah - (by1 - by0) * k) / 2 - by0 * k;
+    plugFit = { inset: "auto", left: (left - x) / scale, top: (topW - y) / scale, width: plugLayout.width, height: plugLayout.height, transformOrigin: "0 0", scale: String(k / scale) };
+    idleFit = { left: x0, right: plugLayout.width - x1, bottom: "auto", top: iy };
+  }
+
   const nav = useMapNav({ ref: wrap, fit: { x, y, s: scale }, content: { w: layout.width, h: layout.height }, enabled: !inPlugins && !!size.w, ignore: ".lm-head, .lm-nav" });
   const V = nav.view;
   const stageStyle = { transform: `translate(${V.x}px, ${V.y}px) scale(${V.s})`, width: layout.width, height: layout.height };
@@ -175,7 +192,7 @@ export function MapView(p: Props) {
     </div>
   );
   const sel = p.selection?.type === "node" ? p.selection.id : null;
-  const pick = (c: Card) => (c.id === PLUGINS ? (vertical || compact ? p.onPlugins?.() : (nav.reset(), zoom.open())) : p.onSelect({ type: "node", id: c.select }));
+  const pick = (c: Card) => (c.id === PLUGINS ? (vertical ? p.onPlugins?.() : (nav.reset(), zoom.open())) : p.onSelect({ type: "node", id: c.select }));
   const headStyle = vertical ? { top: headTop, left: 12, right: 12 } : compact ? { top: 8, left: 12, right: 64 } : { top: headTop, left: p.headLeft ?? Math.max(18, pad.l), right: Math.max(18, pad.r - 12) };
   const head = (
     <MapHead ref={headRef} items={items} anyPaused={p.map.nodes.some((n) => !!n.paused)} onReview={() => p.onReview?.()} onLogs={(id) => p.onSelect({ type: "node", id, logs: true })} onChanged={() => p.onChanged?.()}
@@ -202,10 +219,10 @@ export function MapView(p: Props) {
             <div ref={zoom.refs.cam} className="lm-cam">
               <LevelCanvas layout={layout} flow={p.flow} selected={sel} onPick={pick} label="Live map" />
             </div>
-            <div ref={zoom.refs.view} className="lm-plug" aria-label="Inside the plugins" aria-hidden={!inPlugins} style={{ opacity: 0, pointerEvents: "none" }}>
+            <div ref={zoom.refs.view} className="lm-plug" aria-label="Inside the plugins" aria-hidden={!inPlugins} style={{ opacity: 0, pointerEvents: "none", ...plugFit }}>
               <div ref={zoom.refs.pbg} className="lm-pbg" />
               <LevelCanvas layout={plugLayout} flow={p.flow} selected={sel} onPick={(c) => p.onSelect({ type: "node", id: c.select })} label="Inside the plugins" />
-              <div ref={zoom.refs.idle} className="lm-idle">
+              <div ref={zoom.refs.idle} className="lm-idle" style={idleFit}>
                 <b>{pv.idle.length} idle plugin{pv.idle.length === 1 ? "" : "s"}</b>
                 <div>{pv.idle.slice(0, MAX_IDLE).map((n) => <span key={n}>{n}</span>)}{pv.idle.length > MAX_IDLE && <span>+{pv.idle.length - MAX_IDLE} more</span>}</div>
               </div>
