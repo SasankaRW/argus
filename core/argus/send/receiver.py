@@ -80,6 +80,7 @@ class Receiver:
     agent: SendAgent
     sessions: dict[str, Session] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
+    parsed: dict = field(default_factory=dict)  # offer id -> (dir, offer): offer.json is read once, not per chunk
 
     # ------------------------------------------------------------------ paths
     @property
@@ -90,10 +91,15 @@ class Receiver:
         return self.root / (".holding" if hold else ".incoming") / offer_id
 
     def find_offer(self, offer_id: str) -> tuple[Path, dict] | None:
+        hit = self.parsed.get(offer_id)
+        if hit and (hit[0] / "offer.json").exists():
+            return hit
+        self.parsed.pop(offer_id, None)
         for hold in (False, True):
             d = self.offer_dir(offer_id, hold)
             if (d / "offer.json").exists():
-                return d, json.loads((d / "offer.json").read_text(encoding="utf-8"))
+                self.parsed[offer_id] = (d, json.loads((d / "offer.json").read_text(encoding="utf-8")))
+                return self.parsed[offer_id]
         return None
 
     def free_bytes(self) -> int:
@@ -257,6 +263,7 @@ def build_app(agent: SendAgent) -> FastAPI:
         if (d / "offer.json").exists():
             meta["created"] = json.loads((d / "offer.json").read_text(encoding="utf-8")).get("created", meta["created"])
         (d / "offer.json").write_text(json.dumps(meta), encoding="utf-8")
+        rx.parsed.pop(offer.offer_id, None)
         return await asyncio.to_thread(rx.reply, d, meta)
 
     @app.get("/send/offers/{offer_id}")
@@ -386,6 +393,7 @@ def finish(rx: Receiver, d: Path, offer: dict) -> tuple[int, dict]:
         meta = json.loads((d / "offer.json").read_text(encoding="utf-8"))
         meta["complete"] = True
         (d / "offer.json").write_text(json.dumps(meta), encoding="utf-8")
+        rx.parsed.pop(offer["offer_id"], None)
         rx.agent.accept_hold(offer)
         return 200, {"saved": [], "held": True}
     shutil.rmtree(d, ignore_errors=True)

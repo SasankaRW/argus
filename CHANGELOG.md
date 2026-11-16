@@ -5,6 +5,8 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Send:** the agent polls Tailscale only when it is configured, and its tests are lighter.
+
 - **Right-click send:** Windows 11 now has Send to my phone and Send to Calypso in the main right-click menu for files and folders. Run scripts\send-menu-install.ps1 as admin.
 
 - **Argus Send (engine):** `argus send <device> <path...>` and `argus send-agent` send files between my devices over the LAN or Tailscale, with resume, checks, a disk queue and a holding area on Calypso. Off until `send:` is set in argus.yaml.
