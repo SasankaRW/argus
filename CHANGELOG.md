@@ -6,6 +6,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 ## Unreleased
 
 - **Send:** the agent polls Tailscale only when it is configured, and its tests are lighter.
+- **Send:** the session key now matches the phone app's byte format.
 
 - **Right-click send:** Windows 11 now has Send to my phone and Send to Calypso in the main right-click menu for files and folders. Run scripts\send-menu-install.ps1 as admin.
 

@@ -64,8 +64,8 @@ class Ephemeral:
 
 
 def session_key(shared: bytes, nonce_c: bytes, nonce_s: bytes, pub_c: str, pub_s: str) -> bytes:
-    """K = HKDF-SHA256(X25519 secret, salt=nonce_c||nonce_s, info="argus-send v1"||client pubkey||server pubkey)."""
-    info = b"argus-send v1" + unb64(pub_c) + unb64(pub_s)
+    """K = HKDF-SHA256(X25519 secret, salt=nonce_c||nonce_s, info="argus-send v1"||both pubkeys sorted)."""
+    info = b"argus-send v1" + b"".join(sorted((unb64(pub_c), unb64(pub_s))))  # both pubkeys, sorted bytewise
     return HKDF(algorithm=hashes.SHA256(), length=32, salt=nonce_c + nonce_s, info=info).derive(shared)
 
 

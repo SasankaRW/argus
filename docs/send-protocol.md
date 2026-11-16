@@ -15,7 +15,7 @@ Plan: https://claude.ai/artifact/DQLMVJstRFS2EauLgQ6Zo3. This file is the contra
 
 ## Auth (every request)
 - `POST /send/hello {from, nonce_c}` → `{nonce_s, sig}` (receiver signs `nonce_c`); sender replies inside the next call with `sig` over `nonce_s`. Both check the other's pubkey from devices.json; unknown key → 403.
-- Key exchange: each side also sends a fresh X25519 public key (`eph_c` in the hello, `eph_s` in the reply), and the Ed25519 signatures cover `nonce || eph` so the exchange can't be swapped. Session key `K = HKDF-SHA256(X25519(eph), salt=nonce_c||nonce_s, info="argus-send v1"||both device pubkeys)` (32 bytes). A LAN sniffer sees only public values and cannot compute K. Session id `sid` comes with the reply, valid 10 min, renewed by a new hello.
+- Key exchange: each side also sends a fresh X25519 public key (`eph_c` in the hello, `eph_s` in the reply), and the Ed25519 signatures cover `nonce || eph` so the exchange can't be swapped. Session key `K = HKDF-SHA256(X25519(eph), salt=nonce_c||nonce_s, info="argus-send v1"||both device pubkeys sorted bytewise; MAC = HMAC(K, METHOD|path|query|sha256hex(body)|seq); receiver signs nonce_c||eph_s, sender proof signs nonce_s||eph_c; test vectors in docs/send-test-vectors.json)` (32 bytes). A LAN sniffer sees only public values and cannot compute K. Session id `sid` comes with the reply, valid 10 min, renewed by a new hello.
 - Replay: each request also carries `X-Send-Seq` (a counter starting at 1 per session, inside the MAC); the receiver refuses a seq it has already seen.
 - Every later request carries `X-Send-Session: <sid>` and `X-Send-Mac: HMAC-SHA256(K, method|path|query|sha256(body))`. Chunk bodies: MAC covers the chunk's sha256. Bad/missing MAC → 401.
 
