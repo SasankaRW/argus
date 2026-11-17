@@ -28,7 +28,8 @@ SYMBOLS = ROOT / "helios" / "node_modules" / "material-symbols" / "material-symb
 # Every icon the island draws (core/argus/ari/ari_popup.py, ICON_* and icon_for).
 ICONS = ["mic", "hub", "sports_esports", "power_settings_new", "play_arrow", "pause", "skip_previous", "skip_next",
          "chevron_right", "memory", "music_note", "inbox", "grid_view", "chat_bubble", "description",
-         "bedtime", "auto_awesome", "bolt", "language", "notifications", "circle"]
+         "bedtime", "auto_awesome", "bolt", "language", "notifications", "circle",
+         "smartphone", "desktop_windows", "laptop_chromebook", "devices"]  # Argus Send: the devices a file moves between
 # Latin, Latin-1, general punctuation and the few symbols the island prints.
 TEXT = ([*range(0x20, 0x7F), *range(0xA0, 0x100), 0x2013, 0x2014, 0x2018, 0x2019, 0x201C, 0x201D, 0x2026, 0x2022,
          0x2190, 0x2191, 0x2193, 0x2192, 0x203A, 0x2713, 0x266A, 0xB7, 0xB0])
