@@ -5,6 +5,7 @@
 import type { ArgusEvent, ArgusMap, MapNode } from "./api";
 import type { IconName } from "./icons";
 import { buildLevels, Card, Dim, Layout, layoutLevels, Line, lineKind, RECENT, Tone } from "./mapGraph";
+import { deviceIcon, fraction, isMoving, type SendLiveItem } from "./sendLive";
 
 export type PluginView = { cards: Card[]; lines: Line[]; idle: string[]; running: number; stopped: number };
 
@@ -54,7 +55,29 @@ export function pluginCard(n: MapNode, workflow?: string): Card {
   return { ...base, skin: "wait", tone: "warn", status: j.queued > 0 ? "waiting for a worker" : "waiting" };
 }
 
-export function buildPluginView(map: ArgusMap, ctx: { now: number; events: ArgusEvent[]; workflows?: Record<string, string> }): PluginView {
+// Argus Send while a file moves: the sending device, a green Send box with the progress, the receiving device, and busy
+// lines between them (the newest transfer; the others are in the pop-up and on the Transfers page). Idle, Send is listed
+// with the idle plugins.
+function sendCards(transfers: SendLiveItem[], name: (id: string) => string): { cards: Card[]; lines: Line[] } | null {
+  const t = transfers.find(isMoving);
+  if (!t) return null;
+  const pct = fraction(t);
+  const dev = (id: string, level: number, status: string): Card => ({
+    id: `dev:${id}`, select: "transfers", label: name(id), icon: deviceIcon(id), status, level, skin: "plain", tone: "ok",
+  });
+  return {
+    cards: [
+      dev(t.from, PL.inputs, "sending"),
+      { id: "send", select: "transfers", label: "Send", icon: "swap_horiz", level: PL.plugins, skin: "run", tone: "ok",
+        status: `${name(t.from)} → ${name(t.to)} · ${Math.round(pct * 100)}%`, meter: pct },
+      dev(t.to, PL.outputs, "receiving"),
+    ],
+    lines: [{ a: `dev:${t.from}`, b: "send", kind: "busy" }, { a: "send", b: `dev:${t.to}`, kind: "busy" }],
+  };
+}
+
+export function buildPluginView(map: ArgusMap, ctx: { now: number; events: ArgusEvent[]; workflows?: Record<string, string>;
+  transfers?: SendLiveItem[]; name?: (id: string) => string }): PluginView {
   const nodes = new Map(map.nodes.map((n) => [n.id, n]));
   const plugins = map.nodes.filter((n) => n.kind === "plugin");
   const busy = (n: MapNode) => (n.jobs?.active ?? 0) + (n.jobs?.queued ?? 0) + (n.jobs?.waiting ?? 0) > 0;
@@ -105,6 +128,9 @@ export function buildPluginView(map: ArgusMap, ctx: { now: number; events: Argus
       lines.push({ a: input ? id : pid, b: input ? pid : id, kind: lineKind({ tone: input ? "ok" : tone, recent }) });
     }
   }
+  const send = sendCards(ctx.transfers ?? [], ctx.name ?? cap);
+  if (send) { cards.push(...send.cards); lines.push(...send.lines); } else idle.push("Send");
+  idle.sort((a, b) => a.localeCompare(b));
   // a model that escalates to a bigger one: a purple dotted line between the two when both are shown
   const here = new Set(cards.map((c) => c.id));
   for (const e of map.edges) {
@@ -116,7 +142,7 @@ export function buildPluginView(map: ArgusMap, ctx: { now: number; events: Argus
   cards.sort((a, b) => (a.level - b.level) || (kind(a) - kind(b)) || ((order.get(a.id) ?? 99) - (order.get(b.id) ?? 99)));
   return {
     cards, lines, idle,
-    running: live.filter((p) => !p.paused && (p.jobs?.active ?? 0) > 0).length,
+    running: live.filter((p) => !p.paused && (p.jobs?.active ?? 0) > 0).length + (send ? 1 : 0),
     stopped: live.filter((p) => p.paused).length,
   };
 }

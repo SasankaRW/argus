@@ -7,6 +7,7 @@ import { Ms } from "./m3";
 import { labelOf } from "./mapGraph";
 import { MapView } from "./MapView";
 import type { Selection } from "./mapInfo";
+import type { SendLiveItem } from "./sendLive";
 
 // The phone's Map: its own screen between the greeting and the nav bar (design/material3/boards/Map.dc.html). The map
 // fills the screen; a Live chip and the Desk/Command switch float over it, and a tapped box opens a bottom sheet with
@@ -34,11 +35,12 @@ function seenAt(at: number | null): string {
   return d.toDateString() === now.toDateString() ? hm : `${d.toLocaleDateString([], { month: "short", day: "numeric" })}, ${hm}`;
 }
 
-export function PhoneMap({ map, status, events, layout, onLayout, onPlugins, onDetails, onAsk, onView, onChanged, onClose, offline, onRetry }: {
+export function PhoneMap({ map, status, events, layout, onLayout, onPlugins, onDetails, onAsk, onView, onChanged, onClose, offline, onRetry, transfers, sendName, onTransfers }: {
   map: ArgusMap; status: Status | null; events: ArgusEvent[];
   layout: Layout; onLayout: (l: Layout) => void; onPlugins: () => void; onDetails: (s: Selection) => void;
   onAsk: (text: string) => void; onView: (v: string) => void; onChanged: () => void; onClose: () => void;
   offline?: { at: number | null } | null; onRetry?: () => void;
+  transfers?: SendLiveItem[]; sendName?: (id: string) => string; onTransfers?: () => void;
 }) {
   const land = useLandscape();
   useEffect(() => {
@@ -71,7 +73,7 @@ export function PhoneMap({ map, status, events, layout, onLayout, onPlugins, onD
   return (
     <div className="phonemap" role="region" aria-label="Live map">
       <div className="pm-canvas">
-        <MapView map={map} selection={sel} onSelect={pick} flow={!offline} stale={!!offline} onPlugins={onPlugins} onReview={() => onView("inbox")} onChanged={onChanged}
+        <MapView map={map} selection={sel} onSelect={pick} flow={!offline} stale={!!offline} transfers={transfers} sendName={sendName} onTransfers={onTransfers} onPlugins={onPlugins} onReview={() => onView("inbox")} onChanged={onChanged}
           events={events} queue={queue} byWorker={byWorker} vertical={!land} compact={land}
           fitPad={land ? { top: "60px", right: "12px", bottom: "8px", left: "12px" } : { top: "120px", right: "70px", bottom: sel ? "250px" : "110px", left: "20px" }} />
       </div>

@@ -265,6 +265,7 @@ export function App() {
           phoneMap && phoneMap.nodes.length > 0
             ? <PhoneMap map={phoneMap} status={st} events={a.events} layout={layout} onLayout={setLayout}
                 offline={offline ? { at: a.mapAt } : null} onRetry={() => a.reconnect()}
+                transfers={sendLive.items} sendName={sendLive.name} onTransfers={() => go("transfers")}
                 onPlugins={() => go("plugins")} onDetails={setSel} onAsk={askAri} onView={go} onClose={() => go("map")} onChanged={() => { a.reload().catch(() => {}); }} />
             : <div className="empty pm-empty">{a.phase === "down" ? "Waiting for Argus…" : "Loading the map…"}</div>
         ) : (<>
@@ -362,7 +363,8 @@ export function App() {
     <section className={`stage${cmd ? " cmd" : ""}`} aria-label="Live map">
       <div className="canvas">
         {a.map && a.map.nodes.length > 0 ? (
-          <MapView map={a.map} selection={sel} onSelect={setSel} flow={flow} onPlugins={() => go("plugins")} onReview={() => go("inbox")} onChanged={() => { a.reload().catch(() => {}); }}
+          <MapView map={a.map} selection={sel} onSelect={setSel} flow={flow} onPlugins={() => go("plugins")}
+            transfers={sendLive.items} sendName={sendLive.name} onTransfers={() => go("transfers")} onReview={() => go("inbox")} onChanged={() => { a.reload().catch(() => {}); }}
             events={a.events} queue={queue} byWorker={byWorker} fitPad={cmd ? CMD_PAD : deskPad} headLeft={cmd ? 360 : cardUp ? 330 : undefined} />
         ) : (
           <div className="empty">{a.phase === "down" ? "Waiting for Argus…" : "Loading the map…"}</div>

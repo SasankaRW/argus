@@ -17,6 +17,7 @@ import type { Selection } from "./mapInfo";
 import { buildPluginView, layoutPluginView, PL } from "./pluginGraph";
 import { useMapNav } from "./useMapNav";
 import { usePluginZoom } from "./usePluginZoom";
+import type { SendLiveItem } from "./sendLive";
 
 export type FitPad = { top: `${number}px`; right: `${number}px`; bottom: `${number}px`; left: `${number}px` };
 
@@ -26,6 +27,9 @@ type Props = {
   onSelect: (s: Selection) => void;
   flow: boolean;
   stale?: boolean;  // Argus out of reach: the last map, dimmed, lines still
+  transfers?: SendLiveItem[];  // Argus Send's live transfers: shown in the plugin view
+  sendName?: (id: string) => string;
+  onTransfers?: () => void;  // the Send boxes open the Transfers page
   fitPad?: FitPad;  // room kept clear around the map (cards floating over it)
   headLeft?: number;  // where the attention row starts, when floating cards take the corner (the command layout)
   events?: ArgusEvent[];
@@ -123,9 +127,9 @@ export function MapView(p: Props) {
   const pv = useMemo(() => {
     const workflows: Record<string, string> = {};
     for (const j of jobs) if ((j.state === "running" || j.state === "leased") && !workflows[j.plugin]) workflows[j.plugin] = j.workflow;
-    return buildPluginView(p.map, { now, events, workflows });
+    return buildPluginView(p.map, { now, events, workflows, transfers: p.transfers, name: p.sendName });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [p.map, now, p.events, jobs]);
+  }, [p.map, now, p.events, jobs, p.transfers, p.sendName]);
   const plugLayout = useMemo(
     () => layoutPluginView(pv),
     [pv],
@@ -227,7 +231,7 @@ export function MapView(p: Props) {
             </div>
             <div ref={zoom.refs.view} className="lm-plug" aria-label="Inside the plugins" aria-hidden={!inPlugins} style={{ opacity: 0, pointerEvents: "none", ...plugFit }}>
               <div ref={zoom.refs.pbg} className="lm-pbg" />
-              <LevelCanvas layout={plugLayout} flow={p.flow} selected={sel} onPick={(c) => p.onSelect({ type: "node", id: c.select })} label="Inside the plugins" />
+              <LevelCanvas layout={plugLayout} flow={p.flow} selected={sel} onPick={(c) => (c.select === "transfers" ? p.onTransfers?.() : p.onSelect({ type: "node", id: c.select }))} label="Inside the plugins" />
               <div ref={zoom.refs.idle} className="lm-idle" style={idleFit}>
                 <b>{pv.idle.length} idle plugin{pv.idle.length === 1 ? "" : "s"}</b>
                 <div>{pv.idle.slice(0, MAX_IDLE).map((n) => <span key={n}>{n}</span>)}{pv.idle.length > MAX_IDLE && <span>+{pv.idle.length - MAX_IDLE} more</span>}</div>

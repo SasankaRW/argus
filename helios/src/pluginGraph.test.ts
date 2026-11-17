@@ -54,7 +54,7 @@ describe("the plugins shown", () => {
 
   it("lists the idle plugins by name, dimmed, and leaves them out of the columns", () => {
     const v = view();
-    expect(v.idle).toEqual(["diary", "notes"]);
+    expect(v.idle).toEqual(["diary", "notes", "Send"])  // Send sits with the idle plugins while nothing moves;
     expect(card(v, "notes")).toBeUndefined();
   });
 
@@ -69,7 +69,7 @@ describe("the plugins shown", () => {
     for (const n of m.nodes) if (n.kind === "plugin") { n.jobs = jobs(0); n.paused = false; }
     const v = view(m);
     expect(v.cards).toEqual([]);
-    expect(v.idle).toHaveLength(5);
+    expect(v.idle).toHaveLength(6)  // the five plugins and Send;
     expect(v.running).toBe(0);
   });
 });

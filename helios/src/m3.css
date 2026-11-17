@@ -624,3 +624,4 @@ html[data-paused="1"] :is(.phone2, .shell, .login) * { animation-play-state: pau
   :is(.phone2, .shell) .tx-line i { display: none; }
   :is(.phone2, .shell) .tx-fill, :is(.phone2, .shell) .tx-mini i { transition: none; }
 }
+:is(.phone2, .shell) .tx-row .tx-sub { margin-top: 10px; }
