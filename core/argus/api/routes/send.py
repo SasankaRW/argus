@@ -8,6 +8,7 @@ import time
 from fastapi import APIRouter, HTTPException, Path, Query
 from pydantic import BaseModel, Field
 
+from ...events import insert_event
 from ._deps import Deps
 
 
@@ -104,8 +105,14 @@ def build_router(deps: Deps) -> APIRouter:
 
     @router.post("/send/live", dependencies=guarded)
     async def report_live(body: SendLiveIn) -> dict:
-        """An agent's live transfers (kept in memory only); the reply names any it should cancel."""
-        return {"cancel": live.report(body.device, body.items, time.time())}
+        """An agent's live transfers (kept in memory only); the reply names any it should cancel. A transfer that
+        starts or finishes also leaves one small "send.live" event, so Helios and the island know to look."""
+        now = time.time()
+        cancel = live.report(body.device, body.items, now)
+        changes = live.take_changes()
+        if changes:
+            await store.write(lambda c: [insert_event(c, now, "send.live", data=ch) for ch in changes])
+        return {"cancel": cancel}
 
     @router.get("/send/live", dependencies=guarded)
     async def list_live() -> list[dict]:
