@@ -267,3 +267,19 @@ def test_the_island_floats_then_joins_the_edge():
     assert max(abs(a[0] - b[0]) + abs(a[1] - b[1]) for a, b in zip(below, above, strict=True)) < 0.01
     big, (x0, y0, x1, y1) = island_shape(336, 300, True)
     assert (x0, x1, y1) == (-168, 168, 300) and max(y for _, y in big) <= 300 + 1e-6
+
+
+def test_the_island_shows_a_moving_file():
+    from argus.ari.ari_popup import TRANSFER, moving_transfer, send_device_icon, transfer_words
+
+    a = {"offer_id": "a", "state": "done", "started": 5, "to": "pc", "label": "x", "done": 1, "total": 1}
+    b = {"offer_id": "b", "state": "moving", "started": 3, "to": "calypso", "label": "3 files", "done": 41,
+         "total": 100, "eta": 12.2}
+    c = {**b, "offer_id": "c", "started": 4, "to": "phone", "label": "IMG_0971.jpg", "eta": 125.0}
+    assert moving_transfer([a]) is None and moving_transfer([a, b, c])["offer_id"] == "c"  # the newest still moving
+    assert transfer_words(b, {"calypso": "Calypso"}) == ("3 files to Calypso", "41% · 12 s left")
+    assert transfer_words(c, {}) == ("IMG_0971.jpg to Phone", "41% · 2 min left")
+    assert transfer_words({**b, "state": "verifying"}, {})[1] == "checking"
+    assert [send_device_icon(d) for d in ("phone", "pc", "calypso", "tv")] == [
+        "smartphone", "desktop_windows", "laptop_chromebook", "devices"]
+    assert target_size("transfer", "", False, 0) == TRANSFER

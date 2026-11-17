@@ -283,10 +283,46 @@ class AriState:
         return self.phase == "done" and now - self.since > min(9.0, 3.5 + len(self.text) * 0.04)
 
 
+TRANSFER = (300, 54)  # the island while a file moves (Argus Send): the devices, the line, the name and progress
+FINISHED = ("done", "failed", "cancelled")
+
+
+def send_device_icon(dev: str) -> str:
+    if dev.startswith("phone"):
+        return "smartphone"
+    if dev == "pc" or "desktop" in dev:
+        return "desktop_windows"
+    if dev == "calypso" or "laptop" in dev:
+        return "laptop_chromebook"
+    return "devices"
+
+
+def moving_transfer(items: list[dict]) -> dict | None:
+    """The transfer the island shows: the newest one still moving."""
+    live = [t for t in items if t.get("state") not in FINISHED]
+    return max(live, key=lambda t: t.get("started") or 0) if live else None
+
+
+def transfer_words(t: dict, names: dict[str, str]) -> tuple[str, str]:
+    """("Home Lab review.pdf to PC", "41% · 12 s left") for the island's second line."""
+    to = names.get(t.get("to", ""), str(t.get("to", "")).capitalize())
+    pct = round(100 * t["done"] / t["total"]) if t.get("total") else 0
+    if t.get("state") == "verifying":
+        right = "checking"
+    elif t.get("eta") is not None:
+        eta = float(t["eta"])
+        right = f"{pct}% · {max(1, round(eta))} s left" if eta < 60 else f"{pct}% · {round(eta / 60)} min left"
+    else:
+        right = f"{pct}%"
+    return f"{t.get('label') or 'Files'} to {to}", right
+
+
 STOPPABLE = ("thinking", "working", "speaking")  # while Ari is doing any of these, the island has a Stop key
 
 
 def target_size(mode: str, text: str, hover: bool, details_h: float, hover_text: str = "") -> tuple[float, float]:
+    if mode == "transfer":
+        return TRANSFER
     if mode == "details":
         return DETAILS_W, min(MAX_H, details_h)
     if mode in ("active", "done"):  # one look for both: Ari's answer stays in the same pill it spoke from
@@ -481,6 +517,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
         ask = Signal(dict)
         answered = Signal(str)
         live = Signal(str, object)  # what the PC itself says: media, hw, priv, weather
+        transfers = Signal(list, dict)  # Argus Send: the live transfers and the devices' names
         hotkey = Signal(str)
         keys = Signal(dict)
 
@@ -616,6 +653,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             self.hot: str | None = None  # the button under the mouse
             self.flash_text: str | None = None
             self.spring = Spring(*IDLE)
+            self.transfers: list[dict] = []  # Argus Send's live transfers (GET /send/live)
+            self.send_names: dict[str, str] = {}
+            self.tx_frac = 0.0  # the line's fill, eased toward the real progress between reports
+            bus.transfers.connect(self.on_transfers)
             self.mark = Mark()  # Ari's animated mark (ari_mark.py): a move for each job
             self.mark_t = time.monotonic()
             self.still = reduced_motion()
@@ -661,7 +702,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             if self.details:
                 return "details"
             if self.ari.phase == "idle":
-                return "idle"
+                return "transfer" if moving_transfer(self.transfers) else "idle"  # Ari always comes first
             return "done" if self.ari.phase in ("done", "following") else "active"
 
         def shown_text(self) -> str:
@@ -706,7 +747,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 self.last_frame = time.monotonic()
                 self.anim.start()
             # the indicators, the follow-up ring and Talk's breathing ring move
-            busy = (self.mode() in ("active", "details") or self.ari.phase == "following"
+            busy = (self.mode() in ("active", "details", "transfer") or self.ari.phase == "following"
                     or (self.hover and self.mode() == "idle" and not self.still))
             if busy and not self.pulse.isActive():
                 self.pulse.start()
@@ -722,6 +763,14 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             self.update()
             if not moving:
                 self.anim.stop()
+
+        def on_transfers(self, items: list, names: dict) -> None:
+            was = moving_transfer(self.transfers)
+            self.transfers, self.send_names = items, names or self.send_names
+            now = moving_transfer(items)
+            if now and (not was or was.get("offer_id") != now.get("offer_id")):
+                self.tx_frac = 0.0
+            self.kick()
 
         def on_events(self, evs: list) -> None:
             if self.ari.apply(evs, time.monotonic()):
@@ -901,6 +950,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 self.draw_active(qp, body, tone, mode)
             elif mode == "details":
                 self.draw_details(qp, body)
+            elif mode == "transfer" and self.spring.h > 30:
+                self.draw_transfer(qp, body)
             qp.end()
 
         def draw_hover(self, qp: Any, body: Any, mic: bool, cam: bool) -> None:
@@ -992,6 +1043,51 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 qp.drawArc(QRectF(cx - 11, cy - 11, 22, 22), 90 * 16, int(left * 360 * 16))
                 qp.setOpacity(1)
             self.draw_mark(qp, cx, cy, 1.25, mark_state(ph, self.ari.text))
+
+        def draw_transfer(self, qp: Any, body: Any) -> None:
+            """A file moving (approved animation B): sending device, a line that fills with beads running ahead, the
+            receiving device; the name and progress under it."""
+            t = moving_transfer(self.transfers)
+            if not t:
+                return
+            qp.setOpacity(max(0.0, min(1.0, (self.spring.h - 30) / 16)))
+            want = (t["done"] / t["total"]) if t.get("total") else 0.0
+            self.tx_frac += (want - self.tx_frac) * (1.0 if self.still else 0.12)
+            x0, x1, cy = body.x() + 22, body.right() - 22, body.y() + 18
+            for x, dev, to in ((x0, t.get("from", ""), False), (x1, t.get("to", ""), True)):
+                qp.setPen(Qt.PenStyle.NoPen)
+                qp.setBrush(tint(GREEN, 0.22) if to else QColor(CARD))
+                qp.drawEllipse(QPointF(x, cy), 12, 12)
+                self.symbol(qp, send_device_icon(str(dev)), x, cy, 15, QColor(GREEN) if to else ink(0.92))
+            a, b = x0 + 20, x1 - 20
+            track = QPen(ink(0.12), 3)
+            track.setCapStyle(Qt.PenCapStyle.RoundCap)
+            qp.setPen(track)
+            qp.drawLine(QPointF(a, cy), QPointF(b, cy))
+            fill = QPen(QColor(ACCENT), 3)
+            fill.setCapStyle(Qt.PenCapStyle.RoundCap)
+            qp.setPen(fill)
+            qp.drawLine(QPointF(a, cy), QPointF(a + (b - a) * max(0.02, min(1.0, self.tx_frac)), cy))
+            if not self.still:  # three beads running ahead
+                base = qp.opacity()
+                for k in range(3):
+                    p = ((time.monotonic() / 1.2) + k / 3) % 1.0
+                    qp.setOpacity(base * math.sin(p * math.pi))
+                    qp.setPen(Qt.PenStyle.NoPen)
+                    qp.setBrush(QColor(ACCENT))
+                    qp.drawEllipse(QPointF(a + (b - a) * p, cy), 2.6, 2.6)
+                qp.setOpacity(base)
+            left, right = transfer_words(t, self.send_names)
+            qp.setFont(F_CHIP)
+            fm = QFontMetrics(F_CHIP)
+            rw = fm.horizontalAdvance(right)
+            row = QRectF(body.x() + 14, body.y() + 32, body.width() - 28, 16)
+            qp.setPen(ink(DIM))
+            qp.drawText(row, int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter), right)
+            qp.setPen(ink(0.92))
+            qp.drawText(QRectF(row.x(), row.y(), row.width() - rw - 10, row.height()), Qt.AlignmentFlag.AlignVCenter,
+                        fm.elidedText(left, Qt.TextElideMode.ElideRight, int(row.width() - rw - 10)))
+            qp.setOpacity(1)
 
         def draw_active(self, qp: Any, body: Any, tone: Any, mode: str) -> None:
             fade = max(0.0, min(1.0, (self.spring.h - 24) / 10))
@@ -1476,6 +1572,11 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
 
         def mousePressEvent(self, e: Any) -> None:  # noqa: N802
             if not self.shape_rect().contains(QPointF(e.position())):
+                return
+            if self.mode() == "transfer":  # a file moving: Helios's Transfers page
+                target = open_target(args.url, "show:transfers")
+                if target:
+                    webbrowser.open(target)
                 return
             key = self.key_at(e.position()) if (self.details or self.mode() == "active") else None
             if key == "stop":
@@ -1964,14 +2065,16 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                         bus.events.emit([{"kind": "ari.game", "data": api.call("GET", "/ari/game")}])
                     except _API_ERRORS:  # an older Argus without game mode
                         pass
-                r = api.call("GET", "/events?kinds=ari.state,ari.listening,ari.game,step.running,ari.ask,"
+                r = api.call("GET", "/events?kinds=ari.state,ari.listening,ari.game,step.running,ari.ask,send.live,"
                              f"approval.approved,approval.rejected,approval.expired&after={seq}&limit=200&wait=20",
                              timeout=30)
                 evs = r.get("events") or []
                 if evs:
                     seq = max(int(e["seq"]) for e in evs)
                     for e in evs:  # Ari's questions: the box under the island (gone once answered anywhere)
-                        if e.get("kind") == "ari.ask":
+                        if e.get("kind") == "send.live":  # a file started or finished moving: look at Send
+                            send_wake.set()
+                        elif e.get("kind") == "ari.ask":
                             bus.ask.emit(e.get("data") or {})
                         elif str(e.get("kind")).startswith("approval."):
                             bus.answered.emit(str((e.get("data") or {}).get("approval") or ""))
@@ -1985,6 +2088,28 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 log.warning("Ari feed failed", exc_info=True)
                 time.sleep(4)
 
+    send_wake = threading.Event()
+    send_wake.set()  # look once at the start, in case something is already moving
+
+    def send_feed() -> None:
+        """Argus Send: woken by a "send.live" event, read the live transfers twice a second while anything moves,
+        then rest until the next one (nothing is asked while nothing moves)."""
+        names: dict[str, str] = {}
+        while True:
+            send_wake.wait()
+            send_wake.clear()
+            try:
+                names = {d["id"]: d["name"] for d in api.call("GET", "/send/devices")} or names
+                while True:
+                    items = api.call("GET", "/send/live")
+                    bus.transfers.emit(list(items), names)
+                    if not moving_transfer(items):
+                        break
+                    time.sleep(0.5)
+            except (*_API_ERRORS, *_SHAPE_ERRORS):  # an older Argus without Send, or out of reach
+                bus.transfers.emit([], names)
+
+    threading.Thread(target=send_feed, daemon=True, name="send-feed").start()
     threading.Thread(target=feed, daemon=True, name="ari-feed").start()
     print("Ari's island is on (top of the screen).", flush=True)
     return app.exec()
