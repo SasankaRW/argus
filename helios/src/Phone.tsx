@@ -325,6 +325,7 @@ export function PhoneMore({ onOpen, onFull, waiting = 0 }: { onOpen: (v: string)
     ["queue", "queue", "blue", "Queue", "What runs next"],
     ["runs", "history", "plain", "Runs", "Everything that ran"],
     ["share", "ios_share", "plain", "Share", "Send files to Argus"],
+    ["transfers", "swap_horiz", "plain", "Transfers", "Files moving between your devices"],
     ["power", "power_settings_new", "plain", "Power", "Wake, sleep, shut down"],
     ["models", "memory", "violet", "Models", "Tiers, calls, hand-ups"],
     ["settings", "tune", "plain", "Settings", "Quiet hours, summaries, power"],

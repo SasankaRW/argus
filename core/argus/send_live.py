@@ -16,6 +16,7 @@ class SendLive:
     def __init__(self) -> None:
         self._items: dict[tuple[str, str], dict] = {}
         self._cancel: set[str] = set()
+        self._changes: list[dict] = []  # legs that started or finished since take_changes(): the "send.live" events
         self._lock = threading.Lock()
 
     def report(self, device: str, items: list[dict], now: float) -> list[str]:
@@ -32,8 +33,12 @@ class SendLive:
                     new.setdefault("started", old.get("started", now))
                 else:
                     new["started"] = now
+                if old is None:
+                    self._changes.append(self._brief(new))
                 if new.get("state") in FINISHED and not (old and old.get("state") in FINISHED):
                     new["finished_at"] = now
+                    if old is not None:
+                        self._changes.append(self._brief(new))
                 elif old and "finished_at" in old:
                     new["finished_at"] = old["finished_at"]
                 self._items[key] = new
@@ -49,6 +54,16 @@ class SendLive:
                 del self._items[k]
             rows = list(self._items.values())
         return sorted(rows, key=lambda v: (v.get("state") in FINISHED, -v.get("started", 0)))
+
+    @staticmethod
+    def _brief(it: dict) -> dict:
+        return {k: it.get(k) for k in ("offer_id", "leg", "from", "to", "label", "state")}
+
+    def take_changes(self) -> list[dict]:
+        """Legs that started or finished since the last call (rare: Argus writes one small event for each)."""
+        with self._lock:
+            out, self._changes = self._changes, []
+            return out
 
     def cancel(self, offer_id: str) -> bool:
         with self._lock:

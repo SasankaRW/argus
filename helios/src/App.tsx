@@ -24,6 +24,8 @@ import { pref, setPref, setVoiceStatus, VoiceStatus, WakeListener } from "./voic
 import { ariFromEvents, ariSet, ariTell, earsPaused, loadEars } from "./ariState";
 import { PageBoundary, PageHead, pageMeta, PAGES, Skeleton, usePauseWhenHidden, Vitals } from "./kit";
 import { Palette, PaletteItem } from "./Palette";
+import { TransferPopup, TransfersView } from "./Transfers";
+import { useSendLive } from "./sendLive";
 
 // Pages load when first opened, so the first paint stays small.
 const AriHome = lazy(() => import("./AriView").then((m) => ({ default: m.AriHome })));
@@ -54,6 +56,7 @@ const NAV: { id: string; label: string; icon: IconName }[] = [
   { id: "queue", label: "Queue", icon: "queue" },
   { id: "runs", label: "Runs", icon: "history" },
   { id: "share", label: "Share", icon: "ios_share" },
+  { id: "transfers", label: "Transfers", icon: "swap_horiz" },
   { id: "power", label: "Power", icon: "power_settings_new" },
   { id: "models", label: "Models", icon: "neurology" },
   { id: "logs", label: "Logs", icon: "terminal" },
@@ -96,6 +99,7 @@ function Login({ onDone, bad }: { onDone: () => void; bad: boolean }) {
 
 export function App() {
   const a = useArgus();
+  const sendLive = useSendLive(a.events);  // Argus Send's live transfers: the pop-up, the Transfers page and the map
   const [sel, setSel] = useState<Selection>(null);
   const [flow, setFlow] = useState(true);
   const [info, setInfo] = useState(false);
@@ -103,7 +107,7 @@ export function App() {
   const [layout, setLayoutState] = useState<Layout>(loadLayout);  // the PC's home: map + tiles, or map + command bar
   const setLayout = (l: Layout) => { setLayoutState(l); saveLayout(l); };  // the phone's "waiting for you" sheet  // the phone's sideways full-screen map  // the map's inspector drawer with nothing selected (the overview)
   const [triedLogin, setTriedLogin] = useState(false);
-  const parse = (h: string) => (["livemap", "queue", "runs", "logs", "share", "power", "ari", "plugins", "more", "inbox", "notifications", "models", "settings", "voice"].includes(h) || h.startsWith("rules/") || h.startsWith("plugins/") || h.startsWith("ari/") ? h : "map");
+  const parse = (h: string) => (["livemap", "queue", "runs", "logs", "share", "transfers", "power", "ari", "plugins", "more", "inbox", "notifications", "models", "settings", "voice"].includes(h) || h.startsWith("rules/") || h.startsWith("plugins/") || h.startsWith("ari/") ? h : "map");
   const [rawView, setView] = useState<string>(() => parse(location.hash.slice(1)));
   const [details, setDetails] = useState(false);  // the desktop inspector card opened into the full details
   useEffect(() => {  // the share menu opens /helios/#share on a page that may already be open
@@ -261,6 +265,7 @@ export function App() {
           phoneMap && phoneMap.nodes.length > 0
             ? <PhoneMap map={phoneMap} status={st} events={a.events} layout={layout} onLayout={setLayout}
                 offline={offline ? { at: a.mapAt } : null} onRetry={() => a.reconnect()}
+                transfers={sendLive.items} sendName={sendLive.name} onTransfers={() => go("transfers")}
                 onPlugins={() => go("plugins")} onDetails={setSel} onAsk={askAri} onView={go} onClose={() => go("map")} onChanged={() => { a.reload().catch(() => {}); }} />
             : <div className="empty pm-empty">{a.phase === "down" ? "Waiting for Argus…" : "Loading the map…"}</div>
         ) : (<>
@@ -276,6 +281,7 @@ export function App() {
               onPick={(id) => go(id ? `plugins/${encodeURIComponent(id)}` : "plugins")} onSelect={setSel} />
           )
           : proot === "share" ? <ShareView onJob={(id) => setSel({ type: "job", id })} onDone={() => go("map")} />
+          : proot === "transfers" ? <TransfersView live={sendLive} />
           : proot === "queue" ? <QueueView events={a.events} onSelect={setSel} />
           : proot === "runs" ? <RunsView events={a.events} selected={null} onSelect={setSel} />
           : proot === "power" ? <PowerView events={a.events} onSelect={setSel} />
@@ -291,6 +297,7 @@ export function App() {
           </Suspense>
         </main>
         </>)}
+        {proot !== "transfers" && <TransferPopup live={sendLive} onOpen={() => go("transfers")} />}
         <PhoneTabs tab={tab} onTab={onTab} waiting={waiting} />
         {sel && a.map && (
           <Sheet onClose={() => setSel(null)}>
@@ -356,7 +363,8 @@ export function App() {
     <section className={`stage${cmd ? " cmd" : ""}`} aria-label="Live map">
       <div className="canvas">
         {a.map && a.map.nodes.length > 0 ? (
-          <MapView map={a.map} selection={sel} onSelect={setSel} flow={flow} onPlugins={() => go("plugins")} onReview={() => go("inbox")} onChanged={() => { a.reload().catch(() => {}); }}
+          <MapView map={a.map} selection={sel} onSelect={setSel} flow={flow} onPlugins={() => go("plugins")}
+            transfers={sendLive.items} sendName={sendLive.name} onTransfers={() => go("transfers")} onReview={() => go("inbox")} onChanged={() => { a.reload().catch(() => {}); }}
             events={a.events} queue={queue} byWorker={byWorker} fitPad={cmd ? CMD_PAD : deskPad} headLeft={cmd ? 360 : cardUp ? 330 : undefined} />
         ) : (
           <div className="empty">{a.phase === "down" ? "Waiting for Argus…" : "Loading the map…"}</div>
@@ -377,6 +385,7 @@ export function App() {
   const hTone = a.phase === "down" ? "d-coral" : ok ? "d-green" : "d-amber";
   return (
     <div className={`shell${root === "map" ? " onmap" : ""}`}>
+      {root !== "transfers" && <TransferPopup live={sendLive} onOpen={() => go("transfers")} />}
       <nav className="side" aria-label="Helios sections">
         <button type="button" className="side-ask" aria-label="Ask Ari" title="Ask Ari" onClick={() => go("ari")}><Ms n="graphic_eq" fill /></button>
         {RAIL_TOP.map(navItem)}
@@ -414,6 +423,7 @@ export function App() {
             onSelect={(s) => { setSel(s); go("runs"); }} />
         )
         : view === "share" ? <ShareView onJob={(id) => { setSel({ type: "job", id }); go("runs"); }} onDone={() => go("map")} />
+        : view === "transfers" ? <TransfersView live={sendLive} />
         : view === "logs" ? <LogsView />
         : view === "inbox" ? <InboxView events={a.events} onOpenChat={(c) => go(`ari/${c}`)} />
         : view === "notifications" ? <NotificationsView events={a.events} />

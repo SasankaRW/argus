@@ -54,3 +54,8 @@ def test_the_routes(tmp_path):
         assert rows[0]["device"] == "pc" and rows[0]["done"] == 40
         assert c.post("/send/live/" + "o" * 8 + "/cancel", headers=h).json() == {"ok": True}
         assert c.post("/send/live", json={"device": "pc", "items": [s]}, headers=h).json() == {"cancel": ["o" * 8]}
+        c.post("/send/live", json={"device": "pc", "items": [{**s, "done": 100, "state": "done"}]}, headers=h)
+        c.post("/send/live", json={"device": "pc", "items": [{**s, "done": 100, "state": "done"}]}, headers=h)
+        evs = c.get("/events?kinds=send.live&limit=10", headers=h).json()["events"]
+        assert [e["data"]["state"] for e in evs] == ["moving", "done"]  # one when it starts, one when it ends
+        assert all(e.get("from") is None for e in evs)  # no lines on the main map

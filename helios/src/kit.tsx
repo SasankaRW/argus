@@ -17,6 +17,7 @@ export const PAGES: Record<string, PageMeta> = {
   queue: { title: "Queue", sub: "What is running now and what is next." },
   runs: { title: "Runs", sub: "Every job, step by step." },
   share: { title: "Share", sub: "Send a file, a link or a note to a device." },
+  transfers: { title: "Transfers", sub: "Files moving between your devices, and what moved before." },
   power: { title: "Power", sub: "Wake, sleep and find your machines." },
   models: { title: "Models", sub: "Local models, Claude usage and levels." },
   settings: { title: "Settings", sub: "Tune Argus without touching files." },

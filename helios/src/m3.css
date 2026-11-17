@@ -564,3 +564,64 @@ html[data-paused="1"] :is(.phone2, .shell, .login) * { animation-play-state: pau
 .phone2 .pm-off-retry:focus-visible { outline: 2px solid var(--c-err-on); outline-offset: 2px; }
 .phone2 .pm-off-note { margin: 0 0 10px; font-size: 12.5px; color: var(--tx2); }
 .phone2 .pm-sheet.offline .cp-btn, .phone2 .pm-sheet.offline .cp-acts { pointer-events: none; opacity: .45; }
+
+/* ---- Argus Send: the side pop-up and the Transfers page (Transfers.tsx) */
+:is(.phone2, .shell) .tx-layer { position: fixed; z-index: 40; right: 24px; bottom: 24px; width: 340px; max-width: calc(100vw - 32px);
+  display: flex; flex-direction: column; align-items: stretch; gap: 10px; pointer-events: none; }
+.phone2 .tx-layer { right: 16px; left: 16px; width: auto; bottom: calc(108px + var(--sab)); }
+:is(.phone2, .shell) .tx-layer > * { pointer-events: auto; }
+:is(.phone2, .shell) .tx-pop { background: var(--raise); border-radius: 28px; padding: 16px; box-shadow: 0 10px 30px rgba(0, 0, 0, .55);
+  animation: tx-in 900ms var(--sn-out) both; }
+@keyframes tx-in { from { transform: translateX(120%); } to { transform: none; } }
+.phone2 .tx-pop { animation-name: tx-up; }
+@keyframes tx-up { from { transform: translateY(140%); } to { transform: none; } }
+:is(.phone2, .shell) .tx-open { all: unset; display: block; width: 100%; cursor: pointer; border-radius: 20px; }
+:is(.phone2, .shell) .tx-open:focus-visible { outline: 2px solid var(--ac); outline-offset: 4px; }
+:is(.phone2, .shell) .tx-hd { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; color: var(--tx2); font-size: 13px; min-width: 0; }
+:is(.phone2, .shell) .tx-hd b { color: var(--tx); font-weight: 500; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:is(.phone2, .shell) .tx-hd span { margin-left: auto; white-space: nowrap; }
+:is(.phone2, .shell) .tx-ends { display: flex; align-items: center; gap: 10px; }
+:is(.phone2, .shell) .tx-dev { width: 40px; height: 40px; border-radius: 16px; display: grid; place-items: center; flex: none; }
+:is(.phone2, .shell) .tx-dev.from { background: var(--c-sec); color: var(--c-sec-on); }
+:is(.phone2, .shell) .tx-dev.to { background: var(--c-ok); color: var(--c-ok-on); }
+:is(.phone2, .shell) .tx-dev .ms { font-size: 20px; }
+:is(.phone2, .shell) .tx-line { flex: 1; position: relative; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, .12); }
+:is(.phone2, .shell) .tx-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px; background: var(--ac); transition: width 450ms var(--sn-out); }
+:is(.phone2, .shell) .tx-line i { position: absolute; top: -1px; width: 6px; height: 6px; border-radius: 50%; background: var(--ac); opacity: 0; animation: tx-bead 1.2s linear infinite; }
+:is(.phone2, .shell) .tx-line i:nth-of-type(2) { animation-delay: .4s; } :is(.phone2, .shell) .tx-line i:nth-of-type(3) { animation-delay: .8s; }
+@keyframes tx-bead { from { left: 0; opacity: 0; } 20% { opacity: 1; } to { left: calc(100% - 6px); opacity: 0; } }
+:is(.phone2, .shell) .tx-name { font-size: 14px; color: var(--tx); margin: 12px 0 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:is(.phone2, .shell) .tx-sub { display: flex; justify-content: space-between; gap: 10px; font: 12.5px var(--rm); color: var(--tx3); }
+:is(.phone2, .shell) .tx-more { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12.5px; color: var(--tx3); min-width: 0; }
+:is(.phone2, .shell) .tx-more .ms { font-size: 16px; }
+:is(.phone2, .shell) .tx-more > span:first-of-type { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+:is(.phone2, .shell) .tx-mini { flex: 1; min-width: 40px; height: 4px; border-radius: 2px; background: var(--s3); overflow: hidden; }
+:is(.phone2, .shell) .tx-mini i { display: block; height: 100%; background: var(--ac2); transition: width 450ms var(--sn-out); }
+:is(.phone2, .shell) .tx-act { margin-top: 12px; display: flex; justify-content: flex-end; }
+:is(.phone2, .shell) .tx-chip { align-self: flex-end; display: flex; align-items: center; gap: 10px; border-radius: 24px; padding: 10px 16px 10px 10px;
+  background: var(--c-ok); color: var(--c-ok-on); font-size: 13px; box-shadow: 0 10px 30px rgba(0, 0, 0, .45);
+  animation: tx-pop 2.6s var(--sn-out) both; max-width: 100%; }
+:is(.phone2, .shell) .tx-chip span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:is(.phone2, .shell) .tx-chip.t-failed, :is(.phone2, .shell) .tx-chip.t-cancelled { background: var(--s3); color: var(--tx); }
+@keyframes tx-pop { 0% { transform: scale(.6); opacity: 0; } 15% { transform: scale(1.05); opacity: 1; } 25% { transform: none; } 85% { opacity: 1; } 100% { opacity: 0; } }
+:is(.phone2, .shell) .tx-badge { width: 30px; height: 30px; flex: none; }
+:is(.phone2, .shell) .tx-badge .spin { fill: currentColor; transform-origin: 12px 12px; animation: tx-spin 6s linear infinite; }
+:is(.phone2, .shell) .tx-badge path { fill: none; stroke: var(--c-ok); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+@keyframes tx-spin { to { transform: rotate(360deg); } }
+:is(.phone2, .shell) .tx-page { display: flex; flex-direction: column; gap: 12px; max-width: 760px; }
+:is(.phone2, .shell) .tx-h { font-size: 15px; font-weight: 500; margin: 8px 0 0; color: var(--tx); }
+:is(.phone2, .shell) .tx-empty { color: var(--tx3); font-size: 13.5px; margin: 0; }
+:is(.phone2, .shell) .tx-row { background: var(--panel); border-radius: 24px; padding: 16px; }
+:is(.phone2, .shell) .tx-hist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+:is(.phone2, .shell) .tx-hist li { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 16px; background: var(--panel); }
+:is(.phone2, .shell) .tx-hist .ms { font-size: 20px; color: var(--tx2); }
+:is(.phone2, .shell) .tx-hl { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+:is(.phone2, .shell) .tx-hl b { font-weight: 500; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:is(.phone2, .shell) .tx-hl span { font-size: 12.5px; color: var(--tx3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:is(.phone2, .shell) .tx-hist time { font: 12px var(--rm); color: var(--tx3); flex: none; }
+@media (prefers-reduced-motion: reduce) {
+  :is(.phone2, .shell) .tx-pop, :is(.phone2, .shell) .tx-chip, :is(.phone2, .shell) .tx-badge .spin { animation: none; }
+  :is(.phone2, .shell) .tx-line i { display: none; }
+  :is(.phone2, .shell) .tx-fill, :is(.phone2, .shell) .tx-mini i { transition: none; }
+}
+:is(.phone2, .shell) .tx-row .tx-sub { margin-top: 10px; }
