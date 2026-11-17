@@ -54,6 +54,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("device", help="device id, e.g. calypso")
     s.add_argument("paths", nargs="+")
     sub.add_parser("send-agent", help="run the Send agent (receiver, queue, discovery)")
+    cu = sub.add_parser("cancel-url", help="cancel a share from its notification (argus-send://cancel/<id>)")
+    cu.add_argument("url")
     args = ap.parse_args(argv)
     try:
         cfg = load_config(config_path(args.config))
@@ -71,6 +73,11 @@ def main(argv: list[str] | None = None) -> int:
             print(msg, file=sys.stderr)
         return 2
     agent = SendAgent(cfg.send, argus_token=cfg.secrets.worker_token)
+    if args.cmd == "cancel-url" or (args.cmd == "send" and args.device == "cancel"):  # argus send cancel <id>
+        oid = args.url.rstrip("/").rsplit("/", 1)[-1] if args.cmd == "cancel-url" else args.paths[0]
+        ok = agent.cancel(oid)
+        print(f"cancelled {oid[:8]}" if ok else f"nothing to cancel for {oid[:8]}")
+        return 0 if ok else 1
     if args.cmd == "send":
         try:
             oid = agent.enqueue(args.device, args.paths)

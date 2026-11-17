@@ -81,6 +81,7 @@ class Receiver:
     sessions: dict[str, Session] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
     parsed: dict = field(default_factory=dict)  # offer id -> (dir, offer): offer.json is read once, not per chunk
+    got: dict = field(default_factory=dict)  # offer id -> bytes held so far (live progress; rebuilt on resume)
 
     # ------------------------------------------------------------------ paths
     @property
@@ -233,6 +234,15 @@ def build_app(agent: SendAgent) -> FastAPI:
     def note(request: Request) -> None:
         app.state.hits.append((request.method, request.url.path, request.url.query))
 
+    def live(offer: dict, done: int, state: str = "moving") -> None:
+        """Incoming progress (the second leg of a held share is "hold"): for Argus and the notification."""
+        files = offer["files"]
+        first = files[0]["rel_path"].split("/")[0] if files else ""
+        label = first if len({f["rel_path"].split("/")[0] for f in files}) == 1 else f"{len(files)} files"
+        relayed = offer.get("origin") and offer["origin"] != offer["from"]
+        agent.progress(offer["offer_id"], "hold" if relayed else "send", src=offer["from"], dst=agent.cfg.device_id,
+                       label=label, files=len(files), total=offer["total"], done=done, state=state)
+
     @app.post("/send/offers")
     async def make_offer(request: Request) -> dict:
         raw = await request.body()
@@ -304,6 +314,11 @@ def build_app(agent: SendAgent) -> FastAPI:
                     f.write(f"{chunk}\n")
 
         await asyncio.to_thread(write)
+        if offer_id not in rx.got:  # first chunk since start (or a resume): count what is already here
+            rx.got[offer_id] = sum(min(f["size"], len(rx.chunks_of(d, f["n"])) * size_chunk) for f in offer["files"])
+        else:
+            rx.got[offer_id] += len(body)
+        live(offer, rx.got[offer_id])
         return {"ok": True}
 
     @app.post("/send/offers/{offer_id}/done")
@@ -314,6 +329,9 @@ def build_app(agent: SendAgent) -> FastAPI:
         if not found:
             raise HTTPException(404, "no such offer")
         status, out = await asyncio.to_thread(finish, rx, *found)
+        if status == 200:
+            live(found[1], found[1]["total"], "done")
+            rx.got.pop(offer_id, None)
         return JSONResponse(out, status_code=status)
 
     @app.post("/send/offers/{offer_id}/delivered")

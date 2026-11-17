@@ -58,6 +58,10 @@ class Run:
     shown: float = 0.0
 
 
+class Cancelled(Exception):  # noqa: N818  the share was cancelled while it was moving
+    pass
+
+
 def sha256_file(path: str) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -192,12 +196,23 @@ class Sender:
                     return self._wait(item, f"{self.agent.devices.name_of(target)} is not reachable")
                 hold_for = target
             await self.transfer(item, link, hold_for, self.cfg.holder if hold_for else target)
+        except Cancelled:
+            self._live(item, item.get("_remote", target), item.get("_sent", 0), "cancelled")
         except Refused as e:
             self._fail(item, str(e))
         except NoSpace as e:
             self._wait(item, str(e))
         except (SendError, httpx.HTTPError, OSError) as e:
             self._wait(item, f"stopped: {e}" if str(e) else "stopped, will try again")
+            if "_remote" in item:  # it was moving: the notification says it stopped (it tries again later)
+                self._live(item, item["_remote"], item.get("_sent", 0), "failed")
+
+    def _live(self, item: dict, remote: str, done: int, state: str = "moving") -> None:
+        """Tell the agent how far this share has got (for Argus and the notification)."""
+        manifest = item["manifest"]
+        self.agent.progress(item["id"], "hold" if item["kind"] == "hold" else "send", src=self.cfg.device_id,
+                            dst=remote, label=label_of(manifest), files=len(manifest), total=item["total"],
+                            done=done, state=state)
 
     def _wait(self, item: dict, reason: str) -> None:
         state = "held" if item["state"] == "held" else "queued"
@@ -222,6 +237,8 @@ class Sender:
             offer["origin"] = item["origin"]
         store.set(oid, state="sending", route=link.kind, reason=None)
         run = Run(item, remote, link)
+        item["_remote"] = remote
+        self._live(item, remote, 0)
         watcher = asyncio.create_task(self._watch(run))
         try:
             rep = await self._offer(run, offer)
@@ -230,6 +247,7 @@ class Sender:
             for _round in range(4):
                 await self._pump(run, work)
                 store.set(oid, state="verifying", sent=item["total"])
+                self._live(item, remote, item["total"], "verifying")
                 r = await self.call(run.cur, "POST", f"/send/offers/{oid}/done", target=remote)
                 if r.status_code == 404:  # a lost reply: the offer was finished already; offer again, it knows
                     rep = await self._offer(run, offer)
@@ -247,6 +265,7 @@ class Sender:
         finally:
             watcher.cancel()
         label, peer = label_of(manifest), self.agent.devices.name_of(target)
+        self._live(item, remote, item["total"], "done")
         if hold_for:
             store.set(oid, state="held", holder=remote, reason=None, next_try=time.time() + self.cfg.retry_seconds)
             store.event("held", peer=peer, label=label, nbytes=item["total"], offer_id=oid,
@@ -324,9 +343,14 @@ class Sender:
                                     body=data, chunk_sha=sha, target=run.target)
                 if r.status_code == 200:
                     run.sent += len(data)
+                    run.item["_sent"] = run.sent
                     if time.time() - run.shown > 0.5:
                         run.shown = time.time()
+                        cur = self.agent.store.get(run.item["id"])
+                        if cur and cur["state"] == "cancelled":
+                            raise Cancelled()
                         self.agent.store.set(run.item["id"], sent=run.sent)
+                        self._live(run.item, run.target, run.sent)
                     return
                 if r.status_code == 507:
                     raise NoSpace("the other device ran out of room")
