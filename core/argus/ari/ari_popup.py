@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import ctypes
 import http.client
 import json
 import logging
@@ -50,6 +51,7 @@ from ..island_live import (
     rate,
     weekday_letters,
 )
+from .ari_mark import Mark, mark_state
 
 log = logging.getLogger("argus.ari_popup")
 
@@ -57,17 +59,20 @@ log = logging.getLogger("argus.ari_popup")
 # isn't JSON (ValueError), a response cut short (http.client's own errors, which are not OSErrors).
 _API_ERRORS = (OSError, ValueError, http.client.HTTPException)
 # ...and a reply of another shape than we expect (an older or newer Argus).
+
 _SHAPE_ERRORS = (KeyError, TypeError, AttributeError, IndexError)
 
 # ------------------------------------------------------------------ sizes (logical px)
 
-SHOULDER_MAX = 13     # the concave curve into the screen's edge, each side
+SHOULDER_MAX = 13     # room kept for the curves into the screen's edge, each side (the window's mask)
+GAP = 3               # collapsed, the island floats this far below the screen's edge (the minimal pill)
+PAD = 10              # the joins into the edge reach at most this far beyond the island's width, each side
 MARGIN = 28           # room round the shape for its shadow (the window is this much bigger on 3 sides)
 SH_SCALE = 8          # the shadow is drawn at 1/8 size and scaled up: about 8 px of soft fade
 SH_DROP = 3           # how far below the island it sits
 SH_ALPHA = 120        # how dark it is at its darkest
-IDLE = (84, 10)
-HOVER = (138, 22)
+IDLE = (46, 5)        # the floating pill, at rest
+HOVER = (126, 22)     # joined to the edge: the pill Ari's mark sits in
 DETAILS_W = 336
 MAX_W = 430
 MAX_H = 380
@@ -83,8 +88,8 @@ NICE = {"search_my_files": "searching your files", "find_file": "looking for the
         "weather": "checking the weather", "web_search": "searching the web", "read_page": "reading the page",
         "search_everything": "finding the file"}
 # The Sonoma look (design/sonoma/SPEC.md). Surfaces and ink, then the tones: a tone means something, it never decorates.
-SURFACE = "#16161b"   # the island; the lit top edge is white at 7 %
-CARD = "#222228"      # a card or tile inside it
+SURFACE = "#000000"   # the island: true black, so it reads as part of the screen's edge
+CARD = "#1a1a1e"      # a card or tile inside it (still visible on black)
 KEY = "#26262d"       # a round key
 ACCENT = "#a6c8ff"
 ON_ACCENT = "#141418"  # text on an accent fill
@@ -103,45 +108,94 @@ FONT_FILES = ("Inter-Regular.ttf", "Inter-Medium.ttf", "Inter-SemiBold.ttf", "In
               "Symbols-Rounded.ttf", "Symbols-Rounded-Filled.ttf")
 
 
+def reduced_motion() -> bool:
+    """Windows' "Animation effects" switched off (Settings > Accessibility > Visual effects): Ari's mark holds still."""
+    if sys.platform != "win32":
+        return False
+    try:
+        on = ctypes.c_int(1)
+        ctypes.windll.user32.SystemParametersInfoW(0x1042, 0, ctypes.byref(on), 0)  # SPI_GETCLIENTAREAANIMATION
+        return not on.value
+    except (AttributeError, OSError):
+        return False
+
+
 def placement(x: int, y: int, width: int) -> tuple[int, int, int, int]:
     """The window: top middle of the screen, touching its top edge."""
     return x + (width - W) // 2, y, W, H
 
 
-def shoulder_of(h: float) -> float:
-    return min(SHOULDER_MAX, h * 0.55)
+def _lerp(a: float, b: float, t: float) -> float:
+    return a + (b - a) * t
 
 
-def radius_of(h: float, sh: float, big: bool) -> float:
-    return max(2.0, min(26.0 if big else 19.0, h - sh, h / 2))
+def _sstep(a: float, b: float, x: float) -> float:
+    t = max(0.0, min(1.0, (x - a) / (b - a)))
+    return t * t * (3 - 2 * t)
 
 
-def stretch_of(h: float) -> float:
-    """How much wider than tall the curves are: small shapes get long, soft curves (a tapered notch rather than
-    tiny round corners); from 24 px tall they are plain round."""
-    return 1.0 + 1.6 * max(0.0, min(1.0, (24 - h) / 16))
+def _arc(pts: list, cx: float, cy: float, r: float, a0: float, a1: float, n: int = 28) -> None:
+    for i in range(n + 1):
+        a = a0 + (a1 - a0) * i / n
+        pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
 
 
-def shoulder_w(h: float) -> float:
-    return shoulder_of(h) * stretch_of(h)
+def island_shape(w: float, h: float, big: bool = False) -> tuple[list[tuple[float, float]], tuple]:
+    """The island's outline as points (x from its centre, y down from the screen's edge) and its body (x0, y0, x1,
+    y1): where its content goes. Exact curves, so it stays sharp at any size (approved 2026-11-17):
+    - below the hover height it is the minimal pill floating GAP px under the edge; as it grows it rises, a neck
+      forms and it joins the edge with round joins (each tangent to the edge and to the pill's end);
+    - from the hover height up it is a joined shape: bottom corners of radius up to 22 (26 for the details) and
+      round joins into the edge, so the shape stays continuous however big it opens."""
+    hi = HOVER[1]
+    xl, xr = -w / 2, w / 2
+    pts: list[tuple[float, float]] = []
+    if h < hi:
+        t = max(0.0, min(1.0, (h - IDLE[1]) / (hi - IDLE[1])))
+        top = _lerp(GAP, -h, _sstep(0.2, 1, t))
+        bottom = _lerp(GAP + IDLE[1], h, _sstep(0.05, 1, t))
+        r = (bottom - top) / 2
+        cy = top + r
+        f = _lerp(0.25, 0.42 * hi, _sstep(0.08, 1, t))
+        dy, dist = cy - f, r + f
+        if top > 2 * f or abs(dy) > dist:  # still floating: a plain pill
+            _arc(pts, xl + r, cy, r, -math.pi / 2, -math.pi * 1.5)
+            _arc(pts, xr - r, cy, r, math.pi / 2, -math.pi / 2)
+            return pts, (xl, max(0.0, top), xr, bottom)
+        rc, ccy = r, cy
+    else:
+        rc = min(h, 26.0 if big else float(hi))
+        ccy = h - rc
+        f = 0.42 * hi
+        if ccy >= f:  # the sides run straight down: the joins meet them, then the bottom corners
+            _arc(pts, xl - f, f, f, -math.pi / 2, 0)
+            _arc(pts, xl + rc, ccy, rc, math.pi, math.pi / 2)
+            _arc(pts, xr - rc, ccy, rc, math.pi / 2, 0)
+            _arc(pts, xr + f, f, f, math.pi, math.pi * 1.5)
+            return pts, (xl, 0.0, xr, h)
+    dx = math.sqrt(max(0.0, (rc + f) ** 2 - (ccy - f) ** 2))
+    tt = math.atan2(ccy - f, dx)  # from the left join's centre towards the left end
+    _arc(pts, xl + rc - dx, f, f, -math.pi / 2, tt)
+    _arc(pts, xl + rc, ccy, rc, tt + math.pi, math.pi / 2)
+    _arc(pts, xr - rc, ccy, rc, math.pi / 2, -tt)
+    _arc(pts, xr - rc + dx, f, f, math.pi - tt, math.pi * 1.5)
+    return pts, (xl, 0.0, xr, max(h, ccy + rc))
+
+
+def floating(h: float) -> bool:
+    """Collapsed (or on its way): the pill hangs below the edge, so no shadow and no content but its dots."""
+    return h < HOVER[1] * 0.75
+
+
+def shoulder_w(_h: float = 0.0) -> float:
+    return PAD
 
 
 def outline(w: float, h: float, big: bool) -> list[tuple]:
-    """The shape as path commands (origin: its top-left, shoulders included): ("M", x, y), ("L", ...),
-    ("C", c1x, c1y, c2x, c2y, x, y). Concave shoulders into the edge, round bottom corners."""
-    sh = shoulder_of(h)
-    r = radius_of(h, sh, big)
-    st = stretch_of(h)
-    sw, rx = sh * st, r * st  # horizontal extents of the shoulder and the bottom corner
-    x0, x1, k = sw, sw + w, 0.55
-    return [("M", 0, 0), ("L", x1 + sw, 0),
-            ("C", x1 + sw * (1 - k), 0, x1, sh * k, x1, sh),
-            ("L", x1, h - r),
-            ("C", x1, h - r * (1 - k), x1 - rx * (1 - k), h, x1 - rx, h),
-            ("L", x0 + rx, h),
-            ("C", x0 + rx * (1 - k), h, x0, h - r * (1 - k), x0, h - r),
-            ("L", x0, sh),
-            ("C", x0, sh * k, sw * (1 - k), 0, 0, 0)]
+    """The shape as path commands with the origin at its top-left, PAD included: ("M", x, y), ("L", x, y)."""
+    pts, _ = island_shape(w, h, big)
+    ox = PAD + w / 2
+    return [("M", pts[0][0] + ox, pts[0][1])] + [("L", x + ox, y) for x, y in pts[1:]]
 
 
 @dataclass
@@ -562,6 +616,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             self.hot: str | None = None  # the button under the mouse
             self.flash_text: str | None = None
             self.spring = Spring(*IDLE)
+            self.mark = Mark()  # Ari's animated mark (ari_mark.py): a move for each job
+            self.mark_t = time.monotonic()
+            self.still = reduced_motion()
             self.buttons: list[tuple[QRectF, str]] = []
             self.details_h = 120.0
             self.anim = QTimer(self, interval=16)
@@ -649,7 +706,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 self.last_frame = time.monotonic()
                 self.anim.start()
             # the indicators, the follow-up ring and Talk's breathing ring move
-            busy = self.mode() in ("active", "details") or self.ari.phase == "following"
+            busy = (self.mode() in ("active", "details") or self.ari.phase == "following"
+                    or (self.hover and self.mode() == "idle" and not self.still))
             if busy and not self.pulse.isActive():
                 self.pulse.start()
             elif not busy and self.pulse.isActive():
@@ -747,7 +805,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
         def shape_rect(self) -> QRectF:
             w, h = self.spring.w, self.spring.h
             sw = shoulder_w(h)
-            return QRectF((W - w) / 2 - sw, 0, w + 2 * sw, h)
+            # collapsed, the pill floats below the edge: the hover area covers it and a little round it
+            return QRectF((W - w) / 2 - sw, 0, w + 2 * sw, max(h, GAP + IDLE[1] + 5))
 
         def set_mask(self) -> None:
             """Only the island (and room for its shadow) is part of the window; clicks elsewhere go to the app
@@ -782,7 +841,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
         def shadow(self) -> Any:
             """The shadow under the island, blurred by drawing it at 1/SH_SCALE size and scaling it back up
             (twice, so the edge fades smoothly). Kept while the size doesn't change."""
-            key = (round(self.spring.w), round(self.spring.h), self.mode() == "details")
+            key = (round(self.spring.w, 1), round(self.spring.h, 1), self.mode() == "details")
             if self._shadow_key == key:
                 return self._shadow
             k = SH_SCALE
@@ -810,17 +869,17 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             path = self.path()
             mode = self.mode()
             tone = QColor(TONE.get(self.ari.phase, AMBER))
-            # soft shadow: the shape drawn small and scaled up smoothly (a cheap blur that fades to nothing, no
-            # hard ends)
-            qp.drawImage(0, 0, self.shadow())
-            # the shape itself: the Sonoma surface, with the lit top edge (white at 7 %)
-            r = self.shape_rect()
+            # soft shadow once it has joined the edge (the floating pill has none): the shape drawn small and
+            # scaled up smoothly (a cheap blur that fades to nothing, no hard ends)
+            if not floating(self.spring.h):
+                qp.drawImage(0, 0, self.shadow())
+            # the shape itself: true black, exact curves
             qp.setPen(Qt.PenStyle.NoPen)
             qp.setBrush(QColor(SURFACE))
             qp.drawPath(path)
             qp.setClipPath(path)
-            qp.fillRect(QRectF(r.x(), 0, r.width(), 1), ink(0.07))
-            body = QRectF(r.x() + shoulder_w(self.spring.h), 0, self.spring.w, self.spring.h)
+            _, (bx0, by0, bx1, by1) = island_shape(self.spring.w, self.spring.h, mode == "details")
+            body = QRectF(W / 2 + bx0, by0, bx1 - bx0, by1 - by0)
             self.buttons = []
             if mode == "idle":
                 mic, cam = bool(self.priv.get("mic")), bool(self.priv.get("camera"))
@@ -830,14 +889,14 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                     if self.ari.off:  # a small dot on the lip: Ari is off (amber: game mode)
                         qp.setPen(Qt.PenStyle.NoPen)
                         qp.setBrush(QColor(AMBER if self.ari.game else CORAL))
-                        qp.drawEllipse(QPointF(body.center().x(), body.center().y()), 2.2, 2.2)
+                        qp.drawEllipse(QPointF(body.center().x(), body.center().y()), 1.7, 1.7)
                     # privacy: orange while an app has the mic, green while one has the camera (still dots: no
                     # redraws while you sit in a call)
                     dots = [c for c, on in ((MIC_DOT, mic), (CAM_DOT, cam)) if on]
                     for i, col in enumerate(dots):
                         qp.setPen(Qt.PenStyle.NoPen)
                         qp.setBrush(QColor(col))
-                        qp.drawEllipse(QPointF(body.right() - 10 - i * 8, body.center().y()), 2.3, 2.3)
+                        qp.drawEllipse(QPointF(body.right() - 5 - i * 5.5, body.center().y()), 1.6, 1.6)
             elif mode in ("active", "done") and self.spring.h > 24:
                 self.draw_active(qp, body, tone, mode)
             elif mode == "details":
@@ -847,6 +906,11 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
         def draw_hover(self, qp: Any, body: Any, mic: bool, cam: bool) -> None:
             """The one line on hover: a dot for who has the mic or camera, a note for the song, else "Ari"."""
             label = hover_label(self.ari.game, self.ari.off, self.priv, self.media)
+            if label == "Ari":  # nothing else to say: Ari's mark, resting
+                qp.setOpacity(max(0.0, min(1.0, (self.spring.h - 16) / 6)))
+                self.draw_mark(qp, body.center().x(), body.center().y(), 1.0, "ready")
+                qp.setOpacity(1)
+                return
             used = label.startswith(("mic:", "camera:"))
             song = label.startswith("♪")
             text = label[2:] if song else label
@@ -876,42 +940,58 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             qp.setPen(color)
             qp.drawText(QRectF(cx - px, cy - px, 2 * px, 2 * px), Qt.AlignmentFlag.AlignCenter, name)
 
+        def draw_mark(self, qp: Any, cx: float, cy: float, scale: float, state: str) -> None:
+            """Ari's mark (ari_mark.py) centred on (cx, cy): five round-capped pieces on springs, plus any shapes."""
+            now = time.monotonic()
+            self.mark.set(state, now)
+            pieces, extras, tone = self.mark.step(now, now - self.mark_t, self.still)
+            self.mark_t = now
+            col, base = QColor(tone), qp.opacity()
+            for sgm in pieces:
+                if sgm.o < 0.03:
+                    continue
+                pen = QPen(col, sgm.w * scale)
+                pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                qp.setPen(pen)
+                qp.setOpacity(base * sgm.o)
+                a = QPointF(cx + sgm.x1 * scale, cy + sgm.y1 * scale)
+                b = QPointF(cx + sgm.x2 * scale, cy + sgm.y2 * scale)
+                qp.drawLine(a, b) if (a - b).manhattanLength() > 0.01 else qp.drawPoint(a)
+            qp.setOpacity(base)
+            for ex in extras:
+                path = QPainterPath()
+                pts = [QPointF(cx + x * scale, cy + y * scale) for x, y in ex[1]]
+                path.moveTo(pts[0])
+                for pt in pts[1:]:
+                    path.lineTo(pt)
+                if ex[0] == "fill":
+                    path.closeSubpath()
+                    qp.setPen(Qt.PenStyle.NoPen)
+                    qp.setBrush(QColor(ex[2]))
+                    qp.drawPath(path)
+                else:
+                    c = QColor(ex[2])
+                    c.setAlphaF(c.alphaF() * ex[4])
+                    pen = QPen(c, ex[3] * scale)
+                    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+                    qp.setPen(pen)
+                    qp.setBrush(Qt.BrushStyle.NoBrush)
+                    qp.drawPath(path)
+
         def draw_indicator(self, qp: Any, cx: float, cy: float, tone: Any) -> None:
             t = time.monotonic()
             ph = self.ari.phase
-            if ph in ("listening", "speaking"):
-                speed = 1.6 if ph == "listening" else 1.1
-                for i in range(5):
-                    s = 0.22 + 0.78 * (0.5 + 0.5 * math.sin((t / speed) * 2 * math.pi + i * 1.3))
-                    h = 16 * s
-                    qp.setPen(Qt.PenStyle.NoPen)
-                    qp.setBrush(tone)
-                    qp.drawRoundedRect(QRectF(cx - 9 + i * 4.4, cy - h / 2, 2.4, h), 1.2, 1.2)
-            elif ph in ("thinking", "working"):
-                speed = 0.8 if ph == "working" else 1.1
-                start = -((t / speed) % 1.0) * 360
+            if ph == "following":  # still listening for a follow-up: a ring that runs down with the time left
+                left = max(0.0, 1.0 - (t - self.ari.since) / FOLLOW_S)
+                ring = QPen(tone, 1.6)
+                ring.setCapStyle(Qt.PenCapStyle.RoundCap)
+                qp.setPen(ring)
                 qp.setBrush(Qt.BrushStyle.NoBrush)
-                qp.setPen(QPen(ink(0.15), 2.0))  # the track, then the moving arc
-                qp.drawEllipse(QPointF(cx, cy), 6.5, 6.5)
-                arc = QPen(tone, 2.0)
-                arc.setCapStyle(Qt.PenCapStyle.RoundCap)
-                qp.setPen(arc)
-                qp.drawArc(QRectF(cx - 6.5, cy - 6.5, 13, 13), int(start * 16), int(-250 * 16))
-            else:
-                if ph == "following":  # still listening for a follow-up: a ring that runs down with the time left
-                    left = max(0.0, 1.0 - (t - self.ari.since) / FOLLOW_S)
-                    ring = QPen(tone, 1.6)
-                    ring.setCapStyle(Qt.PenCapStyle.RoundCap)
-                    qp.setPen(ring)
-                    qp.setBrush(Qt.BrushStyle.NoBrush)
-                    qp.setOpacity(0.35 + 0.65 * left)
-                    qp.drawArc(QRectF(cx - 8.5, cy - 8.5, 17, 17), 90 * 16, int(left * 360 * 16))
-                    qp.setOpacity(1)
-                qp.setPen(Qt.PenStyle.NoPen)
-                qp.setBrush(tint(tone.name(), 0.16))
-                qp.drawEllipse(QPointF(cx, cy), 8, 8)
-                qp.setBrush(tone)
-                qp.drawEllipse(QPointF(cx, cy), 3.8, 3.8)
+                qp.setOpacity(0.35 + 0.65 * left)
+                qp.drawArc(QRectF(cx - 11, cy - 11, 22, 22), 90 * 16, int(left * 360 * 16))
+                qp.setOpacity(1)
+            self.draw_mark(qp, cx, cy, 1.25, mark_state(ph, self.ari.text))
 
         def draw_active(self, qp: Any, body: Any, tone: Any, mode: str) -> None:
             fade = max(0.0, min(1.0, (self.spring.h - 24) / 10))

@@ -25,6 +25,7 @@ type Props = {
   selection: Selection;
   onSelect: (s: Selection) => void;
   flow: boolean;
+  stale?: boolean;  // Argus out of reach: the last map, dimmed, lines still
   fitPad?: FitPad;  // room kept clear around the map (cards floating over it)
   headLeft?: number;  // where the attention row starts, when floating cards take the corner (the command layout)
   events?: ArgusEvent[];
@@ -203,15 +204,15 @@ export function MapView(p: Props) {
       style={headStyle} />
   );
   return (
-    <div ref={wrap} className={`lm lm-pan${compact ? " lm-compact" : ""}${nav.dragging ? " drag" : ""}`} onClick={(e) => { if (e.target === e.currentTarget) p.onSelect(null); }}>
+    <div ref={wrap} className={`lm lm-pan${compact ? " lm-compact" : ""}${p.stale ? " lm-stale" : ""}${nav.dragging ? " drag" : ""}`} onClick={(e) => { if (e.target === e.currentTarget) p.onSelect(null); }}>
       {vertical ? (<>
-        {head}
+        {!p.stale && head}
         <div className={stageCls} style={stageStyle}>
           <LevelCanvas layout={layout} flow={p.flow} selected={sel} onPick={pick} label="Live map" />
         </div>
         {navBtns}
       </>) : (<>
-        {head}
+        {!p.stale && head}
         <div ref={zoom.refs.bar} className={`lm-head lm-bar${compact ? " compact" : ""}`} style={{ ...headStyle, opacity: 0, pointerEvents: "none" }} aria-hidden={!inPlugins}>
           <button ref={zoom.refs.back} type="button" className="lm-go lm-back" onClick={zoom.back}><Ms n="arrow_back" />Back to map</button>
           <span className="lm-note">{compact

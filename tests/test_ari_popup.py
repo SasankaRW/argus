@@ -6,11 +6,11 @@ from argus.ari.ari_popup import (
     AriState,
     Spring,
     W,
+    island_shape,
     next_schedule,
     open_target,
     outline,
     placement,
-    shoulder_of,
     target_size,
 )
 from argus.worker import Worker
@@ -27,9 +27,10 @@ def states(cl) -> list[tuple[str, str]]:
 def test_the_island_helpers():
     assert placement(0, 0, 1920)[1] == 0 and placement(0, 0, 1920)[2] == W  # centred, touching the top edge
     assert placement(0, 0, 1920)[0] == (1920 - W) // 2
-    # the outline starts and ends at the screen's edge, and spans the shoulders
+    # joined, the outline starts and ends on the screen's edge (y = 0) and stays within PAD of its width
     pts = outline(100, 36, False)
-    assert pts[0] == ("M", 0, 0) and pts[1][1] == 100 + 2 * shoulder_of(36) and pts[-1][-2:] == (0, 0)
+    assert abs(pts[0][2]) < 1e-9 and abs(pts[-1][2]) < 1e-9
+    assert all(-1e-9 <= c[1] <= 120 + 1e-9 for c in pts)
     sp = Spring(96, 8)
     frames = 0
     while sp.step(300, 36, 1 / 60):
@@ -42,7 +43,7 @@ def test_the_island_helpers():
     assert not st.apply([{"kind": "step.running", "job_id": "other", "step": "tool 1: x", "data": {}}], 2.0)
     st.apply([{"kind": "ari.state", "job_id": "j1", "data": {"phase": "done", "text": "Done."}}], 3.0)
     assert not st.fold_due(4.0) and st.fold_due(10.0)
-    assert target_size("idle", "", False, 0) == (84, 10) and target_size("details", "", False, 999)[1] == 380
+    assert target_size("idle", "", False, 0) == (46, 5) and target_size("details", "", False, 999)[1] == 380
     assert next_schedule([{"enabled": True, "next_run_at": 9}, {"enabled": True, "next_run_at": 5},
                           {"enabled": False, "next_run_at": 1}])["next_run_at"] == 5
     assert open_target("http://x:8600", "show:inbox") == "http://x:8600/helios/#inbox"
@@ -184,8 +185,8 @@ def test_the_island_flips_pages_and_says_whats_on_hover():
     assert hover_label(False, False, {"mic": ["Discord"]}, song) == "mic: Discord"  # who listens comes first
     assert hover_label(True, True, {"mic": ["Discord"]}, song) == "Ari · game mode"
     w, h = target_size("idle", "", True, 0, "♪ Midnight City — M83")
-    assert h == 22 and w > 138  # wide enough for the song
-    assert target_size("idle", "", True, 0) == (138, 22)
+    assert h == 22 and w > 126  # wide enough for the song
+    assert target_size("idle", "", True, 0) == (126, 22)
 
 
 def test_the_island_keeps_its_keys(tmp_path):
@@ -252,3 +253,17 @@ def test_the_island_ships_its_fonts_and_every_icon_it_names():
     assert {"Inter", "Inter Medium", "Inter SemiBold", "Inter Display", "Island Symbols",
             "Island Symbols Filled"} <= families
     assert app is not None
+
+
+def test_the_island_floats_then_joins_the_edge():
+    """Collapsed it is a pill below the screen's edge; as it grows to the hover size it joins the edge, with no jump
+    between the two ways of drawing it."""
+    rest, body = island_shape(46, 5)
+    assert min(y for _, y in rest) >= 2.9 and body[1] >= 2.9  # floats GAP px below the edge
+    joined, _ = island_shape(126, 22)
+    assert min(y for _, y in joined) < 1e-6  # touches the edge
+    below, _ = island_shape(126, 22 - 1e-6)
+    above, _ = island_shape(126, 22 + 1e-6)
+    assert max(abs(a[0] - b[0]) + abs(a[1] - b[1]) for a, b in zip(below, above, strict=True)) < 0.01
+    big, (x0, y0, x1, y1) = island_shape(336, 300, True)
+    assert (x0, x1, y1) == (-168, 168, 300) and max(y for _, y in big) <= 300 + 1e-6

@@ -26,10 +26,19 @@ function useLandscape(): boolean {
   return m;
 }
 
-export function PhoneMap({ map, status, events, layout, onLayout, onPlugins, onDetails, onAsk, onView, onChanged, onClose }: {
+// "9:41", or "Nov 16, 9:41" when it isn't today
+function seenAt(at: number | null): string {
+  if (!at) return "earlier";
+  const d = new Date(at * 1000), now = new Date();
+  const hm = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return d.toDateString() === now.toDateString() ? hm : `${d.toLocaleDateString([], { month: "short", day: "numeric" })}, ${hm}`;
+}
+
+export function PhoneMap({ map, status, events, layout, onLayout, onPlugins, onDetails, onAsk, onView, onChanged, onClose, offline, onRetry }: {
   map: ArgusMap; status: Status | null; events: ArgusEvent[];
   layout: Layout; onLayout: (l: Layout) => void; onPlugins: () => void; onDetails: (s: Selection) => void;
   onAsk: (text: string) => void; onView: (v: string) => void; onChanged: () => void; onClose: () => void;
+  offline?: { at: number | null } | null; onRetry?: () => void;
 }) {
   const land = useLandscape();
   useEffect(() => {
@@ -62,18 +71,26 @@ export function PhoneMap({ map, status, events, layout, onLayout, onPlugins, onD
   return (
     <div className="phonemap" role="region" aria-label="Live map">
       <div className="pm-canvas">
-        <MapView map={map} selection={sel} onSelect={pick} flow onPlugins={onPlugins} onReview={() => onView("inbox")} onChanged={onChanged}
+        <MapView map={map} selection={sel} onSelect={pick} flow={!offline} stale={!!offline} onPlugins={onPlugins} onReview={() => onView("inbox")} onChanged={onChanged}
           events={events} queue={queue} byWorker={byWorker} vertical={!land} compact={land}
           fitPad={land ? { top: "60px", right: "12px", bottom: "8px", left: "12px" } : { top: "120px", right: "70px", bottom: sel ? "250px" : "110px", left: "20px" }} />
       </div>
       <div className="pm-top">
-        {!land && <div className="float pm-live"><span className="sn-dot d-green live" /><b>Live</b></div>}
-        <span className="grow" />
+        {offline ? (
+          <div className="pm-off" role="status">
+            <span className="pm-off-dot" aria-hidden="true" />
+            <span className="pm-off-t"><b>Argus is offline</b><span>Showing the map from {seenAt(offline.at)}</span></span>
+            <button type="button" className="pm-off-retry" onClick={() => onRetry?.()}>Retry</button>
+          </div>
+        ) : (<>
+          {!land && <div className="float pm-live"><span className="sn-dot d-green live" /><b>Live</b></div>}
+          <span className="grow" />
+        </>)}
         {land
           ? <button type="button" className="float pm-close" aria-label="Close the map" onClick={onClose}><Ms n="close" /></button>
-          : <LayoutSwitch layout={layout} onChange={onLayout} />}
+          : !offline && <LayoutSwitch layout={layout} onChange={onLayout} />}
       </div>
-      {layout === "command" && !land && !node && (
+      {layout === "command" && !land && !node && !offline && (
         <form className="float pm-cmd" onSubmit={run}>
           <Ms n="search" />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ask Ari, or type / for a page" aria-label="Ask Ari or open a page" enterKeyHint="send" />
@@ -81,8 +98,9 @@ export function PhoneMap({ map, status, events, layout, onLayout, onPlugins, onD
         </form>
       )}
       {node && (
-        <section className={`float pm-sheet${land ? " side" : ""}`} aria-label={`Selected: ${labelOf(node)}`}>
+        <section className={`float pm-sheet${land ? " side" : ""}${offline ? " offline" : ""}`} aria-label={`Selected: ${labelOf(node)}`}>
           <div className="pm-grip" aria-hidden="true" />
+          {offline && <p className="pm-off-note">Last known details. Controls are off until Argus is back.</p>}
           <ControlPanel node={node} logsFirst={sel?.type === "node" && sel.logs} onClose={() => setSel(null)} onChanged={onChanged} onFullLog={() => onView("logs")} onDetails={() => onDetails(sel)} />
         </section>
       )}
