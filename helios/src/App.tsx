@@ -251,12 +251,16 @@ export function App() {
     const open = (v: string) => go(v);
     const title = proot === "map" || proot === "livemap" ? null : proot === "more" ? "More" : PAGES[proot]?.title ?? null;
     const onTab = (t: PhoneTab) => go(t === "home" ? "map" : t === "map" ? "livemap" : t);
+    // Argus out of reach: the map from the last time it loaded stays on screen, dimmed, with a bar saying so
+    const offline = a.phase === "down" || a.conn === "offline";
+    const phoneMap = a.map && a.map.nodes.length > 0 ? a.map : a.phase === "down" ? a.lastMap : null;
     return (
       <PhoneCtx.Provider value={true}>
       <div className={`phone2${proot === "livemap" ? " pm-on" : ""}`}>
         {proot === "livemap" ? (
-          a.map && a.map.nodes.length > 0
-            ? <PhoneMap map={a.map} status={st} events={a.events} layout={layout} onLayout={setLayout}
+          phoneMap && phoneMap.nodes.length > 0
+            ? <PhoneMap map={phoneMap} status={st} events={a.events} layout={layout} onLayout={setLayout}
+                offline={offline ? { at: a.mapAt } : null} onRetry={() => a.reconnect()}
                 onPlugins={() => go("plugins")} onDetails={setSel} onAsk={askAri} onView={go} onClose={() => go("map")} onChanged={() => { a.reload().catch(() => {}); }} />
             : <div className="empty pm-empty">{a.phase === "down" ? "Waiting for Argus…" : "Loading the map…"}</div>
         ) : (<>

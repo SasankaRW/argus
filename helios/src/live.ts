@@ -15,11 +15,23 @@ const BAD = /(dead|failed|offline|timeout|error)/;
 const WARN = /(escalated|skipped|retry|requested|rejected|expired)/;
 const pulseTone = (k: string): Tone => (BAD.test(k) ? "bad" : WARN.test(k) ? "warn" : "flow");
 
+// The last map that loaded, kept on this device, so the phone's map still shows (dimmed) while Argus can't be reached.
+const LAST_MAP = "helios.map.last";
+type LastMap = { at: number; map: ArgusMap };
+function readLastMap(): LastMap | null {
+  try {
+    const v = JSON.parse(localStorage.getItem(LAST_MAP) || "null") as LastMap | null;
+    return v && v.map && Array.isArray(v.map.nodes) ? v : null;
+  } catch { return null; }
+}
+
 export function useArgus() {
   const [phase, setPhase] = useState<Phase>("loading");
   const [authError, setAuthError] = useState<string | null>(null);
   const [status, setStatus] = useState<Status | null>(null);
   const [map, setMap] = useState<ArgusMap | null>(null);
+  const [last, setLast] = useState<LastMap | null>(readLastMap);  // the copy kept on this device
+  const savedAt = useRef(0);
   const [events, setEvents] = useState<ArgusEvent[]>([]);
   const [pulses, setPulses] = useState<Pulse[]>([]);
   const [active, setActive] = useState<Record<string, number>>({}); // component -> last activity (ms)
@@ -36,6 +48,12 @@ export function useArgus() {
   const loadMap = useCallback(async () => {
     const m = await api<ArgusMap>("/map");
     setMap(m);
+    const at = Date.now() / 1000;
+    setLast({ at, map: m });
+    if (at - savedAt.current > 20) {  // keep a copy for when Argus is out of reach (at most every 20 s)
+      savedAt.current = at;
+      try { localStorage.setItem(LAST_MAP, JSON.stringify({ at, map: m })); } catch { /* full or private: skip */ }
+    }
     return m;
   }, []);
 
@@ -140,5 +158,6 @@ export function useArgus() {
     };
   }, [connect, loadStatus]);
 
-  return { phase, authError, setAuthError, status, map, events, pulses, active, conn, reconnect: connect, reload: loadMap };
+  return { phase, authError, setAuthError, status, map, events, pulses, active, conn, reconnect: connect, reload: loadMap,
+    lastMap: last?.map ?? null, mapAt: last?.at ?? null };
 }

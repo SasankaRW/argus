@@ -193,3 +193,8 @@ svg.lm-l { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
 .lm-head.compact .lm-all .sn-holdwrap { flex-direction: row; gap: 8px; align-items: center; }
 .lm-head.compact .lm-all .sn-hold { width: 40px; height: 40px; }
 .lm-head.compact .lm-all .sn-holdcap { font-size: 12.5px; }
+
+/* Argus out of reach: the map from the last time it loaded, dimmed, its lines still and dotted */
+.lm-stale .lm-n { opacity: .6; }
+.lm-stale .lm-e, .lm-stale .lm-e.busy, .lm-stale .lm-e.slow, .lm-stale .lm-e.broken { stroke: #34343c; stroke-width: 2; stroke-dasharray: 2 6; animation: none; }
+.lm-stale .lm-badge { display: none; }

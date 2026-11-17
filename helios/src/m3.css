@@ -551,3 +551,16 @@ html[data-paused="1"] :is(.phone2, .shell, .login) * { animation-play-state: pau
   .phone2 .pm-sheet.side { left: auto; right: 8px; top: 8px; bottom: 8px; width: 340px; max-height: none; border-radius: 24px; padding: 14px 16px; }
   .phone2 .pm-sheet.side .pm-grip { display: none; }
 }
+
+/* ---- the phone's Map while Argus can't be reached: the last map, dimmed and still, under a bar that says so */
+.phone2 .pm-off { flex: 1; min-width: 0; height: 52px; border-radius: 26px; background: var(--c-err); color: var(--c-err-on);
+  display: flex; align-items: center; gap: 10px; padding: 0 6px 0 16px; box-shadow: 0 10px 30px rgba(0, 0, 0, .5); }
+.phone2 .pm-off-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c-err-on); flex: none; }
+.phone2 .pm-off-t { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.phone2 .pm-off-t b { font-size: 14px; font-weight: 500; }
+.phone2 .pm-off-t span { font-size: 12.5px; opacity: .78; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.phone2 .pm-off-retry { margin-left: auto; flex: none; height: 40px; padding: 0 16px; border: 0; border-radius: 20px;
+  background: var(--c-err-on); color: var(--c-err); font: inherit; font-size: 13.5px; font-weight: 500; cursor: pointer; }
+.phone2 .pm-off-retry:focus-visible { outline: 2px solid var(--c-err-on); outline-offset: 2px; }
+.phone2 .pm-off-note { margin: 0 0 10px; font-size: 12.5px; color: var(--tx2); }
+.phone2 .pm-sheet.offline .cp-btn, .phone2 .pm-sheet.offline .cp-acts { pointer-events: none; opacity: .45; }
