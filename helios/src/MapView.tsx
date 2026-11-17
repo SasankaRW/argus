@@ -65,15 +65,18 @@ function useNow(): number {
 
 export function useBox(ref: React.RefObject<HTMLElement | null>): { w: number; h: number } {
   const [s, setS] = useState({ w: 0, h: 0 });
+  // The element behind the ref can change (turning the phone swaps the upright map for the sideways one), so it is
+  // looked at after every render and the observer follows it; watching only the first one left the sizes at 0.
+  const [el, setEl] = useState<HTMLElement | null>(null);
+  useLayoutEffect(() => { if (ref.current !== el) setEl(ref.current); });
   useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
+    if (!el) { setS((o) => (o.w || o.h ? { w: 0, h: 0 } : o)); return; }
     const read = () => setS((o) => (o.w === el.clientWidth && o.h === el.clientHeight ? o : { w: el.clientWidth, h: el.clientHeight }));
     read();
     const ro = new ResizeObserver(read);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [ref]);
+  }, [el]);
   return s;
 }
 
@@ -209,9 +212,11 @@ export function MapView(p: Props) {
         {navBtns}
       </>) : (<>
         {head}
-        <div ref={zoom.refs.bar} className="lm-head lm-bar" style={{ ...headStyle, opacity: 0, pointerEvents: "none" }} aria-hidden={!inPlugins}>
+        <div ref={zoom.refs.bar} className={`lm-head lm-bar${compact ? " compact" : ""}`} style={{ ...headStyle, opacity: 0, pointerEvents: "none" }} aria-hidden={!inPlugins}>
           <button ref={zoom.refs.back} type="button" className="lm-go lm-back" onClick={zoom.back}><Ms n="arrow_back" />Back to map</button>
-          <span className="lm-note">{pv.running ? `${pv.running} working now.` : "Nothing is running right now."}{pv.stopped ? ` ${pv.stopped} stopped.` : ""} Idle plugins are listed below.</span>
+          <span className="lm-note">{compact
+            ? `${pv.running ? `${pv.running} working` : "Nothing running"}${pv.stopped ? ` · ${pv.stopped} stopped` : ""}`
+            : `${pv.running ? `${pv.running} working now.` : "Nothing is running right now."}${pv.stopped ? ` ${pv.stopped} stopped.` : ""} Idle plugins are listed below.`}</span>
           <button type="button" className="lm-go lm-back" onClick={() => p.onPlugins?.()}><Ms n="extension" />All plugins</button>
         </div>
         <div className={stageCls} style={stageStyle}>
