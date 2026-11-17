@@ -20,6 +20,7 @@ from ..config import SendConfig
 from .devices import DeviceBook
 from .discovery import Discovery, local_addresses
 from .keys import DeviceKey
+from .notify import toast_for_event
 from .receiver import build_app
 from .sender import Sender, label_of
 from .store import QueueStore
@@ -36,7 +37,10 @@ def parse_online(status: dict) -> set[str]:
 
 def tailscale_online() -> set[str]:
     try:
-        out = subprocess.run(["tailscale", "status", "--json"], capture_output=True, timeout=10, check=True).stdout
+        # CREATE_NO_WINDOW: tailscale.exe is a console program; started from pythonw without it, a window flashed
+        # on the screen at every check.
+        out = subprocess.run(["tailscale", "status", "--json"], capture_output=True, timeout=10, check=True,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
         return parse_online(json.loads(out))
     except (OSError, subprocess.SubprocessError, ValueError):
         return set()
@@ -62,6 +66,15 @@ class SendAgent:
         self._server: uvicorn.Server | None = None
         self._argus_client: httpx.AsyncClient | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        self.notify = False  # the running agent shows a notification for sent, received and failed shares
+        record = self.store.event
+
+        def event(kind: str, **kw):
+            ev = record(kind, **kw)
+            if self.notify:
+                toast_for_event(kind, kw.get("peer"), kw.get("label"), kw.get("detail"))
+            return ev
+        self.store.event = event  # type: ignore[method-assign]
 
     # ------------------------------------------------------------------ what other parts call
     def me(self) -> dict:
