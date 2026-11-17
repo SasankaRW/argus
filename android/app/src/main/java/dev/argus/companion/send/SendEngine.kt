@@ -197,8 +197,8 @@ class SendEngine(private val ctx: Context, private val self: String, private val
                 }
                 sentBytes.set(already)
                 val err = upload(s, via, target, ref, tasks, sentBytes, hold)
-                if (cancelled.remove(s.id)) { queue.move(s.id, SendState.CANCELLED); SendNotes.clear(ctx, s.id); return }
-                if (err != null) return waiting(s, target.name, err)
+                if (cancelled.remove(s.id)) { queue.move(s.id, SendState.CANCELLED); SendNotes.clear(ctx, s.id); live(s, via.id, sentBytes.get(), "cancelled"); return }
+                if (err != null) { live(s, via.id, sentBytes.get(), "failed"); return waiting(s, target.name, err) }
                 queue.move(s.id, SendState.VERIFYING)
                 r = req(ref, via, "POST", "$path/done", body = ByteArray(0))
                 if (r.status == 200) { finished(s, target, via, hold, wasHeld, t0); return }
@@ -244,7 +244,11 @@ class SendEngine(private val ctx: Context, private val self: String, private val
             tick++
             if (tick % 2 == 0) {
                 val now = System.currentTimeMillis(); val b = sent.get()
-                SendNotes.progress(ctx, s.id, target.name, b, s.total, (b - last) * 1000 / maxOf(1, now - lastAt)); last = b; lastAt = now
+                SendNotes.progress(ctx, s.id, target.name, b, s.total, (b - last) * 1000 / maxOf(1, now - lastAt), target.id); last = b; lastAt = now
+            }
+            run {  // twice a second: live progress for Argus (and a cancel from Helios or the island)
+                val b = sent.get(); val now = System.currentTimeMillis()
+                live(s, via.id, b, "moving", (b - last) * 1000 / maxOf(1, now - lastAt))
             }
             // on Tailscale: try the LAN every 5 s; on success the chunks in flight finish and the rest go over the LAN
             if (tick % 10 == 0 && ref.get().kind == "tailscale") connect(via, lanOnly = true)?.let { ref.set(it) }
@@ -252,7 +256,17 @@ class SendEngine(private val ctx: Context, private val self: String, private val
         return stop.get()
     }
 
+    /** This share's live progress, for Argus; a cancel asked there stops the upload like the notification's Cancel. */
+    private fun live(s: ShareRow, to: String, done: Long, state: String, bps: Long = 0) {
+        val eta: Any = if (bps > 0 && state == "moving" && s.total > done) (s.total - done).toDouble() / bps else JSONObject.NULL
+        val o = JSONObject().put("offer_id", s.offerId).put("leg", "send").put("from", self).put("to", to)
+            .put("label", s.files.first().rel.substringBefore('/') + if (s.files.size > 1) " +${s.files.size - 1}" else "")
+            .put("files", s.files.size).put("total", s.total).put("done", done).put("state", state).put("speed", bps).put("eta", eta)
+        SendHub.reportLive(ctx, o) { oid -> if (oid == s.offerId) cancelled += s.id }
+    }
+
     private fun finished(s: ShareRow, target: Peer, via: Peer, hold: Boolean, wasHeld: Boolean, t0: Long) {
+        live(s, via.id, s.total, "done")
         val ev = JSONObject().put("device", self).put("peer", target.name).put("bytes", s.total).put("offer_id", s.offerId)
             .put("label", s.files.first().rel + if (s.files.size > 1) " +${s.files.size - 1}" else "")
         if (hold) {

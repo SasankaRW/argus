@@ -5,14 +5,14 @@ plugins {
 
 android {
     namespace = "dev.argus.companion"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "dev.argus.companion"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.3"
+        versionCode = 4
+        versionName = "1.4"
     }
 
     buildTypes {

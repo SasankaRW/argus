@@ -38,12 +38,27 @@ object SendNotes {
     private fun base(ctx: Context, ch: String, title: String, text: String) = Notification.Builder(ctx, ch)
         .setSmallIcon(android.R.drawable.stat_sys_upload_done).setContentTitle(title).setContentText(text)
 
-    fun progress(ctx: Context, share: String, peer: String, done: Long, total: Long, bytesPerSec: Long) {
-        val pct = if (total > 0) (done * 100 / total).toInt() else 0
+    /** The receiving device's icon: it rides the bar on Android 16+ (ProgressStyle's tracker). */
+    private fun tracker(peerId: String) = when {
+        peerId == "pc" || "desktop" in peerId -> dev.argus.companion.R.drawable.ic_send_to_pc
+        peerId == "calypso" || "laptop" in peerId -> dev.argus.companion.R.drawable.ic_send_to_laptop
+        else -> dev.argus.companion.R.drawable.ic_send_to_device
+    }
+
+    fun progress(ctx: Context, share: String, peer: String, done: Long, total: Long, bytesPerSec: Long, peerId: String = "") {
+        val pct = if (total > 0) (done * 100 / total).toInt().coerceIn(0, 100) else 0
         val speed = if (bytesPerSec > 0) " · ${human(bytesPerSec)}/s" else ""
-        post(ctx, id(share), base(ctx, CH_PROGRESS, "Sending to $peer", "${human(done)} of ${human(total)}$speed")
-            .setSmallIcon(android.R.drawable.stat_sys_upload).setProgress(100, pct, false).setOngoing(true).setOnlyAlertOnce(true)
-            .addAction(action(ctx, "CANCEL", share, "Cancel")))
+        val left = if (bytesPerSec > 0 && total > done) ((total - done) / bytesPerSec).let { s -> if (s < 60) " · ${maxOf(1L, s)} s left" else " · ${s / 60} min left" } else ""
+        val b = base(ctx, CH_PROGRESS, "Sending to $peer", "$pct% · ${human(done)} of ${human(total)}$speed$left")
+            .setSmallIcon(android.R.drawable.stat_sys_upload).setOngoing(true).setOnlyAlertOnce(true)
+            .addAction(action(ctx, "CANCEL", share, "Cancel"))
+        if (android.os.Build.VERSION.SDK_INT >= 36) {
+            // Android 16+: the progress-centric notification, the device riding the bar, shown as a live update
+            b.setStyle(Notification.ProgressStyle().setProgress(pct).setStyledByProgress(true)
+                .setProgressTrackerIcon(android.graphics.drawable.Icon.createWithResource(ctx, tracker(peerId))))
+            b.addExtras(android.os.Bundle().apply { putBoolean("android.requestPromotedOngoing", true) })  // a live update
+        } else b.setProgress(100, pct, false)
+        post(ctx, id(share), b)
     }
 
     fun sent(ctx: Context, share: String, peer: String) { post(ctx, id(share), base(ctx, CH_RESULT, "Sent to $peer", "Delivered and checked").setAutoCancel(true)) }

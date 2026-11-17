@@ -23,6 +23,19 @@ import java.util.UUID
 /** Owns the Send parts inside WorkerService: receiver, sender, Argus pairing loop, NSD, share shortcuts. */
 object SendHub {
     const val SELF = "phone"
+    private val liveExec = java.util.concurrent.Executors.newSingleThreadExecutor()
+
+    /** Live progress to Argus (Helios, the island and the PC show it); the reply may ask to cancel. Best effort. */
+    fun reportLive(ctx: Context, item: JSONObject, onCancel: (String) -> Unit) {
+        liveExec.execute {
+            try {
+                val p = Prefs(ctx)
+                if (!p.ready) return@execute
+                val r = Api(p.url, p.token).post("/send/live", JSONObject().put("device", SELF).put("items", JSONArray().put(item)), 4_000)
+                if (r.status == 200) r.json().optJSONArray("cancel")?.let { a -> for (i in 0 until a.length()) onCancel(a.getString(i)) }
+            } catch (_: Exception) { /* Argus out of reach: the transfer goes on */ }
+        }
+    }
     const val EXTRA_TARGET = "dev.argus.companion.SEND_TARGET"
 
     @Volatile private var engine: SendEngine? = null
