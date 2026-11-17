@@ -11,6 +11,7 @@ import shutil
 import sqlite3
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
@@ -20,7 +21,6 @@ from ..config import SendConfig
 from .devices import DeviceBook
 from .discovery import Discovery, local_addresses
 from .keys import DeviceKey
-from .notify import toast_for_event
 from .progress import Progress
 from .receiver import build_app
 from .sender import Sender, label_of
@@ -70,16 +70,9 @@ class SendAgent:
         self._loop: asyncio.AbstractEventLoop | None = None
         self.live: dict[tuple[str, str], Progress] = {}  # transfers moving now, by (offer id, leg)
         self._live_wake = asyncio.Event()
-        self.on_progress = lambda p: None  # the notification (toast.py) hooks in here on Windows
-        self.notify = False  # the running agent shows a notification for sent, received and failed shares
-        record = self.store.event
-
-        def event(kind: str, **kw):
-            ev = record(kind, **kw)
-            if self.notify:
-                toast_for_event(kind, kw.get("peer"), kw.get("label"), kw.get("detail"))
-            return ev
-        self.store.event = event  # type: ignore[method-assign]
+        # the notification (toast.py) hooks in here on Windows: progress as it moves, and a share that arrived
+        self.on_progress: Callable[[Progress], None] = lambda p: None
+        self.on_received: Callable[[dict, list[str]], None] = lambda offer, saved: None
 
     # ------------------------------------------------------------------ what other parts call
     def me(self) -> dict:
@@ -153,6 +146,10 @@ class SendAgent:
 
     def received(self, offer: dict, saved: list[str]) -> None:
         origin = offer.get("origin") or offer["from"]
+        try:
+            self.on_received(offer, saved)
+        except Exception:  # noqa: BLE001  a notification must never matter
+            log.debug("received hook failed", exc_info=True)
         self.store.event("received", peer=self.devices.name_of(origin), label=label_of(offer["files"]),
                          nbytes=offer["total"], offer_id=offer["offer_id"])
         self._flush_soon()

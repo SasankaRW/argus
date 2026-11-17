@@ -16,8 +16,9 @@ import time
 from pathlib import Path
 
 from ..config import ConfigError, load_config
+from . import toast
 from .agent import SendAgent
-from .notify import toast
+from .sender import label_of
 
 
 def config_path(given: str | None) -> str | None:
@@ -43,7 +44,7 @@ def _problem(text: str) -> None:
             f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {text}\n")
     except OSError:
         pass
-    toast("Argus couldn't send that", text.splitlines()[0][:200])
+    toast.Toaster().problem("Argus couldn't send that", text.splitlines()[0][:200])
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -84,12 +85,16 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as e:
             _problem(f"argus send: {e}")
             return 2
-        name = agent.devices.name_of(args.device)
-        print(f"queued {oid[:8]}: the agent sends it as soon as {name} is reachable")
-        what = Path(args.paths[0]).name if len(args.paths) == 1 else f"{len(args.paths)} items"
-        toast(f"Sending {what} to {name}", "You'll get another notification when it arrives")
-        return 0
-    agent.notify = True
+        print(f"queued {oid[:8]}: the agent sends it as soon as {agent.devices.name_of(args.device)} is reachable")
+        return 0  # the agent's notification appears as soon as it starts moving
+    if toast.enabled():  # the "Argus" notification with a live progress bar (Windows)
+        toast.register_app()
+        toast.register_cancel_protocol()
+        shower = toast.Toaster(cfg.send.device_id, agent.devices.name_of)
+        agent.on_progress = shower.show
+        agent.on_received = lambda offer, saved: shower.received(
+            offer["offer_id"], agent.devices.name_of(offer.get("origin") or offer["from"]), label_of(offer["files"]),
+            saved)
     fmt = "%(asctime)s %(name)s %(message)s"
     if sys.stdout is None or sys.stderr is None:  # pythonw (the logon task on Windows) has no console
         agent.data.mkdir(parents=True, exist_ok=True)
