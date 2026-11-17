@@ -11,6 +11,7 @@ import shutil
 import sqlite3
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
@@ -20,13 +21,14 @@ from ..config import SendConfig
 from .devices import DeviceBook
 from .discovery import Discovery, local_addresses
 from .keys import DeviceKey
-from .notify import toast_for_event
+from .progress import Progress
 from .receiver import build_app
 from .sender import Sender, label_of
 from .store import QueueStore
 
 log = logging.getLogger("argus.send")
 POLL_SECONDS = 2.0  # how often the queue is looked at (the CLI writes to it from outside)
+LIVE_SECONDS = 0.5  # how often live progress goes to Argus while something moves
 
 
 def parse_online(status: dict) -> set[str]:
@@ -66,15 +68,11 @@ class SendAgent:
         self._server: uvicorn.Server | None = None
         self._argus_client: httpx.AsyncClient | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
-        self.notify = False  # the running agent shows a notification for sent, received and failed shares
-        record = self.store.event
-
-        def event(kind: str, **kw):
-            ev = record(kind, **kw)
-            if self.notify:
-                toast_for_event(kind, kw.get("peer"), kw.get("label"), kw.get("detail"))
-            return ev
-        self.store.event = event  # type: ignore[method-assign]
+        self.live: dict[tuple[str, str], Progress] = {}  # transfers moving now, by (offer id, leg)
+        self._live_wake = asyncio.Event()
+        # the notification (toast.py) hooks in here on Windows: progress as it moves, and a share that arrived
+        self.on_progress: Callable[[Progress], None] = lambda p: None
+        self.on_received: Callable[[dict, list[str]], None] = lambda offer, saved: None
 
     # ------------------------------------------------------------------ what other parts call
     def me(self) -> dict:
@@ -116,8 +114,42 @@ class SendAgent:
         st = path.stat()
         return {"abs": str(path), "rel_path": rel, "size": st.st_size, "mtime": st.st_mtime, "sha256": None}
 
+    def progress(self, offer_id: str, leg: str, *, src: str, dst: str, label: str, files: int, total: int,
+                 done: int, state: str = "moving") -> Progress:
+        """A transfer leg moved on (sender or receiver): kept for the report loop and shown by the notification."""
+        now = time.time()
+        p = self.live.get((offer_id, leg))
+        if p is None:
+            p = self.live[(offer_id, leg)] = Progress(offer_id, leg, src, dst, label, files, total, now)
+        p.update(done, now, state)
+        if p.due(now):
+            try:
+                self.on_progress(p)
+            except Exception:  # noqa: BLE001  a notification must never stop a transfer
+                log.debug("progress hook failed", exc_info=True)
+        if self._loop and not self._loop.is_closed():
+            self._loop.call_soon_threadsafe(self._live_wake.set)
+        return p
+
+    def cancel(self, offer_id: str) -> bool:
+        """Stop a share (from the notification, the CLI, or Argus on behalf of Helios or the island). The sender
+        sees the state within half a second and stops; a held copy is dropped. False if there is nothing to stop."""
+        item = self.store.get(offer_id)
+        if not item or item["state"] in ("done", "failed", "cancelled"):
+            return False
+        self.store.set(offer_id, state="cancelled", reason="cancelled")
+        self.store.event("cancelled", peer=self.devices.name_of(item["target"]), label=label_of(item["manifest"]),
+                         nbytes=item["total"], offer_id=offer_id)
+        if item["kind"] == "hold":
+            self.drop_hold_files(offer_id)
+        return True
+
     def received(self, offer: dict, saved: list[str]) -> None:
         origin = offer.get("origin") or offer["from"]
+        try:
+            self.on_received(offer, saved)
+        except Exception:  # noqa: BLE001  a notification must never matter
+            log.debug("received hook failed", exc_info=True)
         self.store.event("received", peer=self.devices.name_of(origin), label=label_of(offer["files"]),
                          nbytes=offer["total"], offer_id=offer["offer_id"])
         self._flush_soon()
@@ -236,6 +268,36 @@ class SendAgent:
             await self.argus_cycle()
             await asyncio.sleep(self.cfg.register_seconds)
 
+    async def _live_loop(self) -> None:
+        """While anything moves, send Argus the live transfers every half second (and once more when they finish);
+        the reply names any to cancel. Quiet otherwise. Argus down: nothing changes, it just tries again."""
+        while True:
+            await self._live_wake.wait()
+            self._live_wake.clear()
+            while self.live:
+                items = [p.snapshot() for p in self.live.values()]
+                for oid in await self._post_live(items):
+                    self.cancel(oid)
+                for key in [k for k, p in self.live.items() if p.finished]:
+                    del self.live[key]
+                if self.live:
+                    await asyncio.sleep(LIVE_SECONDS)
+
+    async def _post_live(self, items: list[dict]) -> list[str]:
+        if not self.cfg.argus_url:
+            return []
+        if self._argus_client is None:
+            self._argus_client = httpx.AsyncClient(timeout=5)
+        headers = {"Authorization": f"Bearer {self.argus_token}"} if self.argus_token else {}
+        try:
+            r = await self._argus_client.post(self.cfg.argus_url.rstrip("/") + "/send/live", headers=headers,
+                                              json={"device": self.cfg.device_id, "items": items})
+            r.raise_for_status()
+            return [str(x) for x in (r.json().get("cancel") or [])]
+        except (httpx.HTTPError, OSError, ValueError, AttributeError) as e:
+            log.debug("live progress not sent: %s", e)
+            return []
+
     async def _net_loop(self) -> None:
         seen = local_addresses()
         while True:
@@ -276,7 +338,8 @@ class SendAgent:
                 serve.result()
                 raise RuntimeError("the Send receiver did not start")
             await asyncio.sleep(0.02)
-        self._tasks = [serve, asyncio.create_task(self._queue_loop()), asyncio.create_task(self._net_loop())]
+        self._tasks = [serve, asyncio.create_task(self._queue_loop()), asyncio.create_task(self._net_loop()),
+                       asyncio.create_task(self._live_loop())]
         if self.cfg.argus_url:
             self._tasks.append(asyncio.create_task(self._argus_loop()))
         if self.cfg.tailscale:  # only a device that uses Tailscale polls it

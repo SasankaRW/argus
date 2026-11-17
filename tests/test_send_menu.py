@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 
 from argus.send import agent as agent_mod
-from argus.send import cli, notify
+from argus.send import cli, toast
 
 
 def test_config_is_found_from_any_folder(tmp_path, monkeypatch):
@@ -25,25 +25,11 @@ def test_an_explicit_config_still_wins(tmp_path, monkeypatch):
 
 def test_a_failed_send_is_logged_and_shown(tmp_path, monkeypatch):
     shown = []
-    monkeypatch.setattr(cli, "toast", lambda title, body="": shown.append((title, body)))
+    monkeypatch.setattr(toast.Toaster, "problem", lambda self, title, body="": shown.append((title, body)))
     monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
     cli._problem("argus send: not found: C:\\nope.txt")
     assert "not found" in (tmp_path / ".argus-send" / "send-cli.log").read_text(encoding="utf-8")
     assert shown == [("Argus couldn't send that", "argus send: not found: C:\\nope.txt")]
-
-
-def test_toast_text_is_escaped():
-    x = notify.toast_xml("Sent <a&b>.txt to my phone", 'say "hi"')
-    assert "&lt;a&amp;b&gt;.txt" in x and "<text>say \"hi\"</text>" in x
-
-
-def test_events_that_notify(monkeypatch):
-    shown = []
-    monkeypatch.setattr(notify, "toast", lambda title, body="": shown.append(title) or True)
-    assert notify.toast_for_event("sent", "my phone", "a.txt")
-    assert notify.toast_for_event("received", "Calypso", "b.pdf")
-    assert not notify.toast_for_event("held", "Calypso", "b.pdf")  # the quiet ones show nothing
-    assert shown == ["Sent a.txt to my phone", "Got b.pdf from Calypso"]
 
 
 def test_tailscale_check_opens_no_window(monkeypatch):

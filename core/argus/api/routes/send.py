@@ -19,6 +19,11 @@ class SendDevice(BaseModel):
     tailscale: str | None = Field(None, max_length=253)
 
 
+class SendLiveIn(BaseModel):
+    device: str = Field(..., pattern=r"^[a-z0-9-]{1,32}$")
+    items: list[dict] = Field(default_factory=list, max_length=50)
+
+
 class SendDeviceRename(BaseModel):
     name: str = Field(..., min_length=1, max_length=60)
 
@@ -94,6 +99,23 @@ def build_router(deps: Deps) -> APIRouter:
             return True
 
         return {"ok": True, "stored": bool(await store.write(w))}
+
+    live = deps.argus.send_live
+
+    @router.post("/send/live", dependencies=guarded)
+    async def report_live(body: SendLiveIn) -> dict:
+        """An agent's live transfers (kept in memory only); the reply names any it should cancel."""
+        return {"cancel": live.report(body.device, body.items, time.time())}
+
+    @router.get("/send/live", dependencies=guarded)
+    async def list_live() -> list[dict]:
+        """Transfers moving now (and ones that finished in the last few seconds), kept in memory only."""
+        return live.items(time.time())
+
+    @router.post("/send/live/{offer_id}/cancel", dependencies=guarded)
+    async def cancel_live(offer_id: str = Path(..., pattern=r"^[A-Za-z0-9-]{8,64}$")) -> dict:
+        """Ask the sending device to stop; it hears on its next report (about half a second)."""
+        return {"ok": live.cancel(offer_id)}
 
     @router.get("/send/history", dependencies=guarded)
     async def history(limit: int = Query(50, ge=1, le=200)) -> list[dict]:

@@ -35,6 +35,7 @@ from .outbox import Outbox, add_message, phone_message
 from .plugins import PluginHost
 from .registry import Registry, ensure_component
 from .scheduler import Scheduler
+from .send_live import SendLive
 from .triggers import Triggers
 from .usage import rollup as usage_rollup
 from .weather import Weather, words
@@ -48,6 +49,7 @@ class Argus:
         self.cfg = cfg
         self.version = __version__
         self.store = Store(cfg.db_path)
+        self.send_live = SendLive()  # live Send transfers, in memory only (send_live.py)
         self.jobs = JobStore(self.store, cfg.jobs, windows=cfg.windows, off=cfg.plugins.off)
         self.registry = Registry(self.store)
         self.models = ModelBoard(self.store, cfg)

@@ -16,8 +16,9 @@ import time
 from pathlib import Path
 
 from ..config import ConfigError, load_config
+from . import toast
 from .agent import SendAgent
-from .notify import toast
+from .sender import label_of
 
 
 def config_path(given: str | None) -> str | None:
@@ -43,7 +44,7 @@ def _problem(text: str) -> None:
             f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {text}\n")
     except OSError:
         pass
-    toast("Argus couldn't send that", text.splitlines()[0][:200])
+    toast.Toaster().problem("Argus couldn't send that", text.splitlines()[0][:200])
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -54,6 +55,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("device", help="device id, e.g. calypso")
     s.add_argument("paths", nargs="+")
     sub.add_parser("send-agent", help="run the Send agent (receiver, queue, discovery)")
+    cu = sub.add_parser("cancel-url", help="cancel a share from its notification (argus-send://cancel/<id>)")
+    cu.add_argument("url")
     args = ap.parse_args(argv)
     try:
         cfg = load_config(config_path(args.config))
@@ -71,18 +74,27 @@ def main(argv: list[str] | None = None) -> int:
             print(msg, file=sys.stderr)
         return 2
     agent = SendAgent(cfg.send, argus_token=cfg.secrets.worker_token)
+    if args.cmd == "cancel-url" or (args.cmd == "send" and args.device == "cancel"):  # argus send cancel <id>
+        oid = args.url.rstrip("/").rsplit("/", 1)[-1] if args.cmd == "cancel-url" else args.paths[0]
+        ok = agent.cancel(oid)
+        print(f"cancelled {oid[:8]}" if ok else f"nothing to cancel for {oid[:8]}")
+        return 0 if ok else 1
     if args.cmd == "send":
         try:
             oid = agent.enqueue(args.device, args.paths)
         except ValueError as e:
             _problem(f"argus send: {e}")
             return 2
-        name = agent.devices.name_of(args.device)
-        print(f"queued {oid[:8]}: the agent sends it as soon as {name} is reachable")
-        what = Path(args.paths[0]).name if len(args.paths) == 1 else f"{len(args.paths)} items"
-        toast(f"Sending {what} to {name}", "You'll get another notification when it arrives")
-        return 0
-    agent.notify = True
+        print(f"queued {oid[:8]}: the agent sends it as soon as {agent.devices.name_of(args.device)} is reachable")
+        return 0  # the agent's notification appears as soon as it starts moving
+    if toast.enabled():  # the "Argus" notification with a live progress bar (Windows)
+        toast.register_app()
+        toast.register_cancel_protocol()
+        shower = toast.Toaster(cfg.send.device_id, agent.devices.name_of)
+        agent.on_progress = shower.show
+        agent.on_received = lambda offer, saved: shower.received(
+            offer["offer_id"], agent.devices.name_of(offer.get("origin") or offer["from"]), label_of(offer["files"]),
+            saved)
     fmt = "%(asctime)s %(name)s %(message)s"
     if sys.stdout is None or sys.stderr is None:  # pythonw (the logon task on Windows) has no console
         agent.data.mkdir(parents=True, exist_ok=True)
