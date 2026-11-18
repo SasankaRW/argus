@@ -30,7 +30,9 @@
 #   .\scripts\dev.ps1 merge local       CI can't run on GitHub (minutes, billing): the same checks here, then merge
 #   .\scripts\dev.ps1 ship a.tgz b.tgz  apply, pr and merge each package in turn (stops at the first problem;
 #                                       $env:ARGUS_MERGE_LOCAL=1 first to merge with local checks instead of CI)
-#   .\scripts\dev.ps1 rerun             re-run CI's failed jobs once (a flaky test unrelated to the change)
+#   .\scripts\dev.ps1 deployed          wait (up to 8 min) until the laptop runs origin/main; else say why not
+#                                       (uses $env:ARGUS_URL, the laptop's address, or http://127.0.0.1:8600; ship ends with it)
+#   .\scripts\dev.ps1 rerun          re-run CI's failed jobs once (a flaky test unrelated to the change)
 #   .\scripts\dev.ps1 sync              bring main up to date with GitHub
 #   .\scripts\dev.ps1 release minor     release: tests, version bump, changelog, tag, push, GitHub release
 param(
@@ -544,6 +546,37 @@ switch ($Command) {
         Write-Host "Shipped $($Pkgs.Count) package(s). The PC's worker restarts on the new code by itself, and the laptop" -ForegroundColor Green
         Write-Host "updates itself within ~5 minutes (once auto-update.sh is set up there)."
         Write-Host "For Ari's listener and island now: .\scripts\pc-worker.ps1 restart"
+        Write-Host ""
+        & $PSCommandPath deployed
+    }
+    "deployed" {
+        # Poll GET /deploy on the laptop until it runs what origin/main is now, or say why it doesn't.
+        GitOk fetch --quiet origin main
+        $Want = (git rev-parse origin/main).Trim()
+        $Base = if ($env:ARGUS_URL) { $env:ARGUS_URL.TrimEnd("/") } else { $ArgusUrl }
+        $H = @{}; $T = Token; if ($T) { $H["Authorization"] = "Bearer $T" }
+        Write-Host "Waiting for $Base to run $($Want.Substring(0, 8)) (up to 8 minutes) ..."
+        $Deadline = (Get-Date).AddMinutes(8)
+        $D = $null; $Err = $null
+        while ((Get-Date) -lt $Deadline) {
+            try { $D = Invoke-RestMethod -Uri "$Base/deploy" -Headers $H -TimeoutSec 5; $Err = $null } catch { $Err = $_.Exception.Message }
+            if ($D -and $D.commit -eq $Want) {
+                Write-Host "The laptop runs $($Want.Substring(0, 8)): $($D.commit_subject)" -ForegroundColor Green
+                return
+            }
+            if ($D -and $D.last_update -and $D.last_update.to -eq $Want -and $D.last_update.result -ne "updated") { break }  # no point waiting
+            Start-Sleep -Seconds 10
+        }
+        Write-Host "The laptop is not running $($Want.Substring(0, 8)) yet." -ForegroundColor Yellow
+        if ($Err) { Write-Host "  last error: $Err" }
+        if ($D) {
+            Write-Host "  running:    $($D.commit)  $($D.commit_subject)"
+            $U = $D.last_update
+            if ($U) { Write-Host "  last update: $($U.result) at step $($U.step) ($($U.detail)), $($U.subject)" } else { Write-Host "  last update: none recorded" }
+            if ($D.stale) { Write-Host "  the updater has not checked in for 15+ minutes: it is not running" -ForegroundColor Red }
+            elseif ($D.last_check) { Write-Host "  last check: $($D.last_check.behind) merge(s) behind$(if ($D.last_check.error) { ', error: ' + $D.last_check.error })" }
+        }
+        exit 1
     }
     "rerun" {
         Need-Gh

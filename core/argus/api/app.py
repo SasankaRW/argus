@@ -36,6 +36,7 @@ Approvals (C8):
     POST /phone/inbox/ack             {ids}: the app showed them (token)
     GET  /phone/notifications         the notifications sent to the phone, newest first (token)
     POST /outbox/test                 send a test notification (token)
+    GET  /deploy                      the running commit and the laptop updater's last check and update (token)
 
 Scheduler and triggers (C9):
     GET  /schedules                   schedules with their next run (token)
@@ -73,6 +74,7 @@ from .routes import (
     ari_timeline,
     ask,
     controls,
+    deploy,
     events,
     guidance,
     island,
@@ -114,7 +116,7 @@ def create_app(argus: Argus) -> FastAPI:
     tries them in."""
     from ..supervisor import head
 
-    commit = head()  # the code this argusd runs: ship.ps1 waits for the laptop to report the merged commit
+    commit = head()  # the code this argusd runs: dev.ps1 deployed waits for the laptop to report it (GET /deploy)
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await argus.start()
@@ -226,6 +228,7 @@ def create_app(argus: Argus) -> FastAPI:
     mcp.register(app, argus, mcp_auth, tools)
 
     for area in (tools_routes, island, phone, guidance, models, ari, ari_timeline, ari_memory, voice, plugins,
-                 shares, ops, events, workers, settings, approvals, schedules, controls, send, tokens_routes):
+                 shares, ops, events, workers, settings, approvals, schedules, controls, send, tokens_routes,
+                 deploy):
         app.include_router(area.build_router(deps))
     return app

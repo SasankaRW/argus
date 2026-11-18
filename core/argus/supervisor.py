@@ -48,6 +48,15 @@ def head() -> str | None:
         return None
 
 
+def head_subject() -> str | None:
+    """The first line of the commit message at HEAD (what /deploy shows next to the running commit)."""
+    try:
+        return subprocess.run(["git", "log", "-1", "--format=%s"], cwd=ROOT, capture_output=True, text=True,
+                              timeout=20).stdout.strip() or None
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
 def deps_hash() -> str:
     p = ROOT / "pyproject.toml"
     return hashlib.sha256(p.read_bytes()).hexdigest() if p.exists() else ""

@@ -85,6 +85,16 @@ export type Status = {
   token_required: boolean;
 };
 
+/** GET /deploy: the running commit and how the laptop's updater is doing (times are epoch seconds). */
+export type Deploy = {
+  commit: string | null;
+  commit_subject: string | null;
+  started_at: number | null;
+  last_check: { checked_at: number; origin: string; behind: number; error?: string } | null;
+  last_update: { at: number; from: string; to: string; subject: string; result: "updated" | "rolled_back" | "failed"; step: string; detail: string } | null;
+  stale: boolean;
+};
+
 export type Step = { idx: number; name: string; state: string; tier_used: string | null; output: unknown; error: string | null };
 export type Job = {
   id: string; plugin: string; workflow: string; state: string; attempt: number; max_attempts: number;
