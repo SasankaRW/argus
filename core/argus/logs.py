@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import logging.handlers
@@ -39,6 +40,13 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(entry, default=str, ensure_ascii=False)
 
 
+def shutdown_cancel(record: logging.LogRecord) -> bool:
+    """False for uvicorn's "Exception in ASGI application" when the exception is only a request cancelled at
+    shutdown (a long-poll still open when argusd restarts): hundreds of these a month buried the real errors."""
+    exc = record.exc_info[1] if record.exc_info else None
+    return not (isinstance(exc, asyncio.CancelledError) and record.getMessage().startswith("Exception in ASGI"))
+
+
 def setup_logging(level: str = "INFO", file: Path | None = None) -> None:
     root = logging.getLogger()
     for h in list(root.handlers):
@@ -63,3 +71,6 @@ def setup_logging(level: str = "INFO", file: Path | None = None) -> None:
 
     # Keep uvicorn's own access log quiet; our API logs what matters.
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    err = logging.getLogger("uvicorn.error")
+    if shutdown_cancel not in err.filters:
+        err.addFilter(shutdown_cancel)
