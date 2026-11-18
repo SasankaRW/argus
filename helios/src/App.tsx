@@ -25,7 +25,7 @@ import { ariFromEvents, ariSet, ariTell, earsPaused, loadEars } from "./ariState
 import { PageBoundary, PageHead, pageMeta, PAGES, Skeleton, usePauseWhenHidden, Vitals } from "./kit";
 import { Palette, PaletteItem } from "./Palette";
 import { TransferPopup, TransfersView } from "./Transfers";
-import { useSendLive } from "./sendLive";
+import { isMoving, useSendLive } from "./sendLive";
 
 // Pages load when first opened, so the first paint stays small.
 const AriHome = lazy(() => import("./AriView").then((m) => ({ default: m.AriHome })));
@@ -63,7 +63,7 @@ const NAV: { id: string; label: string; icon: IconName }[] = [
   { id: "settings", label: "Settings", icon: "settings" },
 ];
 // The desktop rail, as on the board (design/material3/boards/Desktop.dc.html). The palette (Ctrl K) goes to every page in NAV.
-const RAIL_TOP = ["map", "inbox", "plugins", "runs", "power", "models"];
+const RAIL_TOP = ["map", "inbox", "plugins", "transfers", "runs", "power", "models"];
 const RAIL_BOTTOM = ["logs", "settings"];  // after the spacer
 const RAIL_LABEL: Record<string, string> = { map: "Map" };
 
@@ -313,10 +313,13 @@ export function App() {
     const n = NAV.find((x) => x.id === id)!;
     const cur = id === view.split("/")[0];
     const label = RAIL_LABEL[id] ?? n.label;
+    // a count on Inbox (waiting for you) and on Transfers (files moving now)
+    const count = id === "inbox" ? waiting : id === "transfers" ? sendLive.items.filter(isMoving).length : 0;
+    const said = id === "inbox" ? `${count} waiting` : `${count} moving`;
     return (
-      <button key={id} type="button" className="side-i" title={n.label} aria-label={id === "inbox" && waiting > 0 ? `${label}, ${waiting} waiting` : label}
+      <button key={id} type="button" className="side-i" title={n.label} aria-label={count > 0 ? `${label}, ${said}` : label}
         aria-current={cur ? "page" : undefined} onClick={() => go(id)}>
-        <span className="ind"><Ms n={n.icon} fill={cur} />{id === "inbox" && waiting > 0 && <span className="sn-badge" aria-hidden="true">{waiting}</span>}</span>{label}
+        <span className="ind"><Ms n={n.icon} fill={cur} />{count > 0 && <span className="sn-badge" aria-hidden="true">{count}</span>}</span>{label}
       </button>
     );
   };

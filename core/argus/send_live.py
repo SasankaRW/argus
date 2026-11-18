@@ -7,8 +7,10 @@ sending device in the reply to its next report."""
 from __future__ import annotations
 
 import threading
+import time
 
 KEEP_DONE = 10.0
+SILENT = 5.0  # no report for this long: the sending device isn't there to hear a cancel
 STALE = 30.0  # a moving leg nobody reported on for this long is gone (agents report every ~0.5 s while it moves)
 FINISHED = ("done", "failed", "cancelled")
 
@@ -67,9 +69,17 @@ class SendLive:
             out, self._changes = self._changes, []
             return out
 
-    def cancel(self, offer_id: str) -> bool:
+    def cancel(self, offer_id: str, now: float | None = None) -> bool:
+        """Ask the sender to stop (it hears in the reply to its next report). A leg nobody reports on any more (its
+        device lost the finish, went to sleep or is gone) can't hear it: that one ends here at once."""
+        now = time.time() if now is None else now
         with self._lock:
-            if not any(k[0] == offer_id and v.get("state") not in FINISHED for k, v in self._items.items()):
+            open_legs = [(k, v) for k, v in self._items.items() if k[0] == offer_id and v.get("state") not in FINISHED]
+            if not open_legs:
                 return False
+            for k, v in open_legs:
+                if now - v.get("updated", now) > SILENT:
+                    self._items[k] = {**v, "state": "cancelled", "finished_at": now}
+                    self._changes.append(self._brief(self._items[k]))
             self._cancel.add(offer_id)
             return True
