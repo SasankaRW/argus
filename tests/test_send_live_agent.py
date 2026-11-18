@@ -150,3 +150,29 @@ def test_cli_cancel_marks_the_item(tmp_path, capsys):
     assert q.get(oid)["state"] == "cancelled"
     q.close()
     assert cli.main(["--config", str(cfg), "send", "cancel", oid]) == 1  # nothing left to cancel
+
+
+def test_a_transfer_finishing_during_a_report_is_reported_done(tmp_path):
+    """A tiny share (a small folder) can finish while its first "moving" report is still on the way: its "done"
+    must still reach Argus, or Helios shows it stuck at 0%."""
+    agent = make_agent(tmp_path, "pc", "PC")
+    posts: list[list[dict]] = []
+
+    async def slow_post(items):
+        posts.append(items)
+        if len(posts) == 1:  # the transfer finishes while the first report is in flight
+            agent.progress("f" * 8, "send", src="pc", dst="calypso", label="folder", files=2, total=4, done=4,
+                           state="done")
+        await asyncio.sleep(0)
+        return []
+
+    async def go():
+        agent._loop = asyncio.get_running_loop()
+        agent._post_live = slow_post
+        loop_task = asyncio.create_task(agent._live_loop())
+        agent.progress("f" * 8, "send", src="pc", dst="calypso", label="folder", files=2, total=4, done=0)
+        await wait_for(lambda: not agent.live and posts, 5, "the live loop to empty")
+        loop_task.cancel()
+
+    asyncio.run(go())
+    assert posts[-1][0]["state"] == "done"

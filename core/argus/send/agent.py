@@ -21,7 +21,7 @@ from ..config import SendConfig
 from .devices import DeviceBook
 from .discovery import Discovery, local_addresses
 from .keys import DeviceKey
-from .progress import Progress
+from .progress import FINISHED, Progress
 from .receiver import build_app
 from .sender import Sender, label_of
 from .store import QueueStore
@@ -278,7 +278,10 @@ class SendAgent:
                 items = [p.snapshot() for p in self.live.values()]
                 for oid in await self._post_live(items):
                     self.cancel(oid)
-                for key in [k for k, p in self.live.items() if p.finished]:
+                # Forget only legs whose finish went out in this report: a small share can finish while the report
+                # is on the way, and its "done" must still go out next time (or Helios shows it stuck at 0%).
+                sent = {(i["offer_id"], i["leg"]) for i in items if i.get("state") in FINISHED}
+                for key in [k for k, p in self.live.items() if p.finished and k in sent]:
                     del self.live[key]
                 if self.live:
                     await asyncio.sleep(LIVE_SECONDS)
