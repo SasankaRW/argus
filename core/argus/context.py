@@ -556,8 +556,10 @@ class Argus:
 
     async def stop(self) -> None:
         if self._activity_task is not None:
-            self._activity_task.cancel()
-            await asyncio.gather(self._activity_task, return_exceptions=True)
+            task = self._activity_task
+            if not task.done() and task.get_loop() is asyncio.get_running_loop():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
             self._activity_task = None
         await self.watchdog.stop()
         await asyncio.to_thread(self.marker.stop)  # a clean stop: no "Argus is back" message next time
