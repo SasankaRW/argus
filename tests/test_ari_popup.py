@@ -292,6 +292,7 @@ def test_the_live_pill_helpers():
         activity_action,
         countdown,
         elapsed_words,
+        live_icon,
         live_line,
         live_scenario,
         live_tone,
@@ -314,6 +315,7 @@ def test_the_live_pill_helpers():
     assert live_words({"kind": "custom", "title": "T", "progress": 0.25}, now)[2] == "25%"
     assert live_line({"kind": "custom", "progress": None, "ends_at": None}, now)[0] == "none"
     assert live_tone(timer, now) != live_tone({**timer, "ends_at": now + 30}, now)  # the last minute turns coral
+    assert live_icon({"icon": "timer"}) == "timer" and live_icon({"icon": "nope"}) == "bolt"
     assert activity_action({"kind": "transfer"}) == "show:transfers" and activity_action({"kind": "timer"}) is None
     # ranking: a timer in its last minute first, then transfers, timers, jobs, custom; more than 4 rows are cut
     items = [{"id": "c", "kind": "custom", "started_at": 1}, {"id": "j", "kind": "job", "started_at": 2},

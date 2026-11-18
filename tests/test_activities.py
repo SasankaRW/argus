@@ -95,6 +95,8 @@ def test_transfers_are_derived_from_send_live(clock):
     [t] = a.snapshot()["items"]
     assert t["kind"] == "transfer" and t["id"] == f"transfer:{'o' * 8}:send" and t["progress"] == 0.4
     assert t["title"] == "a.pdf to Pc" and t["detail"] == "40% · 6 s left" and t["device"] == "pc"
+    a.set_names({"pc": "PC"})
+    assert a.snapshot()["items"][0]["title"] == "a.pdf to PC"
     v = a.version
     live.report("phone", [snap(eta=5)], clock.now)
     a.poke()
@@ -187,7 +189,7 @@ def test_the_routes_and_their_auth(tmp_path):
     with TestClient(create_app(argus)) as c:
         named = c.post("/tokens", json={"name": "workout"}, headers=W).json()["token"]
         N = {"Authorization": f"Bearer {named}"}
-        body = {"title": "Rest", "detail": "Bench press", "icon": "timer", "ends_at": 9e12}
+        body = {"title": "Rest", "detail": "Bench press", "icon": "timer", "ends_at": 3.9e9}
         assert c.put("/activities/custom/workout-rest", json=body).status_code == 401
         assert c.delete("/activities/custom/workout-rest").status_code == 401
         assert c.get("/activities").status_code == 401
@@ -202,6 +204,7 @@ def test_the_routes_and_their_auth(tmp_path):
         assert c.delete("/activities/custom/other", headers=N).status_code == 404
         assert c.put("/activities/custom/bad id", json=body, headers=W).status_code == 422  # not a valid id
         assert c.put("/activities/custom/x", json={"title": "", "progress": 3}, headers=W).status_code == 422
+        assert c.put("/activities/custom/x", json={"title": "x", "ends_at": 1.7e12}, headers=W).status_code == 422  # ms
         t = c.post("/activities/timer", json={"minutes": 5, "label": "Tea"}, headers=W).json()
         assert t["kind"] == "timer" and t["title"] == "Tea"
         assert c.post("/activities/timer", json={"minutes": 0}, headers=W).status_code == 422

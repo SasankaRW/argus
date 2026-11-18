@@ -20,7 +20,7 @@ class CustomIn(BaseModel):
     detail: str = Field("", max_length=120)
     icon: str = Field("bolt", max_length=40, pattern=r"^[a-z0-9_]+$")
     progress: float | None = Field(None, ge=0, le=1)
-    ends_at: float | None = None
+    ends_at: float | None = Field(None, gt=0, lt=4e9)  # unix seconds (not milliseconds)
     device: str | None = Field(None, max_length=32)
 
 

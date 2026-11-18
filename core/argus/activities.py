@@ -50,9 +50,10 @@ def _eta_words(eta: float) -> str:
     return f"{max(1, round(eta))} s left" if eta < 60 else f"{round(eta / 60)} min left"
 
 
-def transfer_activity(t: dict) -> dict:
-    """One moving Send transfer as an activity."""
+def transfer_activity(t: dict, names: dict[str, str] | None = None) -> dict:
+    """One moving Send transfer as an activity (`names`: device id -> the name set in Send)."""
     to = str(t.get("to", ""))
+    to_name = (names or {}).get(to) or to.capitalize()
     pct = round(100 * t["done"] / t["total"]) if t.get("total") else 0
     if t.get("state") == "verifying":
         detail = "checking"
@@ -61,7 +62,7 @@ def transfer_activity(t: dict) -> dict:
     else:
         detail = f"{pct}%"
     return {"id": f"transfer:{t.get('offer_id', '')}:{t.get('leg', 'send')}", "kind": "transfer",
-            "title": f"{t.get('label') or 'Files'} to {to.capitalize()}", "detail": detail, "icon": "swap_horiz",
+            "title": f"{t.get('label') or 'Files'} to {to_name}", "detail": detail, "icon": "swap_horiz",
             "progress": (min(1.0, t["done"] / t["total"]) if t.get("total") else 0.0), "ends_at": None,
             "started_at": t.get("started"), "device": to or None, "priority": 0}
 
@@ -86,6 +87,12 @@ class Activities:
         self._done: list[dict] = []
         self._waiters: set[tuple[asyncio.AbstractEventLoop, asyncio.Event]] = set()
         self._pump: tuple[asyncio.AbstractEventLoop, asyncio.Event] | None = None
+        self.names: dict[str, str] = {}  # Send's device names (the send routes keep it current)
+        self.names_at = float("-inf")
+
+    def set_names(self, names: dict[str, str]) -> None:
+        with self._lock:
+            self.names, self.names_at = dict(names), self.clock()
 
     # ------------------------------------------------------------------ sources
 
@@ -181,7 +188,8 @@ class Activities:
     def _build(self, now: float) -> list[dict]:
         items: list[dict] = []
         if self.send_live is not None:
-            items += [transfer_activity(t) for t in self.send_live.items(now) if t.get("state") not in FINISHED]
+            moving = [t for t in self.send_live.items(now) if t.get("state") not in FINISHED]
+            items += [transfer_activity(t, self.names) for t in moving]
         for j in self._jobs.values():
             if now - j["since"] >= PROMOTE_AFTER:
                 detail = f"{j['step']} · step {int(j['idx']) + 1}" if j["step"] and j["idx"] is not None \

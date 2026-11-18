@@ -287,6 +287,8 @@ class AriState:
 
 LIVE = (300, 54)  # the island while something is live (a file moving, a job, a timer): icon, text, line, time
 TRANSFER = LIVE  # the transfer is the live pill's first look: same size
+LIVE_ICONS = ("swap_horiz", "timer", "play_circle", "fitness_center", "bolt", "notifications", "bedtime",
+              "auto_awesome", "language", "description", "chat_bubble", "inbox", "circle")  # in the icon font
 LIVE_ROW = 34  # one row of the hover list
 STACK_MAX = 4  # the hover list shows at most this many
 FINISHED = ("done", "failed", "cancelled")
@@ -388,6 +390,12 @@ def live_tone(a: dict, now: float) -> str:
     return ACCENT if kind in ("job", "transfer") else GREEN
 
 
+def live_icon(a: dict) -> str:
+    """The activity's icon if the island's icon font has it (a custom one may name any), else a bolt."""
+    name = str(a.get("icon") or "")
+    return name if name in LIVE_ICONS else "bolt"
+
+
 def activity_action(a: dict) -> str | None:
     """Where a click on this row goes in Helios: Transfers, the runs, nothing for a timer."""
     return {"transfer": "show:transfers", "job": "show:runs"}.get(str(a.get("kind")))
@@ -484,7 +492,7 @@ def live_scenario(name: str, now: float) -> tuple[list[dict], list[dict]]:
     custom = act("custom", "Rest", "Bench press", "fitness_center", started_at=now - 50, ends_at=now + 70)
     xfer = {"offer_id": "ab12cd34", "leg": "send", "from": "phone", "to": "pc", "label": "IMG_0971.jpg",
             "done": 41, "total": 100, "eta": 12.2, "state": "moving", "started": now - 5}
-    move = act("transfer", "IMG_0971.jpg to Pc", "41%", "swap_horiz", id="transfer:ab12cd34:send", progress=0.41,
+    move = act("transfer", "IMG_0971.jpg to PC", "41%", "swap_horiz", id="transfer:ab12cd34:send", progress=0.41,
                started_at=now - 5)
     return {"timer": ([timer], []), "soon": ([soon], []), "timerend": ([{**soon, "ends_at": now - 0.2}], []),
             "job": ([job], []), "custom": ([custom], []), "transfer": ([move], [xfer]),
@@ -1257,8 +1265,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             fill = QPen(tone, 3)
             fill.setCapStyle(Qt.PenCapStyle.RoundCap)
             if how == "shimmer":
-                if self.still or not shimmer:  # reduced motion: a still half-line, nothing sweeping
-                    frac_a, frac_b = 0.0, 0.35
+                if self.still or not shimmer:  # reduced motion: a short still dash in the middle, nothing sweeping
+                    frac_a, frac_b = 0.4, 0.6
                 else:
                     p = (time.monotonic() / 1.6) % 1.0
                     frac_a, frac_b = p * 1.35 - 0.35, p * 1.35
@@ -1285,7 +1293,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             qp.setPen(Qt.PenStyle.NoPen)
             qp.setBrush(tint(tone.name(), 0.22 + 0.4 * pulse))
             qp.drawEllipse(QPointF(ix, cy), r, r)
-            self.symbol(qp, str(a.get("icon") or "bolt"), ix, cy, 17, tone, filled=True)
+            self.symbol(qp, live_icon(a), ix, cy, 17, tone, filled=True)
             if pulse:  # the end of a timer: a ring round the pill, fading out
                 ring = QPen(tone, 1.6)
                 qp.setPen(ring)
@@ -1324,7 +1332,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             for a in rows[:STACK_MAX]:
                 row = QRectF(body.x() + 8, y, body.width() - 16, LIVE_ROW)
                 self.rows.append((row, a))
-                hot = self.hot_row is a.get("id")
+                hot = self.hot_row == a.get("id")
                 if hot:
                     qp.setPen(Qt.PenStyle.NoPen)
                     qp.setBrush(QColor(CARD))
@@ -1335,7 +1343,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 qp.setPen(Qt.PenStyle.NoPen)
                 qp.setBrush(tint(tone.name(), 0.22))
                 qp.drawEllipse(QPointF(row.x() + 16, cy), 11, 11)
-                self.symbol(qp, str(a.get("icon") or "bolt"), row.x() + 16, cy, 14, tone, filled=True)
+                self.symbol(qp, live_icon(a), row.x() + 16, cy, 14, tone, filled=True)
                 fm = QFontMetrics(F_VALUE)
                 rw = fm.horizontalAdvance(right) if right else 0
                 qp.setFont(F_VALUE)
