@@ -270,7 +270,7 @@ def test_the_island_floats_then_joins_the_edge():
 
 
 def test_the_island_shows_a_moving_file():
-    from argus.ari.ari_popup import TRANSFER, moving_transfer, send_device_icon, transfer_words
+    from argus.ari.ari_popup import LIVE, moving_transfer, send_device_icon, transfer_words
 
     a = {"offer_id": "a", "state": "done", "started": 5, "to": "pc", "label": "x", "done": 1, "total": 1}
     b = {"offer_id": "b", "state": "moving", "started": 3, "to": "calypso", "label": "3 files", "done": 41,
@@ -282,4 +282,54 @@ def test_the_island_shows_a_moving_file():
     assert transfer_words({**b, "state": "verifying"}, {})[1] == "checking"
     assert [send_device_icon(d) for d in ("phone", "pc", "calypso", "tv")] == [
         "smartphone", "desktop_windows", "laptop_chromebook", "devices"]
-    assert target_size("transfer", "", False, 0) == TRANSFER
+    assert target_size("live", "", False, 0) == LIVE
+
+
+def test_the_live_pill_helpers():
+    from argus.ari.ari_popup import (
+        LIVE,
+        LIVE_ROW,
+        activity_action,
+        countdown,
+        elapsed_words,
+        live_line,
+        live_scenario,
+        live_tone,
+        live_view,
+        live_words,
+        timer_pulse,
+    )
+
+    assert [countdown(s) for s in (272, 271.2, 9, 0, -3, 3905)] == ["4:32", "4:32", "0:09", "0:00", "0:00", "1:05:05"]
+    assert [elapsed_words(s) for s in (3, 59.9, 60, 600, 3900)] == ["3 s", "59 s", "1 min", "10 min", "1 h 05 min"]
+    now = 1000.0
+    timer = {"kind": "timer", "title": "Pasta", "detail": "10 min timer", "ends_at": now + 300,
+             "started_at": now - 300, "progress": None}
+    assert live_words(timer, now) == ("Pasta", "10 min timer", "5:00")
+    assert live_words({**timer, "ends_at": now - 1}, now)[2] == "done"
+    assert live_line(timer, now) == ("drain", 0.5)
+    assert live_words({"kind": "job", "title": "J", "detail": "scan", "started_at": now - 125}, now)[2] == "2 min"
+    assert live_line({"kind": "job", "progress": None, "ends_at": None}, now) == ("shimmer", 0.0)
+    assert live_line({"kind": "custom", "progress": 0.25}, now) == ("fill", 0.25)
+    assert live_words({"kind": "custom", "title": "T", "progress": 0.25}, now)[2] == "25%"
+    assert live_line({"kind": "custom", "progress": None, "ends_at": None}, now)[0] == "none"
+    assert live_tone(timer, now) != live_tone({**timer, "ends_at": now + 30}, now)  # the last minute turns coral
+    assert activity_action({"kind": "transfer"}) == "show:transfers" and activity_action({"kind": "timer"}) is None
+    # ranking: a timer in its last minute first, then transfers, timers, jobs, custom; more than 4 rows are cut
+    items = [{"id": "c", "kind": "custom", "started_at": 1}, {"id": "j", "kind": "job", "started_at": 2},
+             {"id": "t", "kind": "timer", "started_at": 3, "ends_at": now + 900},
+             {"id": "x", "kind": "transfer", "started_at": 4},
+             {"id": "s", "kind": "timer", "started_at": 5, "ends_at": now + 20},
+             {"id": "k", "kind": "custom", "started_at": 0}]
+    rows, extra = live_view(items, now)
+    assert [r["id"] for r in rows] == ["s", "x", "t", "j"] and extra == 5
+    assert live_view(items[:1], now)[1] == 0
+    assert target_size("live", "", False, 0, "", 4) == LIVE  # not hovered: the one pill
+    assert target_size("live", "", True, 0, "", 1) == LIVE
+    assert target_size("live", "", True, 0, "", 3) == (LIVE[0], 12 + 3 * LIVE_ROW)
+    assert target_size("live", "", True, 0, "", 9)[1] == 12 + 4 * LIVE_ROW  # at most four rows
+    assert timer_pulse(10.0, 10.0) == 1.0 and 0 < timer_pulse(10.6, 10.0) < 1 and timer_pulse(12, 10) == 0.0
+    assert timer_pulse(5, None) == 0.0 and timer_pulse(9, 10.0) == 0.0
+    for name in ("timer", "soon", "timerend", "job", "custom", "transfer", "stack", "plus"):
+        acts, _ = live_scenario(name, now)  # every preview scenario is well-formed
+        assert acts and all({"id", "kind", "title", "detail", "icon"} <= set(a) for a in acts)
