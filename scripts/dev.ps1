@@ -175,6 +175,17 @@ function Live-Proc($Rec) {
     return $null
 }
 
+function Laptop-Url {  # send.argus_url from argus.yaml (the laptop's Argus), or "" when it isn't set
+    if (-not (Test-Path "argus.yaml")) { return "" }
+    $InSend = $false
+    foreach ($L in Get-Content "argus.yaml") {
+        if ($L -match '^send:') { $InSend = $true; continue }
+        if ($InSend -and $L -match '^\S') { break }
+        if ($InSend -and $L -match '^\s+argus_url:\s*["'']?([^"''#\s]+)') { return $Matches[1].TrimEnd("/") }
+    }
+    return ""
+}
+
 function Token {
     if (-not (Test-Path ".env")) { return "" }
     $Line = Get-Content ".env" | Where-Object { $_ -match "^ARGUS_WORKER_TOKEN=(.+)$" } | Select-Object -First 1
@@ -548,12 +559,16 @@ switch ($Command) {
         Write-Host "For Ari's listener and island now: .\scripts\pc-worker.ps1 restart"
         Write-Host ""
         & $PSCommandPath deployed
+        if ($LASTEXITCODE -ne 0) { Write-Host "(Shipped; the laptop hasn't picked it up yet. Check later: .\scripts\dev.ps1 deployed)" -ForegroundColor Yellow }
     }
     "deployed" {
         # Poll GET /deploy on the laptop until it runs what origin/main is now, or say why it doesn't.
         GitOk fetch --quiet origin main
         $Want = (git rev-parse origin/main).Trim()
-        $Base = if ($env:ARGUS_URL) { $env:ARGUS_URL.TrimEnd("/") } else { $ArgusUrl }
+        # The laptop's address: $env:ARGUS_URL, else send.argus_url in argus.yaml (never this PC's own argusd, which
+        # runs this checkout and would say "deployed" when the laptop isn't).
+        $Base = if ($env:ARGUS_URL) { $env:ARGUS_URL.TrimEnd("/") } else { Laptop-Url }
+        if (-not $Base) { throw "Where is the laptop? Set ARGUS_URL, or send.argus_url in argus.yaml." }
         $H = @{}; $T = Token; if ($T) { $H["Authorization"] = "Bearer $T" }
         Write-Host "Waiting for $Base to run $($Want.Substring(0, 8)) (up to 8 minutes) ..."
         $Deadline = (Get-Date).AddMinutes(8)

@@ -103,8 +103,8 @@ for i in $(seq 1 30); do
     detail="updated"
     if [ -n "$backup_note" ]; then detail="updated; $backup_note"; fi
     trap - ERR
-    write_update updated "$detail"
-    write_check ""
+    write_update updated "$detail" || true   # the update itself worked: a note that can't be written mustn't fail it
+    write_check "" || true
     echo "updated: ${before:0:8} -> ${after:0:8}"
     exit 0
   fi
