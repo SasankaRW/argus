@@ -59,3 +59,11 @@ def test_the_routes(tmp_path):
         evs = c.get("/events?kinds=send.live&limit=10", headers=h).json()["events"]
         assert [e["data"]["state"] for e in evs] == ["moving", "done"]  # one when it starts, one when it ends
         assert all(e.get("from") is None for e in evs)  # no lines on the main map
+
+
+def test_a_leg_nobody_reports_on_goes_away():
+    """An agent that lost its last report (or went to sleep mid-transfer) must not leave a leg moving forever."""
+    lv = SendLive()
+    lv.report("pc", [snap(offer_id="s" * 8)], now=0.0)
+    assert len(lv.items(20.0)) == 1
+    assert lv.items(31.0) == []

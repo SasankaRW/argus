@@ -9,6 +9,7 @@ from __future__ import annotations
 import threading
 
 KEEP_DONE = 10.0
+STALE = 30.0  # a moving leg nobody reported on for this long is gone (agents report every ~0.5 s while it moves)
 FINISHED = ("done", "failed", "cancelled")
 
 
@@ -49,8 +50,9 @@ class SendLive:
 
     def items(self, now: float) -> list[dict]:
         with self._lock:
-            for k in [k for k, v in self._items.items() if v.get("state") in FINISHED
-                      and now - v.get("finished_at", now) > KEEP_DONE]:
+            for k in [k for k, v in self._items.items()
+                      if (v.get("state") in FINISHED and now - v.get("finished_at", now) > KEEP_DONE)
+                      or (v.get("state") not in FINISHED and now - v.get("updated", now) > STALE)]:
                 del self._items[k]
             rows = list(self._items.values())
         return sorted(rows, key=lambda v: (v.get("state") in FINISHED, -v.get("started", 0)))
