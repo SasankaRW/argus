@@ -16,6 +16,7 @@ $Py = Join-Path $Root ".venv\Scripts\python.exe"
 $Task = "Argus PC worker"
 $OllamaTask = "Argus Ollama"
 $DesktopTask = "Argus desktop"
+$SendTask = "Argus Send agent"  # send-agent-install.ps1 registers it; restart stops its process too, so start it again
 
 switch ($Command) {
     "install" {
@@ -69,13 +70,13 @@ switch ($Command) {
     "restart" {
         # Stopping a task ends only its PowerShell: the Python processes under it (supervisor, worker, listener,
         # island, voice) keep running, and a new start then finds an old listener holding the microphone.
-        foreach ($T in @($DesktopTask, $Task)) { Stop-ScheduledTask -TaskName $T -ErrorAction SilentlyContinue }
+        foreach ($T in @($DesktopTask, $Task, $SendTask)) { Stop-ScheduledTask -TaskName $T -ErrorAction SilentlyContinue }
         $Old = Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'" |
             Where-Object { $_.CommandLine -match '-m argus\.|voice_server\.py' }
         foreach ($P in $Old) { Stop-Process -Id $P.ProcessId -Force -ErrorAction SilentlyContinue }
         Write-Host "[ok] stopped $(@($Old).Count) Argus process(es)"
         Start-Sleep -Seconds 2
-        foreach ($T in @($OllamaTask, $Task, $DesktopTask)) {
+        foreach ($T in @($OllamaTask, $Task, $DesktopTask, $SendTask)) {
             if (Get-ScheduledTask -TaskName $T -ErrorAction SilentlyContinue) { Start-ScheduledTask -TaskName $T }
         }
         Write-Host "[ok] started again: the worker now, Hey Ari / the island / the voice in a few seconds"

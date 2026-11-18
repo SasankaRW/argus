@@ -18,6 +18,7 @@ import httpx
 import uvicorn
 
 from ..config import SendConfig
+from . import reload
 from .clip import ClipSync
 from .devices import DeviceBook
 from .discovery import Discovery, local_addresses
@@ -406,11 +407,34 @@ class SendAgent:
             await self._argus_client.aclose()
         self.store.close()
 
+    def idle(self) -> bool:
+        """Nothing moving: no transfer in flight, no sending queue entry, no clip waiting in RAM."""
+        moving = any(not p.finished for p in self.live.values())
+        return not (moving or self.store.sending() or self.clip.pending)
+
+    async def _reload_loop(self) -> None:
+        """Returns (ending run_forever) once new code is checked out and the agent is idle: systemd restarts it."""
+        started = await asyncio.to_thread(reload.code_stamp)
+        seen_at: float | None = None
+        while True:
+            await asyncio.sleep(reload.CHECK_SECONDS)
+            now = await asyncio.to_thread(reload.code_stamp)
+            if not now or now == started:
+                continue
+            seen_at = seen_at or time.monotonic()
+            if reload.should_restart(started, now, self.idle(), time.monotonic() - seen_at):
+                log.info("Argus Send: new code (%s), restarting", now[:8])
+                return
+
     async def run_forever(self) -> None:
         await self.start()
         log.info("Argus Send: %s listening on %s:%s, files go to %s", self.cfg.device_id, self.cfg.host,
                  self.cfg.port, self.root)
+        if reload.under_systemd():
+            self._tasks.append(asyncio.create_task(self._reload_loop()))
         try:
-            await asyncio.gather(*self._tasks)
+            done, _ = await asyncio.wait(self._tasks, return_when=asyncio.FIRST_COMPLETED)
+            for t in done:
+                t.result()  # a loop that failed still fails the agent, as before
         finally:
             await self.stop()

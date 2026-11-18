@@ -538,6 +538,13 @@ switch ($Command) {
         GitOk switch main
         GitOk pull --ff-only --quiet
         Write-Host "Merged into main. (Releases happen at milestones: .\scripts\dev.ps1 release minor)"
+        # This PC runs the merged code from this checkout (worker, island, Send agent): restart them when it changed,
+        # or they keep the old code until the next logon. Calypso updates itself (argus-update.sh, every 5 minutes).
+        $Changed = @(git diff --name-only HEAD~1 HEAD -- core plugins pyproject.toml)
+        if ($Changed.Count -and (Get-ScheduledTask -TaskName "Argus PC worker" -ErrorAction SilentlyContinue)) {
+            Write-Host "Restarting this PC's Argus (worker, island, Send agent) on the new code ..."
+            & (Join-Path $PSScriptRoot "pc-worker.ps1") restart
+        }
     }
     "ship" {
         # The whole flow for change packages, one after another: apply -> pr -> merge (CI must be green).
