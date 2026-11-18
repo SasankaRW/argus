@@ -1055,12 +1055,12 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                     self.sitdown.start()
             else:
                 self.sitdown.stop()
-                self.sit = ib.Sit()
+                self.sit = ib.Sit(0.0)  # at 05:00 someone already at the PC has not just sat down
                 self.window.start(int(min(wait, 1800) * 1000) + 500)
 
         def blocked(self) -> bool:
             """Game mode, a fullscreen app in front, Ari busy, or the island already open."""
-            if self.details or self.ari.game or self.ari.phase != "idle":
+            if self.details or self.ari.game or self.ari.phase != "idle" or not self.isVisible():  # (Ctrl+Alt+D)
                 return True
             try:
                 from ..busy import front_window
@@ -1087,7 +1087,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
 
             def go() -> None:
                 try:
-                    bus.brief.emit(api.call("GET", "/brief/today", timeout=20), auto)
+                    bus.brief.emit(api.call("GET", "/brief/today", timeout=40), auto)
                 except (*_API_ERRORS, *_SHAPE_ERRORS):
                     bus.brief.emit(None, auto)
             threading.Thread(target=go, daemon=True).start()
@@ -1097,6 +1097,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             if not isinstance(data, dict) or "parts" not in data:
                 if not auto:
                     bus.flash.emit("Couldn't reach Argus")
+                else:  # still owed: asked again at the next free look
+                    self.sit = ib.Sit(self.sit.prev_idle, True)
                 return
             if auto:
                 if self.blocked():  # something got in the way meanwhile: still owed, shown at the next free look
@@ -1116,12 +1118,13 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             self.kick()
 
         def read_brief(self) -> None:
-            """Ari says it: the same route as "good morning" (POST /ari, the spoken brief)."""
+            """Ari says it: the route behind "good morning" (POST /ari, the spoken brief); source island-read has the
+            PC's listener say the answer aloud."""
             self.close_details()
 
             def go() -> None:
                 try:
-                    api.call("POST", "/ari", {"text": "good morning", "source": "island"}, timeout=60)
+                    api.call("POST", "/ari", {"text": "good morning", "source": "island-read"}, timeout=60)
                 except _API_ERRORS:
                     bus.flash.emit("Couldn't reach Argus")
             threading.Thread(target=go, daemon=True).start()
@@ -1730,7 +1733,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                     same_day = time.strftime("%Y%m%d", at) == time.strftime("%Y%m%d")
                     rows.append((ACCENT, nxt.get("label") or f"{nxt['plugin']} · {nxt['workflow']}",
                                  time.strftime("%H:%M" if same_day else "%a %H:%M", at), None))
-            if self.brief_row if self.brief_row is not None else ib.row_open(datetime.now()):
+            if self.brief_row if self.brief_row is not None else ib.row_open(datetime.now(), self.shown_day):
                 rows.append((ACCENT, "Morning brief", "›", "brief"))  # until noon: the card again
             for dot, text, right, key in rows:
                 if key:

@@ -412,7 +412,7 @@ class Argus:
     async def brief_today(self) -> dict:
         """The morning brief as data for the island's card: brief_parts as the phone brief builds them, plus the
         structured weather. No Life Hub tasks yet: its plugin has no "due today" call, so `tasks` stays empty."""
-        inputs = await self._brief_inputs()
+        inputs, weather = await asyncio.gather(self._brief_inputs(), self.island_weather())
         now = time.time()
         parts = await self.store.read(lambda c: brief_parts(c, now, health=last_health(c), **inputs))
         parts["today"] = [list(t) for t in parts["today"]]
@@ -420,7 +420,7 @@ class Argus:
         b = parts["backup"]
         parts["backup"] = {k: b.get(k) for k in ("ok", "at", "problem")} if b else None
         return {"day": datetime.fromtimestamp(now).strftime("%Y-%m-%d"), "at": now, "parts": parts,
-                "weather": await self.island_weather(), "tasks": []}
+                "weather": weather, "tasks": []}
 
     async def _brief_inputs(self) -> dict:
         needs = set(self.cfg.power.pc_needs)

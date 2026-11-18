@@ -76,7 +76,8 @@ def test_the_timer_runs_only_in_the_window_and_stops_once_shown():
     assert ib.seconds_to_watch(at(4), None) == 3600
     assert ib.seconds_to_watch(at(9), DAY) == 20 * 3600  # tomorrow 05:00
     assert ib.seconds_to_watch(at(15), None) == 14 * 3600
-    assert ib.row_open(at(11, 59)) and not ib.row_open(at(12))
+    assert ib.row_open(at(11, 59), DAY) and not ib.row_open(at(12), DAY)
+    assert not ib.row_open(at(8), None) and not ib.row_open(at(8), "2026-11-18")  # not before it has shown today
 
 
 def test_what_was_shown_is_kept_across_restarts(tmp_path):
@@ -163,3 +164,18 @@ def test_brief_today_route(tmp_path):
         assert body["weather"] == {} and body["tasks"] == []  # no town and no Life Hub: the card copes
         assert body["parts"]["waiting"] == [] and body["parts"]["backup"] is None
         assert ib.card_rows(body, datetime.now())[0]["text"] == "Nothing scheduled today"
+
+
+def test_read_it_to_me_has_the_listener_say_the_brief(tmp_path):
+    argus = make(tmp_path)
+    with TestClient(create_app(argus)) as c:
+        body = {"text": "good morning", "source": "island-read"}
+        r = c.post("/ari", json=body, headers=W).json()  # no listener on this PC: the answer is only shown
+        assert r["reply"].startswith("Good morning")
+        assert c.get("/events?kinds=ari.say", headers=W).json()["events"] == []
+        c.post("/ari/listener", headers=W)
+        c.post("/ari", json=body, headers=W)
+        said = c.get("/events?kinds=ari.say", headers=W).json()["events"]
+        assert len(said) == 1 and said[0]["data"]["text"].startswith("Good morning")
+        c.post("/ari", json={"text": "good morning", "source": "island"}, headers=W)  # typed: not read aloud
+        assert len(c.get("/events?kinds=ari.say", headers=W).json()["events"]) == 1

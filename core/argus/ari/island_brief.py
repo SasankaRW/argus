@@ -69,9 +69,9 @@ def watching(now: datetime, shown_day: str | None) -> bool:
     return in_window(now) and shown_day != today_key(now)
 
 
-def row_open(now: datetime) -> bool:
-    """The "Morning brief" row on the island's Ari page: until noon."""
-    return now.hour < UNTIL_H
+def row_open(now: datetime, shown_day: str | None) -> bool:
+    """The "Morning brief" row on the island's Ari page: once the card has shown today, until noon."""
+    return now.hour < UNTIL_H and shown_day == today_key(now)
 
 
 def load_shown(path: Path = STORE) -> str | None:
