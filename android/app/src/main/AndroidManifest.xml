@@ -75,9 +75,30 @@
                 <action android:name="android.intent.action.SEND" />
                 <action android:name="android.intent.action.SEND_MULTIPLE" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="*/*" />
+                <data android:mimeType="*/*" />  <!-- includes text/plain: shared text goes as a clip -->
             </intent-filter>
         </activity>
+        <receiver android:name=".send.ClipCopyReceiver" android:exported="false" />
+
+        <!-- clipboard sync: the tile starts a see-through activity, the only moment Android lets the app read the clipboard -->
+        <service
+            android:name=".send.ClipTile"
+            android:exported="true"
+            android:label="Send clipboard"
+            android:icon="@drawable/ic_send_to_pc"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+        <activity
+            android:name=".send.ClipActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Argus.Clip"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:launchMode="singleTask" />
         <receiver android:name=".send.SendActionReceiver" android:exported="false" />
 
         <receiver android:name=".KeepAlive" android:exported="false" />

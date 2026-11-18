@@ -140,6 +140,7 @@ class SendReceiver(private val ctx: Context, private val self: String, private v
         val s = check(req, bodySha)
         return when {
             req.method == "POST" && parts.size == 2 && parts[1] == "offers" -> offer(s, req)
+            req.method == "POST" && parts.size == 2 && parts[1] == "clip" -> ClipHub.receive(ctx, s.peer, s.key, req.body)
             parts.size == 3 && parts[1] == "offers" && req.method == "GET" -> reply(findOffer(parts[2]))
             parts.size == 5 && parts[1] == "offers" && parts[3] == "files" && req.method == "PUT" ->
                 chunk(parts[2], parts[4].toIntOrNull() ?: throw err(400, "bad file"), req)
