@@ -29,12 +29,14 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from . import CHUNK, SESSION_SECONDS
+from . import clip as clipmod
 from .keys import Ephemeral, b64, request_mac, session_key, unb64, verify
 
 if TYPE_CHECKING:
     from .agent import SendAgent
 
 OFFER_ID = re.compile(r"^[A-Za-z0-9-]{8,64}$")
+CLIP_LOCAL = ("/send/clip", "/send/clip/enabled", "/send/clip/link")  # asked by this device's own island or Helios
 BAD_NAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
@@ -57,6 +59,14 @@ class Offer(BaseModel):
     origin: str | None = None  # the original sender, when a holding agent delivers
 
     model_config = {"populate_by_name": True}
+
+
+class Enabled(BaseModel):
+    enabled: bool
+
+
+class LinkIn(BaseModel):
+    url: str = Field(..., max_length=2000)
 
 
 class Hello(BaseModel):
@@ -235,7 +245,7 @@ def build_app(agent: SendAgent) -> FastAPI:
 
     @app.middleware("http")
     async def helios_cors(request: Request, call_next):
-        if not request.url.path.startswith("/send/mine"):
+        if not (request.url.path.startswith("/send/mine") or request.url.path in CLIP_LOCAL):
             return await call_next(request)
         origin = request.headers.get("origin", "")
         allow = bool(origin) and origin in (helios_origin, "http://localhost:5173")
@@ -244,7 +254,8 @@ def build_app(agent: SendAgent) -> FastAPI:
                 return Response(status_code=403)
             return Response(status_code=204, headers={
                 "Access-Control-Allow-Origin": origin, "Access-Control-Allow-Methods": "GET, POST",
-                "Access-Control-Allow-Headers": "Authorization", "Access-Control-Allow-Private-Network": "true",
+                "Access-Control-Allow-Headers": "Authorization, Content-Type",
+                "Access-Control-Allow-Private-Network": "true",
                 "Access-Control-Max-Age": "600", "Vary": "Origin"})
         if origin and not allow:
             return JSONResponse({"detail": "not from Helios"}, status_code=403)
@@ -320,6 +331,7 @@ def build_app(agent: SendAgent) -> FastAPI:
                 raise ValueError("eph")
         except ValueError:
             raise HTTPException(400, "bad nonce") from None
+        agent.clip.kick()  # a device that says hello may be waiting for a clip held here
         nonce_s = os.urandom(32)
         sid = secrets.token_urlsafe(16)
         now = time.time()
@@ -450,6 +462,52 @@ def build_app(agent: SendAgent) -> FastAPI:
         shutil.rmtree(rx.offer_dir(offer_id, True), ignore_errors=True)
         agent.cancel_hold(offer_id)
         return {"ok": True}
+
+    # ---- clipboard and link sync. POST /send/clip is the peers' route (session MAC like an offer, encrypted body);
+    # the other three are this device's own island/CLI, worker token only. Clip text is never logged or kept.
+    @app.post("/send/clip")
+    async def receive_clip(request: Request) -> dict:
+        raw = await request.body()
+        s = rx.check(request, hashlib.sha256(raw).hexdigest())
+        note(request)
+        clip = agent.clip
+        if not clip.enabled:
+            raise HTTPException(409, "clipboard sync is off")
+        try:
+            got = clipmod.unseal(s.key, raw)
+            out = clip.receive(got, s.peer)
+        except (ValueError, clipmod.ClipError) as e:
+            raise HTTPException(400, str(e)) from None
+        if out.pop("apply", False):
+            try:
+                await asyncio.to_thread(clip.apply, got)
+            except OSError:
+                raise HTTPException(503, "the clipboard is busy") from None
+        return out
+
+    @app.get("/send/clip")
+    async def clip_state(request: Request) -> dict:
+        token_only(request)
+        return agent.clip.state()
+
+    @app.post("/send/clip/enabled")
+    async def clip_enabled(body: Enabled, request: Request) -> dict:
+        token_only(request)
+        await asyncio.to_thread(agent.clip.set_enabled, body.enabled)
+        return agent.clip.state()
+
+    @app.post("/send/clip/link")
+    async def clip_link(body: LinkIn, request: Request) -> dict:
+        token_only(request)
+        url = clipmod.as_url(body.url)
+        if not url:
+            raise HTTPException(400, "that is not a web link")
+        try:
+            return {"ok": True, "via": await agent.clip.send("link", url)}
+        except clipmod.ClipDisabled as e:
+            raise HTTPException(409, str(e)) from None
+        except clipmod.ClipError as e:
+            raise HTTPException(502, str(e)) from None
 
     return app
 

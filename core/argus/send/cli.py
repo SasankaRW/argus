@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 
 from ..config import ConfigError, load_config
+from . import clip as clipmod
 from . import toast
 from .agent import SendAgent
 from .sender import label_of
@@ -45,6 +46,64 @@ def _problem(text: str) -> None:
     except OSError:
         pass
     toast.Toaster().problem("Argus couldn't send that", text.splitlines()[0][:200])
+
+
+def local_call(cfg, method: str, path: str, body: dict | None = None, opener=None) -> tuple[int, dict]:
+    """A call to this PC's own Send agent (token only): (status, json)."""
+    import json
+    import urllib.error
+    import urllib.request
+
+    headers = {"Content-Type": "application/json"}
+    if cfg.secrets.worker_token:
+        headers["Authorization"] = f"Bearer {cfg.secrets.worker_token}"
+    req = urllib.request.Request(f"http://127.0.0.1:{cfg.send.port}{path}", method=method, headers=headers,
+                                 data=json.dumps(body).encode() if body is not None else None)
+    try:
+        with (opener or urllib.request.urlopen)(req, timeout=10) as r:
+            return r.status, json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read() or b"{}")
+        except ValueError:
+            return e.code, {}
+
+
+def copy_url_command(url: str) -> int:
+    """argus-send://copy/<url> from a link notification's Copy button: the link goes on the clipboard."""
+    import base64
+
+    from .clipwin import WinClipboard
+
+    raw = url.rstrip("/").rsplit("/", 1)[-1].replace("-", "+").replace("_", "/")
+    try:
+        text = base64.b64decode(raw + "=" * (-len(raw) % 4)).decode("utf-8")
+    except ValueError:
+        return 1
+    if not clipmod.as_url(text):
+        return 1
+    try:
+        WinClipboard().write(text, exclude=False)
+    except OSError:
+        return 1
+    return 0
+
+
+def link_command(cfg, url: str) -> int:
+    """argus send --link <url>: the PC's agent sends it to the phone as a notification."""
+    if not clipmod.as_url(url):
+        _problem("argus send --link: that is not a web link (http:// or https://)")
+        return 2
+    try:
+        status, body = local_call(cfg, "POST", "/send/clip/link", {"url": url})
+    except OSError as e:
+        _problem(f"argus send --link: the Send agent is not running ({e})")
+        return 1
+    if status != 200:
+        _problem(f"argus send --link: {body.get('detail', status)}")
+        return 1
+    print("sent the link to the phone" if body.get("via") == "direct" else "queued the link for the phone")
+    return 0
 
 
 def token_command(cfg, args, opener=None) -> int:
@@ -91,8 +150,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--config", help="argus.yaml (default: $ARGUS_CONFIG or ./argus.yaml)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("send", help="send files or folders to one of my devices")
-    s.add_argument("device", help="device id, e.g. calypso")
-    s.add_argument("paths", nargs="+")
+    s.add_argument("device", nargs="?", help="device id, e.g. calypso")
+    s.add_argument("paths", nargs="*")
+    s.add_argument("--link", metavar="URL", help="send a web link to the phone as a notification, not a file")
     sub.add_parser("send-agent", help="run the Send agent (receiver, queue, discovery)")
     cu = sub.add_parser("cancel-url", help="cancel a share from its notification (argus-send://cancel/<id>)")
     cu.add_argument("url")
@@ -119,6 +179,12 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(msg, file=sys.stderr)
         return 2
+    if args.cmd == "send" and args.link:
+        return link_command(cfg, args.link)
+    if args.cmd == "send" and not (args.device and args.paths):
+        ap.error("send needs a device and paths, or --link URL")
+    if args.cmd == "cancel-url" and args.url.startswith("argus-send://copy/"):
+        return copy_url_command(args.url)
     agent = SendAgent(cfg.send, argus_token=cfg.secrets.worker_token)
     if args.cmd == "cancel-url" or (args.cmd == "send" and args.device == "cancel"):  # argus send cancel <id>
         oid = args.url.rstrip("/").rsplit("/", 1)[-1] if args.cmd == "cancel-url" else args.paths[0]
@@ -141,6 +207,12 @@ def main(argv: list[str] | None = None) -> int:
         agent.on_received = lambda offer, saved: shower.received(
             offer["offer_id"], agent.devices.name_of(offer.get("origin") or offer["from"]), label_of(offer["files"]),
             saved)
+        agent.clip.on_link = lambda url, origin: shower.link(
+            "clip-" + str(int(time.time() * 1000)), agent.devices.name_of(origin), url)
+    if sys.platform == "win32":
+        from .clipwin import WinClipboard
+
+        agent.clip.attach(WinClipboard())  # the listener thread starts with the agent, and only while sync is on
     fmt = "%(asctime)s %(name)s %(message)s"
     if sys.stdout is None or sys.stderr is None:  # pythonw (the logon task on Windows) has no console
         agent.data.mkdir(parents=True, exist_ok=True)

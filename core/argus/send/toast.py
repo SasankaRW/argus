@@ -210,5 +210,13 @@ class Toaster:
             buttons.append(("Show in folder", first.parent.as_uri()))
         self._post(result_xml(f"Got it from {peer}", label, buttons), offer_id)
 
+    def link(self, clip_id: str, peer: str, url: str) -> None:
+        """A link from the other device: Open (the default browser) and Copy (argus-send://copy/<url, base64>)."""
+        from .clip import short_url
+        from .keys import b64
+
+        copy = "argus-send://copy/" + b64(url.encode("utf-8")).replace("+", "-").replace("/", "_")
+        self._post(result_xml(f"Link from {peer}", short_url(url), [("Open", url), ("Copy", copy)]), clip_id)
+
     def problem(self, title: str, body: str) -> None:
         self._post(result_xml(title, body), None)
