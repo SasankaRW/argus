@@ -37,6 +37,7 @@ import urllib.parse
 import urllib.request
 import webbrowser
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +54,7 @@ from ..island_live import (
     rate,
     weekday_letters,
 )
+from . import island_brief as ib
 from .ari_mark import Mark, mark_state
 
 log = logging.getLogger("argus.ari_popup")
@@ -604,6 +606,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
     p.add_argument("--hover", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--live", choices=sorted(LIVE_SCENARIOS), help=argparse.SUPPRESS)  # with --preview: fake activities
     p.add_argument("--page", default="ari", help=argparse.SUPPRESS)  # with --details: media, system, calendar
+    p.add_argument("--brief", choices=("normal", "quiet", "trouble", "row"),
+                   help=argparse.SUPPRESS)  # with --preview: the morning brief card (row: the Ari page's row)
     p.add_argument("--ask", action="store_true", help=argparse.SUPPRESS)  # the type-to-Ari box
     p.add_argument("--question", action="store_true", help=argparse.SUPPRESS)  # Ari's question box
     args = p.parse_args(argv)
@@ -649,6 +653,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
         activity_done = Signal(dict)  # a timer reached its end
         hotkey = Signal(str)
         keys = Signal(dict)
+        brief = Signal(object, bool)  # GET /brief/today, and whether the sit-down check asked for it
 
     bus = Bus()
 
@@ -826,6 +831,19 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             bus.info.connect(self.on_info)
             bus.flash.connect(self.on_flash)
             bus.live.connect(self.on_live)
+            self.card = False  # the morning brief card is on show (inside the opened island)
+            self.brief: dict | None = None  # GET /brief/today
+            self.brief_row: bool | None = None  # --preview: force the "Morning brief" row on or off
+            self.shown_day = ib.load_shown()
+            self.sit = ib.Sit()
+            self.fetching = False
+            bus.brief.connect(self.on_brief)
+            self.sitdown = QTimer(self, interval=int(ib.EVERY_S * 1000))  # runs only 05:00-12:00, until shown
+            self.sitdown.timeout.connect(self.sit_check)
+            self.card_hide = QTimer(self, singleShot=True, interval=int(ib.HIDE_S * 1000))
+            self.card_hide.timeout.connect(self.close_details)
+            self.window = QTimer(self, singleShot=True)  # until the window opens again
+            self.window.timeout.connect(self.arm)
             self.page = 0
             self.wheel_acc, self.wheel_at = 0.0, 0.0
             self.media: dict | None = None
@@ -1008,19 +1026,158 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
         def close_details(self) -> None:
             if not self.details:
                 return
-            self.details = False
-            for t in (self.refresh, self.clock, self.away, self.leave, self.tick):
+            self.details = self.card = False
+            for t in (self.refresh, self.clock, self.away, self.leave, self.tick, self.card_hide):
                 t.stop()
             self.kick()
 
         def click_away(self) -> None:
             """Windows: a mouse press outside the island folds it (it never takes the keyboard, so no focus)."""
+            if self.card and esc_down():
+                self.close_details()
+                return
             down = mouse_down()
             if down and not self.was_down:
                 pos = self.mapFromGlobal(QCursor.pos())
                 if not self.shape_rect().adjusted(-2, -2, 2, 2).contains(QPointF(pos)):
                     self.close_details()
             self.was_down = down
+
+        # -------------------------------------------------------------- the morning brief
+
+        def arm(self) -> None:
+            """Run the 5 s sit-down check only while it can matter (05:00-12:00, not shown today); otherwise wait
+            for the window to open (looked at again at least every half hour, in case the PC slept)."""
+            wait = ib.seconds_to_watch(datetime.now(), self.shown_day)
+            if wait <= 0:
+                self.window.stop()
+                if not self.sitdown.isActive():
+                    self.sitdown.start()
+            else:
+                self.sitdown.stop()
+                self.sit = ib.Sit()
+                self.window.start(int(min(wait, 1800) * 1000) + 500)
+
+        def blocked(self) -> bool:
+            """Game mode, a fullscreen app in front, Ari busy, or the island already open."""
+            if self.details or self.ari.game or self.ari.phase != "idle":
+                return True
+            try:
+                from ..busy import front_window
+
+                return bool((front_window() or {}).get("fullscreen"))
+            except Exception:  # noqa: BLE001  # boundary: the window API or psutil; not knowing is not blocking
+                return False
+
+        def sit_check(self) -> None:
+            from .ari_listen import idle_seconds
+
+            now = datetime.now()
+            if not ib.watching(now, self.shown_day):
+                self.arm()
+                return
+            idle = idle_seconds()
+            _, show = ib.decide(self.sit, idle, now, self.shown_day, False)
+            self.sit, show = ib.decide(self.sit, idle, now, self.shown_day, show and self.blocked())
+            if show and not self.fetching:
+                self.fetch_brief(True)
+
+        def fetch_brief(self, auto: bool) -> None:
+            self.fetching = True
+
+            def go() -> None:
+                try:
+                    bus.brief.emit(api.call("GET", "/brief/today", timeout=20), auto)
+                except (*_API_ERRORS, *_SHAPE_ERRORS):
+                    bus.brief.emit(None, auto)
+            threading.Thread(target=go, daemon=True).start()
+
+        def on_brief(self, data: Any, auto: bool) -> None:
+            self.fetching = False
+            if not isinstance(data, dict) or "parts" not in data:
+                if not auto:
+                    bus.flash.emit("Couldn't reach Argus")
+                return
+            if auto:
+                if self.blocked():  # something got in the way meanwhile: still owed, shown at the next free look
+                    self.sit = ib.Sit(self.sit.prev_idle, True)
+                    return
+                self.shown_day = ib.today_key(datetime.now())  # shown once a day, kept across restarts
+                ib.save_shown(self.shown_day)
+                self.arm()
+            self.open_card(data, auto)
+
+        def open_card(self, data: dict, auto: bool) -> None:
+            self.brief, self.card, self.details = data, True, True
+            self.leave.stop()
+            self.away.start()
+            if auto and not self.hover:  # closes itself unless the pointer comes in (once in, it stays)
+                self.card_hide.start()
+            self.kick()
+
+        def read_brief(self) -> None:
+            """Ari says it: the same route as "good morning" (POST /ari, the spoken brief)."""
+            self.close_details()
+
+            def go() -> None:
+                try:
+                    api.call("POST", "/ari", {"text": "good morning", "source": "island"}, timeout=60)
+                except _API_ERRORS:
+                    bus.flash.emit("Couldn't reach Argus")
+            threading.Thread(target=go, daemon=True).start()
+
+        def draw_brief(self, qp: Any, x0: float, x1: float, y: float) -> float:
+            """The card: a greeting and the date, today's weather on the right, the rows (the island's row
+            style), then "Read it to me" and "Done"."""
+            data = self.brief or {}
+            now = datetime.fromtimestamp(self.now())
+            qp.setFont(F_TITLE)
+            qp.setPen(ink())
+            qp.drawText(QRectF(x0, y, 170, 24), Qt.AlignmentFlag.AlignVCenter, "Good morning")
+            qp.setFont(F_SMALL)
+            qp.setPen(ink(DIM))
+            qp.drawText(QRectF(x0, y + 24, 170, 18), Qt.AlignmentFlag.AlignVCenter, now.strftime("%A %d %B"))
+            icon, temp, under = ib.weather_line(data.get("weather"))
+            if icon:
+                qp.setFont(F_TITLE)
+                tw = QFontMetrics(F_TITLE).horizontalAdvance(temp)
+                qp.setPen(ink())
+                qp.drawText(QRectF(x1 - tw - 2, y, tw + 2, 24), Qt.AlignmentFlag.AlignVCenter, temp)
+                self.symbol(qp, icon, x1 - tw - 18, y + 12, 22, QColor(ACCENT), filled=True)
+                qp.setFont(F_SMALL)
+                qp.setPen(ink(DIM))
+                qp.drawText(QRectF(x0 + 150, y + 24, x1 - x0 - 150, 18), RIGHT_MID, under)
+            y += 54
+            for r in ib.card_rows(data, now):
+                key = r["action"]
+                if key:
+                    rect = QRectF(x0 - 8, y, x1 - x0 + 16, 30)
+                    self.buttons.append((rect, key))
+                    if self.hot == key:
+                        qp.setPen(Qt.PenStyle.NoPen)
+                        qp.setBrush(ink(0.06))
+                        qp.drawRoundedRect(rect, 10, 10)
+                y = self.line(qp, x0, x1, y, r["dot"], r["text"], r["right"], hot=key is not None and self.hot == key)
+            y += 12
+            done = QRectF(x1 - 84, y, 84, 38)
+            read = QRectF(x0, y, done.x() - 8 - x0, 38)
+            for rect, key, fill, fg in ((read, "brief:read", ACCENT, ON_ACCENT), (done, "brief:done", KEY, None)):
+                qp.setPen(Qt.PenStyle.NoPen)
+                qp.setBrush(QColor(fill))
+                qp.drawRoundedRect(rect, 19, 19)
+                if self.hot == key:  # the M3 state layer: +8 %
+                    qp.setBrush(ink(0.08) if fg is None else QColor(0, 0, 0, 20))
+                    qp.drawRoundedRect(rect, 19, 19)
+                if key == "brief:read":
+                    self.symbol(qp, "volume_up", rect.x() + 22, rect.center().y(), 18, QColor(fg), filled=True)
+                qp.setFont(F_CHIP)
+                qp.setPen(QColor(fg) if fg else ink())
+                if key == "brief:read":
+                    qp.drawText(rect.adjusted(38, 0, -8, 0), Qt.AlignmentFlag.AlignVCenter, "Read it to me")
+                else:
+                    qp.drawText(rect, Qt.AlignmentFlag.AlignCenter, "Done")
+                self.buttons.append((rect, key))
+            return y + 38 + 8
 
         # -------------------------------------------------------------- geometry
 
@@ -1455,8 +1612,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             qp.setOpacity(fade)
             x0, x1 = body.x() + 20, body.right() - 20
             y = body.y() + 18
-            pid = self.page_id()
-            if pid == "media":
+            pid = "brief" if self.card else self.page_id()
+            if pid == "brief":
+                y = self.draw_brief(qp, x0, x1, y)
+            elif pid == "media":
                 y = self.draw_media(qp, x0, x1, y)
             elif pid == "system":
                 y = self.draw_system(qp, x0, x1, y)
@@ -1469,7 +1628,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 qp.setPen(QColor(GREEN))
                 qp.drawText(QRectF(x0, y + 2, x1 - x0, 18), Qt.AlignmentFlag.AlignLeft, self.flash_text)
                 y += 22
-            y = self.draw_dots(qp, body, y)
+            y = y if self.card else self.draw_dots(qp, body, y)
             qp.setOpacity(1)
             h = y - body.y() + 8
             if abs(h - self.details_h) > 1:
@@ -1571,6 +1730,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                     same_day = time.strftime("%Y%m%d", at) == time.strftime("%Y%m%d")
                     rows.append((ACCENT, nxt.get("label") or f"{nxt['plugin']} · {nxt['workflow']}",
                                  time.strftime("%H:%M" if same_day else "%a %H:%M", at), None))
+            if self.brief_row if self.brief_row is not None else ib.row_open(datetime.now()):
+                rows.append((ACCENT, "Morning brief", "›", "brief"))  # until noon: the card again
             for dot, text, right, key in rows:
                 if key:
                     r = QRectF(x0 - 8, y, x1 - x0 + 16, 30)
@@ -1873,13 +2034,14 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
 
         def enterEvent(self, _e: Any) -> None:  # noqa: N802
             self.leave.stop()
+            self.card_hide.stop()  # the pointer is on the card: it stays until you close it
             if not self.hover:
                 self.hover = True
                 self.kick()
 
         def leaveEvent(self, _e: Any) -> None:  # noqa: N802
             self.hover, self.hot = False, None
-            if self.details:
+            if self.details and not self.card:
                 self.leave.start()
             self.kick()
 
@@ -1915,7 +2077,16 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             if key is None:
                 (self.close_details if self.details else self.open_details)()
                 return
-            if key == "power":
+            if key == "brief":
+                if self.brief:
+                    self.open_card(self.brief, False)
+                else:
+                    self.fetch_brief(False)
+            elif key == "brief:read":
+                self.read_brief()
+            elif key == "brief:done":
+                self.close_details()
+            elif key == "power":
                 self.toggle_power()
             elif key == "game":
                 self.toggle_game()
@@ -1942,7 +2113,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
         def wheelEvent(self, e: Any) -> None:  # noqa: N802
             """Scroll on the opened island to flip its pages (a mouse notch or a touchpad swipe, one page at a
             time)."""
-            if not self.details:
+            if not self.details or self.card:
                 return
             now = time.monotonic()
             if now - self.wheel_at > 0.4:
@@ -2115,6 +2286,13 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
         import ctypes
 
         return bool(ctypes.windll.user32.GetAsyncKeyState(0x01) & 0x8000)
+
+    def esc_down() -> bool:
+        if sys.platform != "win32":
+            return False
+        import ctypes
+
+        return bool(ctypes.windll.user32.GetAsyncKeyState(0x1B) & 0x8000)
 
     PAD = 22  # room round a box for its shadow
 
@@ -2371,7 +2549,11 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             island.priv = {"mic": ["Discord"], "camera": []}
         elif args.text == "dots":
             island.priv = {"mic": ["Discord"], "camera": ["WindowsCamera"]}
-        if args.details:
+        if args.brief and args.brief != "row":
+            island.brief, island.card, island.details = ib.sample(args.brief, datetime.now()), True, True
+        if args.brief == "row":
+            island.brief_row = True
+        if args.details or args.brief == "row":
             island.details = True
             island.page = max(0, pages_of(island.info.widgets).index(args.page)
                               if args.page in pages_of(island.info.widgets) else 0)
@@ -2397,6 +2579,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
         island.grab().save(args.preview)
         return 0
     island.show()
+    island.arm()  # the morning brief: the sit-down check, 05:00-12:00
     app.primaryScreen().geometryChanged.connect(lambda _g: island.place())
 
     def on_hotkey(name: str) -> None:
