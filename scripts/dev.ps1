@@ -467,9 +467,30 @@ switch ($Command) {
             & $Py -m pytest -q -p no:cacheprovider --basetemp (Test-Temp)
             if ($LASTEXITCODE -ne 0) { throw "Tests failed: not merged" }
             if (Get-Command npm -ErrorAction SilentlyContinue) {
+                # Same as the CI job: build in place, fail if the committed bundle differs, always restore the tree.
                 Push-Location (Join-Path $Root "helios")
-                try { npm run typecheck; if ($LASTEXITCODE -ne 0) { throw "Helios typecheck failed: not merged" } }
-                finally { Pop-Location }
+                try {
+                    npm ci; if ($LASTEXITCODE -ne 0) { throw "Helios npm ci failed: not merged" }
+                    npm run typecheck; if ($LASTEXITCODE -ne 0) { throw "Helios typecheck failed: not merged" }
+                    npm test; if ($LASTEXITCODE -ne 0) { throw "Helios tests failed: not merged" }
+                    npm run build; if ($LASTEXITCODE -ne 0) { throw "Helios build failed: not merged" }
+                    $Dist = @(git status --porcelain -- ../core/argus/helios_dist)
+                    if ($Dist.Count -gt 0) {
+                        $Dist | Select-Object -First 10 | ForEach-Object { Write-Host $_ }
+                        throw "Helios source changed but core/argus/helios_dist wasn't rebuilt: run .\scripts\dev.ps1 helios, commit, then .\scripts\dev.ps1 pr again"
+                    }
+                }
+                finally {
+                    git checkout -- ../core/argus/helios_dist
+                    git clean -fd -- ../core/argus/helios_dist
+                    Pop-Location
+                }
+            }
+            elseif (@(git diff --name-only "origin/main...HEAD") -match '^helios/') {
+                throw "npm is needed to check the Helios build"
+            }
+            else {
+                Write-Host "NOTE: npm is missing, so the Helios build was NOT checked (this branch doesn't touch helios/)." -ForegroundColor Yellow
             }
             $MergeFlags = @("--admin")
         }
