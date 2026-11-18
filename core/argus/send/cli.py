@@ -17,7 +17,7 @@ from pathlib import Path
 
 from ..config import ConfigError, load_config
 from . import clip as clipmod
-from . import toast
+from . import reload, toast
 from .agent import SendAgent
 from .sender import label_of
 
@@ -222,10 +222,13 @@ def main(argv: list[str] | None = None) -> int:
         logging.basicConfig(level=logging.INFO, format=fmt, stream=log)
     else:
         logging.basicConfig(level=logging.INFO, format=fmt)
+    agent.reload_on_new_code = True
     try:
         asyncio.run(agent.run_forever())
     except KeyboardInterrupt:
         pass
+    if agent.restart_requested and not reload.under_systemd():
+        reload.respawn()  # the port is free again (run_forever stopped the receiver): the copy binds it
     return 0
 
 
