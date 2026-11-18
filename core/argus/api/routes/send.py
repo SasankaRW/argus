@@ -121,8 +121,14 @@ def build_router(deps: Deps) -> APIRouter:
 
     @router.post("/send/live/{offer_id}/cancel", dependencies=guarded)
     async def cancel_live(offer_id: str = Path(..., pattern=r"^[A-Za-z0-9-]{8,64}$")) -> dict:
-        """Ask the sending device to stop; it hears on its next report (about half a second)."""
-        return {"ok": live.cancel(offer_id)}
+        """Ask the sending device to stop; it hears on its next report (about half a second). A transfer no device
+        reports on any more ends here at once."""
+        now = time.time()
+        ok = live.cancel(offer_id, now)
+        changes = live.take_changes()
+        if changes:
+            await store.write(lambda c: [insert_event(c, now, "send.live", data=ch) for ch in changes])
+        return {"ok": ok}
 
     @router.get("/send/history", dependencies=guarded)
     async def history(limit: int = Query(50, ge=1, le=200)) -> list[dict]:

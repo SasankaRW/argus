@@ -662,11 +662,16 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             self.still = reduced_motion()
             self.buttons: list[tuple[QRectF, str]] = []
             self.details_h = 120.0
-            self.anim = QTimer(self, interval=16)
+            # One frame per screen refresh (120 Hz screens get 120 fps), on precise timers: Qt's default coarse
+            # timer slips to Windows' ~15.6 ms ticks, so a 16 ms timer often ran at ~32 fps and looked choppy.
+            hz = self.screen().refreshRate() if self.screen() else 60.0
+            frame_ms = max(4, round(1000 / min(240.0, max(60.0, hz or 60.0))))
+            self.anim = QTimer(self, interval=frame_ms, timerType=Qt.TimerType.PreciseTimer)
             self.anim.timeout.connect(self.frame)
             self.last_frame = time.monotonic()
-            self.pulse = QTimer(self, interval=33)  # the indicators move while Ari is busy (30 fps)
+            self.pulse = QTimer(self, interval=frame_ms, timerType=Qt.TimerType.PreciseTimer)  # Ari busy, a transfer
             self.pulse.timeout.connect(self.update)
+            self.tx_t = time.monotonic()
             self.fold = QTimer(self, singleShot=True)
             self.fold.timeout.connect(self.check_fold)
             self.away = QTimer(self, interval=60)  # while open: a click anywhere else folds it
@@ -1052,7 +1057,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 return
             qp.setOpacity(max(0.0, min(1.0, (self.spring.h - 30) / 16)))
             want = (t["done"] / t["total"]) if t.get("total") else 0.0
-            self.tx_frac += (want - self.tx_frac) * (1.0 if self.still else 0.12)
+            now = time.monotonic()  # eased by time, not per frame, so it looks the same at any frame rate
+            dt, self.tx_t = min(0.1, now - self.tx_t), now
+            self.tx_frac += (want - self.tx_frac) * (1.0 if self.still else 1.0 - math.exp(-3.8 * dt))
             x0, x1, cy = body.x() + 22, body.right() - 22, body.y() + 18
             for x, dev, to in ((x0, t.get("from", ""), False), (x1, t.get("to", ""), True)):
                 qp.setPen(Qt.PenStyle.NoPen)

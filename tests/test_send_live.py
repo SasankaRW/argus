@@ -38,7 +38,7 @@ def test_cancel_reaches_the_sender_on_its_next_report():
     lv = SendLive()
     s = snap(offer_id="c" * 8, **{"from": "pc", "to": "phone"})
     lv.report("pc", [s], now=0.0)
-    assert lv.cancel("c" * 8) and not lv.cancel("x" * 8)
+    assert lv.cancel("c" * 8, now=0.05) and not lv.cancel("x" * 8, now=0.05)
     assert lv.report("phone", [], now=0.1) == []  # not the sender
     assert lv.report("pc", [s], now=0.2) == ["c" * 8]
     assert lv.report("pc", [s], now=0.3) == []  # asked once
@@ -67,3 +67,14 @@ def test_a_leg_nobody_reports_on_goes_away():
     lv.report("pc", [snap(offer_id="s" * 8)], now=0.0)
     assert len(lv.items(20.0)) == 1
     assert lv.items(31.0) == []
+
+
+def test_cancel_ends_a_leg_nobody_reports_on():
+    """The sender lost track of it (or is gone): a cancel from Helios or the island must still end it."""
+    lv = SendLive()
+    lv.report("pc", [snap(offer_id="z" * 8, **{"from": "pc", "to": "phone"})], now=0.0)
+    lv.take_changes()
+    assert lv.cancel("z" * 8, now=1.0) is True and lv.items(1.0)[0]["state"] == "moving"  # still reporting: it hears
+    assert lv.cancel("z" * 8, now=9.0) is True
+    assert lv.items(9.0)[0]["state"] == "cancelled" and lv.take_changes()[0]["state"] == "cancelled"
+    assert lv.items(20.0) == []
