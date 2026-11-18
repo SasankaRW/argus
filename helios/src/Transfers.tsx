@@ -87,6 +87,53 @@ export function TransferPopup({ live, onOpen }: { live: SendLive; onOpen: () => 
 
 const KIND: Record<string, string> = { sent: "Sent to", received: "Got from", delivered: "Delivered to", held: "Waiting on", failed: "Couldn't send to", cancelled: "Cancelled for", not_delivered: "Didn't reach", keep_waiting: "Still waiting for" };
 
+type ReceivedFile = { n: number; name: string; size: number; here: boolean; url: string };
+type Received = { device: string; files: ReceivedFile[]; reason?: string };
+const OPENS = new Set(["sent", "received", "delivered"]);
+
+// An earlier transfer: tap it to see its files, each a link that opens it (the files stay on the device that got
+// them; Argus passes them on through a short-lived signed link, so a browser tab or the phone's browser opens it).
+function HistRow({ h, name }: { h: SendHistoryItem; name: (id: string) => string }) {
+  const [open, setOpen] = useState(false);
+  const [got, setGot] = useState<Received | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const can = !!h.offer_id && OPENS.has(h.kind);
+  // "Gym photos/a.jpg" under a row already called "Gym photos": just "a.jpg"
+  const short = (n: string) => (h.label && n.startsWith(`${h.label}/`) ? n.slice(h.label.length + 1) : n);
+  const toggle = () => {
+    if (!can) return;
+    const next = !open;
+    setOpen(next);
+    if (next) {  // links expire after ten minutes: ask again each time it opens
+      setErr(null);
+      api<Received>(`/send/files/${h.offer_id}`).then(setGot).catch((e) => setErr(e instanceof Error ? e.message : "Couldn't reach it"));
+    }
+  };
+  const head = (
+    <>
+      <Ms n={h.kind === "received" ? "inbox" : h.kind === "failed" || h.kind === "not_delivered" ? "info" : "send"} />
+      <span className="tx-hl"><b>{h.label ?? "Files"}</b><span>{KIND[h.kind] ?? h.kind} {h.peer ?? "a device"}{h.bytes ? ` · ${size(h.bytes)}` : ""}{h.detail ? ` · ${h.detail}` : ""}</span></span>
+      <time>{new Date(h.at * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</time>
+      {can && <Ms n={open ? "expand_less" : "expand_more"} />}
+    </>
+  );
+  return (
+    <li className={open ? "tx-open" : undefined}>
+      {can ? <button type="button" className="tx-li" aria-expanded={open} onClick={toggle}>{head}</button> : <div className="tx-li">{head}</div>}
+      {open && (
+        <div className="tx-files">
+          {err ? <p className="tx-note">{err}</p>
+            : got === null ? <p className="tx-note">Asking {h.kind === "received" ? "it" : h.peer ?? "the device"}…</p>
+            : got.files.length === 0 ? <p className="tx-note"><Ms n="smartphone" />{got.device === "phone" ? "Saved on your phone, in Downloads › Argus." : `Kept on ${name(got.device)}, in its Argus Shared folder.`}</p>
+            : got.files.map((f) => f.here
+              ? <a key={f.n} className="tx-file" href={f.url} target="_blank" rel="noopener"><span className="tx-fn">{short(f.name)}</span><small>{size(f.size)}</small><Ms n="chevron_right" /></a>
+              : <span key={f.n} className="tx-file gone"><span className="tx-fn">{short(f.name)}</span><small>moved or deleted</small></span>)}
+        </div>
+      )}
+    </li>
+  );
+}
+
 export function TransfersView({ live }: { live: SendLive }) {
   const [hist, setHist] = useState<SendHistoryItem[] | null>(null);
   const done = live.items.filter((t) => !isMoving(t)).length;
@@ -106,13 +153,7 @@ export function TransfersView({ live }: { live: SendLive }) {
       <h2 className="tx-h">Earlier</h2>
       {hist === null ? <p className="tx-empty">Loading…</p> : hist.length === 0 ? <p className="tx-empty">No transfers yet.</p> : (
         <ul className="tx-hist">
-          {hist.map((h) => (
-            <li key={h.eid}>
-              <Ms n={h.kind === "received" ? "inbox" : h.kind === "failed" || h.kind === "not_delivered" ? "info" : "send"} />
-              <span className="tx-hl"><b>{h.label ?? "Files"}</b><span>{KIND[h.kind] ?? h.kind} {h.peer ?? "a device"}{h.bytes ? ` · ${size(h.bytes)}` : ""}{h.detail ? ` · ${h.detail}` : ""}</span></span>
-              <time>{new Date(h.at * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</time>
-            </li>
-          ))}
+          {hist.map((h) => <HistRow key={h.eid} h={h} name={live.name} />)}
         </ul>
       )}
     </div>

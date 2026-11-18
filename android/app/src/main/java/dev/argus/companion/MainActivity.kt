@@ -87,6 +87,11 @@ class MainActivity : Activity() {
         w.webViewClient = object : WebViewClient() {
             // Helios stays in the app; any other link opens in the browser
             override fun shouldOverrideUrlLoading(view: WebView, req: WebResourceRequest): Boolean {
+                // a received file from Transfers (a signed link): the browser shows or saves any kind of file
+                if (req.url.path?.contains("/send/files/") == true) {
+                    startActivity(Intent(Intent.ACTION_VIEW, req.url))
+                    return true
+                }
                 val inside = req.url.toString().startsWith(prefs.url)
                 if (!inside) startActivity(Intent(Intent.ACTION_VIEW, req.url))
                 return !inside

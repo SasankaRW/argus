@@ -22,7 +22,7 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from . import CHUNK, SESSION_SECONDS
@@ -208,6 +208,40 @@ def build_app(agent: SendAgent) -> FastAPI:
     async def _http(request: Request, exc: HTTPException):
         body = exc.detail if isinstance(exc.detail, dict) else {"detail": exc.detail}
         return JSONResponse(body, status_code=exc.status_code)
+
+    # ---- received files, for Argus only (Helios's "Open" on the Transfers page): the worker token, not a device key
+    def argus_only(request: Request) -> None:
+        want = agent.argus_token or ""
+        got = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+        if not want or not hmac.compare_digest(got.encode(), want.encode()):
+            raise HTTPException(401, "Argus only")
+
+    def received_entry(offer_id: str) -> list[Path]:
+        files = agent.received_files(offer_id) if OFFER_ID.match(offer_id) else None
+        if files is None:
+            raise HTTPException(404, "nothing received with that id")
+        return [Path(f) for f in files]
+
+    @app.get("/send/received/{offer_id}")
+    async def received_list(offer_id: str, request: Request) -> list[dict]:
+        argus_only(request)
+        out = []
+        for n, p in enumerate(received_entry(offer_id)):
+            there = p.is_file()
+            try:  # "photos/a.jpg" for a folder share (inside "From <device>/"), else the file's name
+                name = PurePosixPath(*p.relative_to(rx.root).parts[1:]).as_posix() or p.name
+            except ValueError:
+                name = p.name
+            out.append({"n": n, "name": name, "size": p.stat().st_size if there else 0, "here": there})
+        return out
+
+    @app.get("/send/received/{offer_id}/{n}")
+    async def received_file(offer_id: str, n: int, request: Request):
+        argus_only(request)
+        files = received_entry(offer_id)
+        if not 0 <= n < len(files) or not files[n].is_file():
+            raise HTTPException(404, "that file is no longer there")
+        return FileResponse(files[n], filename=files[n].name, content_disposition_type="inline")
 
     @app.post("/send/hello")
     async def hello(body: Hello) -> dict:
