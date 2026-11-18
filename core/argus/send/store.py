@@ -40,6 +40,10 @@ class QueueStore:
             return self._db.execute(sql, args)
 
     # ------------------------------------------------------------------ queue
+    def sending(self) -> bool:
+        """Something is mid-transfer (the agent waits for it before restarting on new code)."""
+        return self._x("SELECT 1 FROM queue WHERE state IN ('sending','verifying') LIMIT 1").fetchone() is not None
+
     def add(self, target: str, manifest: list[dict], *, offer_id: str | None = None, kind: str = "send",
             origin: str | None = None, state: str = "queued") -> str:
         oid = offer_id or str(uuid.uuid4())
