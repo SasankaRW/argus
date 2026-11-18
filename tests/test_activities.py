@@ -224,3 +224,110 @@ def test_changes_reach_the_hub_as_events(tmp_path):
                 break
             time.sleep(0.1)
         assert evs and evs[0]["kind"] == "activity.changed" and evs[0]["data"]["version"] >= 1
+
+
+def test_a_malformed_send_report_is_survived(tmp_path):
+    import time
+
+    with TestClient(create_app(make(tmp_path))) as c:
+        r = c.post("/send/live", json={"device": "phone", "items": [{"offer_id": "x"}]}, headers=W)
+        assert r.status_code == 200
+        bad = {"offer_id": "y" * 8, "from": "phone", "to": "pc", "state": "moving", "total": "lots", "done": None,
+               "eta": "soon"}
+        assert c.post("/send/live", json={"device": "phone", "items": [bad]}, headers=W).status_code == 200
+        assert c.post("/send/live", json={"device": "phone", "items": [bad]}, headers=W).status_code == 200
+        assert c.get("/activities", headers=W).status_code == 200
+        ok = {"offer_id": "z" * 8, "from": "phone", "to": "pc", "state": "moving", "total": 100, "done": 50}
+        assert c.post("/send/live", json={"device": "phone", "items": [ok]}, headers=W).status_code == 200
+        ids = [i["id"] for i in c.get("/activities", headers=W).json()["items"]]
+        assert f"transfer:{'z' * 8}:send" in ids
+        n = len(c.get("/events?kinds=activity.&limit=50", headers=W).json()["events"])
+        c.put("/activities/custom/after", json={"title": "After"}, headers=W)  # the pump still emits
+        for _ in range(60):
+            if len(c.get("/events?kinds=activity.&limit=50", headers=W).json()["events"]) > n:
+                break
+            time.sleep(0.1)
+        else:
+            raise AssertionError("pump stopped emitting")
+
+
+def test_transfer_activity_coerces_and_a_bad_one_is_skipped(clock):
+    from argus.activities import transfer_activity
+
+    t = transfer_activity({"offer_id": "x"})
+    assert t["progress"] == 0.0 and t["detail"] == "0%"
+    t = transfer_activity({"offer_id": "x", "total": "9", "done": "3", "eta": "nan"})
+    assert abs(t["progress"] - 1 / 3) < 1e-9 and t["detail"] == "33%"
+    live = SendLive()
+    a = Activities(live, clock)
+    live._items[("q", "send")] = {"offer_id": "q", "state": "moving", "to": _Boom(), "updated": clock.now,
+                                  "started": clock.now}
+    live.report("phone", [snap()], clock.now)
+    assert [i["kind"] for i in a.snapshot()["items"]] == ["transfer"]
+
+
+def test_a_failed_write_is_retried(clock):
+    a = Activities(clock=clock)
+    a.put_custom("c", {"title": "x"})
+    evs = a.take_events()
+    assert [k for k, _ in evs] == ["activity.changed"]
+    a.requeue(evs)  # the write failed
+    assert [k for k, _ in a.take_events()] == ["activity.changed"]  # same window, retried at once
+    a.start_timer(1)
+    clock.advance(61)
+    evs = a.take_events()
+    assert "activity.done" in [k for k, _ in evs]
+    a.requeue(evs)
+    assert [k for k, _ in a.take_events() if k == "activity.done"] == ["activity.done"]
+
+
+def test_pump_survives_failing_writes_and_retries(clock):
+    a = Activities(clock=clock)
+    got: list = []
+    calls = {"n": 0}
+
+    async def write(evs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OSError("hub down")
+        got.extend(evs)
+
+    async def go():
+        t = asyncio.create_task(a.pump(write))
+        await asyncio.sleep(0)
+        a.put_custom("c", {"title": "x"})
+        for _ in range(40):
+            if got:
+                break
+            clock.advance(MIN_EMIT + 0.01)
+            await asyncio.sleep(0.05)
+        t.cancel()
+
+    run(go())
+    assert calls["n"] >= 2 and got and got[0][0] == "activity.changed"
+
+
+def test_small_progress_changes_do_not_bump_the_version(clock):
+    a = Activities(clock=clock)
+    a.put_custom("c", {"title": "t", "progress": 0.50})
+    v = a.version
+    a.put_custom("c", {"title": "t", "progress": 0.52})
+    assert a.version == v
+    a.put_custom("c", {"title": "t", "progress": 0.60})
+    assert a.version == v + 1
+
+
+def test_the_pump_sleeps_long_when_nothing_needs_it(clock):
+    a = Activities(clock=clock)
+    a.take_events()
+    assert a.wait_time() == 5.0
+    a.start_timer(10)
+    a.take_events()
+    assert 4.9 < a.wait_time() <= 5.0  # a far-off timer: no 4 Hz ticking
+    clock.advance(10 * 60 - 1)
+    assert a.wait_time() == MIN_EMIT  # within 2 s of its end
+
+
+class _Boom:
+    def __str__(self):
+        raise ValueError("unprintable")

@@ -2476,8 +2476,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
         """Live activities: woken by "activity.changed" on the event stream above (nothing is asked while nothing
         is live), read GET /activities; for a transfer, also Send's record of it (its devices)."""
         names: dict[str, str] = {}
+        timeout: float | None = None  # None: idle, nothing shown: sleep until an event
         while True:
-            act_wake.wait()
+            act_wake.wait(timeout)  # woken by an event; else a retry after a failure, or a 30 s refresh
             act_wake.clear()
             try:
                 items = api.call("GET", "/activities").get("items") or []
@@ -2486,8 +2487,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                     names = {d["id"]: d["name"] for d in api.call("GET", "/send/devices")} or names
                     moving = api.call("GET", "/send/live")
                 bus.activities.emit(list(items), list(moving), names)
+                timeout = 30.0 if items else None
             except (*_API_ERRORS, *_SHAPE_ERRORS):  # an older Argus without activities, or out of reach
-                bus.activities.emit([], [], names)
+                timeout = 3.0  # keep what is shown and ask again soon
 
     threading.Thread(target=act_feed, daemon=True, name="activity-feed").start()
     threading.Thread(target=feed, daemon=True, name="ari-feed").start()
