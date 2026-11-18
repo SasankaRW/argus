@@ -94,7 +94,7 @@ object Notifier {
     }
 
     /** Opens Argus (Helios) at a page: a path on Argus, or a full link. */
-    private fun open(ctx: Context, code: Int, path: String): PendingIntent {
+    fun open(ctx: Context, code: Int, path: String): PendingIntent {
         val i = Intent(ctx, MainActivity::class.java).setAction("dev.argus.companion.OPEN").putExtra("path", path)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         return PendingIntent.getActivity(ctx, code, i, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
