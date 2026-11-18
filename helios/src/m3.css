@@ -617,7 +617,11 @@ html[data-paused="1"] :is(.phone2, .shell, .login) * { animation-play-state: pau
 :is(.phone2, .shell) .tx-li { display: flex; align-items: center; gap: 12px; padding: 10px 12px; width: 100%; text-align: left; color: inherit; background: none; border: 0; font: inherit; }
 :is(.phone2, .shell) button.tx-li { cursor: pointer; }
 :is(.phone2, .shell) .tx-files { display: flex; flex-direction: column; gap: 2px; padding: 0 8px 8px 44px; }
-:is(.phone2, .shell) .tx-file { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 8px 0 14px; border-radius: 999px; background: var(--s2); color: var(--tx); text-decoration: none; font-size: 13px; }
+:is(.phone2, .shell) .tx-file { display: flex; align-items: center; gap: 4px; min-height: 44px; padding: 0 4px 0 0; border-radius: 999px; background: var(--s2); color: var(--tx); font-size: 13px; }
+:is(.phone2, .shell) .tx-file.gone { padding: 0 14px; gap: 10px; }
+:is(.phone2, .shell) .tx-fo { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 10px 0 14px; border: 0; border-radius: 999px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+:is(.phone2, .shell) .tx-fr { flex: none; width: 36px; height: 36px; display: grid; place-items: center; border: 0; border-radius: 999px; background: var(--s3); color: var(--tx2); cursor: pointer; }
+:is(.phone2, .shell) .tx-fr .ms { font-size: 18px; }
 :is(.phone2, .shell) .tx-fn { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 :is(.phone2, .shell) .tx-file small { font: 12px var(--rm); color: var(--tx3); flex: none; }
 :is(.phone2, .shell) .tx-file.gone { opacity: .55; }

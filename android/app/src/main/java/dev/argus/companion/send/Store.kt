@@ -104,7 +104,7 @@ class ShareRow(val id: String, val target: String, val state: SendState, val rea
                val total: Long, val sendAnyway: Boolean, val offerId: String, val files: List<FileRow>)
 
 /** The sender's disk queue (SQLite). A share is written here before any byte is sent. */
-class SendQueue private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "send-queue.db", null, 1) {
+class SendQueue private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "send-queue.db", null, 2) {
     companion object {
         @Volatile private var inst: SendQueue? = null
         fun get(ctx: Context): SendQueue = inst ?: synchronized(this) { inst ?: SendQueue(ctx.applicationContext).also { inst = it } }
@@ -115,9 +115,49 @@ class SendQueue private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "send-
         db.execSQL("CREATE TABLE files(share_id TEXT, n INTEGER, uri TEXT, rel TEXT, size INTEGER, mtime INTEGER, sha TEXT DEFAULT '', PRIMARY KEY(share_id, n))")
         db.execSQL("CREATE TABLE events(eid TEXT PRIMARY KEY, at INTEGER, json TEXT, sent INTEGER DEFAULT 0)")  // history + outbox
         db.execSQL("CREATE TABLE received(dir TEXT, name TEXT, sha TEXT, path TEXT, PRIMARY KEY(dir, name))")
+        mineTables(db)
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, o: Int, n: Int) {}
+    // what this phone sent and received, with where the files are: Helios in the app opens them, even offline
+    private fun mineTables(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS mine(kind TEXT, offer_id TEXT, at INTEGER, label TEXT, peer TEXT, PRIMARY KEY(kind, offer_id))")
+        db.execSQL("CREATE TABLE IF NOT EXISTS mine_files(kind TEXT, offer_id TEXT, n INTEGER, name TEXT, uri TEXT, size INTEGER, PRIMARY KEY(kind, offer_id, n))")
+    }
+
+    override fun onUpgrade(db: SQLiteDatabase, o: Int, n: Int) { if (o < 2) mineTables(db) }
+
+    class MineFile(val n: Int, val name: String, val uri: String, val size: Long)
+    class MineRow(val kind: String, val offerId: String, val at: Long, val label: String, val peer: String, val files: List<MineFile>)
+
+    @Synchronized fun remember(kind: String, offerId: String, label: String, peer: String, files: List<MineFile>) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.execSQL("INSERT OR REPLACE INTO mine(kind,offer_id,at,label,peer) VALUES(?,?,?,?,?)", arrayOf<Any>(kind, offerId, System.currentTimeMillis(), label, peer))
+            db.execSQL("DELETE FROM mine_files WHERE kind=? AND offer_id=?", arrayOf<Any>(kind, offerId))
+            for (f in files) db.execSQL("INSERT INTO mine_files(kind,offer_id,n,name,uri,size) VALUES(?,?,?,?,?,?)", arrayOf<Any>(kind, offerId, f.n, f.name, f.uri, f.size))
+            // keep the newest 300
+            db.execSQL("DELETE FROM mine WHERE (kind || offer_id) NOT IN (SELECT kind || offer_id FROM mine ORDER BY at DESC LIMIT 300)")
+            db.execSQL("DELETE FROM mine_files WHERE (kind || offer_id) NOT IN (SELECT kind || offer_id FROM mine)")
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+    }
+
+    @Synchronized fun mine(): List<MineRow> {
+        val out = ArrayList<MineRow>()
+        readableDatabase.rawQuery("SELECT kind,offer_id,at,label,peer FROM mine ORDER BY at DESC", null).use { c ->
+            while (c.moveToNext()) out += MineRow(c.getString(0), c.getString(1), c.getLong(2), c.getString(3) ?: "", c.getString(4) ?: "", mineFiles(c.getString(0), c.getString(1)))
+        }
+        return out
+    }
+
+    @Synchronized fun mineFiles(kind: String, offerId: String): List<MineFile> {
+        val out = ArrayList<MineFile>()
+        readableDatabase.rawQuery("SELECT n,name,uri,size FROM mine_files WHERE kind=? AND offer_id=? ORDER BY n", arrayOf(kind, offerId)).use { c ->
+            while (c.moveToNext()) out += MineFile(c.getInt(0), c.getString(1), c.getString(2), c.getLong(3))
+        }
+        return out
+    }
 
     @Synchronized fun add(id: String, target: String, offerId: String, files: List<FileRow>) {
         val db = writableDatabase

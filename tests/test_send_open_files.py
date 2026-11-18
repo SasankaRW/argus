@@ -1,88 +1,104 @@
-"""Helios's "Open" on the Transfers page: the receiving agent keeps where it saved each share and hands the files to
-Argus (worker token only); Argus lists them with short-lived signed links and passes each file on."""
+"""Helios's "Open" on the Transfers page: each device keeps what it sent and received and where the files are; Helios
+on that same device asks it directly (never through Argus, so it works while Argus is down) to list them and to open
+one or show it in its folder. Worker token required, and only Helios's own address may ask from a page."""
 
 from __future__ import annotations
 
-import asyncio
-import threading
-import time
-
-import uvicorn
 from fastapi.testclient import TestClient
 
-from _send_kit import free_port, make_agent
-from argus.api import create_app
+from _send_kit import make_agent
+from argus.send import receiver
 from argus.send.receiver import build_app
-from test_send_api import KEY, make
 
 OID = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"
+SID = "1a1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"
+HELIOS = "https://calypso.example.ts.net"
+H = {"Authorization": "Bearer t0ken"}
 
 
-def received_agent(tmp_path):
-    agent = make_agent(tmp_path, "pc", "PC")
+def device(tmp_path):
+    agent = make_agent(tmp_path, "pc", "PC", argus_url=HELIOS)
     agent.argus_token = "t0ken"
     folder = tmp_path / "pc-root" / "From my phone" / "photos"
     folder.mkdir(parents=True)
     (folder / "a.jpg").write_bytes(b"jpeg-bytes")
     (folder / "b.txt").write_bytes(b"hello")
-    agent.remember_received(OID, [str(folder / "a.jpg"), str(folder / "b.txt")])
+    agent.remember("received", OID, "photos", "my phone", [str(folder / "a.jpg"), str(folder / "b.txt")])
+    mine = tmp_path / "Documents" / "report.pdf"
+    mine.parent.mkdir()
+    mine.write_bytes(b"%PDF")
+    agent.remember("sent", SID, "report.pdf", "Calypso", [str(mine), str(tmp_path / "gone.txt")])
     return agent
 
 
-def test_the_agent_hands_received_files_to_argus_only(tmp_path):
-    agent = received_agent(tmp_path)
-    with TestClient(build_app(agent)) as c:
-        assert c.get(f"/send/received/{OID}").status_code == 401  # no token
-        assert c.get(f"/send/received/{OID}", headers={"Authorization": "Bearer nope"}).status_code == 401
-        h = {"Authorization": "Bearer t0ken"}
-        got = c.get(f"/send/received/{OID}", headers=h).json()
-        want = [("photos/a.jpg", 10, True), ("photos/b.txt", 5, True)]
-        assert [(f["name"], f["size"], f["here"]) for f in got] == want
-        r = c.get(f"/send/received/{OID}/1", headers=h)
-        assert r.content == b"hello" and "inline" in r.headers["content-disposition"]
-        assert c.get(f"/send/received/{OID}/9", headers=h).status_code == 404
-        assert c.get("/send/received/" + "a" * 36, headers=h).status_code == 404
+def test_lists_this_devices_sent_and_received_files(tmp_path):
+    with TestClient(build_app(device(tmp_path))) as c:
+        assert c.get("/send/mine").status_code == 401
+        got = c.get("/send/mine", headers=H).json()
+        assert got["device"] == "pc"
+        sent, rec = got["items"]  # newest first
+        assert (sent["kind"], sent["label"], sent["peer"]) == ("sent", "report.pdf", "Calypso")
+        assert [(f["name"], f["here"]) for f in sent["files"]] == [("report.pdf", True), ("gone.txt", False)]
+        assert [(f["name"], f["size"]) for f in rec["files"]] == [("photos/a.jpg", 10), ("photos/b.txt", 5)]
+
+
+def test_opens_and_reveals_on_this_device(tmp_path, monkeypatch):
+    opened: list = []
+    monkeypatch.setattr(receiver, "open_on_this_device", lambda p, reveal: opened.append((p.name, reveal)))
+    with TestClient(build_app(device(tmp_path))) as c:
+        assert c.post(f"/send/mine/received/{OID}/1/open").status_code == 401
+        assert c.post(f"/send/mine/received/{OID}/1/open", headers=H).json() == {"ok": True}
+        assert c.post(f"/send/mine/received/{OID}/0/reveal", headers=H).json() == {"ok": True}
+        assert c.post(f"/send/mine/sent/{SID}/1/open", headers=H).status_code == 410  # moved or deleted
+        assert c.post(f"/send/mine/sent/{OID}/0/open", headers=H).status_code == 404  # not something it sent
+        assert c.post(f"/send/mine/other/{OID}/0/open", headers=H).status_code == 404
+    assert opened == [("b.txt", False), ("a.jpg", True)]
+
+
+def test_only_helios_may_ask_from_a_page(tmp_path):
+    with TestClient(build_app(device(tmp_path))) as c:
+        pre = {"Origin": HELIOS, "Access-Control-Request-Method": "GET",
+               "Access-Control-Request-Private-Network": "true"}
+        r = c.options("/send/mine", headers=pre)
+        assert r.status_code == 204 and r.headers["access-control-allow-origin"] == HELIOS
+        assert r.headers["access-control-allow-private-network"] == "true"
+        assert c.options("/send/mine", headers={**pre, "Origin": "https://evil.example"}).status_code == 403
+        assert c.get("/send/mine", headers={**H, "Origin": "https://evil.example"}).status_code == 403
+        r = c.get("/send/mine", headers={**H, "Origin": HELIOS})
+        assert r.status_code == 200 and r.headers["access-control-allow-origin"] == HELIOS
 
 
 def test_the_book_keeps_only_the_newest(tmp_path):
     agent = make_agent(tmp_path, "pc", "PC")
-    agent.RECEIVED_KEEP = 3
+    agent.MINE_KEEP = 3
     for i in range(5):
-        agent.remember_received(f"offer-{i:04d}", [f"/x/{i}"])
-    assert agent.received_files("offer-0001") is None and agent.received_files("offer-0004") == ["/x/4"]
+        agent.remember("sent", f"offer-{i:04d}", "x", "PC", [f"/x/{i}"])
+    assert agent.mine_files("sent", "offer-0001") is None and agent.mine_files("sent", "offer-0004") == ["/x/4"]
 
 
-def test_argus_lists_and_passes_files_on_with_signed_links(tmp_path):
-    agent = received_agent(tmp_path)
-    port = free_port()
-    srv = uvicorn.Server(uvicorn.Config(build_app(agent), host="127.0.0.1", port=port, log_level="warning",
-                                        lifespan="off"))
-    t = threading.Thread(target=lambda: asyncio.run(srv.serve()), daemon=True)
-    t.start()
-    while not srv.started:
-        time.sleep(0.01)
-    try:
-        (tmp_path / "argus").mkdir()
-        with TestClient(create_app(make(tmp_path / "argus"))) as c:
-            h = {"Authorization": "Bearer t0ken"}
-            dev = {"id": "pc", "name": "PC", "pubkey": KEY, "lan": [f"127.0.0.1:{port}"], "tailscale": None}
-            c.post("/send/devices", json=dev, headers=h)
-            c.post("/send/events", headers=h, json={"eid": "rx" * 8, "device": "pc", "kind": "received",
-                                                     "peer": "my phone", "label": "photos", "bytes": 15,
-                                                     "offer_id": OID})
-            assert c.get(f"/send/files/{OID}").status_code == 401
-            listed = c.get(f"/send/files/{OID}", headers=h).json()
-            assert listed["device"] == "pc" and [f["name"] for f in listed["files"]] == ["photos/a.jpg", "photos/b.txt"]
-            url = listed["files"][0]["url"]
-            r = c.get(url)  # no token: the signed link is enough
-            assert r.status_code == 200 and r.content == b"jpeg-bytes"
-            assert c.get(url.replace("sig=", "sig=0")).status_code == 403
-            assert c.get(f"/send/files/{OID}/0?exp={int(time.time()) - 5}&sig=x").status_code == 403
-            assert c.get("/send/files/" + "b" * 36, headers=h).status_code == 404  # nobody received it
-            c.post("/send/events", headers=h, json={"eid": "ph" * 8, "device": "phone", "kind": "received",
-                                                     "peer": "PC", "label": "a.apk", "bytes": 1, "offer_id": "c" * 36})
-            assert c.get("/send/files/" + "c" * 36, headers=h).json() == {"device": "phone", "files": [],
-                                                                           "reason": "on the phone"}
-    finally:
-        srv.should_exit = True
-        t.join(5)
+def test_a_finished_send_and_receive_are_remembered(tmp_path):
+    """Through a real transfer: the sender remembers what it sent, the receiver where it saved it."""
+    import asyncio
+
+    from _send_kit import make_file, pair, wait_state
+
+    a, b = make_agent(tmp_path, "pc", "PC"), make_agent(tmp_path, "calypso", "Calypso")
+    pair(a, b)
+    src = tmp_path / "out" / "notes.txt"
+    make_file(src, 5000)
+
+    async def go():
+        await a.start()
+        await b.start()
+        try:
+            oid = a.enqueue("calypso", [src])
+            await wait_state(a, oid, "done")
+            return oid
+        finally:
+            await a.stop()
+            await b.stop()
+
+    oid = asyncio.run(go())
+    assert a.mine_files("sent", oid) == [str(src)]
+    got = b.mine_files("received", oid)
+    assert got and got[0].endswith("notes.txt")

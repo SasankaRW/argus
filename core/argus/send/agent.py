@@ -144,35 +144,41 @@ class SendAgent:
             self.drop_hold_files(offer_id)
         return True
 
-    # ------------------------------------------------------------------ received files, for Helios's "Open"
-    RECEIVED_KEEP = 300  # the newest received shares whose files Argus may ask for
+    # ------------------------------------------------------------------ my transfers, for Helios's "Open"
+    MINE_KEEP = 300  # the newest shares this device sent or received, with where their files are
 
-    def remember_received(self, offer_id: str, saved: list[str]) -> None:
-        """Where a received share's files were saved, so Argus can hand them to Helios later."""
-        p = self.data / "received.json"
+    def _mine_path(self) -> Path:
+        return self.data / "mine.json"
+
+    def _mine_book(self) -> dict:
         try:
-            book = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+            return json.loads(self._mine_path().read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            book = {}
-        book[offer_id] = {"at": time.time(), "files": saved}
-        if len(book) > self.RECEIVED_KEEP:
-            book = dict(sorted(book.items(), key=lambda kv: kv[1].get("at", 0))[-self.RECEIVED_KEEP:])
-        tmp = p.with_suffix(".tmp")
+            return {}
+
+    def remember(self, kind: str, offer_id: str, label: str, peer: str, files: list[str]) -> None:
+        """A share this device sent ("sent") or received ("received"), so Helios on this device can open its files
+        (asked straight here, never through Argus: it works while Argus is down)."""
+        book = self._mine_book()
+        book[f"{kind}:{offer_id}"] = {"kind": kind, "offer_id": offer_id, "at": time.time(), "label": label,
+                                      "peer": peer, "files": files}
+        if len(book) > self.MINE_KEEP:
+            book = dict(sorted(book.items(), key=lambda kv: kv[1].get("at", 0))[-self.MINE_KEEP:])
+        tmp = self._mine_path().with_suffix(".tmp")
         tmp.write_text(json.dumps(book), encoding="utf-8")
-        os.replace(tmp, p)
+        os.replace(tmp, self._mine_path())
 
-    def received_files(self, offer_id: str) -> list[str] | None:
-        p = self.data / "received.json"
-        try:
-            entry = json.loads(p.read_text(encoding="utf-8")).get(offer_id)
-        except (OSError, ValueError):
-            return None
-        return list(entry["files"]) if entry else None
+    def mine(self) -> list[dict]:
+        return sorted(self._mine_book().values(), key=lambda e: -e.get("at", 0))
+
+    def mine_files(self, kind: str, offer_id: str) -> list[str] | None:
+        e = self._mine_book().get(f"{kind}:{offer_id}")
+        return list(e["files"]) if e else None
 
     def received(self, offer: dict, saved: list[str]) -> None:
         origin = offer.get("origin") or offer["from"]
         try:
-            self.remember_received(offer["offer_id"], saved)
+            self.remember("received", offer["offer_id"], label_of(offer["files"]), self.devices.name_of(origin), saved)
         except OSError:
             log.warning("could not note where %s was saved", offer["offer_id"], exc_info=True)
         try:

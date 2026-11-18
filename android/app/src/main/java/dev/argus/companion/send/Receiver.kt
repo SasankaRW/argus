@@ -252,6 +252,13 @@ class SendReceiver(private val ctx: Context, private val self: String, private v
         }
         d.deleteRecursively()
         val from = offer.optString("origin").ifBlank { offer.getString("from") }
+        runCatching {  // Helios in the app can open these later, Argus or not
+            val rows = (0 until files.length()).map { k -> val f = files.getJSONObject(k)
+                SendQueue.MineFile(k, f.getString("rel_path"), saved.optString(k), f.getLong("size")) }
+            val first = rows.first().name.substringBefore('/')
+            val label = if (rows.map { it.name.substringBefore('/') }.toSet().size == 1) first else "${rows.size} files"
+            queue.remember("received", offer.getString("offer_id"), label, book.nameOf(from), rows)
+        }
         SendNotes.received(ctx, files.length(), book.nameOf(from), book.nameOf(from))
         queue.event("rx-" + offer.getString("offer_id"), JSONObject().put("kind", "received").put("device", self).put("peer", book.nameOf(from))
             .put("bytes", offer.getLong("total")).put("offer_id", offer.getString("offer_id")))

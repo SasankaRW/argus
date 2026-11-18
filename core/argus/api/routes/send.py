@@ -2,16 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import json
 import time
 
-import httpx
 from fastapi import APIRouter, HTTPException, Path, Query
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from starlette.background import BackgroundTask
 
 from ...events import insert_event
 from ._deps import Deps
@@ -46,96 +41,10 @@ class SendEvent(BaseModel):
     offer_id: str | None = Field(None, max_length=64)
 
 
-LINK_SECONDS = 600  # an "Open" link from the Transfers page works this long
-AGENT_PORT = 8610
-OID = r"^[A-Za-z0-9-]{8,64}$"
-
-
 def build_router(deps: Deps) -> APIRouter:
     store = deps.argus.store
     router = APIRouter()
     guarded = deps.guarded
-
-    # ---- received files: Helios's "Open". The files stay on the device that received them; Argus asks that
-    # device's Send agent (with the worker token) and passes them on. Links are signed and short-lived, so a browser
-    # tab, a download or the phone's browser can open them without the token.
-    def token() -> str:
-        return deps.argus.cfg.secrets.worker_token or ""
-
-    def sign(oid: str, n: int, exp: int) -> str:
-        return hmac.new(token().encode(), f"send-file/{oid}/{n}/{exp}".encode(), hashlib.sha256).hexdigest()[:40]
-
-    async def holder(oid: str) -> tuple[str, list[str]]:
-        """The device that received this share, and where its agent listens."""
-        def r(conn):
-            row = conn.execute("SELECT device FROM send_history WHERE offer_id=? AND kind='received' "
-                               "ORDER BY at DESC LIMIT 1", (oid,)).fetchone()
-            if not row:
-                return None, None
-            return row["device"], conn.execute("SELECT lan, tailscale FROM send_device WHERE id=?",
-                                               (row["device"],)).fetchone()
-
-        device, dev = await store.read(r)
-        if not device:
-            raise HTTPException(404, "no device has received this")
-        addrs = []
-        if dev is not None:
-            addrs = [a for a in json.loads(dev["lan"] or "[]") if a]
-            if dev["tailscale"]:
-                addrs.append(f"{dev['tailscale']}:{AGENT_PORT}")
-        return device, addrs
-
-    async def ask_agent(addrs: list[str], path: str, stream: bool = False):
-        headers = {"Authorization": f"Bearer {token()}"}
-        last: Exception | None = None
-        for a in addrs:
-            client = httpx.AsyncClient(timeout=httpx.Timeout(10, read=60))
-            try:
-                r = await client.send(client.build_request("GET", f"http://{a}{path}", headers=headers), stream=stream)
-            except httpx.HTTPError as e:
-                last = e
-                await client.aclose()
-                continue
-            if not stream:
-                await client.aclose()
-            return r, client
-        raise HTTPException(502, f"the device is out of reach ({last})" if last else "the device has no address")
-
-    @router.get("/send/files/{offer_id}", dependencies=guarded)
-    async def received_files(offer_id: str = Path(..., pattern=OID)) -> dict:
-        """The files of a received share, each with a short-lived link that opens it."""
-        device, addrs = await holder(offer_id)
-        if device.startswith("phone"):  # the phone app keeps them in Downloads > Argus and doesn't serve files
-            return {"device": device, "files": [], "reason": "on the phone"}
-        r, _ = await ask_agent(addrs, f"/send/received/{offer_id}")
-        if r.status_code == 404:
-            return {"device": device, "files": [], "reason": "not kept"}  # an older agent, or the phone
-        if r.status_code != 200:
-            raise HTTPException(502, f"the device said {r.status_code}")
-        exp = int(time.time()) + LINK_SECONDS
-        files = [{**f, "url": f"/send/files/{offer_id}/{f['n']}?exp={exp}&sig={sign(offer_id, f['n'], exp)}"}
-                 for f in r.json()]
-        return {"device": device, "files": files}
-
-    @router.get("/send/files/{offer_id}/{n}")
-    async def received_file(n: int, exp: int, sig: str, offer_id: str = Path(..., pattern=OID)):
-        """One received file, passed on from the device that has it (signed link: no token needed)."""
-        if exp < time.time() or not hmac.compare_digest(sig, sign(offer_id, n, exp)):
-            raise HTTPException(403, "this link has expired: open it again from Transfers")
-        _, addrs = await holder(offer_id)
-        r, client = await ask_agent(addrs, f"/send/received/{offer_id}/{n}", stream=True)
-        if r.status_code != 200:
-            await r.aclose()
-            await client.aclose()
-            raise HTTPException(404 if r.status_code == 404 else 502, "that file is no longer there")
-        keep = {k: v for k, v in r.headers.items() if k.lower() in ("content-type", "content-length",
-                                                                      "content-disposition", "last-modified")}
-
-        async def close() -> None:
-            await r.aclose()
-            await client.aclose()
-
-        return StreamingResponse(r.aiter_raw(), headers=keep, background=BackgroundTask(close))
 
     @router.post("/send/devices", dependencies=guarded)
     async def register_device(body: SendDevice) -> dict:

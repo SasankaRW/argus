@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import time
 from collections import deque
@@ -60,6 +61,8 @@ class Run:
 
 class Cancelled(Exception):  # noqa: N818  the share was cancelled while it was moving
     pass
+
+log = logging.getLogger("argus.send")
 
 
 def sha256_file(path: str) -> str:
@@ -266,6 +269,11 @@ class Sender:
             watcher.cancel()
         label, peer = label_of(manifest), self.agent.devices.name_of(target)
         self._live(item, remote, item["total"], "done")
+        if item["kind"] == "send":  # Helios on this device can open what it sent (the originals, where they were)
+            try:
+                self.agent.remember("sent", oid, label, peer, [f["abs"] for f in manifest])
+            except OSError:
+                log.warning("could not note what %s sent", oid, exc_info=True)
         if hold_for:
             store.set(oid, state="held", holder=remote, reason=None, next_try=time.time() + self.cfg.retry_seconds)
             store.event("held", peer=peer, label=label, nbytes=item["total"], offer_id=oid,

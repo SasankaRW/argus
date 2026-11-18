@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { HoldButton, Ms } from "./m3";
+import { type Mine, type MineFile, type MineItem, mineKey, useMine } from "./mine";
 import { deviceIcon, fraction, isMoving, pace, result, size, type SendHistoryItem, type SendLive, type SendLiveItem } from "./sendLive";
 
 // The line between the two devices: it fills with the progress, beads run ahead while it moves.
@@ -87,27 +88,20 @@ export function TransferPopup({ live, onOpen }: { live: SendLive; onOpen: () => 
 
 const KIND: Record<string, string> = { sent: "Sent to", received: "Got from", delivered: "Delivered to", held: "Waiting on", failed: "Couldn't send to", cancelled: "Cancelled for", not_delivered: "Didn't reach", keep_waiting: "Still waiting for" };
 
-type ReceivedFile = { n: number; name: string; size: number; here: boolean; url: string };
-type Received = { device: string; files: ReceivedFile[]; reason?: string };
-const OPENS = new Set(["sent", "received", "delivered"]);
-
-// An earlier transfer: tap it to see its files, each a link that opens it (the files stay on the device that got
-// them; Argus passes them on through a short-lived signed link, so a browser tab or the phone's browser opens it).
-function HistRow({ h, name }: { h: SendHistoryItem; name: (id: string) => string }) {
+// An earlier transfer. One this device sent or received (and still knows where the files are) opens up to its files:
+// tap one to open it here (in its app on a computer, or on the phone), "Show in folder" on a computer. Others are
+// history only: the files are on another device.
+function HistRow({ h, mine, m }: { h: SendHistoryItem; mine: MineItem | undefined; m: Mine }) {
   const [open, setOpen] = useState(false);
-  const [got, setGot] = useState<Received | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const can = !!h.offer_id && OPENS.has(h.kind);
+  const [why, setWhy] = useState<string | null>(null);
+  const can = !!mine && mine.files.length > 0;
   // "Gym photos/a.jpg" under a row already called "Gym photos": just "a.jpg"
   const short = (n: string) => (h.label && n.startsWith(`${h.label}/`) ? n.slice(h.label.length + 1) : n);
-  const toggle = () => {
-    if (!can) return;
-    const next = !open;
-    setOpen(next);
-    if (next) {  // links expire after ten minutes: ask again each time it opens
-      setErr(null);
-      api<Received>(`/send/files/${h.offer_id}`).then(setGot).catch((e) => setErr(e instanceof Error ? e.message : "Couldn't reach it"));
-    }
+  const act = async (f: MineFile, reveal: boolean) => {
+    if (!mine) return;
+    setWhy(null);
+    const no = reveal && m.reveal ? await m.reveal(mine, f.n) : await m.open(mine, f.n);
+    if (no) setWhy(no);
   };
   const head = (
     <>
@@ -119,15 +113,18 @@ function HistRow({ h, name }: { h: SendHistoryItem; name: (id: string) => string
   );
   return (
     <li className={open ? "tx-open" : undefined}>
-      {can ? <button type="button" className="tx-li" aria-expanded={open} onClick={toggle}>{head}</button> : <div className="tx-li">{head}</div>}
-      {open && (
+      {can ? <button type="button" className="tx-li" aria-expanded={open} onClick={() => { setOpen(!open); setWhy(null); }}>{head}</button> : <div className="tx-li">{head}</div>}
+      {open && mine && (
         <div className="tx-files">
-          {err ? <p className="tx-note">{err}</p>
-            : got === null ? <p className="tx-note">Asking {h.kind === "received" ? "it" : h.peer ?? "the device"}…</p>
-            : got.files.length === 0 ? <p className="tx-note"><Ms n="smartphone" />{got.device === "phone" ? "Saved on your phone, in Downloads › Argus." : `Kept on ${name(got.device)}, in its Argus Shared folder.`}</p>
-            : got.files.map((f) => f.here
-              ? <a key={f.n} className="tx-file" href={f.url} target="_blank" rel="noopener"><span className="tx-fn">{short(f.name)}</span><small>{size(f.size)}</small><Ms n="chevron_right" /></a>
-              : <span key={f.n} className="tx-file gone"><span className="tx-fn">{short(f.name)}</span><small>moved or deleted</small></span>)}
+          {mine.files.map((f) => f.here
+            ? (
+              <div key={f.n} className="tx-file">
+                <button type="button" className="tx-fo" onClick={() => act(f, false)}><span className="tx-fn">{short(f.name)}</span><small>{size(f.size)}</small></button>
+                {m.reveal && <button type="button" className="tx-fr" aria-label={`Show ${short(f.name)} in its folder`} title="Show in folder" onClick={() => act(f, true)}><Ms n="folder_open" /></button>}
+              </div>
+            )
+            : <span key={f.n} className="tx-file gone"><span className="tx-fn">{short(f.name)}</span><small>moved or deleted</small></span>)}
+          {why && <p className="tx-note">{why}</p>}
         </div>
       )}
     </li>
@@ -138,7 +135,20 @@ export function TransfersView({ live }: { live: SendLive }) {
   const [hist, setHist] = useState<SendHistoryItem[] | null>(null);
   const done = live.items.filter((t) => !isMoving(t)).length;
   useEffect(() => { api<SendHistoryItem[]>("/send/history?limit=60").then(setHist).catch(() => setHist([])); }, [done]);
+  const m = useMine(done);
   const moving = live.items.filter(isMoving);
+  // Argus's history, plus anything this device knows that Argus doesn't (Argus down, or not told yet)
+  const mineBy = new Map(m.items.map((it) => [mineKey(it.kind, it.offer_id), it]));
+  const rows: SendHistoryItem[] = [...(hist ?? [])];
+  const known = new Set(rows.filter((h) => h.offer_id && h.device === m.device).map((h) => mineKey(h.kind, h.offer_id!)));
+  for (const it of m.items) {
+    if (!known.has(mineKey(it.kind, it.offer_id))) {
+      rows.push({ eid: `mine-${it.kind}-${it.offer_id}`, device: m.device ?? "", kind: it.kind, at: it.at, peer: it.peer, label: it.label,
+        bytes: it.files.reduce((a, f) => a + f.size, 0), detail: null, offer_id: it.offer_id });
+    }
+  }
+  rows.sort((a, b) => b.at - a.at);
+  const mineOf = (h: SendHistoryItem) => (h.offer_id && h.device === m.device ? mineBy.get(mineKey(h.kind, h.offer_id)) : undefined);
   return (
     <div className="tx-page">
       <h2 className="tx-h">Moving now</h2>
@@ -151,9 +161,9 @@ export function TransfersView({ live }: { live: SendLive }) {
         </div>
       ))}
       <h2 className="tx-h">Earlier</h2>
-      {hist === null ? <p className="tx-empty">Loading…</p> : hist.length === 0 ? <p className="tx-empty">No transfers yet.</p> : (
+      {hist === null && m.items.length === 0 ? <p className="tx-empty">Loading…</p> : rows.length === 0 ? <p className="tx-empty">No transfers yet.</p> : (
         <ul className="tx-hist">
-          {hist.map((h) => <HistRow key={h.eid} h={h} name={live.name} />)}
+          {rows.map((h) => <HistRow key={h.eid} h={h} mine={mineOf(h)} m={m} />)}
         </ul>
       )}
     </div>
