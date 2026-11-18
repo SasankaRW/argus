@@ -5,6 +5,7 @@ import android.net.ConnectivityManager
 import android.net.Uri
 import android.util.Log
 import dev.argus.companion.Pause
+import dev.argus.companion.Prefs
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.FileInputStream
@@ -88,10 +89,10 @@ class SendEngine(private val ctx: Context, private val self: String, private val
     private fun tsBase(peer: Peer): String? = peer.tailscale?.let { if (it.contains(":")) "http://$it" else "http://$it:${SendConst.PORT}" }
 
     /** LAN address, mDNS address and Tailscale name at the same time; the first good LAN answer wins, else Tailscale. */
-    private fun connect(peer: Peer, lanOnly: Boolean = false): Link? {
+    private fun connect(peer: Peer, lanOnly: Boolean = false, budgetMs: Long = 5000): Link? {
         val lan = lanBases(peer).map { b -> pool.submit<Link?> { hello(peer, b, "lan") } }
         val ts = if (lanOnly) null else tsBase(peer)?.let { b -> pool.submit<Link?> { hello(peer, b, "tailscale") } }
-        val end = System.currentTimeMillis() + 5000
+        val end = System.currentTimeMillis() + budgetMs
         while (System.currentTimeMillis() < end) {
             lan.firstOrNull { it.isDone && it.get() != null }?.let { return it.get() }
             if (lan.all { it.isDone }) { if (ts == null) return null; if (ts.isDone) return ts.get() }
@@ -118,6 +119,27 @@ class SendEngine(private val ctx: Context, private val self: String, private val
         var r = call(l, method, path, query, body, chunkSha)
         if (r.status == 401) hello(peer, l.base, l.kind)?.let { ref.compareAndSet(l, it); r = call(it, method, path, query, body, chunkSha) }
         return r
+    }
+
+    /**
+     * One clipboard or link clip, in memory only (never the queue, the outbox or the DB): the peer with a 3 s budget,
+     * else Calypso with "for" set so it can relay. True when the receiver answered 200.
+     */
+    fun sendClip(kind: String, text: String): Boolean {
+        val target = Prefs(ctx).clipPeer
+        val peer = book.get(target) ?: return false
+        val plain = JSONObject().put("id", UUID.randomUUID().toString()).put("kind", kind).put("text", text)
+            .put("at", System.currentTimeMillis()).put("from", self).put("for", target).toString().toByteArray()
+        var via = peer
+        var link = connect(peer, budgetMs = 3000)
+        if (link == null) {
+            val cal = book.get("calypso")
+            if (cal != null && target != "calypso") { link = connect(cal, budgetMs = 3000); via = cal }
+        }
+        if (link == null) return false
+        return try {
+            req(AtomicReference(link), via, "POST", "/send/clip", body = ClipCrypto.seal(link.key, plain).toByteArray()).status == 200
+        } catch (e: IOException) { false }
     }
 
     // ---------------------------------------------------------------- one share
