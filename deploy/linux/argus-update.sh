@@ -6,6 +6,9 @@
 # Every run leaves two small files in argusd's data dir for GET /deploy (Helios, dev.ps1 deployed):
 #   last-check.json   {checked_at, origin, behind, error?}                 after each fetch
 #   last-update.json  {at, from, to, subject, result, step, detail}        after each attempt
+# Every step that can wait on the network or a busy process has its own time limit, together well under the unit's
+# TimeoutStartSec=15min: a run that systemd kills half way would leave new code checked out but never installed or
+# restarted (and the next run would see "nothing new"). If systemd stops it anyway, the TERM trap rolls back.
 set -euo pipefail
 cd /opt/argus
 url=http://127.0.0.1:8600
@@ -48,8 +51,16 @@ fail_early() {  # before anything was changed: just record that the check failed
   exit "$rc"
 }
 trap fail_early ERR
+on_term() {  # systemd stops a run that went over its time: record it (and undo the reset, if it happened)
+  if [ "$reset_done" = 1 ]; then rollback "stopped during $step (over its time)"; fi
+  trap - ERR
+  write_check "stopped during $step (over its time)" || true
+  exit 143
+}
+reset_done=0
+trap on_term TERM
 
-if ! git fetch --quiet origin main; then
+if ! timeout 120 git fetch --quiet origin main; then
   write_check "git fetch failed"
   exit 1
 fi
@@ -77,7 +88,7 @@ rollback() {  # rollback [detail]: the note is written FIRST, so it is there eve
     exit 1
   fi
   # shellcheck disable=SC2046
-  .venv/bin/pip install --quiet -e ".[plugins,console]" $(pins) || true
+  timeout 240 .venv/bin/pip install --quiet -e ".[plugins,console]" $(pins) || true
   sudo /usr/bin/systemctl restart argusd argus-worker || true
   write_check "" || true
   exit 1
@@ -85,21 +96,22 @@ rollback() {  # rollback [detail]: the note is written FIRST, so it is there eve
 
 step=backup
 echo "backing up the database ..."
-curl -fsS -X POST -H "Authorization: Bearer ${ARGUS_WORKER_TOKEN:-$(grep -E '^ARGUS_WORKER_TOKEN=' .env | cut -d= -f2-)}" "$url/backups" >/dev/null || { backup_note="backup failed or argusd down"; echo "($backup_note; going on)"; }
+curl -fsS --max-time 180 -X POST -H "Authorization: Bearer ${ARGUS_WORKER_TOKEN:-$(grep -E '^ARGUS_WORKER_TOKEN=' .env | cut -d= -f2-)}" "$url/backups" >/dev/null || { backup_note="backup failed or argusd down"; echo "($backup_note; going on)"; }
 step=reset
 git checkout --quiet main
 git reset --quiet --hard "$after"
+reset_done=1
 trap rollback ERR
 step=pip
 # shellcheck disable=SC2046
-.venv/bin/pip install --quiet -e ".[plugins,console]" $(pins)
+timeout 360 .venv/bin/pip install --quiet -e ".[plugins,console]" $(pins)
 step=check
-.venv/bin/python -m argus --check
+timeout 120 .venv/bin/python -m argus --check
 step=restart
 sudo /usr/bin/systemctl restart argusd argus-worker
 step=health
 for i in $(seq 1 30); do
-  if curl -fsS "$url/health" >/dev/null 2>&1; then
+  if curl -fsS --max-time 3 "$url/health" >/dev/null 2>&1; then
     detail="updated"
     if [ -n "$backup_note" ]; then detail="updated; $backup_note"; fi
     trap - ERR

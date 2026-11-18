@@ -74,3 +74,14 @@ def test_the_console_opens_at_login_in_hyprland_and_can_be_turned_off(tmp_path):
     r = subprocess.run(["bash", str(LINUX / "console-setup.sh"), "off"], env=env, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     assert conf.read_text() == "monitor=,preferred,auto,1\nbind = SUPER, Q, killactive\n"  # only its own two lines
+
+
+def test_every_waiting_step_of_the_update_has_a_time_limit():
+    """A run systemd kills after the reset left new code checked out but not installed (2026-11-18 20:15)."""
+    upd = (LINUX / "argus-update.sh").read_text()
+    assert "timeout 120 git fetch" in upd and "timeout 360 .venv/bin/pip install" in upd
+    assert "timeout 120 .venv/bin/python -m argus --check" in upd and "curl -fsS --max-time 180 -X POST" in upd
+    assert 'curl -fsS --max-time 3 "$url/health"' in upd
+    assert "trap on_term TERM" in upd and "reset_done=1" in upd
+    unit = (LINUX / "argus-update.service").read_text()
+    assert "TimeoutStartSec=15min" in unit  # 120 + 180 + 360 + 120 + restart + 30 s of health checks fit inside
