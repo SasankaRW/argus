@@ -31,6 +31,8 @@ class Deps:
         self.token_ok = token_ok
         self.guarded = guarded  # dependencies=[Depends(auth)]
         self.tools = tools
+        self.tokens: Any = None  # tokens.Tokens, set by create_app
+        self.worker_ok: Callable[[str | None], bool] = lambda _a: True  # worker token only (create_app)
         # Owned by one router, called from another. Each is set in its owner's build_router.
         self.phone_where: Any = None  # routes/phone.py
         self.ring_phone: Any = None  # routes/phone.py

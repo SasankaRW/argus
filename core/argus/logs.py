@@ -15,10 +15,11 @@ _RESERVED = set(logging.LogRecord("", 0, "", 0, "", (), None).__dict__) | {"mess
 
 # Tokens travel in some URLs (the WebSocket's ?token=, the phone page's ?t=); uvicorn logs those URLs.
 _SECRET_IN_URL = re.compile(r"([?&](?:token|t)=)[^&\s\"']+")
+_NAMED_TOKEN = re.compile(r"\bar_[A-Za-z0-9_-]{40,}")  # a named API token (tokens.PREFIX) wherever it appears
 
 
 def redact(text: str) -> str:
-    return _SECRET_IN_URL.sub(r"\1***", text)
+    return _NAMED_TOKEN.sub("***", _SECRET_IN_URL.sub(r"\1***", text))
 
 
 class JsonFormatter(logging.Formatter):

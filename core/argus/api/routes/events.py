@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 from typing import Any
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
@@ -12,6 +13,7 @@ from ...events import EventFilter, read_events
 from ._deps import Deps
 
 WS_PING_SECONDS = 20.0
+WS_RECHECK_SECONDS = 60.0  # an open socket asks again whether its token still works (revoked tokens are cut off)
 MAX_REPLAY = 10_000
 
 
@@ -85,7 +87,13 @@ def build_router(deps: Deps) -> APIRouter:
             # down) ends this handler at once instead of at the next ping.
             recv = asyncio.ensure_future(ws.receive())
             try:
+                last_check = time.monotonic()
                 while True:
+                    if time.monotonic() - last_check >= WS_RECHECK_SECONDS:
+                        last_check = time.monotonic()
+                        if not token_ok(ws.headers.get("authorization"), token):
+                            await ws.close(code=4401, reason="token revoked")
+                            return
                     get = asyncio.ensure_future(sub.queue.get())
                     done, _ = await asyncio.wait({get, recv}, timeout=WS_PING_SECONDS,
                                                  return_when=asyncio.FIRST_COMPLETED)
