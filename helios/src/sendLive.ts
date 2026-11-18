@@ -10,7 +10,7 @@ export type SendLiveItem = {
   total: number; done: number; state: "moving" | "verifying" | "done" | "failed" | "cancelled";
   speed: number; eta: number | null; device?: string; updated?: number; started?: number;
 };
-export type SendHistoryItem = { eid: string; device: string; kind: string; at: number; peer: string | null; label: string | null; bytes: number; detail: string | null };
+export type SendHistoryItem = { eid: string; device: string; kind: string; at: number; peer: string | null; label: string | null; bytes: number; detail: string | null; offer_id?: string | null };
 
 const FINISHED = new Set(["done", "failed", "cancelled"]);
 export const isMoving = (t: SendLiveItem) => !FINISHED.has(t.state);

@@ -267,6 +267,10 @@ class SendEngine(private val ctx: Context, private val self: String, private val
 
     private fun finished(s: ShareRow, target: Peer, via: Peer, hold: Boolean, wasHeld: Boolean, t0: Long) {
         live(s, via.id, s.total, "done")
+        runCatching {  // Helios in the app can open what was shared, later, Argus or not
+            queue.remember("sent", s.offerId, s.files.first().rel + if (s.files.size > 1) " +${s.files.size - 1}" else "", target.name,
+                s.files.map { SendQueue.MineFile(it.n, it.rel, it.uri, it.size) })
+        }
         val ev = JSONObject().put("device", self).put("peer", target.name).put("bytes", s.total).put("offer_id", s.offerId)
             .put("label", s.files.first().rel + if (s.files.size > 1) " +${s.files.size - 1}" else "")
         if (hold) {

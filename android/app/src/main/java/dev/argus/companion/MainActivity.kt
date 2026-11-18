@@ -1,5 +1,6 @@
 package dev.argus.companion
 
+import dev.argus.companion.send.PhoneMine
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
@@ -28,6 +29,7 @@ import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
@@ -74,6 +76,8 @@ class MainActivity : Activity() {
 
     // ------------------------------------------------------------------ Helios
 
+    private var fromCache = false  // Helios is being shown from the saved copy (Argus out of reach)
+
     @SuppressLint("SetJavaScriptEnabled")
     private fun helios(path: String? = null) {
         onSetup = false
@@ -92,9 +96,21 @@ class MainActivity : Activity() {
                 return !inside
             }
 
-            // A blank page told nothing: say why Helios didn't load and how to change the address
+            // Argus out of reach: show the copy of Helios this phone loaded last (it then shows its offline state, and
+            // Transfers still opens this phone's files). Only when there is no copy either, say why nothing loaded.
             override fun onReceivedError(view: WebView, req: WebResourceRequest, err: WebResourceError) {
-                if (req.isForMainFrame) problem(view, "Can't reach Argus at ${prefs.url}", err.description.toString())
+                if (!req.isForMainFrame) return
+                if (!fromCache) {
+                    fromCache = true
+                    view.settings.cacheMode = WebSettings.LOAD_CACHE_ONLY
+                    view.reload()
+                } else problem(view, "Can't reach Argus at ${prefs.url}", err.description.toString())
+            }
+
+            override fun onPageFinished(view: WebView, url: String?) {
+                // the page is up (from the network or the saved copy): its own calls to Argus go to the network again
+                if (view.settings.cacheMode != WebSettings.LOAD_DEFAULT) view.settings.cacheMode = WebSettings.LOAD_DEFAULT
+                fromCache = false
             }
 
             override fun onReceivedHttpError(view: WebView, req: WebResourceRequest, resp: WebResourceResponse) {
@@ -134,6 +150,11 @@ class MainActivity : Activity() {
                 }
             }
         }, "ArgusNative")
+        // Transfers in Helios: what this phone sent and received, and opening those files here (works offline)
+        w.addJavascriptInterface(object {
+            @JavascriptInterface fun mine(): String = PhoneMine.json(this@MainActivity)
+            @JavascriptInterface fun open(kind: String, offerId: String, n: Int): String = PhoneMine.open(this@MainActivity, kind, offerId, n)
+        }, "ArgusPhone")
         val target = path?.trim()?.takeIf { it.isNotEmpty() }?.let { if (it.startsWith("/")) prefs.url + it else it }
         when {
             target != null && target.startsWith(prefs.url) -> w.loadUrl(target)

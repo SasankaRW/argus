@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { HoldButton, Ms } from "./m3";
+import { type Mine, type MineFile, type MineItem, mineKey, useMine } from "./mine";
 import { deviceIcon, fraction, isMoving, pace, result, size, type SendHistoryItem, type SendLive, type SendLiveItem } from "./sendLive";
 
 // The line between the two devices: it fills with the progress, beads run ahead while it moves.
@@ -87,11 +88,67 @@ export function TransferPopup({ live, onOpen }: { live: SendLive; onOpen: () => 
 
 const KIND: Record<string, string> = { sent: "Sent to", received: "Got from", delivered: "Delivered to", held: "Waiting on", failed: "Couldn't send to", cancelled: "Cancelled for", not_delivered: "Didn't reach", keep_waiting: "Still waiting for" };
 
+// An earlier transfer. One this device sent or received (and still knows where the files are) opens up to its files:
+// tap one to open it here (in its app on a computer, or on the phone), "Show in folder" on a computer. Others are
+// history only: the files are on another device.
+function HistRow({ h, mine, m }: { h: SendHistoryItem; mine: MineItem | undefined; m: Mine }) {
+  const [open, setOpen] = useState(false);
+  const [why, setWhy] = useState<string | null>(null);
+  const can = !!mine && mine.files.length > 0;
+  // "Gym photos/a.jpg" under a row already called "Gym photos": just "a.jpg"
+  const short = (n: string) => (h.label && n.startsWith(`${h.label}/`) ? n.slice(h.label.length + 1) : n);
+  const act = async (f: MineFile, reveal: boolean) => {
+    if (!mine) return;
+    setWhy(null);
+    const no = reveal && m.reveal ? await m.reveal(mine, f.n) : await m.open(mine, f.n);
+    if (no) setWhy(no);
+  };
+  const head = (
+    <>
+      <Ms n={h.kind === "received" ? "inbox" : h.kind === "failed" || h.kind === "not_delivered" ? "info" : "send"} />
+      <span className="tx-hl"><b>{h.label ?? "Files"}</b><span>{KIND[h.kind] ?? h.kind} {h.peer ?? "a device"}{h.bytes ? ` · ${size(h.bytes)}` : ""}{h.detail ? ` · ${h.detail}` : ""}</span></span>
+      <time>{new Date(h.at * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</time>
+      {can && <Ms n={open ? "expand_less" : "expand_more"} />}
+    </>
+  );
+  return (
+    <li className={open ? "tx-open" : undefined}>
+      {can ? <button type="button" className="tx-li" aria-expanded={open} onClick={() => { setOpen(!open); setWhy(null); }}>{head}</button> : <div className="tx-li">{head}</div>}
+      {open && mine && (
+        <div className="tx-files">
+          {mine.files.map((f) => f.here
+            ? (
+              <div key={f.n} className="tx-file">
+                <button type="button" className="tx-fo" onClick={() => act(f, false)}><span className="tx-fn">{short(f.name)}</span><small>{size(f.size)}</small></button>
+                {m.reveal && <button type="button" className="tx-fr" aria-label={`Show ${short(f.name)} in its folder`} title="Show in folder" onClick={() => act(f, true)}><Ms n="folder_open" /></button>}
+              </div>
+            )
+            : <span key={f.n} className="tx-file gone"><span className="tx-fn">{short(f.name)}</span><small>moved or deleted</small></span>)}
+          {why && <p className="tx-note">{why}</p>}
+        </div>
+      )}
+    </li>
+  );
+}
+
 export function TransfersView({ live }: { live: SendLive }) {
   const [hist, setHist] = useState<SendHistoryItem[] | null>(null);
   const done = live.items.filter((t) => !isMoving(t)).length;
   useEffect(() => { api<SendHistoryItem[]>("/send/history?limit=60").then(setHist).catch(() => setHist([])); }, [done]);
+  const m = useMine(done);
   const moving = live.items.filter(isMoving);
+  // Argus's history, plus anything this device knows that Argus doesn't (Argus down, or not told yet)
+  const mineBy = new Map(m.items.map((it) => [mineKey(it.kind, it.offer_id), it]));
+  const rows: SendHistoryItem[] = [...(hist ?? [])];
+  const known = new Set(rows.filter((h) => h.offer_id && h.device === m.device).map((h) => mineKey(h.kind, h.offer_id!)));
+  for (const it of m.items) {
+    if (!known.has(mineKey(it.kind, it.offer_id))) {
+      rows.push({ eid: `mine-${it.kind}-${it.offer_id}`, device: m.device ?? "", kind: it.kind, at: it.at, peer: it.peer, label: it.label,
+        bytes: it.files.reduce((a, f) => a + f.size, 0), detail: null, offer_id: it.offer_id });
+    }
+  }
+  rows.sort((a, b) => b.at - a.at);
+  const mineOf = (h: SendHistoryItem) => (h.offer_id && h.device === m.device ? mineBy.get(mineKey(h.kind, h.offer_id)) : undefined);
   return (
     <div className="tx-page">
       <h2 className="tx-h">Moving now</h2>
@@ -104,15 +161,9 @@ export function TransfersView({ live }: { live: SendLive }) {
         </div>
       ))}
       <h2 className="tx-h">Earlier</h2>
-      {hist === null ? <p className="tx-empty">Loading…</p> : hist.length === 0 ? <p className="tx-empty">No transfers yet.</p> : (
+      {hist === null && m.items.length === 0 ? <p className="tx-empty">Loading…</p> : rows.length === 0 ? <p className="tx-empty">No transfers yet.</p> : (
         <ul className="tx-hist">
-          {hist.map((h) => (
-            <li key={h.eid}>
-              <Ms n={h.kind === "received" ? "inbox" : h.kind === "failed" || h.kind === "not_delivered" ? "info" : "send"} />
-              <span className="tx-hl"><b>{h.label ?? "Files"}</b><span>{KIND[h.kind] ?? h.kind} {h.peer ?? "a device"}{h.bytes ? ` · ${size(h.bytes)}` : ""}{h.detail ? ` · ${h.detail}` : ""}</span></span>
-              <time>{new Date(h.at * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</time>
-            </li>
-          ))}
+          {rows.map((h) => <HistRow key={h.eid} h={h} mine={mineOf(h)} m={m} />)}
         </ul>
       )}
     </div>

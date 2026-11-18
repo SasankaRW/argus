@@ -15,14 +15,17 @@ import os
 import re
 import secrets
 import shutil
+import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from . import CHUNK, SESSION_SECONDS
@@ -198,6 +201,19 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def open_on_this_device(path: Path, reveal: bool) -> None:
+    """Open a file in its usual app on this machine, or show it selected in its folder."""
+    if sys.platform == "win32":
+        if reveal:
+            subprocess.Popen(["explorer", f"/select,{path}"])  # noqa: S603,S607
+        else:
+            os.startfile(path)  # type: ignore[attr-defined]  # noqa: S606
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", "-R", str(path)] if reveal else ["open", str(path)])  # noqa: S603,S607
+    else:
+        subprocess.Popen(["xdg-open", str(path.parent if reveal else path)])  # noqa: S603,S607
+
+
 def build_app(agent: SendAgent) -> FastAPI:
     rx = Receiver(agent)
     app = FastAPI(title="Argus Send", docs_url=None, redoc_url=None, openapi_url=None)
@@ -208,6 +224,89 @@ def build_app(agent: SendAgent) -> FastAPI:
     async def _http(request: Request, exc: HTTPException):
         body = exc.detail if isinstance(exc.detail, dict) else {"detail": exc.detail}
         return JSONResponse(body, status_code=exc.status_code)
+
+    # ---- my transfers, for Helios on this same device: list what this device sent and received, open a file in its
+    # own app or show it in its folder. Asked from the browser on this machine (127.0.0.1), never through Argus, so it
+    # works while Argus is down. The worker token is required, and only Helios's own address may ask from a page.
+    helios_origin = ""
+    if agent.cfg.argus_url:
+        u = urlsplit(agent.cfg.argus_url)
+        helios_origin = f"{u.scheme}://{u.netloc}"
+
+    @app.middleware("http")
+    async def helios_cors(request: Request, call_next):
+        if not request.url.path.startswith("/send/mine"):
+            return await call_next(request)
+        origin = request.headers.get("origin", "")
+        allow = bool(origin) and origin in (helios_origin, "http://localhost:5173")
+        if request.method == "OPTIONS":  # the browser's preflight (and Chrome's local-network check)
+            if not allow:
+                return Response(status_code=403)
+            return Response(status_code=204, headers={
+                "Access-Control-Allow-Origin": origin, "Access-Control-Allow-Methods": "GET, POST",
+                "Access-Control-Allow-Headers": "Authorization", "Access-Control-Allow-Private-Network": "true",
+                "Access-Control-Max-Age": "600", "Vary": "Origin"})
+        if origin and not allow:
+            return JSONResponse({"detail": "not from Helios"}, status_code=403)
+        resp = await call_next(request)
+        if origin:
+            resp.headers["Access-Control-Allow-Origin"] = origin
+            resp.headers["Vary"] = "Origin"
+        return resp
+
+    def token_only(request: Request) -> None:
+        want = agent.argus_token or ""
+        got = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+        if not want or not hmac.compare_digest(got.encode(), want.encode()):
+            raise HTTPException(401, "the worker token is needed")
+
+    def shown_name(p: Path, kind: str) -> str:
+        """"photos/a.jpg" for a received folder (inside "From <device>/"), else the file's own name."""
+        if kind == "received":
+            try:
+                return PurePosixPath(*p.relative_to(rx.root).parts[1:]).as_posix() or p.name
+            except ValueError:
+                pass
+        return p.name
+
+    @app.get("/send/mine")
+    async def mine(request: Request) -> dict:
+        token_only(request)
+
+        def build() -> list[dict]:
+            out = []
+            for e in agent.mine():
+                files = []
+                for n, f in enumerate(e["files"]):
+                    p = Path(f)
+                    there = p.is_file()
+                    files.append({"n": n, "name": shown_name(p, e["kind"]), "size": p.stat().st_size if there else 0,
+                                  "here": there})
+                out.append({k: e[k] for k in ("kind", "offer_id", "at", "label", "peer")} | {"files": files})
+            return out
+
+        return {"device": agent.cfg.device_id, "items": await asyncio.to_thread(build)}
+
+    def mine_file(kind: str, offer_id: str, n: int) -> Path:
+        files = agent.mine_files(kind, offer_id) if kind in ("sent", "received") and OFFER_ID.match(offer_id) else None
+        if files is None or not 0 <= n < len(files):
+            raise HTTPException(404, "not one of this device's transfers")
+        p = Path(files[n])
+        if not p.is_file():
+            raise HTTPException(410, "that file was moved or deleted")
+        return p
+
+    @app.post("/send/mine/{kind}/{offer_id}/{n}/open")
+    async def open_mine(kind: str, offer_id: str, n: int, request: Request) -> dict:
+        token_only(request)
+        await asyncio.to_thread(open_on_this_device, mine_file(kind, offer_id, n), False)
+        return {"ok": True}
+
+    @app.post("/send/mine/{kind}/{offer_id}/{n}/reveal")
+    async def reveal_mine(kind: str, offer_id: str, n: int, request: Request) -> dict:
+        token_only(request)
+        await asyncio.to_thread(open_on_this_device, mine_file(kind, offer_id, n), True)
+        return {"ok": True}
 
     @app.post("/send/hello")
     async def hello(body: Hello) -> dict:
