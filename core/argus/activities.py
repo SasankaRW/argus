@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import threading
 import time
 from collections.abc import Callable
@@ -50,20 +51,33 @@ def _eta_words(eta: float) -> str:
     return f"{max(1, round(eta))} s left" if eta < 60 else f"{round(eta / 60)} min left"
 
 
+def _num(v: Any, default: float | None = 0.0) -> float | None:
+    """A finite number from whatever a device reported, else `default`."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return default
+    return f if math.isfinite(f) else default
+
+
 def transfer_activity(t: dict, names: dict[str, str] | None = None) -> dict:
-    """One moving Send transfer as an activity (`names`: device id -> the name set in Send)."""
+    """One moving Send transfer as an activity (`names`: device id -> the name set in Send). Malformed numbers in
+    a device's report count as 0 (or no eta) rather than failing."""
     to = str(t.get("to", ""))
     to_name = (names or {}).get(to) or to.capitalize()
-    pct = round(100 * t["done"] / t["total"]) if t.get("total") else 0
+    done, total = _num(t.get("done")) or 0.0, _num(t.get("total")) or 0.0
+    frac = max(0.0, min(1.0, done / total)) if total > 0 else 0.0
+    pct = round(100 * frac)
+    eta = _num(t.get("eta"), None)
     if t.get("state") == "verifying":
         detail = "checking"
-    elif t.get("eta") is not None:
-        detail = f"{pct}% · {_eta_words(float(t['eta']))}"
+    elif eta is not None:
+        detail = f"{pct}% · {_eta_words(eta)}"
     else:
         detail = f"{pct}%"
     return {"id": f"transfer:{t.get('offer_id', '')}:{t.get('leg', 'send')}", "kind": "transfer",
             "title": f"{t.get('label') or 'Files'} to {to_name}", "detail": detail, "icon": "swap_horiz",
-            "progress": (min(1.0, t["done"] / t["total"]) if t.get("total") else 0.0), "ends_at": None,
+            "progress": frac, "ends_at": None,
             "started_at": t.get("started"), "device": to or None, "priority": 0,
             "devices": [d for d in (str(t.get("from") or ""), to) if d]}  # both ends: a phone skips its own
 
@@ -84,6 +98,7 @@ class Activities:
         self._custom: dict[str, dict] = {}
         self._sig: Any = ()
         self._emitted = 0
+        self._prev_emit: tuple[int, float] = (0, float("-inf"))
         self._last_emit = float("-inf")
         self._done: list[dict] = []
         self._waiters: set[tuple[asyncio.AbstractEventLoop, asyncio.Event]] = set()
@@ -190,7 +205,11 @@ class Activities:
         items: list[dict] = []
         if self.send_live is not None:
             moving = [t for t in self.send_live.items(now) if t.get("state") not in FINISHED]
-            items += [transfer_activity(t, self.names) for t in moving]
+            for t in moving:
+                try:
+                    items.append(transfer_activity(t, self.names))
+                except Exception:  # noqa: BLE001  # boundary: one malformed report must not hide the rest
+                    log.warning("transfer skipped: bad report", exc_info=True)
         for j in self._jobs.values():
             if now - j["since"] >= PROMOTE_AFTER:
                 detail = f"{j['step']} · step {int(j['idx']) + 1}" if j["step"] and j["idx"] is not None \
@@ -210,8 +229,8 @@ class Activities:
         with self._lock:
             self._prune(now)
             items = self._build(now)
-            # what changes the picture: not the transfer's eta text (its percent is in `progress`)
-            sig = tuple((a["id"], a["priority"], a["title"], a["icon"], a["ends_at"], round(a["progress"] or 0, 2),
+            # what changes the picture: progress in 5-point steps (its eta/detail text follows at that pace)
+            sig = tuple((a["id"], a["priority"], a["title"], a["icon"], a["ends_at"], round((a["progress"] or 0) * 20),
                          None if a["kind"] == "transfer" else a["detail"]) for a in items)
             if sig == self._sig:
                 return False
@@ -273,7 +292,8 @@ class Activities:
     # ------------------------------------------------------------------ hub events
 
     def take_events(self, now: float | None = None) -> list[tuple[str, dict]]:
-        """The hub events due now: activity.changed (coalesced to one per MIN_EMIT) and each timer's activity.done."""
+        """The hub events due now: activity.changed (coalesced to one per MIN_EMIT) and each timer's activity.done.
+        They count as sent from here: if the write fails, call `requeue` with the same list."""
         now = self.clock() if now is None else now
         self.tick(now)
         out: list[tuple[str, dict]] = []
@@ -282,37 +302,72 @@ class Activities:
                 out.append(("activity.done", d))
             self._done = []
             if self.version != self._emitted and now - self._last_emit >= MIN_EMIT:
+                self._prev_emit = (self._emitted, self._last_emit)
                 self._emitted, self._last_emit = self.version, now
                 out.append(("activity.changed", {"version": self.version}))
         return out
 
-    def busy(self) -> bool:
-        """Anything the pump needs to keep an eye on."""
+    def requeue(self, events: list[tuple[str, dict]]) -> None:
+        """A write of `events` failed: bring them back so the next pass retries."""
         with self._lock:
-            if self._jobs or self._timers or self._custom or self.version != self._emitted or self._done:
-                return True
-        return bool(self.send_live is not None and self.send_live.items(self.clock()))
+            done = [d for k, d in events if k == "activity.done"]
+            self._done = done + self._done
+            if any(k == "activity.changed" for k, _ in events):
+                self._emitted, self._last_emit = self._prev_emit
+
+    def _next_deadline(self, now: float) -> float | None:
+        """Seconds to the soonest timer/custom end (or timer expiry), None if there is none."""
+        ends = []
+        for t in self._timers.values():
+            ends.append(t["ends_at"] if not t["announced"] else t["ends_at"] + TIMER_LINGER)
+        for c in self._custom.values():
+            ends.append(float(c["ends_at"]) + CUSTOM_GRACE if c["ends_at"] is not None else c["updated"] + CUSTOM_IDLE)
+        for j in self._jobs.values():
+            if now - j["since"] < PROMOTE_AFTER:
+                ends.append(j["since"] + PROMOTE_AFTER)
+        return max(0.0, min(ends) - now) if ends else None
+
+    def wait_time(self) -> float:
+        """How long the pump may sleep: MIN_EMIT while a change is waiting or a transfer moves or a deadline is
+        within 2 s, else up to 5 s but never past the next deadline."""
+        now = self.clock()
+        with self._lock:
+            if self.version != self._emitted or self._done:
+                return MIN_EMIT
+            nxt = self._next_deadline(now)
+        if self.send_live is not None and any(t.get("state") not in FINISHED for t in self.send_live.items(now)):
+            return MIN_EMIT
+        if nxt is None:
+            return 5.0
+        return MIN_EMIT if nxt <= 2.0 else min(5.0, nxt)
 
     async def pump(self, write: Callable[[list[tuple[str, dict]]], Any]) -> None:
-        """Run for the life of Argus: turn changes into hub events (`write` stores them)."""
+        """Run for the life of Argus: turn changes into hub events (`write` stores them). Nothing here may end it."""
         ev = asyncio.Event()
         with self._lock:
             self._pump = (asyncio.get_running_loop(), ev)
         while True:
-            events = self.take_events()
-            if events:
-                try:
-                    await write(events)
-                except asyncio.CancelledError:
-                    raise
-                except Exception:  # noqa: BLE001  # boundary: one failed write must not end the pump
-                    log.warning("activity events not written", exc_info=True)
-            if self.busy():
-                await asyncio.sleep(MIN_EMIT)
-            else:
-                ev.clear()
-                try:
-                    async with asyncio.timeout(5.0):
-                        await ev.wait()
-                except TimeoutError:
-                    pass
+            wait = 5.0
+            try:
+                ev.clear()  # before looking: a poke from here on is kept, not lost
+                events = self.take_events()
+                if events:
+                    try:
+                        await write(events)
+                    except asyncio.CancelledError:
+                        self.requeue(events)
+                        raise
+                    except Exception:  # noqa: BLE001  # boundary: one failed write must not end the pump
+                        log.warning("activity events not written", exc_info=True)
+                        self.requeue(events)
+                wait = self.wait_time()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001  # boundary: the pump lives as long as Argus
+                log.exception("activity pump pass failed")
+                wait = 1.0
+            try:
+                async with asyncio.timeout(wait):
+                    await ev.wait()
+            except TimeoutError:
+                pass

@@ -15,6 +15,13 @@ STALE = 30.0  # a moving leg nobody reported on for this long is gone (agents re
 FINISHED = ("done", "failed", "cancelled")
 
 
+def _int(v: object) -> int:
+    try:
+        return int(v)  # type: ignore[call-overload]
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
 class SendLive:
     def __init__(self) -> None:
         self._items: dict[tuple[str, str], dict] = {}
@@ -30,7 +37,7 @@ class SendLive:
                 old = self._items.get(key)
                 new = {**it, "device": device, "updated": now}
                 if old:
-                    new["done"] = max(int(old.get("done", 0)), int(it.get("done", 0)))
+                    new["done"] = max(_int(old.get("done")), _int(it.get("done")))
                     if old.get("state") in FINISHED and it.get("state") not in FINISHED:
                         new["state"] = old["state"]  # a late report from the other end doesn't reopen it
                     new.setdefault("started", old.get("started", now))
