@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 import sqlite3
+import threading
 import time
 
 from .db.store import Store
@@ -37,10 +38,19 @@ class Tokens:
         self._map: dict[str, str] = {}
         self._loaded = float("-inf")
         self._touched: dict[str, float] = {}
+        # A periodic re-read in `check` (a worker thread) must not overwrite a newer list from create/revoke with the
+        # older one it read just before: each create/revoke bumps the generation, and a stale read is dropped.
+        self._lock = threading.Lock()
+        self._gen = 0
 
     async def _refresh(self) -> None:
-        self._map = await self.store.read(_active)
-        self._loaded = time.monotonic()
+        with self._lock:
+            self._gen += 1
+        fresh = await self.store.read(_active)
+        with self._lock:
+            self._gen += 1
+            self._map = fresh
+            self._loaded = time.monotonic()
 
     async def create(self, name: str) -> str:
         name = name.strip()
@@ -67,6 +77,8 @@ class Tokens:
         return await self.store.read(r)
 
     async def revoke(self, name: str) -> bool:
+        name = name.strip()
+
         def w(conn: sqlite3.Connection) -> int:
             return conn.execute("UPDATE api_token SET revoked_at=? WHERE name=? AND revoked_at IS NULL",
                                 (time.time(), name)).rowcount
@@ -80,11 +92,15 @@ class Tokens:
         if not presented:
             return None
         if time.monotonic() - self._loaded > REFRESH:
+            gen = self._gen
             try:
-                self._map = self.store.read_sync(_active)
+                fresh = self.store.read_sync(_active)
             except Exception:  # keep the last good list rather than fail every request
-                pass
-            self._loaded = time.monotonic()
+                fresh = None
+            with self._lock:
+                if fresh is not None and gen == self._gen:
+                    self._map = fresh
+                self._loaded = time.monotonic()
         h = digest(presented)
         name = self._map.get(h)
         if name is not None:

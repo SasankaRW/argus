@@ -192,3 +192,12 @@ def test_cli_token_commands(tmp_path, capsys):
         ("GET", "http://127.0.0.1:8601/tokens", "Bearer t0ken"),
         ("DELETE", "http://127.0.0.1:8601/tokens/my%20phone", "Bearer t0ken")]
     assert "ar_x" in capsys.readouterr().out
+
+
+
+def test_revoke_trims_the_name_like_create(tmp_path):
+    with TestClient(create_app(make(tmp_path))) as c:
+        tok = mint(c, "laptop")
+        assert c.get("/status", headers={"Authorization": f"Bearer {tok}"}).status_code == 200
+        assert c.delete("/tokens/%20laptop%20", headers=W).status_code == 200
+        assert c.get("/tokens", headers=W).json()[0]["revoked_at"] is not None
