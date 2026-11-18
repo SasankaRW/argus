@@ -15,6 +15,7 @@ import { PhoneMap } from "./PhoneMap";
 import { DeskLayer } from "./DeskLayer";
 import { ControlPanel } from "./ControlPanel";
 import { ClaudeChip, Clock } from "./chips";
+import { DeployChip } from "./Deploy";
 import { useJobs } from "./jobsFeed";
 import { Logo, Ms, PhoneCtx } from "./m3";
 import type { IconName } from "./icons";
@@ -407,7 +408,7 @@ export function App() {
           <span className={`seg-s ${a.phase === "down" ? "bad" : ok ? "ok" : "warn"}`}>
             <span className={`sn-dot ${hTone}`} />{health}
           </span>
-          {st && <span className="seg-s hide-sm faint" title={`Argus ${st.version}`}>Up {uptime(st.uptime_seconds)}</span>}
+          {st && <DeployChip label={`Up ${uptime(st.uptime_seconds)}`} title={`Argus ${st.version}`} />}
           <ClaudeChip />
           <span className="seg-s hide-sm"><Clock /></span>
         </div>

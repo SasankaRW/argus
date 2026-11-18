@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, ArgusEvent } from "./api";
 import { ApprovalCard } from "./Inspector";
 import { CallLog } from "./Calls";
+import { DeployLines, useDeploy } from "./Deploy";
 import { Empty, Skeleton } from "./kit";
 import { useSc } from "./m3";
 
@@ -166,6 +167,7 @@ type Setting = { key: string; group: string; label: string; type: "bool" | "time
   options?: string[]; placeholder?: string; min?: number; max?: number; value: unknown; default: unknown; changed: boolean };
 
 export function SettingsView() {
+  const deploy = useDeploy();
   const [rows, setRows] = useState<Setting[] | null>(null);
   const [draft, setDraft] = useState<Record<string, unknown>>({});
   const [err, setErr] = useState<string | null>(null);
@@ -193,6 +195,10 @@ export function SettingsView() {
   });
   return (
     <div className="setp">
+      <section className="panel dep-panel">
+        <div className="sect">What Argus runs</div>
+        <DeployLines d={deploy} />
+      </section>
       <section className="panel">
         <div className="toolbar sticky">
           <span className="count" style={{ marginLeft: 0 }}>argus.yaml is the base; what you change here wins, and is kept</span>
