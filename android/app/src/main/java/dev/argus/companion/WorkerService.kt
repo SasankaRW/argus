@@ -151,8 +151,14 @@ class WorkerService : Service() {
         var version = -1L
         var wait = 25L
         var backoff = 5_000L
+        var failures = 0
+        var lastAsk = 0L
         while (running) {
             try {
+                // at least 1 s between requests, whatever the server answers
+                val gap = 1_000L - (System.currentTimeMillis() - lastAsk)
+                if (gap > 0) Thread.sleep(gap)
+                lastAsk = System.currentTimeMillis()
                 val q = if (version < 0) "" else "after=$version&"
                 val r = api.call("GET", "/activities?${q}wait=$wait", timeoutMs = 45_000)
                 if (r.status == 401 || r.status == 403 || r.status == 404) {
@@ -162,6 +168,7 @@ class WorkerService : Service() {
                 }
                 if (r.status >= 400) throw IOException("activities: HTTP ${r.status}")
                 backoff = 5_000L
+                failures = 0
                 val j = r.json()
                 version = j.optLong("version", version)
                 val items = Activity.parseAll(j.optJSONArray("items"))
@@ -174,6 +181,7 @@ class WorkerService : Service() {
                 return
             } catch (e: Exception) {
                 Log.w(TAG, "live: can't reach Argus", e)
+                if (++failures >= 3) LiveNote.clear(this)  // don't leave a stale notification up
                 try {
                     livePause.sleep(backoff)
                 } catch (_: InterruptedException) {
