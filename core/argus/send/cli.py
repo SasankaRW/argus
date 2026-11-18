@@ -47,6 +47,45 @@ def _problem(text: str) -> None:
     toast.Toaster().problem("Argus couldn't send that", text.splitlines()[0][:200])
 
 
+def token_command(cfg, args, opener=None) -> int:
+    """argus token new|list|revoke: calls the server's /tokens routes with argus.yaml's URL and worker token."""
+    import json
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    base = (cfg.send.argus_url or f"http://{cfg.server.host}:{cfg.server.port}").rstrip("/")
+    headers = {"Content-Type": "application/json"}
+    if cfg.secrets.worker_token:
+        headers["Authorization"] = f"Bearer {cfg.secrets.worker_token}"
+    if args.token_cmd == "new":
+        method, path, data = "POST", "/tokens", json.dumps({"name": args.name}).encode()
+    elif args.token_cmd == "revoke":
+        method, path, data = "DELETE", "/tokens/" + urllib.parse.quote(args.name, safe=""), None
+    else:
+        method, path, data = "GET", "/tokens", None
+    req = urllib.request.Request(base + path, data=data, headers=headers, method=method)
+    try:
+        with (opener or urllib.request.urlopen)(req, timeout=15) as r:
+            body = json.loads(r.read() or b"null")
+    except urllib.error.HTTPError as e:
+        print(f"argus token: {e.code} {e.read().decode('utf-8', 'replace')[:200]}", file=sys.stderr)
+        return 1
+    except OSError as e:
+        print(f"argus token: cannot reach {base}: {e}", file=sys.stderr)
+        return 1
+    if args.token_cmd == "new":
+        print(f"{body['name']}: {body['token']}\nThis is shown once; store it now.")
+    elif args.token_cmd == "revoke":
+        print(f"revoked {args.name}")
+    else:
+        for t in body:
+            state = "revoked" if t["revoked_at"] else "active"
+            used = time.strftime("%Y-%m-%d %H:%M", time.localtime(t["last_used_at"])) if t["last_used_at"] else "never"
+            print(t["name"], state, f"last used {used}", sep="\t")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="argus", description="Argus command line")
     ap.add_argument("--config", help="argus.yaml (default: $ARGUS_CONFIG or ./argus.yaml)")
@@ -57,6 +96,11 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("send-agent", help="run the Send agent (receiver, queue, discovery)")
     cu = sub.add_parser("cancel-url", help="cancel a share from its notification (argus-send://cancel/<id>)")
     cu.add_argument("url")
+    tk = sub.add_parser("token", help="named API tokens: new <name>, list, revoke <name>")
+    tsub = tk.add_subparsers(dest="token_cmd", required=True)
+    tsub.add_parser("new", help="make a token (shown once)").add_argument("name")
+    tsub.add_parser("list", help="list the tokens")
+    tsub.add_parser("revoke", help="revoke a token").add_argument("name")
     args = ap.parse_args(argv)
     try:
         cfg = load_config(config_path(args.config))
@@ -66,6 +110,8 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(e, file=sys.stderr)
         return 2
+    if args.cmd == "token":
+        return token_command(cfg, args)
     if not cfg.send.device_id:
         msg = "send.device_id is not set in the config (see the send: block in argus.example.yaml)"
         if args.cmd == "send":

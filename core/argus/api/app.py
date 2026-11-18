@@ -62,6 +62,7 @@ from fastapi.staticfiles import StaticFiles
 from ..approvals import ApprovalClosed, ApprovalError, ApprovalNotFound, BadToken
 from ..context import Argus
 from ..jobs import InvalidTransition, JobNotFound, LeaseLost, PluginOff, PluginPaused, QueueFull
+from ..tokens import Tokens
 from ..tools import Tools
 from ..triggers import BadSignature, TriggerError, UnknownTrigger
 from . import mcp
@@ -88,6 +89,7 @@ from .routes import (
     voice,
     workers,
 )
+from .routes import tokens as tokens_routes
 from .routes import tools as tools_routes
 from .routes._deps import HELIOS_DIR, Deps, job_json
 
@@ -178,13 +180,27 @@ def create_app(argus: Argus) -> FastAPI:
     async def _paused(request: Request, exc: PluginPaused):
         return JSONResponse({"error": "plugin_paused", "detail": str(exc)}, status_code=409)
 
-    def token_ok(authorization: str | None, query_token: str | None = None) -> bool:
+    tokens = Tokens(argus.store)
+    app.state.tokens = tokens
+
+    def worker_ok(authorization: str | None) -> bool:
+        """The worker token itself (all open when none is set). Only this may manage the named tokens."""
         token = argus.cfg.secrets.worker_token
         if not token:
             return True
-        if authorization is not None and hmac.compare_digest(authorization, f"Bearer {token}"):
+        return authorization is not None and hmac.compare_digest(authorization, f"Bearer {token}")
+
+    def token_ok(authorization: str | None, query_token: str | None = None) -> bool:
+        """The worker token, or a live named token (header or ?token=)."""
+        token = argus.cfg.secrets.worker_token
+        if not token:
             return True
-        return query_token is not None and hmac.compare_digest(query_token, token)
+        if worker_ok(authorization):
+            return True
+        if query_token is not None and hmac.compare_digest(query_token, token):
+            return True
+        bearer = authorization[7:] if authorization is not None and authorization[:7].lower() == "bearer " else None
+        return tokens.check(bearer) is not None or tokens.check(query_token) is not None
 
     def auth(authorization: str | None = Header(default=None)) -> None:
         if not token_ok(authorization):
@@ -195,6 +211,8 @@ def create_app(argus: Argus) -> FastAPI:
     tools = Tools(argus, job_json)
     app.state.tools = tools
     deps = Deps(argus, commit, token_ok, guarded, tools)
+    deps.tokens = tokens
+    deps.worker_ok = worker_ok
 
     app.include_router(public.build_router(deps))
     if (HELIOS_DIR / "index.html").exists():
@@ -208,6 +226,6 @@ def create_app(argus: Argus) -> FastAPI:
     mcp.register(app, argus, mcp_auth, tools)
 
     for area in (tools_routes, island, phone, guidance, models, ari, ari_timeline, ari_memory, voice, plugins,
-                 shares, ops, events, workers, settings, approvals, schedules, controls, send):
+                 shares, ops, events, workers, settings, approvals, schedules, controls, send, tokens_routes):
         app.include_router(area.build_router(deps))
     return app

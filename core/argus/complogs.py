@@ -30,7 +30,8 @@ SECRET_KEYS = r"(?:token|secret|password|passwd|pwd|api[_-]?key|apikey|authoriza
 KEYED = re.compile(rf"(?i)(\"?[\w.-]*{SECRET_KEYS}\"?\s*[:=]\s*)(\"[^\"]*\"|'[^']*'|[^\s\"',;&}}\]]+)")
 BEARER = re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{6,}")
 LINK_T = re.compile(r"([?&](?:t|key|sig|token|access_token)=)[^&\s\"']+")
-SHAPES = re.compile(r"\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|"
+SHAPES = re.compile(r"\b(?:ar_[A-Za-z0-9_-]{40,}|sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{20,}|"
+                    r"xox[abprs]-[A-Za-z0-9-]{10,}|"
                     r"AIza[A-Za-z0-9_-]{30,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+)\b")
 LONG_RUN = re.compile(r"\b[A-Za-z0-9+/_-]{40,}={0,2}")
 
