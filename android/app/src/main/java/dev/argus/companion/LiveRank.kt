@@ -14,6 +14,7 @@ data class Activity(
     val endsAt: Long?,
     val startedAt: Double,
     val device: String?,
+    val devices: List<String> = emptyList(),  // a transfer's two ends
 ) {
     companion object {
         fun parse(o: JSONObject) = Activity(
@@ -26,6 +27,7 @@ data class Activity(
             endsAt = if (o.isNull("ends_at")) null else o.optDouble("ends_at").toLong(),
             startedAt = o.optDouble("started_at", 0.0),
             device = if (o.isNull("device")) null else o.optString("device").ifBlank { null },
+            devices = o.optJSONArray("devices")?.let { arr -> List(arr.length()) { arr.optString(it) } } ?: emptyList(),
         )
 
         fun parseAll(a: JSONArray?): List<Activity> =
@@ -43,7 +45,8 @@ object LiveRank {
     private const val URGENT_SECS = 60L
 
     fun skip(a: Activity, self: String = SELF): Boolean =
-        (a.kind == "transfer" && a.device == self) || (a.kind == "timer" && a.id.startsWith("phone.timer"))
+        // its own transfers (either end) already have the Send notification; its own timers the Clock app's
+        (a.kind == "transfer" && (self in a.devices || a.device == self)) || (a.kind == "timer" && a.device == self)
 
     private fun rank(a: Activity, nowSec: Long): Int = when {
         a.kind == "timer" && a.endsAt != null && a.endsAt - nowSec < URGENT_SECS -> 0

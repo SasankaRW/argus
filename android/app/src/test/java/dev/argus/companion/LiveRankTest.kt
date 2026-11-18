@@ -23,9 +23,11 @@ class LiveRankTest {
     }
 
     @Test fun skipsPhoneTransfersAndPhoneTimers() {
-        val items = listOf(a("s", "transfer", device = "phone"), a("phone.timer.1", "timer", ends = now + 20))
+        val sent = Activity("o", "transfer", "o", "", "", 0.5, null, 1.0, "pc", listOf("phone", "pc"))  // the phone sends
+        val items = listOf(a("s", "transfer", device = "phone"), a("timer:j1", "timer", ends = now + 20, device = "phone"), sent)
         assertNull(LiveRank.pick(items, now))
         assertEquals("s2", LiveRank.pick(items + a("s2", "transfer", device = null), now)?.id)
+        assertEquals("pc-t", LiveRank.pick(items + a("pc-t", "timer", ends = now + 300, device = null), now)?.id)
     }
 
     @Test fun reRankDelayIsWhenATimerTurnsUrgent() {

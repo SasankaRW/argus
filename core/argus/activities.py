@@ -64,7 +64,8 @@ def transfer_activity(t: dict, names: dict[str, str] | None = None) -> dict:
     return {"id": f"transfer:{t.get('offer_id', '')}:{t.get('leg', 'send')}", "kind": "transfer",
             "title": f"{t.get('label') or 'Files'} to {to_name}", "detail": detail, "icon": "swap_horiz",
             "progress": (min(1.0, t["done"] / t["total"]) if t.get("total") else 0.0), "ends_at": None,
-            "started_at": t.get("started"), "device": to or None, "priority": 0}
+            "started_at": t.get("started"), "device": to or None, "priority": 0,
+            "devices": [d for d in (str(t.get("from") or ""), to) if d]}  # both ends: a phone skips its own
 
 
 def _words(s: str) -> str:
