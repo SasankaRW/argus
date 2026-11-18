@@ -64,11 +64,12 @@ def test_run_forever_ends_when_new_code_lands_and_idle(tmp_path, monkeypatch):
     monkeypatch.setattr(reload, "CHECK_SECONDS", 0.01)
     monkeypatch.setattr(reload, "code_stamp", lambda repo=None: next(stamps, "new"))
     ag = make_agent(tmp_path, "calypso", "Calypso")
-    asyncio.run(asyncio.wait_for(ag.run_forever(), 20))  # returns: systemd's Restart=always starts the new code
+    ag.reload_on_new_code = True
+    asyncio.run(asyncio.wait_for(ag.run_forever(), 20))  # returns: systemd (or respawn on the PC) starts the new code
+    assert ag.restart_requested
 
 
-def test_not_under_systemd_never_restarts(tmp_path, monkeypatch):
-    monkeypatch.setattr(reload, "under_systemd", lambda: False)
+def test_without_reload_on_new_code_it_keeps_running(tmp_path, monkeypatch):
     monkeypatch.setattr(reload, "CHECK_SECONDS", 0.01)
     n = iter(range(10**6))
     monkeypatch.setattr(reload, "code_stamp", lambda repo=None: f"commit {next(n)}")

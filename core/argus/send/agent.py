@@ -66,6 +66,8 @@ class SendAgent:
         self.app = build_app(self)
         self.argus_token = argus_token
         self.argus_up = False
+        self.reload_on_new_code = False  # send-agent turns it on: exit once idle when a new commit is checked out
+        self.restart_requested = False
         self._wake = asyncio.Event()
         self._tasks: list[asyncio.Task] = []
         self._server: uvicorn.Server | None = None
@@ -424,13 +426,14 @@ class SendAgent:
             seen_at = seen_at or time.monotonic()
             if reload.should_restart(started, now, self.idle(), time.monotonic() - seen_at):
                 log.info("Argus Send: new code (%s), restarting", now[:8])
+                self.restart_requested = True
                 return
 
     async def run_forever(self) -> None:
         await self.start()
         log.info("Argus Send: %s listening on %s:%s, files go to %s", self.cfg.device_id, self.cfg.host,
                  self.cfg.port, self.root)
-        if reload.under_systemd():
+        if self.reload_on_new_code:
             self._tasks.append(asyncio.create_task(self._reload_loop()))
         try:
             done, _ = await asyncio.wait(self._tasks, return_when=asyncio.FIRST_COMPLETED)
