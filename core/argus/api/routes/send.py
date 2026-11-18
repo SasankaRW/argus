@@ -109,6 +109,7 @@ def build_router(deps: Deps) -> APIRouter:
         starts or finishes also leaves one small "send.live" event, so Helios and the island know to look."""
         now = time.time()
         cancel = live.report(body.device, body.items, now)
+        deps.argus.activities.poke()
         changes = live.take_changes()
         if changes:
             await store.write(lambda c: [insert_event(c, now, "send.live", data=ch) for ch in changes])
@@ -125,6 +126,7 @@ def build_router(deps: Deps) -> APIRouter:
         reports on any more ends here at once."""
         now = time.time()
         ok = live.cancel(offer_id, now)
+        deps.argus.activities.poke()
         changes = live.take_changes()
         if changes:
             await store.write(lambda c: [insert_event(c, now, "send.live", data=ch) for ch in changes])

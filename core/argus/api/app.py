@@ -44,6 +44,8 @@ Scheduler and triggers (C9):
     POST /triggers/file               {worker, trigger, path, sha256, size} from a worker's folder watcher (token)
                                       -> {status: queued|duplicate, job_id}; 429 when the plugin's queue is full
     POST /hooks/{name}                a signed webhook (no Argus token; the signature is the check)
+Live activities (token, worker or named): GET /activities?after=<version>&wait=25, POST /activities/timer,
+    PUT|DELETE /activities/custom/{id}. See activities.py.
 Controls (token): POST /plugins/{id}/stop|start|restart, POST /workers/{id}/pause|resume|restart,
     GET /control/state, POST /control/pause-all|resume-all, GET /logs/{component}?level=&since=. See docs/controls.md.
 Errors: 404 unknown job, 409 lease lost, transition not allowed or plugin stopped, 429 plugin queue full.
@@ -68,6 +70,7 @@ from ..tools import Tools
 from ..triggers import BadSignature, TriggerError, UnknownTrigger
 from . import mcp
 from .routes import (
+    activities,
     approvals,
     ari,
     ari_memory,
@@ -227,7 +230,8 @@ def create_app(argus: Argus) -> FastAPI:
 
     mcp.register(app, argus, mcp_auth, tools)
 
-    for area in (tools_routes, island, phone, guidance, models, ari, ari_timeline, ari_memory, voice, plugins,
+    for area in (activities, tools_routes, island, phone, guidance, models, ari, ari_timeline, ari_memory, voice,
+                 plugins,
                  shares, ops, events, workers, settings, approvals, schedules, controls, send, tokens_routes,
                  deploy):
         app.include_router(area.build_router(deps))
