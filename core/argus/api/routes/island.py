@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import re
 from typing import Any
 
@@ -11,7 +10,6 @@ from fastapi import APIRouter, HTTPException
 from ... import ask as ask_mod
 from ... import island as island_mod
 from ...tools import ToolError
-from ...weather import CODES as weather_codes
 from ..schemas import AskDo
 from ._deps import Deps
 
@@ -54,18 +52,7 @@ def build_router(deps: Deps) -> APIRouter:
     async def island_weather() -> dict:
         """Today's weather for the island's calendar page (brief.weather's town); {} when no town is set or the
         forecast can't be reached. Kept for an hour, like the brief's."""
-        place = argus.cfg.brief.weather.strip()
-        if not place:
-            return {}
-        try:
-            w = await asyncio.wait_for(asyncio.to_thread(argus.weather.day, place, 0), 15)
-        except Exception:  # noqa: BLE001 - no connection: the page goes without it
-            return {}
-        if not w:
-            return {}
-        code = w.get("code")
-        return {"place": w.get("place"), "now": w.get("now"), "low": w.get("low"), "high": w.get("high"),
-                "rain": w.get("rain"), "sky": weather_codes.get(int(code), "") if code is not None else ""}
+        return await argus.island_weather()
 
     @router.post("/island/run", dependencies=guarded)
     async def island_run(body: AskDo) -> dict:

@@ -39,6 +39,7 @@ from .scheduler import Scheduler
 from .send_live import SendLive
 from .triggers import Triggers
 from .usage import rollup as usage_rollup
+from .weather import CODES as WEATHER_CODES
 from .weather import Weather, words
 from .weather import spoken as weather_spoken
 
@@ -391,6 +392,35 @@ class Argus:
         if w is None:
             return f"I couldn't find a place called {place}."
         return weather_spoken(w, "tomorrow" if offset else "today")
+
+    async def island_weather(self) -> dict:
+        """Today's weather as the island shows it: {place, now, low, high, rain, sky}; {} when no town is set or
+        the forecast can't be reached."""
+        place = self.cfg.brief.weather.strip()
+        if not place:
+            return {}
+        try:
+            w = await asyncio.wait_for(asyncio.to_thread(self.weather.day, place, 0), 15)
+        except Exception:  # noqa: BLE001 - no connection: the island goes without it
+            return {}
+        if not w:
+            return {}
+        code = w.get("code")
+        return {"place": w.get("place"), "now": w.get("now"), "low": w.get("low"), "high": w.get("high"),
+                "rain": w.get("rain"), "sky": WEATHER_CODES.get(int(code), "") if code is not None else ""}
+
+    async def brief_today(self) -> dict:
+        """The morning brief as data for the island's card: brief_parts as the phone brief builds them, plus the
+        structured weather. No Life Hub tasks yet: its plugin has no "due today" call, so `tasks` stays empty."""
+        inputs = await self._brief_inputs()
+        now = time.time()
+        parts = await self.store.read(lambda c: brief_parts(c, now, health=last_health(c), **inputs))
+        parts["today"] = [list(t) for t in parts["today"]]
+        parts["claude"] = list(parts["claude"])
+        b = parts["backup"]
+        parts["backup"] = {k: b.get(k) for k in ("ok", "at", "problem")} if b else None
+        return {"day": datetime.fromtimestamp(now).strftime("%Y-%m-%d"), "at": now, "parts": parts,
+                "weather": await self.island_weather(), "tasks": []}
 
     async def _brief_inputs(self) -> dict:
         needs = set(self.cfg.power.pc_needs)
