@@ -48,6 +48,14 @@ object SendHub {
     private val argusPause = Pause()
     private lateinit var book: DeviceBook
 
+    private var clipEngine: SendEngine? = null
+
+    /** Sends one clip to the clip peer (or via Calypso). Blocks up to a few seconds: call off the main thread. */
+    @Synchronized fun sendClip(ctx: Context, kind: String, text: String): Boolean {
+        val e = engine ?: clipEngine ?: SendEngine(ctx.applicationContext, SELF, DeviceKeys(ctx), DeviceBook(ctx), SendQueue.get(ctx)) { false }.also { clipEngine = it }
+        return e.sendClip(kind, text)
+    }
+
     fun kick() { engine?.kick() }
     fun kickArgus() { argusPause.kick() }
     fun cancel(id: String) { engine?.cancel(id) }
@@ -56,7 +64,7 @@ object SendHub {
         if (running) { kick(); return }
         val ctx = ctx0.applicationContext
         running = true
-        SendNotes.channels(ctx)
+        SendNotes.channels(ctx); ClipHub.channel(ctx)
         val keys = DeviceKeys(ctx); book = DeviceBook(ctx); val q = SendQueue.get(ctx)
         receiver = SendReceiver(ctx, SELF, keys, book, q).also { runCatching { it.start() }.onFailure { e -> Log.w("argus-send", "port ${SendConst.PORT}", e) } }
         engine = SendEngine(ctx, SELF, keys, book, q) { argusUp }.also { it.start() }

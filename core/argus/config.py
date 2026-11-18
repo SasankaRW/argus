@@ -304,6 +304,13 @@ class ShareConfig(_Strict):
     keep_days: float = Field(7, gt=0, le=365)  # shared files are deleted after this
 
 
+class SendClipConfig(_Strict):
+    """Clipboard and link sync between the PC and the phone (docs/superpowers/specs/2026-11-18-clipboard-sync-*)."""
+
+    enabled: bool = True  # the runtime switch (island menu) is kept in <data_dir>/clip.json and wins over this
+    peer: str | None = Field(None, pattern=r"^[a-z0-9-]{1,32}$")  # who clips go to (default: phone, or pc on the phone)
+
+
 class SendConfig(_Strict):
     """Argus Send: the agent that sends and receives files between my devices (core/argus/send, contract in
     docs/send-protocol.md). Off unless `enabled`. Addresses and names come from here and devices.json, never code."""
@@ -330,6 +337,7 @@ class SendConfig(_Strict):
     probe_timeout_seconds: float = Field(2, gt=0)
     retry_seconds: float = Field(30, gt=0)
     register_seconds: float = Field(30, gt=0)
+    clip: SendClipConfig = Field(default_factory=SendClipConfig)
 
 
 GONE_ARI = ("voice", "voice_engine", "live", "follow_up")

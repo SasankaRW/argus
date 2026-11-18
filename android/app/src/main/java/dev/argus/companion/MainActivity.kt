@@ -1,10 +1,14 @@
 package dev.argus.companion
 
+import dev.argus.companion.send.ClipHub
+import dev.argus.companion.send.ClipRules
 import dev.argus.companion.send.PhoneMine
+import dev.argus.companion.send.SendHub
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.NotificationManager
+import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
@@ -154,6 +158,9 @@ class MainActivity : Activity() {
         w.addJavascriptInterface(object {
             @JavascriptInterface fun mine(): String = PhoneMine.json(this@MainActivity)
             @JavascriptInterface fun open(kind: String, offerId: String, n: Int): String = PhoneMine.open(this@MainActivity, kind, offerId, n)
+            // the clipboard sync switch of the Send screen
+            @JavascriptInterface fun clipSync(): Boolean = Prefs(this@MainActivity).clipSync
+            @JavascriptInterface fun setClipSync(on: Boolean) { Prefs(this@MainActivity).clipSync = on }
         }, "ArgusPhone")
         val target = path?.trim()?.takeIf { it.isNotEmpty() }?.let { if (it.startsWith("/")) prefs.url + it else it }
         when {
@@ -272,6 +279,13 @@ class MainActivity : Activity() {
                 runOnUiThread { status.text = if (ok) "Sent: it should appear within a few seconds." else "Couldn't reach Argus." }
             }
         })
+        col.addView(label("Clipboard and links", 17f, ink, bold = true, top = dp(28)))
+        col.addView(label("Copies on the PC land on this phone's clipboard; to send one back, use the Send clipboard " +
+            "tile in quick settings or share the text to Argus. Links arrive as a notification.", 13f, dim))
+        col.addView(button((if (prefs.clipSync) "✓  " else "○  ") + "Sync clipboard and links with the PC") {
+            prefs.clipSync = !prefs.clipSync
+            setup()
+        })
         col.addView(label("Phone control", 17f, ink, bold = true, top = dp(28)))
         col.addView(label("So Ari can do things on this phone. Each opens Android's own setting. The first one lets " +
             "her press Back and Home, lock the screen, read the screen, tap and type, only when you ask her to " +
@@ -303,6 +317,25 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         if (onSetup) setup()  // back from one of Android's settings: show what is allowed now
+        getSystemService(ClipboardManager::class.java).addPrimaryClipChangedListener(clipListener)  // only while in front
+    }
+
+    override fun onPause() {
+        getSystemService(ClipboardManager::class.java).removePrimaryClipChangedListener(clipListener)
+        super.onPause()
+    }
+
+    // a copy made inside the app (the WebView or the native screens) goes to the PC; what a clip wrote here is not sent back
+    private var lastSent = ""
+    private val clipListener = ClipboardManager.OnPrimaryClipChangedListener {
+        if (!ClipHub.enabled(this)) return@OnPrimaryClipChangedListener
+        val text = runCatching {
+            getSystemService(ClipboardManager::class.java).primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(this)?.toString()
+        }.getOrNull()
+        if (text.isNullOrEmpty() || !ClipRules.sizeOk(text) || ClipHub.ledger.isEcho(text) || text == lastSent) return@OnPrimaryClipChangedListener
+        lastSent = text
+        val app = applicationContext
+        thread { SendHub.sendClip(app, "copy", text) }
     }
 
     private fun check(ok: Boolean) = if (ok) "✓  " else "○  "

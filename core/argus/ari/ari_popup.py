@@ -32,6 +32,7 @@ import os
 import sys
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
@@ -287,6 +288,15 @@ TRANSFER = (300, 54)  # the island while a file moves (Argus Send): the devices,
 FINISHED = ("done", "failed", "cancelled")
 
 
+LOCAL_SEND = "http://127.0.0.1:8610"  # this PC's own Send agent: clipboard sync (token only)
+
+
+def clipboard_url(text: str) -> str | None:
+    """The text when it is one http(s) link and nothing else (what "Send link to phone" offers), else None."""
+    t = (text or "").strip()
+    return t if len(t) < 2000 and t.lower().startswith(("http://", "https://")) and len(t.split()) == 1 else None
+
+
 def send_device_icon(dev: str) -> str:
     if dev.startswith("phone"):
         return "smartphone"
@@ -436,10 +446,16 @@ class Info:
                                                          "media", "system", "calendar", "privacy")])
     shortcuts: list[dict] = field(default_factory=list)
     keys: dict[str, str] = field(default_factory=lambda: {"ask": "ctrl+alt+space", "hide": "ctrl+alt+d"})
+    clip: dict | None = None  # clipboard sync on this PC (the Send agent's GET /send/clip), None: no agent
 
 
-def fetch_info(api: Api) -> Info:
+def fetch_info(api: Api, local: Api | None = None) -> Info:
     info = Info()
+    if local:
+        try:
+            info.clip = local.call("GET", "/send/clip", timeout=2)
+        except (*_API_ERRORS, *_SHAPE_ERRORS):  # no Send agent here: the rows are simply not shown
+            pass
     for path, fn in (
         ("/island", lambda r: (setattr(info, "widgets", r.get("widgets") or info.widgets),
                                setattr(info, "shortcuts", r.get("shortcuts") or []),
@@ -509,6 +525,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
         return 2
 
     api = Api(args.url, token)
+    local = Api(LOCAL_SEND, token)
 
     class Bus(QObject):
         events = Signal(list)
@@ -662,6 +679,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             self.still = reduced_motion()
             self.buttons: list[tuple[QRectF, str]] = []
             self.details_h = 120.0
+            self.clip_url: str | None = None  # a web link on the clipboard, read when the island opens
             # One frame per screen refresh (120 Hz screens get 120 fps), on precise timers: Qt's default coarse
             # timer slips to Windows' ~15.6 ms ticks, so a 16 ms timer often ran at ~32 fps and looked choppy.
             hz = self.screen().refreshRate() if self.screen() else 60.0
@@ -822,10 +840,11 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             self.kick()
 
         def load_info(self) -> None:
-            threading.Thread(target=lambda: bus.info.emit(fetch_info(api)), daemon=True).start()
+            threading.Thread(target=lambda: bus.info.emit(fetch_info(api, local)), daemon=True).start()
 
         def open_details(self) -> None:
             self.details = True
+            self.clip_url = clipboard_url(QApplication.clipboard().text())
             self.load_info()
             self.refresh.start()
             self.clock.start()
@@ -1237,6 +1256,12 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             rows.append((AMBER if self.ari.game else "#8c8c92",
                          "Game mode on" if self.ari.game else "Game mode off",
                          "auto" if self.ari.game_auto else "manual", "gameauto"))
+            clip = info.clip
+            if clip is not None:  # clipboard sync with the phone (Send agent): the switch, and the copied link
+                rows.append((GREEN if clip.get("enabled") else "#8c8c92", "Clipboard sync",
+                             "on" if clip.get("enabled") else "off", "clip"))
+                if clip.get("enabled") and self.clip_url:
+                    rows.append((ACCENT, "Send link to phone", "›", "cliplink"))
             for wid in order:
                 if wid == "status":
                     running = (jobs.get("running") or 0) + (jobs.get("leased") or 0)
@@ -1598,6 +1623,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 self.toggle_game()
             elif key == "gameauto":
                 self.toggle_game_auto()
+            elif key == "clip":
+                self.toggle_clip()
+            elif key == "cliplink":
+                self.send_link()
             elif key == "talk":
                 self.talk()
             elif key.startswith(("helios:", "show:")):
@@ -1695,6 +1724,40 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                     api.call("POST", "/ari/game", {"auto": auto})
                 except _API_ERRORS:
                     bus.flash.emit("Couldn't reach Argus")
+            threading.Thread(target=go, daemon=True).start()
+
+        def toggle_clip(self) -> None:
+            """Clipboard sync on or off (the Send agent keeps the choice)."""
+            if not self.info.clip:
+                return
+            on = not self.info.clip.get("enabled")
+            self.info.clip = {**self.info.clip, "enabled": on}
+            self.kick()
+
+            def go() -> None:
+                try:
+                    local.call("POST", "/send/clip/enabled", {"enabled": on})
+                except _API_ERRORS:
+                    bus.flash.emit("Couldn't reach the Send agent")
+            threading.Thread(target=go, daemon=True).start()
+
+        def send_link(self) -> None:
+            """The link on the clipboard goes to the phone as a notification."""
+            url = self.clip_url
+            self.close_details()
+            if not url:
+                return
+            bus.flash.emit("Sending link…")
+
+            def go() -> None:
+                try:
+                    local.call("POST", "/send/clip/link", {"url": url}, timeout=15)
+                    bus.flash.emit("Link sent ✓")
+                except urllib.error.HTTPError as e:
+                    bus.flash.emit("Link not sent: sync is off" if e.code == 409
+                                   else "Link not sent: phone not reachable")
+                except _API_ERRORS:
+                    bus.flash.emit("Couldn't reach the Send agent")
             threading.Thread(target=go, daemon=True).start()
 
         def toggle_power(self) -> None:
@@ -2018,7 +2081,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                                shortcuts=[{"label": "Sort downloads", "action": "run:x"},
                                           {"label": "Work mode", "action": "routine:work mode"},
                                           {"label": "Inbox", "action": "show:inbox"},
-                                          {"label": "Helios", "action": "show:map"}])
+                                          {"label": "Helios", "action": "show:map"}],
+                               clip={"enabled": True, "peer": "phone"})
+            island.clip_url = "https://example.com/a-link"
         for _ in range(3):  # lay out (the details measure themselves), then settle the size
             island.spring.w, island.spring.h = island.target()
             island.grab()
@@ -2042,7 +2107,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
         """The island's settings once at the start (its keys); Argus may still be starting."""
         while True:
             try:
-                info = fetch_info(api)
+                info = fetch_info(api, local)
                 if info.status is not None:
                     bus.info.emit(info)
                     bus.keys.emit(info.keys)

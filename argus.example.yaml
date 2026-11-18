@@ -153,3 +153,6 @@ send:                      # Argus Send: files between my devices (off by defaul
   holder:                  # device id that holds shares for offline targets (calypso)
   # holding: true          # on the holder only: hold up to holding_max_gb for holding_days
   # root:                  # received files (default ~/Argus Shared)
+  # clip:                  # clipboard and link sync with the phone
+  #   enabled: true
+  #   peer: phone

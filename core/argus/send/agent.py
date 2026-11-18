@@ -18,6 +18,7 @@ import httpx
 import uvicorn
 
 from ..config import SendConfig
+from .clip import ClipSync
 from .devices import DeviceBook
 from .discovery import Discovery, local_addresses
 from .keys import DeviceKey
@@ -60,6 +61,7 @@ class SendAgent:
         self.store = QueueStore(self.data / "send-queue.db")
         self.discovery = Discovery(cfg.device_id, cfg.port, self.wake, cfg.mdns)
         self.sender = Sender(self, transport)
+        self.clip = ClipSync(self)
         self.app = build_app(self)
         self.argus_token = argus_token
         self.argus_up = False
@@ -85,6 +87,7 @@ class SendAgent:
         self.store.kick()
         if self._loop and not self._loop.is_closed():
             self._loop.call_soon_threadsafe(self._wake.set)
+        self.clip.kick()  # a clip held here for a device that just came back
 
     def enqueue(self, target: str, paths: list[str | Path]) -> str:
         if not self.devices.get(target):
@@ -384,6 +387,8 @@ class SendAgent:
             self._tasks.append(asyncio.create_task(self._tailscale_loop()))
         if self.cfg.holding:
             self._tasks.append(asyncio.create_task(self._hold_loop()))
+            self._tasks.append(asyncio.create_task(self.clip.loop()))
+        self.clip.sync_watcher()
         await asyncio.to_thread(self.discovery.start)
 
     async def stop(self) -> None:
@@ -393,6 +398,8 @@ class SendAgent:
             t.cancel()
         if self._tasks:
             await asyncio.gather(*self._tasks, return_exceptions=True)
+        if self.clip.watcher:
+            self.clip.watcher.stop()
         await asyncio.to_thread(self.discovery.stop)
         await self.sender.close()
         if self._argus_client:

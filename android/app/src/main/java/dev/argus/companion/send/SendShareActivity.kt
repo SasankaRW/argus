@@ -23,6 +23,16 @@ class SendShareActivity : Activity() {
         else (i.getParcelableExtra<Uri>(Intent.EXTRA_STREAM))?.let { uris += it }
         i.clipData?.let { c -> for (k in 0 until c.itemCount) c.getItemAt(k).uri?.let { if (it !in uris) uris += it } }
         val ctx = applicationContext
+        // shared text (no file): a single http(s) link goes as a link clip, anything else as a copy clip
+        val text = if (uris.isEmpty() && i.action == Intent.ACTION_SEND) i.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString() else null
+        if (!text.isNullOrBlank()) {
+            when {
+                !ClipHub.enabled(ctx) -> ClipHub.toast(ctx, "Clipboard sync is off")
+                !ClipRules.sizeOk(text) -> ClipHub.toast(ctx, "That text is too big to send")
+                else -> thread { ClipHub.toast(ctx, if (SendHub.sendClip(ctx, if (ClipRules.isLink(text)) "link" else "copy", text.trim().takeIf { ClipRules.isLink(text) } ?: text)) "Sent to PC" else "Couldn't reach the PC") }
+            }
+            finish(); return
+        }
         // the copy of small files must finish before the other app's permission lapses: do it now, then close
         val n = SendHub.enqueue(ctx, target, uris)
         if (n > 0) { WorkerService.startSend(ctx); Toast.makeText(ctx, "Queued for ${target.replaceFirstChar { it.uppercase() }.let { if (it == "Pc") "PC" else it }}", Toast.LENGTH_SHORT).show() }
