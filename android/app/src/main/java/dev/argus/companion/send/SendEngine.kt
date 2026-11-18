@@ -50,8 +50,10 @@ class SendEngine(private val ctx: Context, private val self: String, private val
     fun cancel(id: String) { cancelled += id }
 
     private fun loop() {
+        var first = true
         while (running) {
             try {
+                OutboxCleanup.maybeClean(ctx, force = first); first = false
                 for (s in queue.shares(SendState.QUEUED, SendState.HELD)) { if (!running) return; process(s) }
                 pause.sleep(30_000)  // the 30 s timer; network changes, NSD and Argus coming back kick() earlier
             } catch (e: InterruptedException) { return } catch (e: Exception) { Log.w("argus-send", "pass failed", e); try { pause.sleep(10_000) } catch (_: InterruptedException) { return } }

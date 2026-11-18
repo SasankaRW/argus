@@ -160,6 +160,8 @@ object SendHub {
     fun enqueue(ctx: Context, target: String, uris: List<Uri>): Int {
         val files = ArrayList<FileRow>()
         val id = UUID.randomUUID().toString()
+        var queued = false
+        try {
         for (u in uris) {
             var name = u.lastPathSegment?.substringAfterLast('/') ?: "file"; var size = -1L
             try {
@@ -180,7 +182,11 @@ object SendHub {
         }
         if (files.isEmpty()) return 0
         SendQueue.get(ctx).add(id, target, UUID.randomUUID().toString(), files)  // written before any byte is sent
+        queued = true
         ctx.getSharedPreferences("argus", Context.MODE_PRIVATE).edit().putString("send_last", target).apply()
         return files.size
+        } finally {
+            if (!queued) File(ctx.filesDir, "outbox/$id").deleteRecursively()  // nothing queued, or a copy threw: no orphans
+        }
     }
 }
