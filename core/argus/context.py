@@ -11,6 +11,7 @@ from datetime import datetime
 
 from . import __version__
 from . import settings as settings_mod
+from .activities import Activities
 from .approvals import Approvals
 from .backup import Backups
 from .config import PRIORITY_BATCH, PRIORITY_INTERACTIVE, Config, ScheduleConfig
@@ -51,6 +52,9 @@ class Argus:
         self.store = Store(cfg.db_path)
         self.send_live = SendLive()  # live Send transfers, in memory only (send_live.py)
         self.jobs = JobStore(self.store, cfg.jobs, windows=cfg.windows, off=cfg.plugins.off)
+        self.activities = Activities(self.send_live)  # live activities, in memory only (activities.py)
+        self.jobs.on_event = self.activities.job_event
+        self._activity_task: asyncio.Task | None = None
         self.registry = Registry(self.store)
         self.models = ModelBoard(self.store, cfg)
         self.outbox = Outbox(self.store, cfg)
@@ -125,6 +129,8 @@ class Argus:
         await self.outbox.start()
         await self.phone.start()
         await self.hub.start()
+        self._activity_task = asyncio.create_task(self.activities.pump(self._write_activity_events),
+                                                  name="argus-activities")
         self.watchdog.start()
         self.started_at = time.time()
         log.info("argus started", extra={"version": self.version, "instance": self.cfg.instance.name})
@@ -544,7 +550,17 @@ class Argus:
             log.info("old events pruned", extra={"count": n})
         return n
 
+    async def _write_activity_events(self, events: list) -> None:
+        now = time.time()
+        await self.store.write(lambda c: [insert_event(c, now, kind, data=data) for kind, data in events])
+
     async def stop(self) -> None:
+        if self._activity_task is not None:
+            task = self._activity_task
+            if not task.done() and task.get_loop() is asyncio.get_running_loop():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            self._activity_task = None
         await self.watchdog.stop()
         await asyncio.to_thread(self.marker.stop)  # a clean stop: no "Argus is back" message next time
         await self.phone.stop()

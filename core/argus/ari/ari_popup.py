@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ..activities import rank as rank_activities
 from ..island_live import (
     Hardware,
     Media,
@@ -284,7 +285,12 @@ class AriState:
         return self.phase == "done" and now - self.since > min(9.0, 3.5 + len(self.text) * 0.04)
 
 
-TRANSFER = (300, 54)  # the island while a file moves (Argus Send): the devices, the line, the name and progress
+LIVE = (300, 54)  # the island while something is live (a file moving, a job, a timer): icon, text, line, time
+TRANSFER = LIVE  # the transfer is the live pill's first look: same size
+LIVE_ICONS = ("swap_horiz", "timer", "play_circle", "fitness_center", "bolt", "notifications", "bedtime",
+              "auto_awesome", "language", "description", "chat_bubble", "inbox", "circle")  # in the icon font
+LIVE_ROW = 34  # one row of the hover list
+STACK_MAX = 4  # the hover list shows at most this many
 FINISHED = ("done", "failed", "cancelled")
 
 
@@ -327,12 +333,95 @@ def transfer_words(t: dict, names: dict[str, str]) -> tuple[str, str]:
     return f"{t.get('label') or 'Files'} to {to}", right
 
 
+# ------------------------------------------------------------------ live activities (Argus core: activities.py)
+
+def countdown(secs: float) -> str:
+    """4:32, 0:09, 1:05:00 (rounded up, so 0:00 only once it is over)."""
+    s = max(0, math.ceil(secs))
+    h, rem = divmod(s, 3600)
+    m, sec = divmod(rem, 60)
+    return f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
+
+
+def elapsed_words(secs: float) -> str:
+    """12 s, 3 min, 1 h 05 min: how long a job has been running."""
+    s = int(max(0, secs))
+    if s < 60:
+        return f"{s} s"
+    if s < 3600:
+        return f"{s // 60} min"
+    return f"{s // 3600} h {s % 3600 // 60:02d} min"
+
+
+def live_words(a: dict, now: float) -> tuple[str, str, str]:
+    """(title, detail, right) for the pill's lines: a timer's right side counts down, a job's shows how long it
+    has run, anything with progress shows the percent."""
+    title, detail = str(a.get("title") or ""), str(a.get("detail") or "")
+    ends, kind = a.get("ends_at"), a.get("kind")
+    if ends is not None and kind != "transfer":
+        left = float(ends) - now
+        return title, detail, countdown(left) if left > 0 else "done"
+    if a.get("progress") is not None:
+        return title, detail, f"{round(100 * float(a['progress']))}%"
+    if kind == "job":
+        return title, detail, elapsed_words(now - float(a.get("started_at") or now))
+    return title, detail, ""
+
+
+def live_line(a: dict, now: float) -> tuple[str, float]:
+    """The thin line under the text: ("drain", 0..1) for a timer, ("fill", 0..1) for progress, ("shimmer", 0) for
+    a job with no progress to show, ("none", 0) for nothing."""
+    ends, start = a.get("ends_at"), a.get("started_at")
+    if a.get("progress") is not None:
+        return "fill", max(0.0, min(1.0, float(a["progress"])))
+    if ends is not None:
+        span = float(ends) - float(start if start is not None else now)
+        return "drain", max(0.0, min(1.0, (float(ends) - now) / span)) if span > 0 else 0.0
+    return ("shimmer", 0.0) if a.get("kind") == "job" else ("none", 0.0)
+
+
+def live_tone(a: dict, now: float) -> str:
+    """The island's own tones: a timer is amber (coral in its last minute), jobs and transfers the accent blue,
+    custom ones green."""
+    kind = a.get("kind")
+    if kind == "timer":
+        ends = a.get("ends_at")
+        return CORAL if ends is not None and float(ends) - now < 60 else AMBER
+    return ACCENT if kind in ("job", "transfer") else GREEN
+
+
+def live_icon(a: dict) -> str:
+    """The activity's icon if the island's icon font has it (a custom one may name any), else a bolt."""
+    name = str(a.get("icon") or "")
+    return name if name in LIVE_ICONS else "bolt"
+
+
+def activity_action(a: dict) -> str | None:
+    """Where a click on this row goes in Helios: Transfers, the runs, nothing for a timer."""
+    return {"transfer": "show:transfers", "job": "show:runs"}.get(str(a.get("kind")))
+
+
+def live_view(items: list[dict], now: float) -> tuple[list[dict], int]:
+    """(the rows, how many beyond the top one): most urgent first (re-ranked here, because a timer becomes urgent
+    as the clock moves), at most STACK_MAX rows for the hover list."""
+    ranked = rank_activities(items, now)
+    return ranked[:STACK_MAX], max(0, len(ranked) - 1)
+
+
+def timer_pulse(now: float, ended: float | None, length: float = 1.2) -> float:
+    """0..1 while a timer's end is being announced (1 at the moment, fading out), else 0."""
+    if ended is None or now < ended or now - ended >= length:
+        return 0.0
+    return 1.0 - (now - ended) / length
+
+
 STOPPABLE = ("thinking", "working", "speaking")  # while Ari is doing any of these, the island has a Stop key
 
 
-def target_size(mode: str, text: str, hover: bool, details_h: float, hover_text: str = "") -> tuple[float, float]:
-    if mode == "transfer":
-        return TRANSFER
+def target_size(mode: str, text: str, hover: bool, details_h: float, hover_text: str = "",
+                rows: int = 1) -> tuple[float, float]:
+    if mode == "live":  # hovered with several activities: a list of up to STACK_MAX rows
+        return (LIVE[0], 12 + LIVE_ROW * min(rows, STACK_MAX)) if hover and rows > 1 else LIVE
     if mode == "details":
         return DETAILS_W, min(MAX_H, details_h)
     if mode in ("active", "done"):  # one look for both: Ari's answer stays in the same pill it spoke from
@@ -390,6 +479,27 @@ def open_target(base: str, action: str) -> str | None:
         return f"{base.rstrip('/')}/helios/{action[7:]}"
     return None
 
+
+def live_scenario(name: str, now: float) -> tuple[list[dict], list[dict]]:
+    """Fake activities for --preview --live <name>: (activities, Send's transfer records)."""
+    def act(kind: str, title: str, detail: str, icon: str, **kw: Any) -> dict:
+        return {"id": f"{kind}:{title}", "kind": kind, "title": title, "detail": detail, "icon": icon,
+                "progress": None, "ends_at": None, "started_at": now - 60, "device": None, "priority": 0, **kw}
+
+    timer = act("timer", "Pasta", "10 min timer", "timer", started_at=now - 328, ends_at=now + 272)
+    soon = act("timer", "Pasta", "10 min timer", "timer", started_at=now - 575, ends_at=now + 25)
+    job = act("job", "Downloads organizer: sort", "Moving files \u00b7 step 3", "play_circle", started_at=now - 84)
+    custom = act("custom", "Rest", "Bench press", "fitness_center", started_at=now - 50, ends_at=now + 70)
+    xfer = {"offer_id": "ab12cd34", "leg": "send", "from": "phone", "to": "pc", "label": "IMG_0971.jpg",
+            "done": 41, "total": 100, "eta": 12.2, "state": "moving", "started": now - 5}
+    move = act("transfer", "IMG_0971.jpg to PC", "41%", "swap_horiz", id="transfer:ab12cd34:send", progress=0.41,
+               started_at=now - 5)
+    return {"timer": ([timer], []), "soon": ([soon], []), "timerend": ([{**soon, "ends_at": now - 0.2}], []),
+            "job": ([job], []), "custom": ([custom], []), "transfer": ([move], [xfer]),
+            "stack": ([soon, move, timer, job, custom], [xfer]), "plus": ([job, custom], [])}[name]
+
+
+LIVE_SCENARIOS = ("timer", "soon", "timerend", "job", "custom", "transfer", "stack", "plus")
 
 # ------------------------------------------------------------------ talking to Argus (a background thread)
 
@@ -492,6 +602,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
     p.add_argument("--text", default="", help=argparse.SUPPRESS)
     p.add_argument("--details", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--hover", action="store_true", help=argparse.SUPPRESS)
+    p.add_argument("--live", choices=sorted(LIVE_SCENARIOS), help=argparse.SUPPRESS)  # with --preview: fake activities
     p.add_argument("--page", default="ari", help=argparse.SUPPRESS)  # with --details: media, system, calendar
     p.add_argument("--ask", action="store_true", help=argparse.SUPPRESS)  # the type-to-Ari box
     p.add_argument("--question", action="store_true", help=argparse.SUPPRESS)  # Ari's question box
@@ -534,7 +645,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
         ask = Signal(dict)
         answered = Signal(str)
         live = Signal(str, object)  # what the PC itself says: media, hw, priv, weather
-        transfers = Signal(list, dict)  # Argus Send: the live transfers and the devices' names
+        activities = Signal(list, list, dict)  # live activities, Send's transfer details, the devices' names
+        activity_done = Signal(dict)  # a timer reached its end
         hotkey = Signal(str)
         keys = Signal(dict)
 
@@ -668,12 +780,19 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             self.details = False
             self.hover = False
             self.hot: str | None = None  # the button under the mouse
+            self.hot_row: str | None = None  # the live row under the mouse
+            self.rows: list[tuple[Any, dict]] = []  # the live pill's rows, as last drawn (for clicks)
             self.flash_text: str | None = None
             self.spring = Spring(*IDLE)
-            self.transfers: list[dict] = []  # Argus Send's live transfers (GET /send/live)
+            self.acts: list[dict] = []  # live activities (GET /activities)
+            self.transfers: list[dict] = []  # Argus Send's transfers, for the transfer look (GET /send/live)
             self.send_names: dict[str, str] = {}
             self.tx_frac = 0.0  # the line's fill, eased toward the real progress between reports
-            bus.transfers.connect(self.on_transfers)
+            self.tx_id = ""
+            self.ended: float | None = None  # when a timer last reached its end (monotonic): the pill pulses
+            self.fake_now: float | None = None  # --preview --live: a frozen clock
+            bus.activities.connect(self.on_activities)
+            bus.activity_done.connect(self.on_activity_done)
             self.mark = Mark()  # Ari's animated mark (ari_mark.py): a move for each job
             self.mark_t = time.monotonic()
             self.still = reduced_motion()
@@ -701,6 +820,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             self.refresh.timeout.connect(self.load_info)
             self.clock = QTimer(self, interval=1000)
             self.clock.timeout.connect(self.update)
+            self.sec = QTimer(self, interval=1000)  # a countdown's seconds: the only redraw a calm live pill needs
+            self.sec.timeout.connect(self.update)
             bus.events.connect(self.on_events)
             bus.info.connect(self.on_info)
             bus.flash.connect(self.on_flash)
@@ -725,8 +846,27 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             if self.details:
                 return "details"
             if self.ari.phase == "idle":
-                return "transfer" if moving_transfer(self.transfers) else "idle"  # Ari always comes first
+                return "live" if self.acts else "idle"  # Ari always comes first
             return "done" if self.ari.phase in ("done", "following") else "active"
+
+        def now(self) -> float:
+            return self.fake_now if self.fake_now is not None else time.time()
+
+        def live_rows(self) -> tuple[list[dict], int]:
+            return live_view(self.acts, self.now())
+
+        def transfer_of(self, a: dict) -> dict | None:
+            """The Send record behind a transfer activity (it carries the two devices), else None."""
+            if a.get("kind") != "transfer":
+                return None
+            return next((t for t in self.transfers if str(a.get("id", "")) == f"transfer:{t.get('offer_id')}:"
+                         f"{t.get('leg', 'send')}"), None)
+
+        def live_animated(self) -> bool:
+            """Something on the pill moves between seconds: beads on a transfer, the shimmer of a job."""
+            rows, _ = self.live_rows()
+            return bool(rows) and not self.still and (rows[0].get("kind") in ("transfer", "job")
+                                                      or timer_pulse(time.monotonic(), self.ended) > 0)
 
         def shown_text(self) -> str:
             return self.ari.text or ("say what you need" if self.ari.phase == "listening" else "")
@@ -759,8 +899,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
 
         def target(self) -> tuple[float, float]:
             label = WORDS.get(self.ari.phase, "")
+            rows = len(self.live_rows()[0]) if self.mode() == "live" else 1
             return target_size(self.mode(), f"{label}  {self.shown_text()}", self.hover, self.details_h,
-                               self.hover_text())
+                               self.hover_text(), rows)
 
         def kick(self) -> None:
             """Something changed: animate to the new size (the timer stops by itself once it settles)."""
@@ -770,8 +911,14 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 self.last_frame = time.monotonic()
                 self.anim.start()
             # the indicators, the follow-up ring and Talk's breathing ring move
-            busy = (self.mode() in ("active", "details", "transfer") or self.ari.phase == "following"
+            live = self.mode() == "live"
+            moving = live and self.live_animated()
+            busy = (self.mode() in ("active", "details") or self.ari.phase == "following" or moving
                     or (self.hover and self.mode() == "idle" and not self.still))
+            if live and not moving and not self.sec.isActive():  # only the countdown's seconds change
+                self.sec.start()
+            elif not live or moving:
+                self.sec.stop()
             if busy and not self.pulse.isActive():
                 self.pulse.start()
             elif not busy and self.pulse.isActive():
@@ -787,13 +934,19 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             if not moving:
                 self.anim.stop()
 
-        def on_transfers(self, items: list, names: dict) -> None:
-            was = moving_transfer(self.transfers)
-            self.transfers, self.send_names = items, names or self.send_names
-            now = moving_transfer(items)
-            if now and (not was or was.get("offer_id") != now.get("offer_id")):
+        def on_activities(self, items: list, transfers: list, names: dict) -> None:
+            was = self.live_rows()[0][:1]
+            self.acts, self.transfers, self.send_names = items, transfers, names or self.send_names
+            top = self.live_rows()[0][:1]
+            if top and top[0].get("kind") == "transfer" and (not was or was[0].get("id") != top[0].get("id")):
                 self.tx_frac = 0.0
             self.kick()
+
+        def on_activity_done(self, data: dict) -> None:
+            """A timer ran out: the pill pulses (the island has no sound of its own to chime with)."""
+            self.ended = time.monotonic()
+            self.kick()
+            QTimer.singleShot(1300, self.kick)
 
         def on_events(self, evs: list) -> None:
             if self.ari.apply(evs, time.monotonic()):
@@ -974,8 +1127,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 self.draw_active(qp, body, tone, mode)
             elif mode == "details":
                 self.draw_details(qp, body)
-            elif mode == "transfer" and self.spring.h > 30:
-                self.draw_transfer(qp, body)
+            elif mode == "live" and self.spring.h > 30:
+                self.draw_live(qp, body)
             qp.end()
 
         def draw_hover(self, qp: Any, body: Any, mic: bool, cam: bool) -> None:
@@ -1068,12 +1221,149 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 qp.setOpacity(1)
             self.draw_mark(qp, cx, cy, 1.25, mark_state(ph, self.ari.text))
 
-        def draw_transfer(self, qp: Any, body: Any) -> None:
+        def draw_live(self, qp: Any, body: Any) -> None:
+            """Live activities: the most urgent one (a file moving keeps its own look), a +N chip when there are more,
+            and while hovered a list of up to four."""
+            rows, extra = self.live_rows()
+            if not rows:
+                return
+            self.rows = []
+            if self.hover and extra and self.spring.h > LIVE[1] + 12:
+                self.draw_stack(qp, body, rows)
+                return
+            top = rows[0]
+            t = self.transfer_of(top)
+            if t:
+                self.draw_transfer(qp, body, t, extra)
+            else:
+                self.draw_pill(qp, body, top, extra)
+            self.rows = [(QRectF(body), top)]
+
+        def live_chip(self, qp: Any, right: float, cy: float, n: int) -> float:
+            """The small "+2" chip at the right edge; returns the room it takes."""
+            qp.setFont(F_TINY)
+            text = f"+{n}"
+            w = QFontMetrics(F_TINY).horizontalAdvance(text) + 12
+            r = QRectF(right - w, cy - 9, w, 18)
+            qp.setPen(Qt.PenStyle.NoPen)
+            qp.setBrush(QColor(CARD))
+            qp.drawRoundedRect(r, 9, 9)
+            qp.setPen(ink(0.85))
+            qp.drawText(r, Qt.AlignmentFlag.AlignCenter, text)
+            return w + 8
+
+        def live_bar(self, qp: Any, a: dict, x0: float, x1: float, y: float, tone: Any, now: float,
+                 shimmer: bool = True) -> None:
+            """The thin line: draining (timer), filling (progress), or a soft shimmer sweeping along (a job)."""
+            how, frac = live_line(a, now)
+            if how == "none":
+                return
+            track = QPen(ink(0.12), 3)
+            track.setCapStyle(Qt.PenCapStyle.RoundCap)
+            qp.setPen(track)
+            qp.drawLine(QPointF(x0, y), QPointF(x1, y))
+            fill = QPen(tone, 3)
+            fill.setCapStyle(Qt.PenCapStyle.RoundCap)
+            if how == "shimmer":
+                if self.still or not shimmer:  # reduced motion: a short still dash in the middle, nothing sweeping
+                    frac_a, frac_b = 0.4, 0.6
+                else:
+                    p = (time.monotonic() / 1.6) % 1.0
+                    frac_a, frac_b = p * 1.35 - 0.35, p * 1.35
+                a0, b0 = max(0.0, frac_a), min(1.0, frac_b)
+                if b0 > a0:
+                    qp.setPen(fill)
+                    qp.drawLine(QPointF(x0 + (x1 - x0) * a0, y), QPointF(x0 + (x1 - x0) * b0, y))
+                return
+            if frac > 0:
+                qp.setPen(fill)
+                qp.drawLine(QPointF(x0, y), QPointF(x0 + (x1 - x0) * max(0.02, frac), y))
+
+        def draw_pill(self, qp: Any, body: Any, a: dict, extra: int) -> None:
+            """The live pill: the activity's icon in its tone, the title, the detail and a thin line under it, and the
+            time or percent on the right."""
+            qp.setOpacity(max(0.0, min(1.0, (self.spring.h - 30) / 16)))
+            now = self.now()
+            tone = QColor(live_tone(a, now))
+            title, detail, right = live_words(a, now)
+            pulse = timer_pulse(time.monotonic(), self.ended) if a.get("kind") == "timer" else 0.0
+            cy = body.y() + 27
+            ix = body.x() + 28
+            r = 14 + (3 * pulse if not self.still else 0)
+            qp.setPen(Qt.PenStyle.NoPen)
+            qp.setBrush(tint(tone.name(), 0.22 + 0.4 * pulse))
+            qp.drawEllipse(QPointF(ix, cy), r, r)
+            self.symbol(qp, live_icon(a), ix, cy, 17, tone, filled=True)
+            if pulse:  # the end of a timer: a ring round the pill, fading out
+                ring = QPen(tone, 1.6)
+                qp.setPen(ring)
+                qp.setBrush(Qt.BrushStyle.NoBrush)
+                qp.setOpacity(qp.opacity() * pulse)
+                qp.drawRoundedRect(body.adjusted(2, 2, -2, -2), 14, 14)
+                qp.setOpacity(max(0.0, min(1.0, (self.spring.h - 30) / 16)))
+            right_edge = body.right() - 16
+            if extra:
+                right_edge -= self.live_chip(qp, right_edge, cy, extra)
+            qp.setFont(F_VALUE)
+            fm = QFontMetrics(F_VALUE)
+            rw = fm.horizontalAdvance(right) if right else 0
+            if right:
+                qp.setPen(ink(0.92))
+                qp.drawText(QRectF(right_edge - rw - 2, cy - 11, rw + 2, 22),
+                            int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter), right)
+            tx = ix + 24
+            tw = right_edge - tx - (rw + 12 if right else 0)
+            qp.setFont(F_LABEL)
+            qp.setPen(ink(0.95))
+            qp.drawText(QRectF(tx, body.y() + 6, tw, 18), Qt.AlignmentFlag.AlignVCenter,
+                        QFontMetrics(F_LABEL).elidedText(title, Qt.TextElideMode.ElideRight, int(tw)))
+            qp.setFont(F_CHIP)
+            qp.setPen(ink(DIM))
+            qp.drawText(QRectF(tx, body.y() + 23, tw, 16), Qt.AlignmentFlag.AlignVCenter,
+                        QFontMetrics(F_CHIP).elidedText(detail, Qt.TextElideMode.ElideRight, int(tw)))
+            self.live_bar(qp, a, tx, tx + tw, body.y() + 46, tone, now)
+            qp.setOpacity(1)
+
+        def draw_stack(self, qp: Any, body: Any, rows: list[dict]) -> None:
+            """Hovered with several activities: up to four rows, each a click away from its Helios page."""
+            qp.setOpacity(max(0.0, min(1.0, (self.spring.h - LIVE[1]) / 16)))
+            now = self.now()
+            y = body.y() + 6
+            for a in rows[:STACK_MAX]:
+                row = QRectF(body.x() + 8, y, body.width() - 16, LIVE_ROW)
+                self.rows.append((row, a))
+                hot = self.hot_row == a.get("id")
+                if hot:
+                    qp.setPen(Qt.PenStyle.NoPen)
+                    qp.setBrush(QColor(CARD))
+                    qp.drawRoundedRect(row, 12, 12)
+                tone = QColor(live_tone(a, now))
+                title, detail, right = live_words(a, now)
+                cy = row.y() + 14
+                qp.setPen(Qt.PenStyle.NoPen)
+                qp.setBrush(tint(tone.name(), 0.22))
+                qp.drawEllipse(QPointF(row.x() + 16, cy), 11, 11)
+                self.symbol(qp, live_icon(a), row.x() + 16, cy, 14, tone, filled=True)
+                fm = QFontMetrics(F_VALUE)
+                rw = fm.horizontalAdvance(right) if right else 0
+                qp.setFont(F_VALUE)
+                qp.setPen(ink(0.92))
+                qp.drawText(QRectF(row.right() - 10 - rw - 2, cy - 11, rw + 2, 22),
+                            int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter), right)
+                tw = row.width() - 44 - rw - 20
+                qp.setFont(F_LABEL)
+                qp.setPen(ink(0.95))
+                qp.drawText(QRectF(row.x() + 36, cy - 9, tw, 18), Qt.AlignmentFlag.AlignVCenter,
+                            QFontMetrics(F_LABEL).elidedText(title, Qt.TextElideMode.ElideRight, int(tw)))
+                self.live_bar(qp, a, row.x() + 36, row.right() - 10, row.y() + LIVE_ROW - 5, tone, now, shimmer=False)
+                y += LIVE_ROW
+            qp.setOpacity(1)
+
+        def draw_transfer(self, qp: Any, body: Any, t: dict, extra: int = 0) -> None:
             """A file moving (approved animation B): sending device, a line that fills with beads running ahead, the
             receiving device; the name and progress under it."""
-            t = moving_transfer(self.transfers)
-            if not t:
-                return
+            if self.tx_id != str(t.get("offer_id")):
+                self.tx_id, self.tx_frac = str(t.get("offer_id")), 0.0
             qp.setOpacity(max(0.0, min(1.0, (self.spring.h - 30) / 16)))
             want = (t["done"] / t["total"]) if t.get("total") else 0.0
             now = time.monotonic()  # eased by time, not per frame, so it looks the same at any frame rate
@@ -1108,6 +1398,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             fm = QFontMetrics(F_CHIP)
             rw = fm.horizontalAdvance(right)
             row = QRectF(body.x() + 14, body.y() + 32, body.width() - 28, 16)
+            if extra:
+                row.setRight(row.right() - self.live_chip(qp, row.right(), row.center().y(), extra))
             qp.setPen(ink(DIM))
             qp.drawText(row, int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter), right)
             qp.setPen(ink(0.92))
@@ -1598,6 +1890,11 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 self.hot = key
                 self.setCursor(Qt.CursorShape.PointingHandCursor if (key or inside) else Qt.CursorShape.ArrowCursor)
                 self.update()
+            hot_row = next((a.get("id") for r, a in self.rows if r.contains(QPointF(e.position()))), None) \
+                if self.mode() == "live" and inside else None
+            if hot_row != self.hot_row:
+                self.hot_row = hot_row
+                self.update()
             if inside != self.hover:
                 self.hover = inside
                 self.kick()
@@ -1605,8 +1902,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
         def mousePressEvent(self, e: Any) -> None:  # noqa: N802
             if not self.shape_rect().contains(QPointF(e.position())):
                 return
-            if self.mode() == "transfer":  # a file moving: Helios's Transfers page
-                target = open_target(args.url, "show:transfers")
+            if self.mode() == "live":  # a row: its Helios page (Transfers, the runs, nothing for a timer)
+                hit = next((a for r, a in self.rows if r.contains(QPointF(e.position()))), None)
+                target = open_target(args.url, activity_action(hit) or "") if hit else None
                 if target:
                     webbrowser.open(target)
                 return
@@ -2058,6 +2356,15 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
     if args.preview:
         island.ari.phase, island.ari.text = args.phase, args.text
         island.hover = args.hover
+        if args.live:  # a frozen moment: the same clock for the text, the lines and the pulse
+            island.fake_now = time.time()
+            island.acts, island.transfers = live_scenario(args.live, island.fake_now)
+            island.send_names = {"pc": "PC", "phone": "Phone"}
+            island.still = True
+            if args.live == "timerend":
+                island.ended = time.monotonic() - 0.3
+            if args.live == "stack":
+                island.hover = True
         if args.hover and args.text.startswith("♪"):
             island.media = {"title": args.text[2:], "artist": "M83", "playing": True}
         elif args.hover and args.text == "mic":
@@ -2137,15 +2444,17 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                         bus.events.emit([{"kind": "ari.game", "data": api.call("GET", "/ari/game")}])
                     except _API_ERRORS:  # an older Argus without game mode
                         pass
-                r = api.call("GET", "/events?kinds=ari.state,ari.listening,ari.game,step.running,ari.ask,send.live,"
+                r = api.call("GET", "/events?kinds=ari.state,ari.listening,ari.game,step.running,ari.ask,activity.,"
                              f"approval.approved,approval.rejected,approval.expired&after={seq}&limit=200&wait=20",
                              timeout=30)
                 evs = r.get("events") or []
                 if evs:
                     seq = max(int(e["seq"]) for e in evs)
                     for e in evs:  # Ari's questions: the box under the island (gone once answered anywhere)
-                        if e.get("kind") == "send.live":  # a file started or finished moving: look at Send
-                            send_wake.set()
+                        if e.get("kind") == "activity.changed":  # something live started, moved or ended: look
+                            act_wake.set()
+                        elif e.get("kind") == "activity.done":
+                            bus.activity_done.emit(e.get("data") or {})
                         elif e.get("kind") == "ari.ask":
                             bus.ask.emit(e.get("data") or {})
                         elif str(e.get("kind")).startswith("approval."):
@@ -2160,28 +2469,27 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 log.warning("Ari feed failed", exc_info=True)
                 time.sleep(4)
 
-    send_wake = threading.Event()
-    send_wake.set()  # look once at the start, in case something is already moving
+    act_wake = threading.Event()
+    act_wake.set()  # look once at the start, in case something is already going on
 
-    def send_feed() -> None:
-        """Argus Send: woken by a "send.live" event, read the live transfers twice a second while anything moves,
-        then rest until the next one (nothing is asked while nothing moves)."""
+    def act_feed() -> None:
+        """Live activities: woken by "activity.changed" on the event stream above (nothing is asked while nothing
+        is live), read GET /activities; for a transfer, also Send's record of it (its devices)."""
         names: dict[str, str] = {}
         while True:
-            send_wake.wait()
-            send_wake.clear()
+            act_wake.wait()
+            act_wake.clear()
             try:
-                names = {d["id"]: d["name"] for d in api.call("GET", "/send/devices")} or names
-                while True:
-                    items = api.call("GET", "/send/live")
-                    bus.transfers.emit(list(items), names)
-                    if not moving_transfer(items):
-                        break
-                    time.sleep(0.5)
-            except (*_API_ERRORS, *_SHAPE_ERRORS):  # an older Argus without Send, or out of reach
-                bus.transfers.emit([], names)
+                items = api.call("GET", "/activities").get("items") or []
+                moving: list[dict] = []
+                if any(a.get("kind") == "transfer" for a in items):
+                    names = {d["id"]: d["name"] for d in api.call("GET", "/send/devices")} or names
+                    moving = api.call("GET", "/send/live")
+                bus.activities.emit(list(items), list(moving), names)
+            except (*_API_ERRORS, *_SHAPE_ERRORS):  # an older Argus without activities, or out of reach
+                bus.activities.emit([], [], names)
 
-    threading.Thread(target=send_feed, daemon=True, name="send-feed").start()
+    threading.Thread(target=act_feed, daemon=True, name="activity-feed").start()
     threading.Thread(target=feed, daemon=True, name="ari-feed").start()
     print("Ari's island is on (top of the screen).", flush=True)
     return app.exec()
