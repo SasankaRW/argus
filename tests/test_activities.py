@@ -7,6 +7,7 @@ import asyncio
 
 from fastapi.testclient import TestClient
 
+from argus import activities as activities_mod
 from argus.activities import MIN_EMIT, Activities, rank
 from argus.api import create_app
 from argus.send_live import SendLive
@@ -109,7 +110,8 @@ def test_transfers_are_derived_from_send_live(clock):
     assert a.snapshot()["items"] == []  # finished: gone from the live list
 
 
-def test_job_is_promoted_after_ten_seconds(jobs, clock):
+def test_job_is_promoted_after_ten_seconds(jobs, clock, monkeypatch):
+    monkeypatch.setattr(activities_mod, "SHOW_JOBS", True)  # off by default (Sas): the mechanism still works
     a = Activities(clock=clock)
     jobs.on_event = a.job_event
 
@@ -331,3 +333,15 @@ def test_the_pump_sleeps_long_when_nothing_needs_it(clock):
 class _Boom:
     def __str__(self):
         raise ValueError("unprintable")
+
+
+def test_jobs_are_not_shown_by_default():
+    """Sas: every plugin job on the island was noise; only transfers and timers are live activities."""
+    from types import SimpleNamespace
+
+    assert activities_mod.SHOW_JOBS is False
+    t = [1000.0]
+    a = Activities(clock=lambda: t[0])
+    a.job_event("job.running", SimpleNamespace(id="j1", plugin="vault", workflow="tidy", input={}), t[0])
+    t[0] += 60
+    assert [x for x in a.snapshot()["items"] if x["kind"] == "job"] == []

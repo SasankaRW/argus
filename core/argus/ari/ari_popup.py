@@ -422,10 +422,10 @@ STOPPABLE = ("thinking", "working", "speaking")  # while Ari is doing any of the
 
 
 def target_size(mode: str, text: str, hover: bool, details_h: float, hover_text: str = "",
-                rows: int = 1) -> tuple[float, float]:
-    if mode == "live":  # small at rest; hovered, the full pill, or a list of up to STACK_MAX rows
+                rows: int = 1, small: bool = True) -> tuple[float, float]:
+    if mode == "live":  # small at rest (a moving file keeps its full look); hovered, the full pill or a list
         if not hover:
-            return LIVE_SMALL
+            return LIVE_SMALL if small else LIVE
         return (LIVE[0], 12 + LIVE_ROW * min(rows, STACK_MAX)) if rows > 1 else LIVE
     if mode == "details":
         return DETAILS_W, min(MAX_H, details_h)
@@ -920,9 +920,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
 
         def target(self) -> tuple[float, float]:
             label = WORDS.get(self.ari.phase, "")
-            rows = len(self.live_rows()[0]) if self.mode() == "live" else 1
+            live = self.live_rows()[0] if self.mode() == "live" else []
+            small = not (live and live[0].get("kind") == "transfer")  # a moving file keeps its full look
             return target_size(self.mode(), f"{label}  {self.shown_text()}", self.hover, self.details_h,
-                               self.hover_text(), rows)
+                               self.hover_text(), len(live) or 1, small)
 
         def kick(self) -> None:
             """Something changed: animate to the new size (the timer stops by itself once it settles)."""
