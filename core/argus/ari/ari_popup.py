@@ -289,7 +289,7 @@ class AriState:
 
 LIVE = (300, 54)  # the island while something is live (a file moving, a job, a timer): icon, text, line, time
 TRANSFER = LIVE  # the transfer is the live pill's first look: same size
-LIVE_SMALL = (200, 28)  # at rest something live shows small: icon, name, time, a hairline; hovered it opens to LIVE
+LIVE_SMALL = (200, 28)  # at rest something live shows small (its width fits what it holds); hovered it opens to LIVE
 LIVE_ICONS = ("swap_horiz", "timer", "play_circle", "fitness_center", "bolt", "notifications", "bedtime",
               "auto_awesome", "language", "description", "chat_bubble", "inbox", "circle")  # in the icon font
 LIVE_ROW = 34  # one row of the hover list
@@ -422,10 +422,10 @@ STOPPABLE = ("thinking", "working", "speaking")  # while Ari is doing any of the
 
 
 def target_size(mode: str, text: str, hover: bool, details_h: float, hover_text: str = "",
-                rows: int = 1, small: bool = True) -> tuple[float, float]:
-    if mode == "live":  # small at rest (a moving file keeps its full look); hovered, the full pill or a list
+                rows: int = 1, small: float = LIVE_SMALL[0]) -> tuple[float, float]:
+    if mode == "live":  # small at rest (`small`: its width; 0 = a moving file, which keeps its full look)
         if not hover:
-            return LIVE_SMALL if small else LIVE
+            return (small, LIVE_SMALL[1]) if small else LIVE
         return (LIVE[0], 12 + LIVE_ROW * min(rows, STACK_MAX)) if rows > 1 else LIVE
     if mode == "details":
         return DETAILS_W, min(MAX_H, details_h)
@@ -921,7 +921,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
         def target(self) -> tuple[float, float]:
             label = WORDS.get(self.ari.phase, "")
             live = self.live_rows()[0] if self.mode() == "live" else []
-            small = not (live and live[0].get("kind") == "transfer")  # a moving file keeps its full look
+            small = 0.0 if not live or live[0].get("kind") == "transfer" else self.small_width(live[0], len(live) - 1)
             return target_size(self.mode(), f"{label}  {self.shown_text()}", self.hover, self.details_h,
                                self.hover_text(), len(live) or 1, small)
 
@@ -1491,50 +1491,69 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 qp.setPen(fill)
                 qp.drawLine(QPointF(x0, y), QPointF(x0 + (x1 - x0) * max(0.02, frac), y))
 
+        def small_parts(self, a: dict, extra: int) -> tuple[str, str, float, float, float]:
+            """(title, time, title width, time width, +N width) for the small pill, in its own fonts."""
+            title, _detail, right = live_words(a, self.now())
+            tw = QFontMetrics(F_CHIP).horizontalAdvance(title) if title else 0.0
+            rw = QFontMetrics(F_VALUE).horizontalAdvance(right) if right else 0.0
+            cw = QFontMetrics(F_TINY).horizontalAdvance(f"+{extra}") + 6 if extra else 0.0
+            return title, right, tw, rw, cw
+
+        def small_width(self, a: dict, extra: int) -> float:
+            """The small pill's width: just what it holds (ring, name, time), so there is no empty middle."""
+            _t, _r, tw, rw, cw = self.small_parts(a, extra)
+            name = (tw + 10) if tw else 4
+            return max(110.0, min(260.0, 14 + 18 + 8 + name + rw + 12 + cw + 14))  # 12: the time's capsule
+
         def draw_small(self, qp: Any, body: Any, a: dict, extra: int) -> None:
-            """Something live, at rest, on one line: the icon inside a thin ring that drains (a timer) or fills
-            (progress), the name, and the time in the activity's tone on the right (+N when there are more)."""
+            """Something live, at rest, on one line: the icon in a thin ring that drains (a timer) or fills
+            (progress), the name, and the time in a capsule of its tone (+N when there are more). The pill is only
+            as wide as that (small_width)."""
             now = self.now()
             tone = QColor(live_tone(a, now))
-            title, _detail, right = live_words(a, now)
+            title, right, tw, rw, cw = self.small_parts(a, extra)
             pulse = timer_pulse(time.monotonic(), self.ended) if a.get("kind") == "timer" else 0.0
             qp.setOpacity(max(0.0, min(1.0, (self.spring.h - 14) / 10)))
             cy = body.center().y()
-            ix = body.x() + 17
-            rr = 8.5 + (1.5 * pulse if not self.still else 0)
+            rr = 9.0 + (1.5 * pulse if not self.still else 0)
+            ix = body.x() + 14 + 9
             ring = QRectF(ix - rr, cy - rr, 2 * rr, 2 * rr)
-            qp.setBrush(Qt.BrushStyle.NoBrush)
-            qp.setPen(QPen(ink(0.16), 2))
-            qp.drawEllipse(ring)
             how, frac = live_line(a, now)
+            qp.setPen(Qt.PenStyle.NoPen)
+            qp.setBrush(tint(tone.name(), 0.16 + 0.3 * pulse))
+            qp.drawEllipse(ring.adjusted(1.5, 1.5, -1.5, -1.5))
             if how in ("fill", "drain") and frac > 0:
+                track = QPen(tint(tone.name(), 0.28), 2)
+                qp.setBrush(Qt.BrushStyle.NoBrush)
+                qp.setPen(track)
+                qp.drawEllipse(ring)
                 arc = QPen(tone, 2)
                 arc.setCapStyle(Qt.PenCapStyle.RoundCap)
                 qp.setPen(arc)
                 qp.drawArc(ring, 90 * 16, -int(360 * 16 * max(0.03, frac)))  # from the top, clockwise
-            elif pulse:
-                qp.setPen(QPen(tone, 2))
-                qp.drawEllipse(ring)
             self.symbol(qp, live_icon(a), ix, cy, 11, tone, filled=True)
-            right_edge = body.right() - 14
+            x = body.right() - 14
             if extra:
                 qp.setFont(F_TINY)
-                chip = f"+{extra}"
-                cw = QFontMetrics(F_TINY).horizontalAdvance(chip)
                 qp.setPen(ink(DIM))
-                qp.drawText(QRectF(right_edge - cw, cy - 8, cw + 1, 16), RIGHT_MID, chip)
-                right_edge -= cw + 6
-            qp.setFont(F_VALUE)
-            rw = QFontMetrics(F_VALUE).horizontalAdvance(right) if right else 0
+                qp.drawText(QRectF(x - cw, cy - 8, cw, 16), RIGHT_MID, f"+{extra}")
+                x -= cw
             if right:
+                qp.setFont(F_VALUE)
+                cap = QRectF(x - rw - 12, cy - 10, rw + 12, 20)  # the time in a tinted capsule
+                qp.setPen(Qt.PenStyle.NoPen)
+                qp.setBrush(tint(tone.name(), 0.2))
+                qp.drawRoundedRect(cap, 10, 10)
                 qp.setPen(tone)
-                qp.drawText(QRectF(right_edge - rw - 1, cy - 9, rw + 1, 18), RIGHT_MID, right)
-            tx = ix + rr + 8
-            tw = right_edge - tx - (rw + 10 if right else 0)
-            qp.setFont(F_CHIP)
-            qp.setPen(ink(0.95))
-            qp.drawText(QRectF(tx, cy - 9, tw, 18), Qt.AlignmentFlag.AlignVCenter,
-                        QFontMetrics(F_CHIP).elidedText(title, Qt.TextElideMode.ElideRight, int(max(0, tw))))
+                qp.drawText(cap, Qt.AlignmentFlag.AlignCenter, right)
+                x = cap.x()
+            if title:
+                tx = ix + rr + 8
+                room = x - 10 - tx
+                qp.setFont(F_CHIP)
+                qp.setPen(ink(0.95))
+                qp.drawText(QRectF(tx, cy - 9, max(0.0, room), 18), Qt.AlignmentFlag.AlignVCenter,
+                            QFontMetrics(F_CHIP).elidedText(title, Qt.TextElideMode.ElideRight, int(max(0, room))))
             qp.setOpacity(1)
 
         def draw_pill(self, qp: Any, body: Any, a: dict, extra: int) -> None:
