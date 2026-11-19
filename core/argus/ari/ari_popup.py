@@ -1151,7 +1151,24 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 qp.setPen(ink(DIM))
                 qp.drawText(QRectF(x0 + 150, y + 24, x1 - x0 - 150, 18), RIGHT_MID, under)
             y += 54
+            head, strip = ib.outlook(data)
+            if head:  # when it rains, in words, then the hours as bars
+                qp.setFont(F_TEXT)
+                qp.setPen(ink())
+                box = QRectF(x0, y, x1 - x0, 40)
+                used = qp.boundingRect(box, int(Qt.TextFlag.TextWordWrap), head)
+                qp.drawText(QRectF(x0, y, x1 - x0, used.height()),
+                            int(Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextWordWrap), head)
+                y += used.height() + 8
+            if strip:
+                y = self.draw_rain_strip(qp, x0, x1, y, strip) + 10
             for r in ib.card_rows(data, now):
+                if "head" in r:  # a small heading over the rows that follow
+                    qp.setFont(F_SMALL)
+                    qp.setPen(ink(DIM))
+                    qp.drawText(QRectF(x0, y + 4, x1 - x0, 18), Qt.AlignmentFlag.AlignVCenter, r["head"])
+                    y += 24
+                    continue
                 key = r["action"]
                 if key:
                     rect = QRectF(x0 - 8, y, x1 - x0 + 16, 30)
@@ -1181,6 +1198,33 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                     qp.drawText(rect, Qt.AlignmentFlag.AlignCenter, "Done")
                 self.buttons.append((rect, key))
             return y + 38 + 8
+
+        def draw_rain_strip(self, qp: Any, x0: float, x1: float, y: float, strip: list[tuple[int, int]]) -> float:
+            """The chance of rain for each hour, 6 am to 11 pm, as thin bars (the island's tones: accent when it
+            is likely, the accent at half strength when it may be, a faint stub when it is dry), with a few
+            hour labels under them. Returns the y under the strip."""
+            top, height = y, 30.0
+            n = max(1, len(strip))
+            step = (x1 - x0) / n
+            bar = max(4.0, step - 4)
+            qp.setPen(Qt.PenStyle.NoPen)
+            for i, (_h, p) in enumerate(strip):
+                bh = max(3.0, height * p / 100)
+                qp.setBrush(QColor(ACCENT) if p >= 60 else tint(ACCENT, 0.5) if p >= 30 else ink(0.14))
+                qp.drawRoundedRect(QRectF(x0 + i * step + (step - bar) / 2, top + height - bh, bar, bh), 2, 2)
+            qp.setFont(F_SMALL)
+            qp.setPen(ink(FAINT))
+            for i, (h, _p) in enumerate(strip):
+                if h in (6, 12, 18, 22):
+                    label = {6: "6 am", 12: "12 pm", 18: "6 pm", 22: "11 pm"}[h]
+                    cx = x0 + i * step + step / 2
+                    left = max(x0, min(x1 - 40, cx - 20))
+                    al = (Qt.AlignmentFlag.AlignLeft if h == 6 else Qt.AlignmentFlag.AlignRight if h == 22
+                          else Qt.AlignmentFlag.AlignHCenter)
+                    box = QRectF(x0, top + height + 2, 40, 16) if h == 6 else \
+                        QRectF(x1 - 40, top + height + 2, 40, 16) if h == 22 else QRectF(left, top + height + 2, 40, 16)
+                    qp.drawText(box, al | Qt.AlignmentFlag.AlignVCenter, label)
+            return top + height + 20
 
         # -------------------------------------------------------------- geometry
 

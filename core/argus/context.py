@@ -22,7 +22,6 @@ from .daily import (
     brief_parts,
     compose_brief,
     compose_summary,
-    last_health,
     resume_summary,
     say_brief,
 )
@@ -40,7 +39,7 @@ from .send_live import SendLive
 from .triggers import Triggers
 from .usage import rollup as usage_rollup
 from .weather import CODES as WEATHER_CODES
-from .weather import Weather, words
+from .weather import Weather, rain_outlook, words
 from .weather import spoken as weather_spoken
 
 log = logging.getLogger("argus")
@@ -377,7 +376,7 @@ class Argus:
         if w is None:
             log.warning("no such place for the weather", extra={"place": place})
             return ""
-        return words(w)
+        return words(w, rain_outlook(w.get("hours"), datetime.now().hour).get("headline", ""))
 
     async def weather_say(self, place: str = "", offset: int = 0) -> str | None:
         """Ari's spoken weather for a place (default: brief.weather), today or tomorrow; None when it can't."""
@@ -407,26 +406,21 @@ class Argus:
             return {}
         code = w.get("code")
         return {"place": w.get("place"), "now": w.get("now"), "low": w.get("low"), "high": w.get("high"),
-                "rain": w.get("rain"), "sky": WEATHER_CODES.get(int(code), "") if code is not None else ""}
+                "rain": w.get("rain"), "sky": WEATHER_CODES.get(int(code), "") if code is not None else "",
+                "outlook": rain_outlook(w.get("hours"), datetime.now().hour)}
 
     async def brief_today(self) -> dict:
-        """The morning brief as data for the island's card: brief_parts as the phone brief builds them, plus the
-        structured weather. No Life Hub tasks yet: its plugin has no "due today" call, so `tasks` stays empty."""
+        """The morning brief as data for the island's card: brief_parts as the phone brief builds them (weather
+        headline, the diary's reminders, what needs you), plus the structured weather with its hourly rain strip
+        (`weather.outlook`)."""
         inputs, weather = await asyncio.gather(self._brief_inputs(), self.island_weather())
         now = time.time()
-        parts = await self.store.read(lambda c: brief_parts(c, now, health=last_health(c), **inputs))
-        parts["today"] = [list(t) for t in parts["today"]]
-        parts["claude"] = list(parts["claude"])
-        b = parts["backup"]
-        parts["backup"] = {k: b.get(k) for k in ("ok", "at", "problem")} if b else None
+        parts = await self.store.read(lambda c: brief_parts(c, now, **inputs))
         return {"day": datetime.fromtimestamp(now).strftime("%Y-%m-%d"), "at": now, "parts": parts,
-                "weather": weather, "tasks": []}
+                "weather": weather}
 
     async def _brief_inputs(self) -> dict:
-        needs = set(self.cfg.power.pc_needs)
-        pc = any(w["state"] == "online" and set(w["capabilities"]) & needs for w in await self.registry.workers())
-        return {"last_backup": self.last_backup, "pc_online": pc, "claude_cap": self.cfg.claude.calls_per_day,
-                "weather": await self.weather_line()}
+        return {"last_backup": self.last_backup, "weather": await self.weather_line()}
 
     async def send_brief(self, day: str | None = None) -> dict:
         """The morning brief to the phone (once per day; `POST /brief` sends one now)."""
@@ -434,7 +428,7 @@ class Argus:
 
         def fn(conn):
             now = time.time()
-            title, text = compose_brief(conn, now, health=last_health(conn), **inputs)
+            title, text = compose_brief(conn, now, **inputs)
             key = f"brief:{day}" if day else f"brief:now:{int(now)}"
             oid = add_message(conn, now, "phone", phone_message(title, text, tags=["sunrise"]), dedupe_key=key)
             return {"title": title, "text": text, "queued": oid is not None}
@@ -449,7 +443,7 @@ class Argus:
         """The brief as Ari says it ("good morning")."""
         inputs = await self._brief_inputs()
         now = time.time()
-        parts = await self.store.read(lambda c: brief_parts(c, now, health=last_health(c), **inputs))
+        parts = await self.store.read(lambda c: brief_parts(c, now, **inputs))
         return say_brief(parts, now)
 
     def _backup_due(self, now: float) -> bool:

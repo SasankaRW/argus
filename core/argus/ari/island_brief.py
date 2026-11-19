@@ -94,48 +94,49 @@ def _n(n: int, one: str, many: str) -> str:
     return f"{n} {one if n == 1 else many}"
 
 
-def backup_words(b: dict | None, now: datetime) -> tuple[str, str, str] | None:
-    """(dot, text, right) for the backup row, None when no backup is known."""
-    if not b:
-        return None
-    if not b.get("ok"):
-        return CORAL, "Backup failed", str(b.get("problem") or "")[:40]
-    at = datetime.fromtimestamp(b["at"])
-    hhmm = at.strftime("%H:%M")
-    days = (now.date() - at.date()).days
-    when = "last night" if (days == 0 and at.hour < 5) or (days == 1 and at.hour >= 18) else \
-        "today" if days == 0 else "yesterday" if days == 1 else at.strftime("%a")
-    return GREEN, f"Backup · {when} {hhmm}", "✓"
+def _hm(t: Any) -> str:
+    """ "14:30" as "2:30 pm"; whatever isn't a time stays as it is."""
+    try:
+        h, m = map(int, str(t).split(":"))
+    except ValueError:
+        return str(t or "")
+    return f"{h % 12 or 12}:{m:02d} {'am' if h < 12 else 'pm'}"
 
 
 def card_rows(data: dict, now: datetime) -> list[dict]:
-    """The card's rows, most important first, from GET /brief/today: {dot, text, right, action}. `right` is a
-    chevron ("›") when the row opens something. Rows that have nothing to say are left out."""
+    """The card's rows from GET /brief/today: {dot, text, right, action} (`right` is "›" when the row opens
+    something), and {"head": "From your diary"} for a small heading. What needs you comes first (approvals
+    waiting, a failed backup, things that failed overnight), then what your diary says is today (up to 4). A row
+    with nothing to say is left out; a quiet morning gets the one line "Nothing needs you"."""
     p = data.get("parts") or {}
     rows: list[dict] = []
     waiting = p.get("waiting") or []
     if waiting:
         rows.append({"dot": AMBER, "text": f"{len(waiting)} waiting for you", "right": "›",
                      "action": "show:inbox"})
+    if p.get("backup"):
+        rows.append({"dot": CORAL, "text": "Backup failed", "right": "›", "action": "show:runs"})
     if p.get("dead_n"):
         first = (p.get("dead") or [""])[0]
-        rows.append({"dot": CORAL, "text": f"{_n(p['dead_n'], 'job', 'jobs')} failed overnight"
+        rows.append({"dot": CORAL, "text": f"{_n(p['dead_n'], 'thing', 'things')} failed overnight"
                      + (f" · {first}" if first else ""), "right": "›", "action": "show:runs"})
-    if p.get("done"):
-        rows.append({"dot": QUIET, "text": f"{_n(p['done'], 'job', 'jobs')} done overnight", "right": "",
-                     "action": None})
-    today = [t for t in (p.get("today") or []) if len(t) == 2][:3]
-    for at, what in today:
-        rows.append({"dot": ACCENT, "text": str(what), "right": str(at), "action": None})
-    for task in (data.get("tasks") or [])[: max(0, 3 - len(today))]:
-        rows.append({"dot": ACCENT, "text": str(task.get("title") or ""), "right": str(task.get("at") or ""),
-                     "action": None})
-    if not today and not data.get("tasks"):
-        rows.append({"dot": QUIET, "text": "Nothing scheduled today", "right": "", "action": None})
-    bk = backup_words(p.get("backup"), now)
-    if bk:
-        rows.append({"dot": bk[0], "text": bk[1], "right": bk[2], "action": None})
+    rem = [r for r in p.get("reminders") or [] if isinstance(r, dict) and r.get("text")]
+    if rem:
+        rows.append({"head": "From your diary"})
+        for r in rem[:4]:
+            rows.append({"dot": ACCENT, "text": str(r["text"]), "right": _hm(r["time"]) if r.get("time") else "",
+                         "action": None})
+    if not rows:  # a quiet morning: one calm line, so the card isn't just a weather report with a gap
+        rows.append({"dot": QUIET, "text": "Nothing needs you", "right": "", "action": None})
     return rows
+
+
+def outlook(data: dict) -> tuple[str, list[tuple[int, int]]]:
+    """(the rain headline, [(hour, chance %)] for the strip) from GET /brief/today; ("", []) without hourly data."""
+    o = (data.get("weather") or {}).get("outlook") or {}
+    strip = [(int(x["h"]), max(0, min(100, int(x["p"])))) for x in o.get("strip") or []
+             if isinstance(x, dict) and x.get("h") is not None and x.get("p") is not None]
+    return str(o.get("headline") or ""), strip
 
 
 def weather_line(w: dict | None) -> tuple[str, str, str]:
@@ -158,18 +159,27 @@ def weather_line(w: dict | None) -> tuple[str, str, str]:
 
 def sample(kind: str, now: datetime) -> dict[str, Any]:
     """Fake GET /brief/today bodies for `--preview --brief normal|quiet|trouble`."""
-    ts = now.replace(hour=2, minute=0).timestamp()
-    wx = {"place": "Colombo", "now": 27.0, "low": 25.0, "high": 31.0, "rain": 70, "sky": "showers"}
-    base: dict[str, Any] = {"parts": {"weather": "", "done": 12, "dead": [], "dead_n": 0, "waiting": [],
-                                       "today": [["09:00", "Downloads organizer"], ["13:30", "Photo backup"]],
-                                       "backup": {"ok": True, "at": ts, "problem": None}, "pc": True,
-                                       "health": {}, "claude": [0, 200]}, "weather": wx, "tasks": []}
-    p = base["parts"]
+    from ..weather import rain_outlook
+
+    def hours(chances: dict[int, int], code: int = 80, mm: float = 1.0) -> list[dict[str, Any]]:
+        return [{"h": h, "p": chances.get(h, 5), "mm": mm if h in chances else 0.0,
+                 "code": code if h in chances else 3} for h in range(24)]
+
+    wx = {"place": "Colombo", "now": 27.0, "low": 25.0, "high": 31.0, "rain": 80, "sky": "showers"}
+    day = hours({13: 40, 14: 70, 15: 80, 16: 80, 17: 60, 18: 30})
+    parts: dict[str, Any] = {
+        "weather": "", "waiting": [], "dead": [], "dead_n": 0, "backup": None,
+        "reminders": [{"text": "Dentist appointment", "time": "15:30", "mentioned_on": "2026-11-17"},
+                      {"text": "Call Kasun about the trip", "time": None, "mentioned_on": "2026-11-18"}]}
     if kind == "quiet":
-        p.update(done=0, today=[])
-        base["weather"] = {**wx, "rain": 10, "sky": "clear", "now": 26.0}
+        wx = {**wx, "rain": 10, "sky": "clear", "now": 26.0}
+        parts["reminders"] = []
+        day = hours({})
     elif kind == "trouble":
-        p.update(done=9, dead=["backup.copy"], dead_n=1, waiting=["Approve email draft", "Delete old logs",
-                                                                  "Install update"],
-                 backup={"ok": False, "at": ts, "problem": "the target drive is full"})
-    return base
+        parts.update(dead=["backup.copy"], dead_n=1, waiting=["Approve email draft", "Delete old logs",
+                                                              "Install update"],
+                     backup={"ok": False, "at": now.timestamp(), "problem": "the target drive is full"})
+        wx = {**wx, "sky": "thunderstorms"}
+        day = hours({11: 50, 12: 70, 13: 90, 14: 90, 15: 70, 16: 40}, code=95, mm=5.0)
+    return {"day": today_key(now), "at": now.timestamp(), "parts": parts,
+            "weather": {**wx, "outlook": rain_outlook(day)}}

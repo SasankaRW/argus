@@ -92,44 +92,46 @@ def test_what_was_shown_is_kept_across_restarts(tmp_path):
 # ------------------------------------------------------------------ the card
 
 def parts(**over):
-    p = {"weather": "", "done": 0, "dead": [], "dead_n": 0, "waiting": [], "today": [],
-         "backup": None, "pc": True, "health": {}, "claude": [0, 200]}
-    return {"parts": {**p, **over}, "weather": {}, "tasks": []}
+    p = {"weather": "", "reminders": [], "waiting": [], "dead": [], "dead_n": 0, "backup": None}
+    return {"parts": {**p, **over}, "weather": {}}
 
 
 def test_an_empty_morning_has_one_calm_row():
     rows = ib.card_rows(parts(), at(8))
-    assert [r["text"] for r in rows] == ["Nothing scheduled today"]
-    assert rows[0]["action"] is None
+    assert [r["text"] for r in rows] == ["Nothing needs you"]
+    assert rows[0]["action"] is None and rows[0]["dot"] == ib.QUIET
 
 
 def test_the_rows_come_in_order_of_need():
-    ts = datetime(2026, 11, 19, 2, 0).timestamp()
-    data = parts(waiting=["a", "b", "c"], dead=["backup.copy"], dead_n=1, done=12,
-                 today=[["09:00", "One"], ["10:00", "Two"], ["11:00", "Three"], ["12:00", "Four"]],
-                 backup={"ok": True, "at": ts, "problem": None})
+    rem = [{"text": "Dentist", "time": "15:30", "mentioned_on": DAY}, {"text": "Call Kasun", "time": None},
+           {"text": "C", "time": None}, {"text": "D", "time": None}, {"text": "E", "time": None}]
+    data = parts(waiting=["a", "b", "c"], dead=["backup.copy"], dead_n=1, reminders=rem,
+                 backup={"ok": False, "at": 1.0, "problem": "the drive is full"})
     rows = ib.card_rows(data, at(8))
-    assert [r["text"] for r in rows] == ["3 waiting for you", "1 job failed overnight · backup.copy",
-                                         "12 jobs done overnight", "One", "Two", "Three",
-                                         "Backup · last night 02:00"]
-    assert rows[0]["action"] == "show:inbox" and rows[0]["right"] == "›"
-    assert rows[1]["action"] == "show:runs" and rows[1]["dot"] == ib.CORAL
-    assert rows[2]["dot"] == ib.QUIET and rows[-1]["right"] == "✓"
+    assert [r.get("text") or r["head"] for r in rows] == [
+        "3 waiting for you", "Backup failed", "1 thing failed overnight · backup.copy", "From your diary",
+        "Dentist", "Call Kasun", "C", "D"]
+    assert rows[0]["action"] == "show:inbox" and rows[0]["right"] == "›" and rows[0]["dot"] == ib.AMBER
+    assert rows[2]["action"] == "show:runs" and rows[2]["dot"] == ib.CORAL
+    assert rows[4]["right"] == "3:30 pm" and rows[5]["right"] == ""
 
 
-def test_a_failed_backup_and_plurals():
-    rows = ib.card_rows(parts(dead=["a.x", "b.y"], dead_n=2, done=1,
-                              backup={"ok": False, "at": 1.0, "problem": "the drive is full"}), at(8))
-    assert rows[0]["text"] == "2 jobs failed overnight · a.x"
-    assert "1 job done overnight" in [r["text"] for r in rows]
-    assert rows[-1]["text"] == "Backup failed" and rows[-1]["right"] == "the drive is full"
-    assert rows[-1]["dot"] == ib.CORAL
+def test_rows_are_hidden_when_there_is_nothing_to_say():
+    assert [r["text"] for r in ib.card_rows(parts(dead=["a.x", "b.y"], dead_n=2), at(8))] == [
+        "2 things failed overnight · a.x"]
+    assert [r["text"] for r in ib.card_rows(parts(waiting=["x"]), at(8))] == ["1 waiting for you"]
+    only = ib.card_rows(parts(reminders=[{"text": "Pay rent", "time": "09:00"}]), at(8))
+    assert [r.get("text") or r["head"] for r in only] == ["From your diary", "Pay rent"]
+    for r in ib.card_rows(parts(waiting=["x"], dead=["a.x"], dead_n=3, backup={"ok": False}), at(8)):
+        assert "job" not in r.get("text", "")  # no job counts anywhere
 
 
-def test_tasks_fill_the_rest_of_today_when_there_are_any():
-    data = {**parts(today=[["09:00", "One"]]), "tasks": [{"title": "Pay rent", "at": "17:00"},
-                                                          {"title": "B"}, {"title": "C"}]}
-    assert [r["text"] for r in ib.card_rows(data, at(8))] == ["One", "Pay rent", "B"]
+def test_the_rain_strip_and_headline_on_the_card():
+    assert ib.outlook({}) == ("", [])
+    assert ib.outlook({"weather": {"outlook": {"headline": "Dry all day", "strip": []}}}) == ("Dry all day", [])
+    data = {"weather": {"outlook": {"headline": "Rain likely", "strip": [{"h": 6, "p": 20}, {"h": 7, "p": 140},
+                                                                         {"h": 8, "p": None}]}}}
+    assert ib.outlook(data) == ("Rain likely", [(6, 20), (7, 100)])  # clamped; an hour without data is skipped
 
 
 def test_the_weather_on_the_card():
@@ -143,9 +145,18 @@ def test_the_weather_on_the_card():
 
 def test_the_preview_scenarios_have_their_rows():
     now = at(8)
-    assert len(ib.card_rows(ib.sample("normal", now), now)) == 4
-    assert [r["text"] for r in ib.card_rows(ib.sample("quiet", now), now)][0] == "Nothing scheduled today"
-    assert ib.card_rows(ib.sample("trouble", now), now)[1]["dot"] == ib.CORAL
+    normal = ib.sample("normal", now)
+    assert [r.get("text") or r["head"] for r in ib.card_rows(normal, now)] == [
+        "From your diary", "Dentist appointment", "Call Kasun about the trip"]
+    head, strip = ib.outlook(normal)
+    assert head.startswith("Rain likely") and len(strip) == 17 and max(p for _h, p in strip) == 80
+    quiet = ib.sample("quiet", now)
+    assert [r["text"] for r in ib.card_rows(quiet, now)] == ["Nothing needs you"]
+    assert ib.outlook(quiet)[0] == "Dry all day"
+    trouble = ib.sample("trouble", now)
+    assert [r.get("text") or r["head"] for r in ib.card_rows(trouble, now)][:3] == [
+        "3 waiting for you", "Backup failed", "1 thing failed overnight · backup.copy"]
+    assert ib.outlook(trouble)[0].startswith("Thunderstorms")
 
 
 # ------------------------------------------------------------------ GET /brief/today
@@ -157,13 +168,50 @@ def test_brief_today_route(tmp_path):
         r = c.get("/brief/today", headers=W)
         assert r.status_code == 200
         body = r.json()
-        assert set(body) == {"day", "at", "parts", "weather", "tasks"}
+        assert set(body) == {"day", "at", "parts", "weather"}
         assert body["day"] == datetime.fromtimestamp(body["at"]).strftime("%Y-%m-%d")
-        assert set(body["parts"]) >= {"weather", "done", "dead", "dead_n", "waiting", "today", "backup", "pc",
-                                      "health", "claude"}
-        assert body["weather"] == {} and body["tasks"] == []  # no town and no Life Hub: the card copes
+        assert set(body["parts"]) == {"weather", "reminders", "waiting", "dead", "dead_n", "backup"}  # no job counts
+        assert body["weather"] == {}  # no town: the card copes
         assert body["parts"]["waiting"] == [] and body["parts"]["backup"] is None
-        assert ib.card_rows(body, datetime.now())[0]["text"] == "Nothing scheduled today"
+        assert body["parts"]["reminders"] == [] and body["parts"]["weather"] == ""
+        assert ib.card_rows(body, datetime.now())[0]["text"] == "Nothing needs you"
+
+
+def test_brief_today_has_the_hourly_rain_and_the_diary(tmp_path, monkeypatch):
+    import json
+    import time
+
+    import argus.context as context
+    from argus.weather import Weather
+    from conftest import run
+    from test_brief_weather import GEO
+
+    class Morning(datetime):  # the headline is about the hours still to come: it is 7 am
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 11, 19, 7, 0)
+
+    monkeypatch.setattr(context, "datetime", Morning)
+    hourly = {"time": [f"{DAY}T{h:02d}:00" for h in range(24)],
+              "precipitation_probability": [80 if 14 <= h <= 16 else 5 for h in range(24)],
+              "precipitation": [1.0] * 24, "weather_code": [80] * 24}
+    fc = {"daily": {"time": [DAY], "weather_code": [80], "temperature_2m_min": [25], "temperature_2m_max": [31],
+                    "precipitation_probability_max": [80]}, "current": {"temperature_2m": 27}, "hourly": hourly}
+    argus = make(tmp_path)
+    argus.cfg.brief.weather = "Kandy, LK"
+    argus.weather = Weather(lambda url: GEO if "geocoding" in url else fc)
+    jid, _ = run(argus.jobs.enqueue("diary", "reminders"))
+    now = time.time()
+    res = {"for": datetime.fromtimestamp(now).strftime("%Y-%m-%d"),
+           "reminders": [{"text": "Dentist", "time": "15:30", "mentioned_on": DAY}]}
+    run(argus.store.write(lambda c: c.execute("UPDATE jobs SET state = 'succeeded', result = ?, finished_at = ?"
+                                              " WHERE id = ?", (json.dumps(res), now - 100, jid))))
+    with TestClient(create_app(argus)) as c:
+        body = c.get("/brief/today", headers=W).json()
+    assert body["weather"]["outlook"]["headline"] == "Rain likely 2–5 pm (80%), dry morning"
+    assert len(body["weather"]["outlook"]["strip"]) == 17
+    assert body["parts"]["reminders"] == [{"text": "Dentist", "time": "15:30", "mentioned_on": DAY}]
+    assert body["parts"]["weather"] == "Kandy: 25 to 31°, showers. Rain likely 2–5 pm (80%), dry morning."
 
 
 def test_read_it_to_me_has_the_listener_say_the_brief(tmp_path):
@@ -171,11 +219,11 @@ def test_read_it_to_me_has_the_listener_say_the_brief(tmp_path):
     with TestClient(create_app(argus)) as c:
         body = {"text": "good morning", "source": "island-read"}
         r = c.post("/ari", json=body, headers=W).json()  # no listener on this PC: the answer is only shown
-        assert r["reply"].startswith("Good morning")
+        assert r["reply"].startswith("Good ")
         assert c.get("/events?kinds=ari.say", headers=W).json()["events"] == []
         c.post("/ari/listener", headers=W)
         c.post("/ari", json=body, headers=W)
         said = c.get("/events?kinds=ari.say", headers=W).json()["events"]
-        assert len(said) == 1 and said[0]["data"]["text"].startswith("Good morning")
+        assert len(said) == 1 and said[0]["data"]["text"].startswith("Good ")
         c.post("/ari", json={"text": "good morning", "source": "island"}, headers=W)  # typed: not read aloud
         assert len(c.get("/events?kinds=ari.say", headers=W).json()["events"]) == 1
