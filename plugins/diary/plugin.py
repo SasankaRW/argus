@@ -12,6 +12,9 @@ Hub's "learn" list, from where the notes vault files them.
 Who writes it: `model: claude` (default) or `local` (the models on your machines; nothing leaves them). Claude
 being away or over its daily budget falls back to the local models. You can also type into Life Hub's diary box
 (or quick add "diary: ..."): `tidy` takes those every 10 minutes.
+
+`reminders` (daily 04:00, or on demand) reads the last 14 days and finds what falls on today, for the morning
+brief. It only ever uses the local models: the diary is private, so Claude is never asked.
 """
 
 from __future__ import annotations
@@ -289,3 +292,108 @@ def tidy(ctx: Context):
             ctx.step(f"taken {i}", call, ctx, "DELETE", f"/api/items/{r['id']}")
         done.append(out)
     return {"taken": len(done), "days": sorted({d["day"] for d in done})}
+
+
+
+# ------------------------------------------------------------------ reminders for today (for the morning brief)
+
+DAYS_BACK = 14
+TIME = re.compile(r"^([01]?\d|2[0-3]):[0-5]\d$")
+
+
+class Reminder(BaseModel):
+    text: str = ""
+    time: str | None = None
+    mentioned_on: str = ""
+
+
+class Reminders(BaseModel):
+    reminders: list[Reminder] = Field(default_factory=list)
+
+
+REMIND = """You read the last two weeks of the user's private diary and find what falls on TODAY (the date and weekday
+are in "today"). You get each day's entry ("entry") and, word for word, what they said ("said").
+Pick out only things that belong to today:
+- appointments, meetings, bookings, deadlines and plans set for today ("dentist on Thursday" on a Thursday, "tomorrow
+  at 3" said yesterday, "on the 20th" when today is the 20th);
+- things they said they would do today or "this morning/afternoon/evening" of today;
+- birthdays and anniversaries today.
+Rules:
+- Never invent anything. Every item must come from something they wrote or said, and numbers must be as they said.
+- Skip anything already done, in the past, or for another day.
+- "text": the item as a short note to the user (under 80 characters, no date). "time": 24-hour "HH:MM" only if a time
+  was given for it, else null. "mentioned_on": the diary date (YYYY-MM-DD) where it was said.
+- At most 8 items, most important first. If nothing falls on today, return an empty list.
+Answer in JSON only."""
+
+
+def reminders_check(sources: str, dates: set[str]):
+    numbers = set(NUM.findall(times(sources)))
+
+    def check(r: Reminders, _inp: Any) -> str | None:
+        if len(r.reminders) > 8:
+            return "at most 8 reminders"
+        for x in r.reminders:
+            if not x.text.strip() or len(x.text) > 160:
+                return "every reminder needs short text (under 80 characters)"
+            if x.time is not None and not TIME.match(x.time.strip()):
+                return f"time {x.time!r} must be 24-hour HH:MM, or null when no time was given"
+            if x.mentioned_on not in dates:
+                return f"mentioned_on {x.mentioned_on!r} must be one of the diary dates you were given"
+            extra = [n for n in NUM.findall(times(x.text)) if n not in numbers]
+            if extra:
+                return f"these numbers weren't in the diary: {', '.join(extra[:5])}. Use only what it says"
+        return None
+
+    return check
+
+
+def diary_days(ctx: Context, today: dt.date) -> list[dict]:
+    """The last DAYS_BACK days of entries (today's too), oldest first; days without an entry are left out."""
+    out = []
+    for back in range(DAYS_BACK, -1, -1):
+        day = today - dt.timedelta(days=back)
+        e = call(ctx, "GET", f"/api/diary/{day.isoformat()}", missing_ok=True)
+        if e:
+            said = " ".join(str(s.get("text") or "") for s in e.get("said") or [])
+            out.append({"date": day.isoformat(), "weekday": WEEKDAYS[day.weekday()].title(),
+                        "entry": str(e.get("entry") or "")[:1500], "said": said[:1500]})
+    return out
+
+
+@workflow(PLUGIN, "reminders")
+def reminders(ctx: Context):
+    """What the last 14 days of your diary say is today (appointments, things you said you would do, birthdays),
+    for the morning brief. Runs at 04:00. The local models only, never Claude: the diary is private. The answer is
+    this job's result (`{"for": "<today>", "reminders": [...]}`); the brief reads the newest one for today."""
+    today = dt.date.fromisoformat(str(ctx.input.get("day"))) if ctx.input.get("day") else dt.date.today()
+    days = ctx.step("load", diary_days, ctx, today)
+    base = {"for": today.isoformat(), "days_read": len(days)}
+    if not days:
+        return {**base, "reminders": []}
+    local = ctx.local_tiers()
+    if not local:
+        raise PermanentError("no local models are set up (models.tiers): the diary is never sent to Claude")
+    task = {"today": {"date": today.isoformat(), "weekday": WEEKDAYS[today.weekday()].title()}, "diary": days}
+    sources = "\n".join(f"{d['entry']} {d['said']}" for d in days) + f" {today.day}"
+    dates = {d["date"] for d in days}
+
+    def extract() -> dict:
+        try:
+            ans = ctx.llm(REMIND, task, schema=Reminders, check=reminders_check(sources, dates), tiers=local,
+                          claude_last=False)
+        except EscalationExhausted as e:
+            return {"reminders": [], "problem": str(e)[:200]}
+        return ans.model_dump()
+
+    got = ctx.step("extract", extract)
+    seen: set[tuple[str, str]] = set()
+    items = []
+    for x in got["reminders"]:
+        text = " ".join(str(x.get("text") or "").split())[:80]
+        key = (text.lower(), str(x.get("time") or ""))
+        if text and key not in seen:
+            seen.add(key)
+            items.append({"text": text, "time": (x.get("time") or "").strip() or None,
+                          "mentioned_on": x.get("mentioned_on") or None})
+    return {**base, "reminders": items[:8], **({"problem": got["problem"]} if got.get("problem") else {})}
