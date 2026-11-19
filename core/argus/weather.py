@@ -79,6 +79,7 @@ class Weather:
         q = urllib.parse.urlencode({
             "latitude": f"{lat:.3f}", "longitude": f"{lon:.3f}", "timezone": "auto", "forecast_days": 2,
             "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
+            "hourly": "precipitation_probability,precipitation,weather_code",
             "current": "temperature_2m"})
         d = self.fetch(f"{FORECAST}?{q}") or {}
         day = d.get("daily") or {}
@@ -90,11 +91,96 @@ class Weather:
         n = max(1, min(2, len(day.get("weather_code") or [None])))
         return [{"place": spelled, "code": nth("weather_code", i), "low": nth("temperature_2m_min", i),
                  "high": nth("temperature_2m_max", i), "rain": nth("precipitation_probability_max", i),
-                 "now": (d.get("current") or {}).get("temperature_2m") if i == 0 else None} for i in range(n)]
+                 "now": (d.get("current") or {}).get("temperature_2m") if i == 0 else None,
+                 "hours": hours_of(d.get("hourly"), nth("time", i))} for i in range(n)]
 
 
-def words(w: dict[str, Any]) -> str:
-    """ "Colombo: 25 to 31°, thunderstorms, rain likely (80%)." """
+def hours_of(hourly: Any, date: Any) -> list[dict[str, Any]]:
+    """That day's hours from Open-Meteo's `hourly` block: [{h, p (chance of rain %), mm, code}], [] when the
+    forecast has none for the day."""
+    if not isinstance(hourly, dict) or not date:
+        return []
+    out = []
+    for i, t in enumerate(hourly.get("time") or []):
+        if not str(t).startswith(str(date)) or len(str(t)) < 13:
+            continue
+
+        def at(k: str, i: int = i) -> Any:
+            v = hourly.get(k) or []
+            return v[i] if i < len(v) else None
+        out.append({"h": int(str(t)[11:13]), "p": at("precipitation_probability"), "mm": at("precipitation"),
+                    "code": at("weather_code")})
+    return out
+
+
+STRIP_FROM, STRIP_TO = 6, 22  # the strip runs 6 am to 11 pm: the hours starting 6:00 .. 22:00
+WET = 40                      # a chance of rain at or above this counts as a wet hour
+THUNDER, HEAVY_MM = (95, 96, 99), 4.0
+
+
+def _hour(h: int) -> str:
+    return "noon" if h == 12 else "midnight" if h % 24 == 0 else f"{h % 12} {'am' if h < 12 else 'pm'}"
+
+
+def _range(a: int, b: int) -> str:
+    """The hours a to b (b: the hour it ends): "2–5 pm", "11 am–1 pm"."""
+    if (a < 12) == (b <= 12) and 12 not in (a, b):
+        return f"{a % 12 or 12}–{_hour(b)}"
+    return f"{_hour(a)}–{_hour(b)}"
+
+
+def rain_outlook(hours: list[dict[str, Any]] | None, from_hour: int = 0) -> dict[str, Any]:
+    """When it rains today: {"headline": "Rain likely 2–5 pm (80%), dry morning", "strip": [{h, p}, ...]}.
+
+    `hours` is the day's hourly forecast (`hours_of`). The headline is about the hours from `from_hour` on (the
+    morning brief asks from the first hour of the day); the strip is every hour 6 am to 11 pm. Without hourly
+    data the headline is "" and the strip is empty, so the card shows neither."""
+    strip = [{"h": x["h"], "p": round(x["p"])} for x in hours or []
+             if x.get("p") is not None and STRIP_FROM <= x["h"] <= STRIP_TO]
+    ahead = [x for x in hours or [] if x.get("p") is not None and max(from_hour, STRIP_FROM) <= x["h"] <= STRIP_TO]
+    if not ahead:
+        return {"headline": "", "strip": strip}
+    peak = max(x["p"] for x in ahead)
+    wet = [x for x in ahead if x["p"] >= WET]
+    if not wet:
+        return {"headline": f"Mostly dry, a small chance of rain ({round(peak)}%)" if peak >= 20 else "Dry all day",
+                "strip": strip}
+    runs: list[list[dict[str, Any]]] = []
+    for x in wet:  # wet hours, with a one-hour gap still part of the same spell
+        if runs and x["h"] - runs[-1][-1]["h"] <= 2:
+            runs[-1].append(x)
+        else:
+            runs.append([x])
+    main = max(runs, key=lambda r: (max(x["p"] for x in r), len(r)))
+    top = max(x["p"] for x in main)
+    a, b = main[0]["h"], main[-1]["h"] + 1
+    thunder = any(x.get("code") in THUNDER for x in ahead if x["p"] >= 30 and a <= x["h"] < b)
+    heavy = any((x.get("mm") or 0) >= HEAVY_MM or x.get("code") in (65, 82) for x in main)
+    on_off = len(main) < 0.6 * (b - a) or (top < 60 and b - a >= 4)
+    where = "after noon" if a >= 12 and b - a >= 6 else f"from {_hour(a)}" if b - a >= 8 else _range(a, b)
+    if thunder:
+        head = f"Thunderstorms {where} ({round(top)}%)"
+    elif heavy:
+        head = f"Heavy rain {where} ({round(top)}%)"
+    elif on_off:
+        head = f"Showers on and off {where} ({round(top)}%)"
+    elif top >= 60:
+        head = f"Rain likely {where} ({round(top)}%)"
+    else:
+        head = f"Rain possible {where} ({round(top)}%)"
+    if a >= 12 and from_hour < 12 and where != "after noon" and len(runs) == 1:
+        head += ", dry morning"
+    elif b <= 15 and len(runs) == 1:
+        head += f", clearing by {_hour(b)}"
+    if len(runs) > 1:
+        other = max((r for r in runs if r is not main), key=lambda r: max(x["p"] for x in r))
+        head += f", also {_range(other[0]['h'], other[-1]['h'] + 1)}"
+    return {"headline": head, "strip": strip}
+
+
+def words(w: dict[str, Any], headline: str = "") -> str:
+    """ "Colombo: 25 to 31°, thunderstorms, rain likely (80%)." With the day's rain `headline` (rain_outlook)
+    that comes after the sky instead of the daily chance: "Colombo: 25 to 31°, showers. Rain likely 2–5 pm." """
     sky = CODES.get(int(w["code"]), "") if w.get("code") is not None else ""
     parts = []
     if w.get("low") is not None and w.get("high") is not None:
@@ -102,11 +188,14 @@ def words(w: dict[str, Any]) -> str:
     if sky:
         parts.append(sky)
     rain = w.get("rain")
-    if rain is not None and rain >= 30 and "rain" not in sky and "shower" not in sky and "thunder" not in sky:
+    if headline:
+        pass
+    elif rain is not None and rain >= 30 and "rain" not in sky and "shower" not in sky and "thunder" not in sky:
         parts.append(f"{'rain likely' if rain >= 60 else 'maybe rain'} ({round(rain)}%)")
     elif rain is not None and rain >= 60:
         parts.append(f"{round(rain)}% chance")
-    return f"{w['place']}: " + ", ".join(parts) + "." if parts else ""
+    out = f"{w['place']}: " + ", ".join(parts) + "." if parts else ""
+    return f"{out} {headline}.".strip() if headline else out
 
 
 def spoken(w: dict[str, Any], when: str = "today") -> str:

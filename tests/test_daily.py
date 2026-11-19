@@ -31,29 +31,61 @@ def test_brief_once_a_morning():
     assert brief_due("07:00", ts(13, 0), None) is None  # too late in the day
 
 
-def test_brief_says_what_matters(tmp_path):
+def reminders_job(a, now, result, state="succeeded", finished=None):
+    """A diary.reminders job with `result` (what the 04:00 run leaves for the brief)."""
+    jid, _ = run(a.jobs.enqueue("diary", "reminders"))
+    run(a.store.write(lambda c: c.execute("UPDATE jobs SET state = ?, result = ?, finished_at = ? WHERE id = ?",
+                                          (state, json.dumps(result), finished or now - 3 * 3600, jid))))
+
+
+def test_brief_says_only_what_needs_you(tmp_path):
     a = make(tmp_path).open()
     now = ts(7)
     j1, _ = run(a.jobs.enqueue("demo", "echo"))
     j2, _ = run(a.jobs.enqueue("screenshot-renamer", "name"))
+    run(a.store.write(lambda c: c.execute("INSERT INTO schedules (id, plugin, workflow, cron, spec, enabled,"
+                                          " next_run_at, created_at, updated_at, owner, label) VALUES ('you-1',"
+                                          "'argus','remind','0 17 30 9 *','{}',1,?,?,?,'you','call mum')",
+                                          (ts(17), now, now))))
+    reminders_job(a, now, {"for": "2026-09-30", "reminders": [
+        {"text": "Call Kasun", "time": None, "mentioned_on": "2026-09-28"},
+        {"text": "Dentist", "time": "15:30", "mentioned_on": "2026-09-27"}]})
 
     def fn(c):
         c.execute("UPDATE jobs SET state = 'succeeded', finished_at = ? WHERE id = ?", (now - 3600, j1))
         c.execute("UPDATE jobs SET state = 'dead', finished_at = ? WHERE id = ?", (now - 600, j2))
-        c.execute("INSERT INTO schedules (id, plugin, workflow, cron, spec, enabled, next_run_at, created_at,"
-                  " updated_at, owner, label) VALUES ('you-1','argus','remind','0 17 30 9 *','{}',1,?,?,?,'you',?)",
-                  (ts(17), now, now, 'today at 5 pm: remind you: "call mum"'))
-        c.execute("INSERT INTO budget (day, key, used, created_at, updated_at) VALUES ('2026-09-29','claude_calls',"
-                  "3,?,?)", (now, now))
-        return compose_brief(c, now, last_backup={"ok": True, "at": ts(2, 30)}, pc_online=False,
-                             health={"problems": ["eclaire-db is exited"]}, claude_cap=30)
+        c.execute("INSERT INTO approvals (id, job_id, key, plugin, type, title, state, expires_at, created_at,"
+                  " updated_at) VALUES ('ap1', ?, 'k1', 'demo', 'entry', 'Approve draft', 'pending', ?, ?, ?)",
+                  (j1, now + 3600, now, now))
+        return compose_brief(c, now, last_backup={"ok": False, "at": ts(2, 30), "problem": "drive full"},
+                             weather="Colombo: 25 to 31°, showers. Rain likely 2–5 pm (80%), dry morning.")
 
     title, text = run(a.store.write(fn))
     assert title == "Good morning - something needs you"
-    assert "Overnight: 1 job done, 1 failed (screenshot-renamer.name)." in text
-    assert 'Today: 5 pm remind you: "call mum".' in text
-    assert "Backup at 2:30 am: OK." in text and "PC: off." in text
-    assert "eclaire-db is exited" in text and "Claude yesterday: 3 of 30 calls." in text
+    assert text.splitlines() == [
+        "Colombo: 25 to 31°, showers. Rain likely 2–5 pm (80%), dry morning.",
+        "From your diary: 3:30 pm Dentist; Call Kasun.",
+        "Waiting for you: 1 (Approve draft).",
+        "Backup failed: drive full.",
+        "1 thing failed overnight (screenshot-renamer.name)."]
+    for gone in ("job", "done", "Today:", "PC:", "Docker", "Claude", "OK"):  # no statistics, nothing that is fine
+        assert gone not in text, gone
+    a.store.close()
+
+
+def test_a_quiet_brief_and_stale_or_failed_reminders_are_left_out(tmp_path):
+    a = make(tmp_path).open()
+    now = ts(7)
+    assert run(a.store.write(lambda c: compose_brief(c, now, last_backup={"ok": True, "at": ts(2, 30)}))) == (
+        "Good morning", "Nothing needs you.")
+    reminders_job(a, now, {"for": "2026-09-29", "reminders": [{"text": "Yesterday's", "time": None}]})  # not today
+    reminders_job(a, now, {"for": "2026-09-30", "reminders": [{"text": "Never ran", "time": None}]},
+                  state="dead", finished=now - 20 * 3600)
+    title, text = run(a.store.write(lambda c: compose_brief(c, now, last_backup=None, weather="Kandy: clear.")))
+    assert (title, text) == ("Good morning", "Kandy: clear.")  # a dead diary job (old) is neither shown nor counted
+    reminders_job(a, now, {"for": "2026-09-30", "reminders": [{"text": "Pay rent", "time": "09:00"}]},
+                  finished=now - 60)  # the newest succeeded one for today wins
+    assert run(a.store.write(lambda c: compose_brief(c, now, last_backup=None)))[1] == "From your diary: 9 am Pay rent."
     a.store.close()
 
 

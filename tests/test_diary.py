@@ -208,3 +208,90 @@ def test_an_entry_you_edited_keeps_your_text_and_only_gets_the_new_part(tmp_path
         assert e["title"] == "Slow start" and e["highlights"][0] == "login bug"  # your title and list stay
         sent = json.loads(ol.requests[0]["messages"][1]["content"])
         assert sent["your_edited_entry"]["entry"] == mine
+
+
+# ------------------------------------------------------------------ reminders for the morning brief
+
+def seed_days(lh):
+    today = dt.date.today()
+    yday = (today - dt.timedelta(days=1)).isoformat()
+    lh["diary"][yday] = {"day": yday, "title": "Slow day", "entry": "Quiet day. Dentist is tomorrow at 3:30.",
+                         "said": [{"at": "20:00", "text": "dentist tomorrow at 3:30, and call Kasun"}]}
+    lh["diary"][(today - dt.timedelta(days=20)).isoformat()] = {"entry": "too old to be read", "said": []}
+    return today, yday
+
+
+def claude_asked(tmp_path) -> bool:
+    """Whether the fake Claude was given a prompt (its `auth status` check, with nothing on stdin, doesn't count)."""
+    f = tmp_path / "claude_stdin.txt"
+    return f.exists() and bool(f.read_text(encoding="utf-8").strip())
+
+
+def claude_setup(tmp_path, monkeypatch, base):
+    cmd = fake_claude(tmp_path, result=json.dumps({"reminders": [{"text": "Claude wrote this", "mentioned_on": "x"}]}))
+    extra = "    T3: {provider: claude}\n  chain: [T1, T3]\n" + f"claude:\n  command: {json.dumps(cmd)}\n"
+    return setup(tmp_path, monkeypatch, base, config="model: claude", extra=extra)  # even with the diary on Claude
+
+
+def test_reminders_come_from_the_last_14_days_by_the_local_model_only(tmp_path, monkeypatch):
+    base, lh = fake_lifehub()
+    today, yday = seed_days(lh)
+    argus, _ = claude_setup(tmp_path, monkeypatch, base)
+    answer = {"reminders": [{"text": "Dentist", "time": "15:30", "mentioned_on": yday},
+                            {"text": "Call Kasun", "time": None, "mentioned_on": yday},
+                            {"text": "call kasun", "time": None, "mentioned_on": yday}]}
+    invented = {"reminders": [{"text": "Dentist at 4:45", "time": "16:45", "mentioned_on": yday}]}
+    with FakeOllama({MODEL: [invented, answer]}) as ol, Server(argus.open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        r = run(cl, w, "reminders")
+        assert r["state"] == "succeeded", r["error"]
+        assert r["result"]["for"] == today.isoformat() and r["result"]["days_read"] == 1
+        assert r["result"]["reminders"] == [{"text": "Dentist", "time": "15:30", "mentioned_on": yday},
+                                            {"text": "Call Kasun", "time": None, "mentioned_on": yday}]  # no repeat
+        assert len(ol.requests) == 2  # the invented 4:45 was refused and asked again, on the local model
+        sent = json.loads(ol.requests[0]["messages"][1]["content"])
+        assert sent["today"]["date"] == today.isoformat() and [d["date"] for d in sent["diary"]] == [yday]
+        assert "dentist tomorrow at 3:30" in sent["diary"][0]["said"]
+        assert not claude_asked(tmp_path)  # Claude was never asked: the diary is private
+
+
+def test_reminders_when_the_local_models_fail_still_never_ask_claude(tmp_path, monkeypatch):
+    base, lh = fake_lifehub()
+    seed_days(lh)
+    argus, _ = claude_setup(tmp_path, monkeypatch, base)
+    with FakeOllama({MODEL: ["not json at all"]}) as ol, Server(argus.open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        r = run(cl, w, "reminders")
+        assert r["state"] == "succeeded", r["error"]
+        assert r["result"]["reminders"] == [] and r["result"]["problem"]  # the brief just goes without the section
+        assert not claude_asked(tmp_path)
+
+
+def test_reminders_with_no_diary_entries_asks_no_model(tmp_path, monkeypatch):
+    base, _lh = fake_lifehub()
+    argus, _ = claude_setup(tmp_path, monkeypatch, base)
+    with FakeOllama({MODEL: [{}]}) as ol, Server(argus.open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        r = run(cl, w, "reminders")
+        assert r["result"] == {"for": dt.date.today().isoformat(), "days_read": 0, "reminders": []}
+        assert not ol.requests and not claude_asked(tmp_path)
+
+
+def test_the_reminders_check_and_the_schedule():
+    ok = dy.Reminders(reminders=[dy.Reminder(text="Dentist at 3:30", time="15:30", mentioned_on="2026-11-18")])
+    check = dy.reminders_check("dentist tomorrow at 3:30", {"2026-11-18"})
+    assert check(ok, None) is None
+    assert "numbers" in check(dy.Reminders(reminders=[dy.Reminder(text="Dentist at 4", mentioned_on="2026-11-18")]),
+                              None)
+    assert "HH:MM" in check(dy.Reminders(reminders=[dy.Reminder(text="x", time="3pm", mentioned_on="2026-11-18")]),
+                            None)
+    assert "mentioned_on" in check(dy.Reminders(reminders=[dy.Reminder(text="x", mentioned_on="2026-01-01")]), None)
+    manifest = (ROOT / "plugins" / "diary" / "plugin.yaml").read_text(encoding="utf-8")
+    assert 'workflow: reminders, cron: "0 4 * * *"' in manifest
+    assert "workflows: [tell, read, tidy, reminders]" in manifest

@@ -54,3 +54,16 @@ The island shows it when Sas sits down:
 
 ## Shipping
 One PR, held for Sas's preview approval. It's built after the live-activities island work, since both touch `ari_popup.py`.
+
+# Revision after Sas's review (2026-11-19) - replaces the card contents above
+Sas wants practical content, not statistics. Approved:
+- **Weather.** Open-Meteo `hourly=precipitation_probability,precipitation,weather_code` for today, as well as the existing daily fields.
+  - One headline gives when rain is most likely, how likely, and whether it's heavy or thundery. Examples: "Rain likely 2–5 pm (80%), dry morning", "Showers on and off after noon (50%)", "Dry all day". These words are the builder's to refine.
+  - Below the headline, a small strip of hourly rain-chance bars from 6 am to 11 pm, drawn in the island's existing tones.
+- **From your diary.** A new `diary` workflow, `reminders`, runs daily at 04:00 and on demand.
+  - It reads the last 14 days of Life Hub diary entries (`GET /api/diary/<date>`) and extracts what falls on today: appointments, things Sas said they would do, birthdays. Output: `[{text, time|null, mentioned_on}]`.
+  - **Local models only, never Claude.** The diary is private.
+  - The result is cached, so the brief reads it instantly. If it's missing, the section doesn't appear.
+- **Actionable rows only.** "N waiting for you ›" when approvals are pending, and failures that need Sas: a failed backup, or "N things failed overnight ›". Each row is hidden when it's zero.
+- **Removed:** jobs-done counts, today's schedules, "backup OK", Claude use.
+- **The phone's 07:00 message (`compose_brief`) and Ari's spoken brief (`say_brief`)** get the same content: weather headline, diary reminders, actionable rows.

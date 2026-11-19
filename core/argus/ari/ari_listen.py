@@ -532,7 +532,7 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device,
         seq = -1
         while True:
             t0 = time.monotonic()
-            evs, seq = client.wakes(seq, "ari.wake,ari.notice,ari.listening,ari.stop,ari.ask", wait=20)
+            evs, seq = client.wakes(seq, "ari.wake,ari.notice,ari.listening,ari.stop,ari.ask,ari.say", wait=20)
             hush_from(evs)
             if any(e.get("kind") == "ari.stop" for e in evs):
                 log.info("stop button")
@@ -545,6 +545,9 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device,
             asks = [e for e in evs if e.get("kind") == "ari.ask"]
             if asks and not paused() and not MIC["busy"]:  # Ari's task needs you: said once, the box is on the island
                 player.add(vl.sentences(ask_text(asks[-1].get("data") or {})))
+            says = [e for e in evs if e.get("kind") == "ari.say"]
+            if says and not paused() and not MIC["busy"]:  # the island's "Read it to me": the morning brief, aloud
+                player.add(vl.sentences(str((says[-1].get("data") or {}).get("text") or "")))
             notes = [e for e in evs if e.get("kind") == "ari.notice"]
             if notes and cfg.ari.speak_up and not paused() and speak_hours_ok(cfg.ari.speak_hours, time.localtime()) \
                     and idle_seconds() < 300 and time.monotonic() - spoke_up[0] > 600 and not player.busy \

@@ -1,8 +1,8 @@
 """What Argus tells you without being asked: the morning brief, and a summary after a power cut or crash.
 
-Morning brief (`brief.at`, 07:00): one phone message with what happened overnight, what waits for you, today's
-schedules, the backup, the PC and Docker, and yesterday's Claude calls. Sent once a day (if argusd was off at 7,
-when it starts, until noon).
+Morning brief (`brief.at`, 07:00): one phone message with the weather (and when it rains), what your diary says
+is today (the diary's `reminders`), and only what needs you: approvals waiting, a failed backup, jobs that failed
+overnight. Sent once a day (if argusd was off at 7, when it starts, until noon).
 
 Back after a power cut: argusd keeps a marker file while it runs and removes it when it stops cleanly. Finding it
 at start means the last run ended abruptly; the phone then hears when it stopped, which jobs pick up where they
@@ -20,7 +20,6 @@ from pathlib import Path
 from typing import Any
 
 from .ari.ari import clock
-from .modelboard import CLAUDE_BUDGET
 
 
 def _name(r) -> str:
@@ -165,64 +164,75 @@ def compose_summary(conn: sqlite3.Connection, now: float, labels: dict[str, str]
     return "Today with Argus", "\n".join(lines)
 
 
-def brief_parts(conn: sqlite3.Connection, now: float, *, last_backup: dict | None, pc_online: bool,
-                health: dict | None, claude_cap: int, weather: str = "") -> dict[str, Any]:
-    """What the morning brief says, before it is worded for the phone (compose_brief) or for Ari (say_brief)."""
+def todays_reminders(conn: sqlite3.Connection, now: float) -> list[dict[str, Any]]:
+    """What the diary's `reminders` workflow found for today (it runs at 04:00 and caches its answer as its job
+    result, so this is one indexed read): [{text, time|None, mentioned_on}], those with a time first. Empty when it
+    hasn't run today, or found nothing."""
+    r = conn.execute("SELECT result FROM jobs WHERE plugin = 'diary' AND workflow = 'reminders'"
+                     " AND state = 'succeeded' ORDER BY finished_at DESC LIMIT 1").fetchone()
+    try:
+        res = json.loads(r[0]) if r and r[0] else {}
+    except ValueError:
+        return []
+    if not isinstance(res, dict) or res.get("for") != datetime.fromtimestamp(now).strftime("%Y-%m-%d"):
+        return []
+    items = [x for x in res.get("reminders") or [] if isinstance(x, dict) and str(x.get("text") or "").strip()]
+    items = [{"text": str(x["text"]).strip(), "time": x.get("time") or None,
+              "mentioned_on": x.get("mentioned_on") or None} for x in items]
+    return sorted(items, key=lambda x: (x["time"] is None, x["time"] or ""))
+
+
+def brief_parts(conn: sqlite3.Connection, now: float, *, last_backup: dict | None,
+                weather: str = "") -> dict[str, Any]:
+    """What the morning brief says, before it is worded for the phone (compose_brief) or for Ari (say_brief):
+    the weather headline, what your diary says is today, and only what needs you (approvals waiting, a failed
+    backup, jobs that failed overnight). No statistics."""
     since = now - 12 * 3600
-    done = conn.execute("SELECT COUNT(*) FROM jobs WHERE state = 'succeeded' AND finished_at >= ?"
-                        " AND plugin NOT IN ('ask', 'ari')", (since,)).fetchone()[0]
     dead = conn.execute("SELECT plugin, workflow FROM jobs WHERE state = 'dead' AND finished_at >= ?"
-                        " ORDER BY finished_at", (since,)).fetchall()
+                        " AND plugin NOT IN ('ask', 'ari') ORDER BY finished_at", (since,)).fetchall()
     waiting = [r[0] for r in conn.execute("SELECT title FROM approvals WHERE state = 'pending' ORDER BY created_at")]
-    end_of_day = datetime.fromtimestamp(now).replace(hour=23, minute=59).timestamp()
-    today = conn.execute("SELECT label, plugin, workflow, next_run_at FROM schedules WHERE enabled = 1"
-                         " AND next_run_at <= ? ORDER BY next_run_at", (end_of_day,)).fetchall()
-    y = (datetime.fromtimestamp(now) - timedelta(days=1)).strftime("%Y-%m-%d")
-    row = conn.execute("SELECT used FROM budget WHERE day = ? AND key = ?", (y, CLAUDE_BUDGET)).fetchone()
-    return {
-        "weather": weather, "done": done, "dead": sorted({_name(r) for r in dead}), "dead_n": len(dead),
-        "waiting": waiting,
-        "today": [(_hhmm(r["next_run_at"]), (r["label"] or _name(r)).split(": ", 1)[-1]) for r in today],
-        "backup": last_backup, "pc": pc_online, "health": health or {},
-        "claude": (row[0] if row and row[0] else 0, claude_cap),
-    }
+    b = last_backup if last_backup and not last_backup.get("ok") else None  # only a failed one needs you
+    if b:  # the backup row already says it: its jobs aren't counted again as "failed overnight"
+        dead = [r for r in dead if r["plugin"] != "backup"]
+    return {"weather": weather, "reminders": todays_reminders(conn, now), "waiting": waiting,
+            "dead": sorted({_name(r) for r in dead}), "dead_n": len(dead),
+            "backup": {k: b.get(k) for k in ("ok", "at", "problem")} if b else None}
 
 
-def compose_brief(conn: sqlite3.Connection, now: float, *, last_backup: dict | None, pc_online: bool,
-                  health: dict | None, claude_cap: int, weather: str = "") -> tuple[str, str]:
-    """(title, text) of the morning brief for the phone. Plain lines, most important first."""
-    p = brief_parts(conn, now, last_backup=last_backup, pc_online=pc_online, health=health, claude_cap=claude_cap,
-                    weather=weather)
+def _hm(t: str | None) -> str:
+    """ "14:30" as "2:30 pm"; whatever isn't a time stays as it is."""
+    try:
+        h, m = map(int, str(t).split(":"))
+    except ValueError:
+        return str(t or "")
+    return clock(h, m)
+
+
+def reminder_words(r: dict[str, Any]) -> str:
+    return f"{_hm(r['time'])} {r['text']}" if r.get("time") else str(r["text"])
+
+
+def compose_brief(conn: sqlite3.Connection, now: float, *, last_backup: dict | None,
+                  weather: str = "") -> tuple[str, str]:
+    """(title, text) of the morning brief for the phone. Plain lines: the weather, your diary's reminders, then
+    only what needs you."""
+    p = brief_parts(conn, now, last_backup=last_backup, weather=weather)
     lines: list[str] = []
     if p["weather"]:
         lines.append(p["weather"])
-    s = f"Overnight: {p['done']} job{'s' if p['done'] != 1 else ''} done"
-    if p["dead_n"]:
-        names = p["dead"]
-        s += f", {p['dead_n']} failed ({', '.join(names[:3])}{'…' if len(names) > 3 else ''})"
-    lines.append(s + ".")
+    if p["reminders"]:
+        lines.append("From your diary: " + "; ".join(reminder_words(r) for r in p["reminders"][:5])
+                     + ("…" if len(p["reminders"]) > 5 else "") + ".")
     if p["waiting"]:
         lines.append(f"Waiting for you: {len(p['waiting'])} (" + "; ".join(p["waiting"][:3]) + ").")
-    if p["today"]:
-        items = [f"{t} {what}" for t, what in p["today"][:5]]
-        lines.append("Today: " + "; ".join(items) + ("…" if len(p["today"]) > 5 else "") + ".")
-    b = p["backup"]
-    if b:
-        if b.get("ok"):
-            lines.append(f"Backup at {_hhmm(b['at'])}: OK.")
-        else:
-            lines.append(f"Backup FAILED: {str(b.get('problem'))[:100]}.")
-    lines.append(f"PC: {'on' if p['pc'] else 'off'}.")
-    h = p["health"]
-    if h.get("problems"):
-        lines.append("Docker/WSL: " + "; ".join(h["problems"][:3]) + ".")
-    elif h.get("docker"):
-        lines.append(f"Docker: {h['docker'].get('running', 0)} running, all fine.")
-    used, cap = p["claude"]
-    if used:
-        lines.append(f"Claude yesterday: {used} of {cap} calls.")
-    title = "Good morning" + (" - something needs you" if p["dead_n"] or p["waiting"] or h.get("problems") else "")
-    return title, "\n".join(lines)
+    if p["backup"]:
+        lines.append(f"Backup failed: {str(p['backup'].get('problem') or 'no reason given')[:100]}.")
+    if p["dead_n"]:
+        names = p["dead"]
+        lines.append(f"{p['dead_n']} thing{'s' if p['dead_n'] != 1 else ''} failed overnight"
+                     f" ({', '.join(names[:3])}{'…' if len(names) > 3 else ''}).")
+    title = "Good morning" + (" - something needs you" if p["dead_n"] or p["waiting"] or p["backup"] else "")
+    return title, "\n".join(lines) if lines else "Nothing needs you."
 
 
 def _num(n: int) -> str:
@@ -235,32 +245,27 @@ def _count(n: int, one: str, many: str) -> str:
 
 
 def say_brief(p: dict[str, Any], now: float) -> str:
-    """The brief as Ari says it on "good morning": short sentences, the things that need you first, the rest only
-    when something is wrong."""
+    """The brief as Ari says it on "good morning": short sentences, the weather, what your diary says is today,
+    then what needs you."""
     d = datetime.fromtimestamp(now)
     hello = "Good morning" if d.hour < 12 else "Good afternoon" if d.hour < 18 else "Good evening"
     out = [f"{hello}. It's {clock(d.hour, d.minute)}."]
     if p["weather"]:
         out.append(p["weather"])
+    rem = p.get("reminders") or []
+    if rem:
+        out.append("From your diary: " + "; ".join(reminder_words(r) for r in rem[:3])
+                   + (f", and {_num(len(rem) - 3)} more." if len(rem) > 3 else "."))
     if p["waiting"]:
         first = p["waiting"][0]
         out.append(f"{_count(len(p['waiting']), 'thing waits', 'things wait').capitalize()} for you"
                    + (f", starting with {first}." if len(p["waiting"]) > 1 else f": {first}."))
-    if p["dead_n"]:
-        what = (f"{_count(p['done'], 'job', 'jobs')} ran and {_num(p['dead_n'])}" if p["done"]
-                else _count(p["dead_n"], "job", "jobs"))
-        out.append(f"Overnight {what} failed: {', '.join(p['dead'][:2])}.")
-    elif p["done"]:
-        out.append(f"Overnight {_count(p['done'], 'job', 'jobs')} ran, all fine.")
-    if p["today"]:
-        (t, what), rest = p["today"][0], len(p["today"]) - 1
-        out.append(f"Today: {what} at {t}" + (f", and {_num(rest)} more." if rest else "."))
-    b = p["backup"]
-    if b and not b.get("ok"):
+    if p["backup"]:
         out.append("Last night's backup failed.")
-    if p["health"].get("problems"):
-        out.append(f"Docker needs a look: {p['health']['problems'][0]}.")
-    if len(out) == 1 or (len(out) == 2 and p["weather"]):
+    if p["dead_n"]:
+        out.append(f"{_count(p['dead_n'], 'thing', 'things').capitalize()} failed overnight: "
+                   f"{', '.join(p['dead'][:2])}.")
+    if not (rem or p["waiting"] or p["backup"] or p["dead_n"]):
         out.append("Nothing needs you.")
     return " ".join(out)
 
