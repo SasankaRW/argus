@@ -11,6 +11,7 @@ from datetime import datetime
 
 from . import __version__
 from . import settings as settings_mod
+from .activities import Activities
 from .approvals import Approvals
 from .backup import Backups
 from .config import PRIORITY_BATCH, PRIORITY_INTERACTIVE, Config, ScheduleConfig
@@ -21,7 +22,6 @@ from .daily import (
     brief_parts,
     compose_brief,
     compose_summary,
-    last_health,
     resume_summary,
     say_brief,
 )
@@ -38,7 +38,8 @@ from .scheduler import Scheduler
 from .send_live import SendLive
 from .triggers import Triggers
 from .usage import rollup as usage_rollup
-from .weather import Weather, words
+from .weather import CODES as WEATHER_CODES
+from .weather import Weather, rain_outlook, words
 from .weather import spoken as weather_spoken
 
 log = logging.getLogger("argus")
@@ -51,6 +52,9 @@ class Argus:
         self.store = Store(cfg.db_path)
         self.send_live = SendLive()  # live Send transfers, in memory only (send_live.py)
         self.jobs = JobStore(self.store, cfg.jobs, windows=cfg.windows, off=cfg.plugins.off)
+        self.activities = Activities(self.send_live)  # live activities, in memory only (activities.py)
+        self.jobs.on_event = self.activities.job_event
+        self._activity_task: asyncio.Task | None = None
         self.registry = Registry(self.store)
         self.models = ModelBoard(self.store, cfg)
         self.outbox = Outbox(self.store, cfg)
@@ -125,6 +129,8 @@ class Argus:
         await self.outbox.start()
         await self.phone.start()
         await self.hub.start()
+        self._activity_task = asyncio.create_task(self.activities.pump(self._write_activity_events),
+                                                  name="argus-activities")
         self.watchdog.start()
         self.started_at = time.time()
         log.info("argus started", extra={"version": self.version, "instance": self.cfg.instance.name})
@@ -370,7 +376,7 @@ class Argus:
         if w is None:
             log.warning("no such place for the weather", extra={"place": place})
             return ""
-        return words(w)
+        return words(w, rain_outlook(w.get("hours"), datetime.now().hour).get("headline", ""))
 
     async def weather_say(self, place: str = "", offset: int = 0) -> str | None:
         """Ari's spoken weather for a place (default: brief.weather), today or tomorrow; None when it can't."""
@@ -386,11 +392,35 @@ class Argus:
             return f"I couldn't find a place called {place}."
         return weather_spoken(w, "tomorrow" if offset else "today")
 
+    async def island_weather(self) -> dict:
+        """Today's weather as the island shows it: {place, now, low, high, rain, sky}; {} when no town is set or
+        the forecast can't be reached."""
+        place = self.cfg.brief.weather.strip()
+        if not place:
+            return {}
+        try:
+            w = await asyncio.wait_for(asyncio.to_thread(self.weather.day, place, 0), 15)
+        except Exception:  # noqa: BLE001 - no connection: the island goes without it
+            return {}
+        if not w:
+            return {}
+        code = w.get("code")
+        return {"place": w.get("place"), "now": w.get("now"), "low": w.get("low"), "high": w.get("high"),
+                "rain": w.get("rain"), "sky": WEATHER_CODES.get(int(code), "") if code is not None else "",
+                "outlook": rain_outlook(w.get("hours"), datetime.now().hour)}
+
+    async def brief_today(self) -> dict:
+        """The morning brief as data for the island's card: brief_parts as the phone brief builds them (weather
+        headline, the diary's reminders, what needs you), plus the structured weather with its hourly rain strip
+        (`weather.outlook`)."""
+        inputs, weather = await asyncio.gather(self._brief_inputs(), self.island_weather())
+        now = time.time()
+        parts = await self.store.read(lambda c: brief_parts(c, now, **inputs))
+        return {"day": datetime.fromtimestamp(now).strftime("%Y-%m-%d"), "at": now, "parts": parts,
+                "weather": weather}
+
     async def _brief_inputs(self) -> dict:
-        needs = set(self.cfg.power.pc_needs)
-        pc = any(w["state"] == "online" and set(w["capabilities"]) & needs for w in await self.registry.workers())
-        return {"last_backup": self.last_backup, "pc_online": pc, "claude_cap": self.cfg.claude.calls_per_day,
-                "weather": await self.weather_line()}
+        return {"last_backup": self.last_backup, "weather": await self.weather_line()}
 
     async def send_brief(self, day: str | None = None) -> dict:
         """The morning brief to the phone (once per day; `POST /brief` sends one now)."""
@@ -398,7 +428,7 @@ class Argus:
 
         def fn(conn):
             now = time.time()
-            title, text = compose_brief(conn, now, health=last_health(conn), **inputs)
+            title, text = compose_brief(conn, now, **inputs)
             key = f"brief:{day}" if day else f"brief:now:{int(now)}"
             oid = add_message(conn, now, "phone", phone_message(title, text, tags=["sunrise"]), dedupe_key=key)
             return {"title": title, "text": text, "queued": oid is not None}
@@ -413,7 +443,7 @@ class Argus:
         """The brief as Ari says it ("good morning")."""
         inputs = await self._brief_inputs()
         now = time.time()
-        parts = await self.store.read(lambda c: brief_parts(c, now, health=last_health(c), **inputs))
+        parts = await self.store.read(lambda c: brief_parts(c, now, **inputs))
         return say_brief(parts, now)
 
     def _backup_due(self, now: float) -> bool:
@@ -544,7 +574,17 @@ class Argus:
             log.info("old events pruned", extra={"count": n})
         return n
 
+    async def _write_activity_events(self, events: list) -> None:
+        now = time.time()
+        await self.store.write(lambda c: [insert_event(c, now, kind, data=data) for kind, data in events])
+
     async def stop(self) -> None:
+        if self._activity_task is not None:
+            task = self._activity_task
+            if not task.done() and task.get_loop() is asyncio.get_running_loop():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            self._activity_task = None
         await self.watchdog.stop()
         await asyncio.to_thread(self.marker.stop)  # a clean stop: no "Argus is back" message next time
         await self.phone.stop()

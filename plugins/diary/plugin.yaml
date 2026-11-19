@@ -9,8 +9,10 @@ runs_on: desktop            # with Life Hub and the notes vault (the PC now)
 triggers:
   - schedule: {workflow: tidy, cron: "*/10 * * * *"}   # what you typed into Life Hub's diary box
   - manual: {workflow: tidy, label: Take Life Hub's diary notes now}
+  - schedule: {workflow: reminders, cron: "0 4 * * *"}   # what the last 14 days of diary say is today, for the morning brief
+  - manual: {workflow: reminders, label: Find today's reminders in my diary now}
 
-workflows: [tell, read, tidy]
+workflows: [tell, read, tidy, reminders]
 
 permissions:
   files: {read: ["~/Vault/Diary"], write: ["~/Vault/Diary"], edit: ["~/Vault/Diary"], delete: none}

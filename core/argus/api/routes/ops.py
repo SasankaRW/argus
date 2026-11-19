@@ -33,6 +33,10 @@ def build_router(deps: Deps) -> APIRouter:
         """Send the morning brief now (to try it)."""
         return await argus.send_brief()
 
+    @router.get("/brief/today", dependencies=guarded)
+    async def brief_today() -> dict:
+        """The morning brief as data (the island's card): the phone brief's parts, today's weather, no re-wording."""
+        return await argus.brief_today()
 
     @router.get("/backups", dependencies=guarded)
     async def backups() -> dict:

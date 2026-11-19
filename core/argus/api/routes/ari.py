@@ -387,7 +387,11 @@ def build_router(deps: Deps) -> APIRouter:
             return {"conv": conv, "turn": tid, "reply": said, "action": action, "pending": pending}
 
         if ari_mod.BRIEF.match(text):  # "good morning": the morning brief, spoken
-            return await reply(await argus.spoken_brief())
+            said = await argus.spoken_brief()
+            if body.source == "island-read" and time.time() - listener["seen"] < 75:  # the island's "Read it to me"
+                await argus.store.write(lambda c: insert_event(c, time.time(), "ari.say", src="island", dst="ari",
+                                                               data={"text": said}))
+            return await reply(said)
         wx = ari_mod.weather_ask(text)
         if wx is not None:  # "how's the weather?", "will it rain tomorrow in Kandy?": Open-Meteo, no model
             said = await argus.weather_say(*wx)
