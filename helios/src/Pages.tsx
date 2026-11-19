@@ -5,6 +5,7 @@ import { CallLog } from "./Calls";
 import { DeployLines, useDeploy } from "./Deploy";
 import { Empty, Skeleton } from "./kit";
 import { useSc } from "./m3";
+import { clipHint, useClipSwitch } from "./clip";
 
 function ago(t: number) {
   const s = Date.now() / 1000 - t;
@@ -168,6 +169,7 @@ type Setting = { key: string; group: string; label: string; type: "bool" | "time
 
 export function SettingsView() {
   const deploy = useDeploy();
+  const clip = useClipSwitch();
   const [rows, setRows] = useState<Setting[] | null>(null);
   const [draft, setDraft] = useState<Record<string, unknown>>({});
   const [err, setErr] = useState<string | null>(null);
@@ -199,6 +201,24 @@ export function SettingsView() {
         <div className="sect">What Argus runs</div>
         <DeployLines d={deploy} />
       </section>
+      {clip && (
+        <section className="panel dep-panel">
+          <div className="sect">{clip.where === "pc" ? "This PC" : "This phone"}</div>
+          <div className="setrow">
+            <label className="setl" htmlFor="set-clip-sync">
+              Clipboard sync
+              <span className="setk">{clipHint(clip.where)}</span>
+            </label>
+            <div className="setv">
+              {clip.failed && <span className="bad">couldn't change it</span>}
+              <button id="set-clip-sync" type="button" role="switch" aria-checked={clip.on} disabled={clip.busy}
+                className={`switch${clip.on ? " on" : ""}`} onClick={clip.toggle}>
+                <i /><span>{clip.on ? "on" : "off"}</span>
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
       <section className="panel">
         <div className="toolbar sticky">
           <span className="count" style={{ marginLeft: 0 }}>argus.yaml is the base; what you change here wins, and is kept</span>

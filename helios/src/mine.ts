@@ -15,14 +15,16 @@ export type Mine = {
   reveal: ((it: MineItem, n: number) => Promise<string | null>) | null;  // "Show in folder" (computers only)
 };
 
-type PhoneBridge = { mine(): string; open(kind: string, offerId: string, n: number): string };
+type PhoneBridge = { mine(): string; open(kind: string, offerId: string, n: number): string; clipSync?(): boolean; setClipSync?(on: boolean): void };
 declare global { interface Window { ArgusPhone?: PhoneBridge } }
 
 const AGENT = "http://127.0.0.1:8610";
 
-async function agent<T>(path: string, method = "GET"): Promise<T> {
+export async function agent<T>(path: string, method = "GET", body?: unknown): Promise<T> {
   const t = getToken();
-  const r = await fetch(AGENT + path, { method, headers: t ? { Authorization: `Bearer ${t}` } : {}, signal: AbortSignal.timeout(2500) });
+  const headers: Record<string, string> = t ? { Authorization: `Bearer ${t}` } : {};
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  const r = await fetch(AGENT + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(2500) });
   if (!r.ok) {
     const why = await r.json().then((b) => (typeof b?.detail === "string" ? b.detail : null)).catch(() => null);
     throw new Error(why ?? `It said ${r.status}`);

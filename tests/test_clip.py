@@ -455,3 +455,26 @@ def test_cli_send_link_calls_the_local_agent(tmp_path, monkeypatch, capsys):
     assert cli.main(["--config", str(cfg), "send", "--link", "not a link"]) == 2 and problems
     with pytest.raises(SystemExit):
         cli.main(["--config", str(cfg), "send"])  # neither a device with paths nor a link
+
+
+def test_clip_routes_answer_helios_but_nobody_else(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from argus.send.receiver import build_app
+    helios = "https://calypso.example.ts.net"
+    agent = make_agent(tmp_path, "pc", "PC", argus_url=helios)
+    agent.argus_token = "t0ken"
+    tok = {"Authorization": "Bearer t0ken"}
+    with TestClient(build_app(agent)) as c:
+        for path in ("/send/clip", "/send/clip/enabled"):
+            pre = {"Origin": helios, "Access-Control-Request-Method": "POST"}
+            r = c.options(path, headers=pre)
+            assert r.status_code == 204 and r.headers["access-control-allow-origin"] == helios
+            assert r.headers["access-control-allow-private-network"] == "true"
+            assert c.options(path, headers={**pre, "Origin": "https://evil.example"}).status_code == 403
+        r = c.get("/send/clip", headers={**tok, "Origin": helios})
+        assert r.status_code == 200 and r.headers["access-control-allow-origin"] == helios
+        assert "enabled" in r.json()
+        assert c.get("/send/clip", headers={**tok, "Origin": "https://evil.example"}).status_code == 403
+        r = c.post("/send/clip/enabled", json={"enabled": False}, headers={**tok, "Origin": helios})
+        assert r.status_code == 200 and r.headers["access-control-allow-origin"] == helios
