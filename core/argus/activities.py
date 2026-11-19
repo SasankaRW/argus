@@ -23,6 +23,7 @@ from typing import Any
 log = logging.getLogger("argus.activities")
 
 PROMOTE_AFTER = 10.0  # a job is shown once it has run this long: quick jobs never flash
+SHOW_JOBS = False  # Sas (2026-11-19): plugin jobs on the island and the phone were noise; transfers and timers only
 TIMER_LINGER = 5.0  # a finished timer stays this long so the end is seen
 CUSTOM_GRACE = 60.0  # a custom activity with an end time goes this long after it
 CUSTOM_IDLE = 600.0  # a custom activity without one goes after this long without an update
@@ -115,7 +116,7 @@ class Activities:
     def job_event(self, kind: str, job: Any, now: float, step: str | None = None, data: dict | None = None) -> None:
         """Called by the job store at each of its event points (any thread)."""
         with self._lock:
-            if kind == "job.running":
+            if kind == "job.running" and SHOW_JOBS:
                 self._jobs[job.id] = {"id": job.id, "plugin": job.plugin, "workflow": job.workflow, "since": now,
                                       "step": None, "idx": None}
             elif kind == "step.running":

@@ -270,7 +270,7 @@ def test_the_island_floats_then_joins_the_edge():
 
 
 def test_the_island_shows_a_moving_file():
-    from argus.ari.ari_popup import LIVE, moving_transfer, send_device_icon, transfer_words
+    from argus.ari.ari_popup import LIVE_SMALL, moving_transfer, send_device_icon, transfer_words
 
     a = {"offer_id": "a", "state": "done", "started": 5, "to": "pc", "label": "x", "done": 1, "total": 1}
     b = {"offer_id": "b", "state": "moving", "started": 3, "to": "calypso", "label": "3 files", "done": 41,
@@ -282,13 +282,14 @@ def test_the_island_shows_a_moving_file():
     assert transfer_words({**b, "state": "verifying"}, {})[1] == "checking"
     assert [send_device_icon(d) for d in ("phone", "pc", "calypso", "tv")] == [
         "smartphone", "desktop_windows", "laptop_chromebook", "devices"]
-    assert target_size("live", "", False, 0) == LIVE
+    assert target_size("live", "", False, 0) == LIVE_SMALL  # at rest: the small pill
 
 
 def test_the_live_pill_helpers():
     from argus.ari.ari_popup import (
         LIVE,
         LIVE_ROW,
+        LIVE_SMALL,
         activity_action,
         countdown,
         elapsed_words,
@@ -326,7 +327,7 @@ def test_the_live_pill_helpers():
     rows, extra = live_view(items, now)
     assert [r["id"] for r in rows] == ["s", "x", "t", "j"] and extra == 5
     assert live_view(items[:1], now)[1] == 0
-    assert target_size("live", "", False, 0, "", 4) == LIVE  # not hovered: the one pill
+    assert target_size("live", "", False, 0, "", 4) == LIVE_SMALL  # not hovered: the small pill
     assert target_size("live", "", True, 0, "", 1) == LIVE
     assert target_size("live", "", True, 0, "", 3) == (LIVE[0], 12 + 3 * LIVE_ROW)
     assert target_size("live", "", True, 0, "", 9)[1] == 12 + 4 * LIVE_ROW  # at most four rows
