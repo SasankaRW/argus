@@ -176,7 +176,7 @@ def sample(kind: str, now: datetime) -> dict[str, Any]:
         parts["reminders"] = []
         day = hours({})
     elif kind == "trouble":
-        parts.update(dead=["backup.copy"], dead_n=1, waiting=["Approve email draft", "Delete old logs",
+        parts.update(dead=["vault.tidy"], dead_n=1, waiting=["Approve email draft", "Delete old logs",
                                                               "Install update"],
                      backup={"ok": False, "at": now.timestamp(), "problem": "the target drive is full"})
         wx = {**wx, "sky": "thunderstorms"}

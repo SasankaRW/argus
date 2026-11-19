@@ -109,7 +109,7 @@ def test_the_rows_come_in_order_of_need():
                  backup={"ok": False, "at": 1.0, "problem": "the drive is full"})
     rows = ib.card_rows(data, at(8))
     assert [r.get("text") or r["head"] for r in rows] == [
-        "3 waiting for you", "Backup failed", "1 thing failed overnight · backup.copy", "From your diary",
+        "3 waiting for you", "Backup failed", "1 thing failed overnight · vault.tidy", "From your diary",
         "Dentist", "Call Kasun", "C", "D"]
     assert rows[0]["action"] == "show:inbox" and rows[0]["right"] == "›" and rows[0]["dot"] == ib.AMBER
     assert rows[2]["action"] == "show:runs" and rows[2]["dot"] == ib.CORAL
@@ -155,7 +155,7 @@ def test_the_preview_scenarios_have_their_rows():
     assert ib.outlook(quiet)[0] == "Dry all day"
     trouble = ib.sample("trouble", now)
     assert [r.get("text") or r["head"] for r in ib.card_rows(trouble, now)][:3] == [
-        "3 waiting for you", "Backup failed", "1 thing failed overnight · backup.copy"]
+        "3 waiting for you", "Backup failed", "1 thing failed overnight · vault.tidy"]
     assert ib.outlook(trouble)[0].startswith("Thunderstorms")
 
 

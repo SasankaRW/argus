@@ -192,6 +192,8 @@ def brief_parts(conn: sqlite3.Connection, now: float, *, last_backup: dict | Non
                         " AND plugin NOT IN ('ask', 'ari') ORDER BY finished_at", (since,)).fetchall()
     waiting = [r[0] for r in conn.execute("SELECT title FROM approvals WHERE state = 'pending' ORDER BY created_at")]
     b = last_backup if last_backup and not last_backup.get("ok") else None  # only a failed one needs you
+    if b:  # the backup row already says it: its jobs aren't counted again as "failed overnight"
+        dead = [r for r in dead if r["plugin"] != "backup"]
     return {"weather": weather, "reminders": todays_reminders(conn, now), "waiting": waiting,
             "dead": sorted({_name(r) for r in dead}), "dead_n": len(dead),
             "backup": {k: b.get(k) for k in ("ok", "at", "problem")} if b else None}
