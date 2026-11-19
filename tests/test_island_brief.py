@@ -105,7 +105,7 @@ def test_an_empty_morning_has_one_calm_row():
 def test_the_rows_come_in_order_of_need():
     rem = [{"text": "Dentist", "time": "15:30", "mentioned_on": DAY}, {"text": "Call Kasun", "time": None},
            {"text": "C", "time": None}, {"text": "D", "time": None}, {"text": "E", "time": None}]
-    data = parts(waiting=["a", "b", "c"], dead=["backup.copy"], dead_n=1, reminders=rem,
+    data = parts(waiting=["a", "b", "c"], dead=["vault.tidy"], dead_n=1, reminders=rem,
                  backup={"ok": False, "at": 1.0, "problem": "the drive is full"})
     rows = ib.card_rows(data, at(8))
     assert [r.get("text") or r["head"] for r in rows] == [
