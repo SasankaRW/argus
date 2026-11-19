@@ -494,14 +494,14 @@ def live_scenario(name: str, now: float) -> tuple[list[dict], list[dict]]:
     timer = act("timer", "Pasta", "10 min timer", "timer", started_at=now - 328, ends_at=now + 272)
     soon = act("timer", "Pasta", "10 min timer", "timer", started_at=now - 575, ends_at=now + 25)
     job = act("job", "Downloads organizer: sort", "Moving files \u00b7 step 3", "play_circle", started_at=now - 84)
-    custom = act("custom", "Rest", "Bench press", "fitness_center", started_at=now - 50, ends_at=now + 70)
+    custom = act("custom", "Laundry", "Washer", "timer", started_at=now - 1500, ends_at=now + 1200)
     xfer = {"offer_id": "ab12cd34", "leg": "send", "from": "phone", "to": "pc", "label": "IMG_0971.jpg",
             "done": 41, "total": 100, "eta": 12.2, "state": "moving", "started": now - 5}
     move = act("transfer", "IMG_0971.jpg to PC", "41%", "swap_horiz", id="transfer:ab12cd34:send", progress=0.41,
                started_at=now - 5)
     return {"timer": ([timer], []), "soon": ([soon], []), "timerend": ([{**soon, "ends_at": now - 0.2}], []),
             "job": ([job], []), "custom": ([custom], []), "transfer": ([move], [xfer]),
-            "stack": ([soon, move, timer, job, custom], [xfer]), "plus": ([job, custom], [])}[name]
+            "stack": ([soon, move, timer, job, custom], [xfer]), "plus": ([timer, custom], [])}[name]
 
 
 LIVE_SCENARIOS = ("timer", "soon", "timerend", "job", "custom", "transfer", "stack", "plus")
@@ -1492,47 +1492,49 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 qp.drawLine(QPointF(x0, y), QPointF(x0 + (x1 - x0) * max(0.02, frac), y))
 
         def draw_small(self, qp: Any, body: Any, a: dict, extra: int) -> None:
-            """Something live, at rest: a small tone dot with the icon, the name, the time or percent on the right
-            (+N when there are more), and the progress as a hairline along the bottom edge."""
+            """Something live, at rest, on one line: the icon inside a thin ring that drains (a timer) or fills
+            (progress), the name, and the time in the activity's tone on the right (+N when there are more)."""
             now = self.now()
             tone = QColor(live_tone(a, now))
             title, _detail, right = live_words(a, now)
             pulse = timer_pulse(time.monotonic(), self.ended) if a.get("kind") == "timer" else 0.0
             qp.setOpacity(max(0.0, min(1.0, (self.spring.h - 14) / 10)))
-            cy = body.center().y() - 1
-            ix = body.x() + 15
-            qp.setPen(Qt.PenStyle.NoPen)
-            qp.setBrush(tint(tone.name(), 0.22 + 0.4 * pulse))
-            rr = 9 + (2 * pulse if not self.still else 0)
-            qp.drawEllipse(QPointF(ix, cy), rr, rr)
-            self.symbol(qp, live_icon(a), ix, cy, 12, tone, filled=True)
-            right_edge = body.right() - 12
+            cy = body.center().y()
+            ix = body.x() + 17
+            rr = 8.5 + (1.5 * pulse if not self.still else 0)
+            ring = QRectF(ix - rr, cy - rr, 2 * rr, 2 * rr)
+            qp.setBrush(Qt.BrushStyle.NoBrush)
+            qp.setPen(QPen(ink(0.16), 2))
+            qp.drawEllipse(ring)
+            how, frac = live_line(a, now)
+            if how in ("fill", "drain") and frac > 0:
+                arc = QPen(tone, 2)
+                arc.setCapStyle(Qt.PenCapStyle.RoundCap)
+                qp.setPen(arc)
+                qp.drawArc(ring, 90 * 16, -int(360 * 16 * max(0.03, frac)))  # from the top, clockwise
+            elif pulse:
+                qp.setPen(QPen(tone, 2))
+                qp.drawEllipse(ring)
+            self.symbol(qp, live_icon(a), ix, cy, 11, tone, filled=True)
+            right_edge = body.right() - 14
             if extra:
                 qp.setFont(F_TINY)
                 chip = f"+{extra}"
                 cw = QFontMetrics(F_TINY).horizontalAdvance(chip)
                 qp.setPen(ink(DIM))
                 qp.drawText(QRectF(right_edge - cw, cy - 8, cw + 1, 16), RIGHT_MID, chip)
-                right_edge -= cw + 7
-            qp.setFont(F_TINY)
-            rw = QFontMetrics(F_TINY).horizontalAdvance(right) if right else 0
+                right_edge -= cw + 6
+            qp.setFont(F_VALUE)
+            rw = QFontMetrics(F_VALUE).horizontalAdvance(right) if right else 0
             if right:
-                qp.setPen(ink(0.92))
-                qp.drawText(QRectF(right_edge - rw - 1, cy - 8, rw + 1, 16), RIGHT_MID, right)
-            tx = ix + 15
-            tw = right_edge - tx - (rw + 8 if right else 0)
+                qp.setPen(tone)
+                qp.drawText(QRectF(right_edge - rw - 1, cy - 9, rw + 1, 18), RIGHT_MID, right)
+            tx = ix + rr + 8
+            tw = right_edge - tx - (rw + 10 if right else 0)
             qp.setFont(F_CHIP)
             qp.setPen(ink(0.95))
             qp.drawText(QRectF(tx, cy - 9, tw, 18), Qt.AlignmentFlag.AlignVCenter,
                         QFontMetrics(F_CHIP).elidedText(title, Qt.TextElideMode.ElideRight, int(max(0, tw))))
-            how, frac = live_line(a, now)
-            if how in ("fill", "drain") and frac > 0:  # a hairline: how far along, without a second row
-                y = body.bottom() - 2
-                pen = QPen(tone, 2)
-                pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-                qp.setPen(pen)
-                qp.setOpacity(qp.opacity() * 0.9)
-                qp.drawLine(QPointF(tx, y), QPointF(tx + (right_edge - tx) * max(0.03, frac), y))
             qp.setOpacity(1)
 
         def draw_pill(self, qp: Any, body: Any, a: dict, extra: int) -> None:
