@@ -289,6 +289,7 @@ class AriState:
 
 LIVE = (300, 54)  # the island while something is live (a file moving, a job, a timer): icon, text, line, time
 TRANSFER = LIVE  # the transfer is the live pill's first look: same size
+LIVE_SMALL = (200, 28)  # at rest something live shows small: icon, name, time, a hairline; hovered it opens to LIVE
 LIVE_ICONS = ("swap_horiz", "timer", "play_circle", "fitness_center", "bolt", "notifications", "bedtime",
               "auto_awesome", "language", "description", "chat_bubble", "inbox", "circle")  # in the icon font
 LIVE_ROW = 34  # one row of the hover list
@@ -422,8 +423,10 @@ STOPPABLE = ("thinking", "working", "speaking")  # while Ari is doing any of the
 
 def target_size(mode: str, text: str, hover: bool, details_h: float, hover_text: str = "",
                 rows: int = 1) -> tuple[float, float]:
-    if mode == "live":  # hovered with several activities: a list of up to STACK_MAX rows
-        return (LIVE[0], 12 + LIVE_ROW * min(rows, STACK_MAX)) if hover and rows > 1 else LIVE
+    if mode == "live":  # small at rest; hovered, the full pill, or a list of up to STACK_MAX rows
+        if not hover:
+            return LIVE_SMALL
+        return (LIVE[0], 12 + LIVE_ROW * min(rows, STACK_MAX)) if rows > 1 else LIVE
     if mode == "details":
         return DETAILS_W, min(MAX_H, details_h)
     if mode in ("active", "done"):  # one look for both: Ari's answer stays in the same pill it spoke from
@@ -1331,7 +1334,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 self.draw_active(qp, body, tone, mode)
             elif mode == "details":
                 self.draw_details(qp, body)
-            elif mode == "live" and self.spring.h > 30:
+            elif mode == "live" and self.spring.h > 18:
                 self.draw_live(qp, body)
             qp.end()
 
@@ -1432,6 +1435,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             if not rows:
                 return
             self.rows = []
+            if self.spring.h < LIVE[1] - 12:  # at rest (or folding back): the small pill
+                self.draw_small(qp, body, rows[0], extra)
+                self.rows = [(QRectF(body), rows[0])]
+                return
             if self.hover and extra and self.spring.h > LIVE[1] + 12:
                 self.draw_stack(qp, body, rows)
                 return
@@ -1482,6 +1489,50 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             if frac > 0:
                 qp.setPen(fill)
                 qp.drawLine(QPointF(x0, y), QPointF(x0 + (x1 - x0) * max(0.02, frac), y))
+
+        def draw_small(self, qp: Any, body: Any, a: dict, extra: int) -> None:
+            """Something live, at rest: a small tone dot with the icon, the name, the time or percent on the right
+            (+N when there are more), and the progress as a hairline along the bottom edge."""
+            now = self.now()
+            tone = QColor(live_tone(a, now))
+            title, _detail, right = live_words(a, now)
+            pulse = timer_pulse(time.monotonic(), self.ended) if a.get("kind") == "timer" else 0.0
+            qp.setOpacity(max(0.0, min(1.0, (self.spring.h - 14) / 10)))
+            cy = body.center().y() - 1
+            ix = body.x() + 15
+            qp.setPen(Qt.PenStyle.NoPen)
+            qp.setBrush(tint(tone.name(), 0.22 + 0.4 * pulse))
+            rr = 9 + (2 * pulse if not self.still else 0)
+            qp.drawEllipse(QPointF(ix, cy), rr, rr)
+            self.symbol(qp, live_icon(a), ix, cy, 12, tone, filled=True)
+            right_edge = body.right() - 12
+            if extra:
+                qp.setFont(F_TINY)
+                chip = f"+{extra}"
+                cw = QFontMetrics(F_TINY).horizontalAdvance(chip)
+                qp.setPen(ink(DIM))
+                qp.drawText(QRectF(right_edge - cw, cy - 8, cw + 1, 16), RIGHT_MID, chip)
+                right_edge -= cw + 7
+            qp.setFont(F_TINY)
+            rw = QFontMetrics(F_TINY).horizontalAdvance(right) if right else 0
+            if right:
+                qp.setPen(ink(0.92))
+                qp.drawText(QRectF(right_edge - rw - 1, cy - 8, rw + 1, 16), RIGHT_MID, right)
+            tx = ix + 15
+            tw = right_edge - tx - (rw + 8 if right else 0)
+            qp.setFont(F_CHIP)
+            qp.setPen(ink(0.95))
+            qp.drawText(QRectF(tx, cy - 9, tw, 18), Qt.AlignmentFlag.AlignVCenter,
+                        QFontMetrics(F_CHIP).elidedText(title, Qt.TextElideMode.ElideRight, int(max(0, tw))))
+            how, frac = live_line(a, now)
+            if how in ("fill", "drain") and frac > 0:  # a hairline: how far along, without a second row
+                y = body.bottom() - 2
+                pen = QPen(tone, 2)
+                pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                qp.setPen(pen)
+                qp.setOpacity(qp.opacity() * 0.9)
+                qp.drawLine(QPointF(tx, y), QPointF(tx + (right_edge - tx) * max(0.03, frac), y))
+            qp.setOpacity(1)
 
         def draw_pill(self, qp: Any, body: Any, a: dict, extra: int) -> None:
             """The live pill: the activity's icon in its tone, the title, the detail and a thin line under it, and the
