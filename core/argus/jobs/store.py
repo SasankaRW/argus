@@ -10,6 +10,7 @@ Rules this module enforces:
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import time
 from collections.abc import Callable, Iterable
@@ -138,6 +139,8 @@ class Step:
             error=r["error"],
         )
 
+log = logging.getLogger("argus.jobs")
+
 
 def _dumps(value: Any) -> str:
     return json.dumps(value, separators=(",", ":"), ensure_ascii=False, default=str)
@@ -152,6 +155,8 @@ class JobStore:
         self.windows = windows or {}
         self.off = set(off)  # plugins.off: jobs for these are refused
         self.gpu_model: str | None = None  # the model the last GPU job used: likely still loaded in Ollama
+        # the live activities hear every job and step event here (kind, job, now, step, data); never breaks a write
+        self.on_event: Callable[..., None] | None = None
 
     # ------------------------------------------------------------------ helpers (writer thread)
 
@@ -174,6 +179,11 @@ class JobStore:
         data: dict[str, Any] | None = None,
     ) -> None:
         insert_event(conn, now, kind, job_id=job.id if job else None, step=step, src=src, dst=dst, data=data)
+        if job is not None and self.on_event is not None and kind.startswith(("job.", "step.")):
+            try:
+                self.on_event(kind, job, now, step, data)
+            except Exception:  # noqa: BLE001  # boundary: a display feature must never fail a job's transaction
+                log.warning("activity hook failed", exc_info=True)
 
     def _move(
         self,

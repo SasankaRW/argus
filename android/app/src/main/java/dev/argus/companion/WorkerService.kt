@@ -55,6 +55,8 @@ class WorkerService : Service() {
     @Volatile private var running = false
     private var loop: Thread? = null
     private var inboxLoop: Thread? = null
+    private var liveLoop: Thread? = null
+    private val livePause = Pause()
     private val workerPause = Pause()
     private val inboxPause = Pause()
     private var lastText = "connecting…"
@@ -71,11 +73,13 @@ class WorkerService : Service() {
             if (!Prefs(this).ready) { /* no Argus address yet: only Send runs */ }
             else if (Prefs(this).worker) loop = thread(name = "argus-worker", isDaemon = true) { work() }
             if (Prefs(this).ready) inboxLoop = thread(name = "argus-inbox", isDaemon = true) { inbox() }
+            if (Prefs(this).ready) liveLoop = thread(name = "argus-live", isDaemon = true) { live() }
             // a network came back (wifi, Tailscale, mobile data): don't wait out the back-off
             val cb = object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: Network) {
                     workerPause.kick()
                     inboxPause.kick()
+                    livePause.kick()
                     dev.argus.companion.send.SendHub.kick()  // a network came back: retry the queue
                 }
             }
@@ -91,6 +95,8 @@ class WorkerService : Service() {
         dev.argus.companion.send.SendHub.stop()
         loop?.interrupt()
         inboxLoop?.interrupt()
+        liveLoop?.interrupt()
+        runCatching { LiveNote.clear(this) }
         netCallback?.let { runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(it) } }
         super.onDestroy()
     }
@@ -130,6 +136,54 @@ class WorkerService : Service() {
                 Log.w(TAG, "inbox: can't reach Argus", e)
                 try {
                     inboxPause.sleep(backoff)
+                } catch (_: InterruptedException) {
+                    return
+                }
+                backoff = minOf(backoff * 2, 120_000L)
+            }
+        }
+    }
+
+    /** Live activities: long-polls /activities and keeps one ongoing notification for the top one (or none). */
+    private fun live() {
+        val prefs = Prefs(this)
+        val api = Api(prefs.url, prefs.token)
+        var version = -1L
+        var wait = 25L
+        var backoff = 5_000L
+        var failures = 0
+        var lastAsk = 0L
+        while (running) {
+            try {
+                // at least 1 s between requests, whatever the server answers
+                val gap = 1_000L - (System.currentTimeMillis() - lastAsk)
+                if (gap > 0) Thread.sleep(gap)
+                lastAsk = System.currentTimeMillis()
+                val q = if (version < 0) "" else "after=$version&"
+                val r = api.call("GET", "/activities?${q}wait=$wait", timeoutMs = 45_000)
+                if (r.status == 401 || r.status == 403 || r.status == 404) {
+                    LiveNote.clear(this)
+                    livePause.sleep(60_000)
+                    continue
+                }
+                if (r.status >= 400) throw IOException("activities: HTTP ${r.status}")
+                backoff = 5_000L
+                failures = 0
+                val j = r.json()
+                version = j.optLong("version", version)
+                val items = Activity.parseAll(j.optJSONArray("items"))
+                val now = System.currentTimeMillis() / 1000
+                val top = LiveRank.pick(items, now)
+                if (top == null) LiveNote.clear(this) else LiveNote.show(this, top)
+                // a timer turning urgent changes the ranking with no server event: wake up then
+                wait = (LiveRank.secsUntilReRank(items, now) ?: 25L).coerceIn(1L, 25L)
+            } catch (e: InterruptedException) {
+                return
+            } catch (e: Exception) {
+                Log.w(TAG, "live: can't reach Argus", e)
+                if (++failures >= 3) LiveNote.clear(this)  // don't leave a stale notification up
+                try {
+                    livePause.sleep(backoff)
                 } catch (_: InterruptedException) {
                     return
                 }
