@@ -202,8 +202,9 @@ def tell_one(ctx: Context, text: str, day: dt.date, at: str, sfx: str = "") -> d
     return write_day(ctx, day, said, old, sfx)
 
 
-def write_day(ctx: Context, day: dt.date, said: list[dict], old: dict, sfx: str = "") -> dict:
-    """Write `day`'s entry from everything said and save it (Life Hub, learned notes, the vault copy)."""
+def write_day(ctx: Context, day: dt.date, said: list[dict], old: dict, sfx: str = "", fresh: bool = False) -> dict:
+    """Write `day`'s entry from everything said and save it (Life Hub, learned notes, the vault copy). `fresh`: a
+    rewrite you asked for: the entry is Ari's again (Life Hub drops its "edited by you" mark)."""
     edited = old if old.get("edited_at") else None  # you changed it in Life Hub: your text stays
     e = ctx.step(f"write{sfx}", lambda: write(ctx, day, said, edited).model_dump())
     if edited:  # your title, and what you listed, stay too
@@ -215,6 +216,8 @@ def write_day(ctx: Context, day: dt.date, said: list[dict], old: dict, sfx: str 
              "people": clean(e["people"], 10, 40), "places": clean(e["places"], 10, 40),
              "tags": clean([t.lower() for t in e["tags"]], 4, 24), "said": said,
              "model": ctx.last_answer.tier if getattr(ctx, "last_answer", None) else None}
+    if fresh:
+        entry["edited"] = False
 
     def save():
         if ctx.dry_run:
@@ -274,14 +277,20 @@ def tell(ctx: Context):
 @workflow(PLUGIN, "rewrite")
 def rewrite(ctx: Context):
     """"Rewrite this day": the entry written again from everything said that day, nothing added (for a day saved as
-    you typed it, when no writer could do it then). A day you edited in Life Hub keeps your text, as always."""
+    you typed it, when no writer could do it then). A day you edited in Life Hub is rewritten too: your edit counts
+    as something you said, and the entry is Ari's again."""
     starts = int(ctx.config.get("day_starts") or 4)
     day = which_day(str(ctx.input.get("day") or "today"), dt.datetime.now(), starts)
     old = ctx.step("load", call, ctx, "GET", f"/api/diary/{day.isoformat()}", missing_ok=True) or {}
     said = old.get("said") or []
     if not said:
         raise PermanentError(f"There's no diary entry for {day:%A %d %B} to rewrite.")
-    out = write_day(ctx, day, said, old)
+    if old.get("edited_at") and str(old.get("entry") or "").strip():
+        # you fixed it by hand: your text counts as something you said (kept, so it isn't lost), and the whole
+        # day is written again from all of it
+        said = [*said, {"at": "edited", "text": " ".join(str(old["entry"]).split())[:8000]}]
+        old = {**old, "edited_at": None}
+    out = write_day(ctx, day, said, old, fresh=True)
     out["say"] = (f"Rewrote your diary for {day:%A %d %B}: {out['title']}." if not ctx.dry_run else
                   "Dry-run: I'd rewrite that day. Turn the Diary plugin Live to keep it.")
     return out
