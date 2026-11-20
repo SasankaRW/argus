@@ -97,7 +97,11 @@ function useOldestApproval(events: ArgusEvent[], waiting: number): number | null
   return oldest;
 }
 
+let opened = false;  // the opening plays once per page load, not every time you come back to the map
+
 export function MapView(p: Props) {
+  const [opening, setOpening] = useState(() => { if (opened || reducedMotion()) return false; opened = true; return true; });
+  useEffect(() => { if (!opening) return; const t = window.setTimeout(() => setOpening(false), 1600); return () => window.clearTimeout(t); }, [opening]);
   const now = useNow();
   const events = p.events ?? [];
   const claude = useClaude();
@@ -218,7 +222,7 @@ export function MapView(p: Props) {
       {vertical ? (<>
         {!p.stale && head}
         <div className={stageCls} style={stageStyle}>
-          <LevelCanvas layout={layout} flow={p.flow} selected={sel} onPick={pick} label="Live map" dots={dots} />
+          <LevelCanvas layout={layout} flow={p.flow} selected={sel} onPick={pick} label="Live map" dots={dots} opening={opening} />
         </div>
         {navBtns}
       </>) : (<>
@@ -233,7 +237,7 @@ export function MapView(p: Props) {
         <div className={stageCls} style={stageStyle}>
           <div ref={zoom.refs.clip} className="lm-clip">
             <div ref={zoom.refs.cam} className="lm-cam">
-              <LevelCanvas layout={layout} flow={p.flow} selected={sel} onPick={pick} label="Live map" dots={dots} />
+              <LevelCanvas layout={layout} flow={p.flow} selected={sel} onPick={pick} label="Live map" dots={dots} opening={opening} />
             </div>
             <div ref={zoom.refs.view} className="lm-plug" aria-label="Inside the plugins" aria-hidden={!inPlugins} style={{ opacity: 0, pointerEvents: "none", ...plugFit }}>
               <div ref={zoom.refs.pbg} className="lm-pbg" />
