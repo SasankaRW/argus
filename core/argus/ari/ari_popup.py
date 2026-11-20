@@ -860,6 +860,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             self.bars_t = time.monotonic()
             self.cpu_hist: list[float] = []  # the last 40 CPU readings: a line under its bar
             self.page_t0 = time.monotonic()  # when this page appeared: its rows rise in
+            self.leaving = False  # drawing the page a flip is leaving: settled, nothing rises
             self.wheel_acc, self.wheel_at = 0.0, 0.0
             self.media: dict | None = None
             self.art: Any = None  # the album art (QImage)
@@ -1755,9 +1756,14 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 self.flip_from = None  # done (or the page it left is gone)
             if self.flip_from is not None:
                 old, new = im.flip_frame(t, self.flip_dir, self.still)
-                keep = list(self.buttons)  # the page sliding away is only drawn: its keys don't count
-                self.posed(qp, body, old, fade, lambda: self.draw_page(qp, ps[self.flip_from], x0, x1, y))
-                self.buttons = keep
+                if not self.still:  # under reduced motion it's gone at once: not drawn at all
+                    keep = list(self.buttons)  # the page sliding away is only drawn: its keys don't count
+                    self.leaving = True
+                    try:
+                        self.posed(qp, body, old, fade, lambda: self.draw_page(qp, ps[self.flip_from], x0, x1, y))
+                    finally:
+                        self.leaving = False
+                    self.buttons = keep
                 y = self.posed(qp, body, new, fade, lambda: self.draw_page(qp, pid, x0, x1, y))
             else:
                 y = self.draw_page(qp, pid, x0, x1, y)
@@ -1861,7 +1867,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             while it plays; the switches; your shortcuts. Each block rises in as the page appears."""
             info = self.info
             on = {w["id"] for w in info.widgets if w.get("on")}
-            since = time.monotonic() - self.page_t0
+            since = 99.0 if self.leaving else time.monotonic() - self.page_t0
             block = [0]
             base = qp.opacity()
 
@@ -1878,6 +1884,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             orb = QRectF(x1 - 44, y + 3, 44, 44)
             power = QRectF(orb.x() - 44, y + 7, 36, 36)
             game = QRectF(power.x() - 44, y + 7, 36, 36)
+            helios = QRectF(game.x() - 44, y + 7, 36, 36)
             if "clock" in on:
                 now = time.localtime()
                 qp.setFont(F_CLOCK)
@@ -1895,10 +1902,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 qp.setFont(F_EYE)
                 qp.setPen(QColor(ACCENT))
                 date = time.strftime("%a %d %b", now).upper()
-                qp.drawText(QRectF(x0, y + 31, game.x() - x0 - 8, 16), Qt.AlignmentFlag.AlignVCenter, date)
+                qp.drawText(QRectF(x0, y + 31, helios.x() - x0 - 8, 16), Qt.AlignmentFlag.AlignVCenter, date)
                 icon, temp, _ = ib.weather_line(self.weather)
-                if temp:
-                    wx = x0 + QFontMetrics(F_EYE).horizontalAdvance(date) + 12
+                wx = x0 + QFontMetrics(F_EYE).horizontalAdvance(date) + 12
+                if temp and wx + 52 <= helios.x():  # only where it fits beside the keys
                     self.symbol(qp, icon, wx + 7, y + 39, 15, QColor(VIOLET), filled=True)
                     qp.setFont(F_PILL)
                     qp.setPen(QColor(VIOLET))
@@ -1907,6 +1914,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 qp.setFont(F_TITLE)
                 qp.setPen(ink())
                 qp.drawText(QRectF(x0, y, 120, 46), Qt.AlignmentFlag.AlignVCenter, "Ari")
+            self.round_key(qp, helios, "helios:#ari", "more")
             self.round_key(qp, game, "game", "game-on" if self.ari.game else "game")
             self.round_key(qp, power, "power", "start" if self.ari.off else "power")
             self.draw_orb(qp, orb)
@@ -2167,9 +2175,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             qp.setFont(F_TINY)
             qp.setPen(ink() if self.hot == key else ink(DIM))
             fm = QFontMetrics(F_TINY)
-            qp.drawText(QRectF(rect.x() + 2, rect.y() + 28, rect.width() - 4, 24),
-                        Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextWordWrap,
-                        fm.elidedText(label, Qt.TextElideMode.ElideRight, int(rect.width() * 2 - 12)))
+            qp.drawText(QRectF(rect.x() + 2, rect.y() + 28, rect.width() - 4, 26),
+                        Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
+                        two_lines(label, fm, int(rect.width() - 4)))
             self.buttons.append((rect, key))
 
         def draw_media(self, qp: Any, x0: float, x1: float, y: float) -> float:
@@ -2504,7 +2512,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 return
             key = self.key_at(e.position()) if (self.details or self.mode() == "active") else None
             if key and self.details and not self.still:
-                rect = next((r for r, k in self.buttons if k == key), None)
+                pos = QPointF(e.position())
+                rect = next((r for r, k in self.buttons if k == key and r.contains(pos)), None)
                 if rect is not None:
                     self.ripples.append((QRectF(rect), QPointF(e.position()), time.monotonic()))
             if key == "stop":
@@ -2715,6 +2724,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
         first = ""
         while words and (not first or fm.horizontalAdvance(f"{first} {words[0]}") <= width):
             first = f"{first} {words.pop(0)}".strip()
+        first = fm.elidedText(first, Qt.TextElideMode.ElideRight, width)  # one long word still fits its line
         if not words:
             return first
         return first + "\n" + fm.elidedText(" ".join(words), Qt.TextElideMode.ElideRight, width)

@@ -348,7 +348,7 @@ def test_the_island_draws_a_page_mid_flip(tmp_path):
 
     pytest.importorskip("PySide6.QtWidgets")
     env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
-    for page, flip in (("system", "0.3"), ("calendar", "1"), ("ari", None)):
+    for page, flip in (("system", "0.3"), ("calendar", "1"), ("ari", None), ("media", "0.1")):  # media: leaves ari
         out = tmp_path / f"{page}.png"
         cmd = [sys.executable, "-m", "argus.ari.ari_popup", "--preview", str(out), "--details", "--page", page,
                "--url", "http://127.0.0.1:9"] + (["--flip", flip] if flip else [])
@@ -378,5 +378,5 @@ def test_the_start_page_shows_whats_playing_only_while_it_plays(tmp_path):
     playing, quiet = keys(), keys("--text", "nomusic")
     assert playing.count("page:1") == 2  # the strip (opens the music page) and its page dot
     assert quiet.count("page:1") == 1  # nothing playing: only the dot
-    for k in ("talk", "game", "power", "clip", "gameauto", "show:inbox", "cliplink"):
+    for k in ("talk", "game", "power", "clip", "gameauto", "show:inbox", "cliplink", "helios:#ari"):
         assert k in playing
