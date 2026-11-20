@@ -355,3 +355,28 @@ def test_the_island_draws_a_page_mid_flip(tmp_path):
         r = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=60)
         assert r.returncode == 0, r.stderr[-800:]
         assert out.stat().st_size > 2000
+
+
+def test_the_start_page_shows_whats_playing_only_while_it_plays(tmp_path):
+    import json
+    import os
+    import subprocess
+    import sys
+
+    import pytest
+
+    pytest.importorskip("PySide6.QtWidgets")
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
+
+    def keys(*extra):
+        cmd = [sys.executable, "-m", "argus.ari.ari_popup", "--preview", str(tmp_path / "a.png"), "--details",
+               "--page", "ari", "--keys", "--url", "http://127.0.0.1:9", *extra]
+        r = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=60)
+        assert r.returncode == 0, r.stderr[-800:]
+        return json.loads(r.stdout.strip().splitlines()[-1])
+
+    playing, quiet = keys(), keys("--text", "nomusic")
+    assert playing.count("page:1") == 2  # the strip (opens the music page) and its page dot
+    assert quiet.count("page:1") == 1  # nothing playing: only the dot
+    for k in ("talk", "game", "power", "clip", "gameauto", "show:inbox", "cliplink"):
+        assert k in playing
