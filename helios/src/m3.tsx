@@ -101,3 +101,11 @@ export function Logo({ size = 22 }: { size?: number }) {
     </svg>
   );
 }
+
+// A 12-point scallop (the "cookie" badge): a circle of radius 31 with 12 soft bumps of 3, drawn in a -36..36 viewBox.
+// Turns slowly behind a status icon (the phone's Home, the map's Argus box).
+export const COOKIE = (() => {
+  const pts: string[] = [];
+  for (let i = 0; i < 144; i++) { const a = (i / 144) * Math.PI * 2, r = 31 + 3 * Math.cos(12 * a); pts.push(`${(r * Math.cos(a)).toFixed(2)} ${(r * Math.sin(a)).toFixed(2)}`); }
+  return `M${pts.join("L")}Z`;
+})();

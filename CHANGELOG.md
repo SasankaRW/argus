@@ -5,6 +5,9 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Helios live map:** work travels the lines as small dots and the box it reaches flashes; the Argus box has a turning badge and a breathing ring; the map opens with boxes settling in and lines drawing themselves; news for you (a wishlist restock, an important message) runs home to the Phone box with a banner; a strip at the bottom right says what just happened. All of it stops under reduced motion and with the Flow switch off.
+- **Watchers:** wishlist alerts are tagged `wishlist`, and `notify.queued` events carry the message's priority, tags and text.
+
 - **Right-click send icons:** plain glyphs without a background, white on dark and dark on light, clearer at small sizes. Run scripts/send-menu-install.ps1 again.
 
 - **Send on the PC:** the logon task no longer exits at start; with no console the agent logs to agent.log in its data folder.

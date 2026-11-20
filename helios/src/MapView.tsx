@@ -4,19 +4,22 @@
 // pluginGraph.ts (pure, tested), the zoom from zoomMath.ts and usePluginZoom.ts; this file fits the drawing to its
 // space, feeds it the live data and handles picking a box.
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, type Approval, type ArgusEvent, type ArgusMap } from "./api";
 import { attentionItems } from "./attention";
 import { useClaude } from "./chips";
 import { useJobs } from "./jobsFeed";
 import { LevelCanvas } from "./LevelCanvas";
 import { Ms } from "./m3";
-import { buildLevels, Card, Dim, L, layoutLevels, PLUGINS } from "./mapGraph";
+import { boxOf, buildLevels, Card, Dim, L, labelOf, layoutLevels, PLUGINS } from "./mapGraph";
+import { MapBanner, MapStrip, useStrip } from "./MapNews";
 import { MapHead } from "./MapHead";
 import type { Selection } from "./mapInfo";
 import { buildPluginView, layoutPluginView, PL } from "./pluginGraph";
 import { useMapNav } from "./useMapNav";
 import { usePluginZoom } from "./usePluginZoom";
+import { reducedMotion, useMapFlow } from "./useMapFlow";
+import { newsRoute } from "./mapFlow";
 import type { SendLiveItem } from "./sendLive";
 
 export type FitPad = { top: `${number}px`; right: `${number}px`; bottom: `${number}px`; left: `${number}px` };
@@ -96,7 +99,11 @@ function useOldestApproval(events: ArgusEvent[], waiting: number): number | null
   return oldest;
 }
 
+let opened = false;  // the opening plays once per page load, not every time you come back to the map
+
 export function MapView(p: Props) {
+  const [opening, setOpening] = useState(() => { if (opened || reducedMotion()) return false; opened = true; return true; });
+  useEffect(() => { if (!opening) return; const t = window.setTimeout(() => setOpening(false), 1600); return () => window.clearTimeout(t); }, [opening]);
   const now = useNow();
   const events = p.events ?? [];
   const claude = useClaude();
@@ -115,6 +122,24 @@ export function MapView(p: Props) {
       : layoutLevels(built.cards, built.lines, { orient: "h", dims: deskDim, xs: DESK.xs, width: DESK.width, height: DESK.height, locked: [L.models], compact: [L.models, L.plugins] })),
     [built, vertical, compact],
   );
+  // the flow layer: dots for what happens from now on (off with the Flow switch, on a stale map, under reduced motion)
+  const of = useMemo(() => boxOf(p.map), [p.map]);
+  const flowOn = p.flow && !p.stale && !reducedMotion();
+  const fl = useMapFlow(events, layout.routes, of, flowOn);
+  // the news banner (desktop): shown when the news dot reaches the Phone box, or at once when there are no dots
+  const [banner, setBanner] = useState<ArgusEvent | null>(null);
+  const latest = fl.news[fl.news.length - 1] ?? null;
+  const latestRef = useRef(latest);
+  latestRef.current = latest;
+  // no dots, or no way home on this map (no Phone box): the banner shows at once
+  useEffect(() => { if (latest && (!flowOn || !newsRoute(latest, layout.routes, of).length)) setBanner(latest); }, [latest, flowOn]);  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!banner) return; const t = window.setTimeout(() => setBanner(null), 5200); return () => window.clearTimeout(t); }, [banner]);
+  const onArrive = useCallback((box: string, tone: "work" | "news", last: boolean) => {
+    if (box === "phone" && tone === "news" && last) setBanner(latestRef.current);
+  }, []);
+  const dots = useMemo(() => (flowOn ? { incoming: fl.incoming, onArrive } : undefined), [flowOn, fl.incoming, onArrive]);
+  const nameOf = useMemo(() => { const byId = new Map(p.map.nodes.map((n) => [n.id, n])); return (id: string) => { const n = byId.get(id); return n ? labelOf(n) : null; }; }, [p.map]);
+  const strip = useStrip(events, nameOf);
   const waiting = p.map.nodes.find((n) => n.id === "approvals")?.pending ?? 0;
   const oldest = useOldestApproval(events, waiting);
   const items = useMemo(
@@ -212,7 +237,7 @@ export function MapView(p: Props) {
       {vertical ? (<>
         {!p.stale && head}
         <div className={stageCls} style={stageStyle}>
-          <LevelCanvas layout={layout} flow={p.flow} selected={sel} onPick={pick} label="Live map" />
+          <LevelCanvas layout={layout} flow={p.flow} selected={sel} onPick={pick} label="Live map" dots={dots} opening={opening} />
         </div>
         {navBtns}
       </>) : (<>
@@ -227,7 +252,7 @@ export function MapView(p: Props) {
         <div className={stageCls} style={stageStyle}>
           <div ref={zoom.refs.clip} className="lm-clip">
             <div ref={zoom.refs.cam} className="lm-cam">
-              <LevelCanvas layout={layout} flow={p.flow} selected={sel} onPick={pick} label="Live map" />
+              <LevelCanvas layout={layout} flow={p.flow} selected={sel} onPick={pick} label="Live map" dots={dots} opening={opening} />
             </div>
             <div ref={zoom.refs.view} className="lm-plug" aria-label="Inside the plugins" aria-hidden={!inPlugins} style={{ opacity: 0, pointerEvents: "none", ...plugFit }}>
               <div ref={zoom.refs.pbg} className="lm-pbg" />
@@ -240,6 +265,8 @@ export function MapView(p: Props) {
           </div>
         </div>
         {navBtns}
+        {!compact && !p.stale && <MapBanner news={banner} style={{ top: headTop + headSize.h + 8, right: Math.max(18, pad.r - 12) }} />}
+        {!compact && !p.stale && !inPlugins && <MapStrip lines={strip} now={now} style={{ right: Math.max(18, pad.r + 18), bottom: pad.b + 14 }} />}
       </>)}
     </div>
   );

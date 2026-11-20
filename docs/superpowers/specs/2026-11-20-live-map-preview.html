@@ -1,0 +1,481 @@
+<title>Argus live map preview</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto+Flex:opsz,wdth,wght@8..144,25..151,100..1000&family=Roboto+Mono:wght@400;500&family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,500,0..1,0&display=swap">
+<style>
+/* Layout: preview controls on top, the Helios desktop (rail + live map) drawn at 1296 x 740 and scaled to fit, notes under it.
+   Material 3 Expressive tokens, copied from helios/src/m3.css and livemap.css. Single dark look on purpose. */
+:root {
+  --bg: #0b0b0e; --panel: #141416; --raise: #1c1c21; --s2: #222227; --s3: #26262c; --map: #111114;
+  --tx: #e2e2e9; --tx2: #c4c6d0; --tx3: #9c9ea9; --ac: #a8c8ff;
+  --c-pri: #244777; --c-pri-on: #d5e3ff; --c-ter: #573e5c; --c-sec: #34405a; --c-ok: #1f4d2e; --c-ok-on: #b6f2c3;
+  --busy: #6fcf8c; --idle: #3a3a43; --slow: #f0d27a; --slowc: #4a3f1a; --esc: #a98bb0; --bad: #ffb4ab;
+  --sans: "Roboto Flex", Roboto, system-ui, sans-serif; --mono: "Roboto Mono", ui-monospace, Consolas, monospace;
+  --out: cubic-bezier(.05, .7, .1, 1); --std: cubic-bezier(.2, 0, 0, 1);
+  color-scheme: dark;
+}
+html, body { background: var(--bg); color: var(--tx); }
+body { font: 15px/1.45 var(--sans); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 24px 40px; }
+.wrap { max-width: 1320px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+.ms { font-family: "Material Symbols Rounded"; font-weight: 500; font-size: 24px; line-height: 1; display: inline-block; font-variation-settings: "FILL" 0; user-select: none; flex: none; }
+.ms.f { font-variation-settings: "FILL" 1; }
+
+/* preview controls */
+.top { display: flex; flex-wrap: wrap; gap: 14px 20px; align-items: center; justify-content: space-between; }
+.top h1 { margin: 0; font-size: 26px; font-weight: 600; font-stretch: 112%; letter-spacing: -.01em; }
+.top p { margin: 2px 0 0; color: var(--tx2); font-size: 14px; }
+.ctl { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.seg { display: inline-flex; border-radius: 999px; background: var(--s2); padding: 4px; gap: 4px; }
+.seg button, .btn { border: 0; font: inherit; font-size: 14px; font-weight: 500; color: var(--tx); background: transparent; border-radius: 999px; padding: 8px 16px; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; transition: background 200ms var(--std); }
+.seg button[aria-pressed="true"] { background: var(--c-pri); color: var(--c-pri-on); }
+.seg button:hover:not([aria-pressed="true"]) { background: rgba(226,226,233,.08); }
+.btn { background: var(--s2); }
+.btn:hover { background: var(--s3); }
+.btn .ms { font-size: 19px; }
+.btn:disabled { opacity: .4; cursor: default; }
+button:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
+
+/* the app frame, scaled */
+.frame { position: relative; border-radius: 28px; overflow: hidden; background: var(--bg); box-shadow: 0 0 0 1px #26262c; }
+.app { position: absolute; left: 0; top: 0; width: 1296px; height: 740px; transform-origin: 0 0; display: flex; }
+.rail { width: 88px; flex: none; display: flex; flex-direction: column; align-items: center; gap: 6px; padding-top: 18px; }
+.logo { width: 48px; height: 48px; border-radius: 16px; background: #17171c; display: grid; place-items: center; color: var(--ac); margin-bottom: 14px; }
+.logo .ms { font-size: 28px; }
+.ri { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 12px; font-weight: 500; color: var(--tx2); }
+.ri i { width: 56px; height: 32px; border-radius: 16px; display: grid; place-items: center; font-style: normal; }
+.ri.on i { background: var(--c-sec); color: #d9e3f8; }
+.ri.on { color: var(--tx); }
+.main { flex: 1; position: relative; margin: 10px 10px 10px 0; border-radius: 28px; background: var(--map); overflow: hidden; }
+.head { position: absolute; left: 20px; right: 20px; top: 16px; height: 60px; display: flex; align-items: center; justify-content: space-between; gap: 14px; z-index: 4; }
+.card { display: flex; gap: 12px; align-items: center; background: var(--s2); border-radius: 20px; padding: 9px 10px 9px 9px; min-width: 330px; }
+.ci { width: 38px; height: 38px; border-radius: 13px; display: grid; place-items: center; background: var(--slowc); color: var(--slow); }
+.card b { display: block; font-weight: 500; font-size: 14px; }
+.card span { display: block; color: var(--tx2); font-size: 12.5px; }
+.go { border: 0; border-radius: 999px; padding: 6px 14px; background: var(--s3); color: var(--tx); font: inherit; font-size: 13px; margin-left: auto; }
+.right { display: flex; gap: 12px; align-items: center; }
+.pill { display: inline-flex; gap: 8px; align-items: center; border-radius: 999px; padding: 7px 14px 7px 10px; font-size: 13px; background: var(--c-ok); color: var(--c-ok-on); }
+.pill .ms { font-size: 18px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--busy); position: relative; }
+.outl { border: 1px solid #3d3d46; background: transparent; color: var(--tx); border-radius: 999px; padding: 7px 14px; font: inherit; font-size: 13px; display: inline-flex; gap: 6px; align-items: center; }
+.outl .ms { font-size: 18px; }
+
+/* the map canvas: 1200 x 600, same positions as Helios */
+.cv { position: absolute; left: 4px; top: 100px; width: 1200px; height: 600px; }
+.cv svg { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+.e { fill: none; stroke-linecap: round; }
+.e.quiet { stroke: var(--idle); stroke-width: 2; }
+.e.busy { stroke: var(--busy); stroke-width: 3.5; }
+.e.slow { stroke: var(--slow); stroke-width: 2.5; stroke-dasharray: 7 6; }
+.e.esc { stroke: var(--esc); stroke-width: 2; stroke-dasharray: 2 7; }
+.n { position: absolute; display: flex; gap: 11px; align-items: center; color: var(--tx); background: var(--raise); border-radius: 18px; padding: 0 14px 0 9px; z-index: 2; }
+.n .i { width: 36px; height: 36px; border-radius: 12px; background: var(--s3); display: grid; place-items: center; flex: none; position: relative; }
+.n .i .ms { font-size: 22px; position: relative; z-index: 1; }
+.n .t { min-width: 0; flex: 1; }
+.n .nm, .n .st { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.n .nm { font-weight: 500; font-size: 14px; line-height: 1.3; }
+.n .st { font-size: 12px; color: var(--tx2); line-height: 1.3; }
+.n.big { background: var(--c-pri); border-radius: 26px; }
+.n.big .i { background: #ffffff1f; width: 44px; height: 44px; border-radius: 15px; }
+.n.big .nm { font-size: 16px; }
+.n.big .st { color: #ffffffb8; }
+.n.plug { background: var(--c-sec); }
+.n.model { background: var(--c-ter); }
+.n.plug .i, .n.model .i { background: #ffffff1a; }
+.n.plug .st, .n.model .st { color: #ffffffb0; }
+.n.warn { box-shadow: inset 0 0 0 1.5px var(--slow); }
+.n.warn .st { color: var(--slow); }
+.mb { display: block; height: 5px; border-radius: 3px; background: #0006; margin-top: 6px; overflow: hidden; }
+.mb i { display: block; height: 100%; border-radius: 3px; background: #8fd9a0; transition: width 1200ms var(--std); }
+.badge { position: absolute; width: 22px; height: 22px; transform: translate(-50%, -50%); border-radius: 50%; display: grid; place-items: center; z-index: 3; background: var(--slow); color: #2b2205; }
+.badge .ms { font-size: 15px; font-variation-settings: "FILL" 1, "wght" 600; }
+.num { font-variant-numeric: tabular-nums; display: inline-block; }
+.cookie { position: absolute; inset: -4px; display: none; }
+.cookie path { fill: #ffffff26; }
+
+/* ---- now: today's Helios (moving dashes, nothing else) */
+@media (prefers-reduced-motion: no-preference) {
+  .now .e.busy { stroke-dasharray: 8 12; animation: flow 1.4s linear infinite; }
+}
+@keyframes flow { to { stroke-dashoffset: -20; } }
+.now .pk { display: none; }
+
+/* ---- proposed */
+.new .e.busy { stroke-opacity: .42; stroke-width: 3; }
+.new .core .i { background: transparent; }
+.new .core .cookie { display: block; }
+@media (prefers-reduced-motion: no-preference) {
+  .new .core .cookie { animation: spin 24s linear infinite; }
+  .new .core::after { content: ""; position: absolute; inset: -2px; border-radius: 28px; box-shadow: 0 0 0 2px rgba(168, 200, 255, .55); animation: ring 3.4s var(--out) infinite; pointer-events: none; }
+  .new .dot::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--busy); animation: ping 2s var(--out) infinite; }
+  .new .n.hit { animation: hit 750ms var(--std); }
+  .new .n.hit .i { animation: pop 420ms var(--out); }
+  .new .num.tick { animation: tick 520ms var(--out); }
+  .new.intro .n { animation: rise 560ms var(--out) backwards; animation-delay: calc(var(--col) * 90ms + 80ms); }
+  .new.intro .badge, .new.intro .e.slow, .new.intro .e.esc { animation: fade 500ms var(--std) backwards; animation-delay: 620ms; }
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes ring { 0% { inset: -2px; opacity: .8; } 100% { inset: -16px; opacity: 0; } }
+@keyframes ping { 0% { transform: scale(1); opacity: .7; } 100% { transform: scale(2.8); opacity: 0; } }
+@keyframes hit { 0% { box-shadow: inset 0 0 0 2px var(--busy), 0 0 0 0 rgba(111, 207, 140, .45); } 100% { box-shadow: inset 0 0 0 2px rgba(111, 207, 140, 0), 0 0 0 12px rgba(111, 207, 140, 0); } }
+@keyframes pop { 40% { transform: scale(1.1); } }
+@keyframes tick { 0% { transform: translateY(-5px); color: var(--c-ok-on); } }
+@keyframes rise { from { opacity: 0; transform: translateY(14px) scale(.96); } }
+@keyframes fade { from { opacity: 0; } }
+
+/* hover focus, the alert banner, the event strip */
+.cv .n, .cv .e, .pk g { transition: opacity 320ms var(--std); }
+.cv .n.dim { opacity: .45; }
+.cv .e.dim, .pk g.dim { opacity: .25; }
+.toast { position: absolute; right: 20px; top: 88px; z-index: 6; display: flex; gap: 12px; align-items: center; background: var(--slowc); color: #fbeec4; border-radius: 24px; padding: 10px 18px 10px 10px; max-width: 420px; }
+.toast .ti { width: 40px; height: 40px; border-radius: 14px; background: var(--slow); color: #2b2205; display: grid; place-items: center; flex: none; }
+.toast b { display: block; font-weight: 600; font-size: 14.5px; }
+.toast span:not(.ms):not(.ti) { display: block; font-size: 12.5px; color: #e9dcae; }
+.toast.show { animation: drop 520ms var(--out); }
+.toast:not(.show) { opacity: 0; transform: translateY(-8px); transition: opacity 300ms var(--std), transform 300ms var(--std); }
+.strip { position: absolute; left: 20px; right: 20px; bottom: 14px; z-index: 4; display: flex; gap: 8px; overflow: hidden; height: 34px; }
+.ev { display: inline-flex; gap: 8px; align-items: center; flex: none; background: var(--s2); color: var(--tx2); border-radius: 999px; padding: 0 14px 0 10px; height: 34px; font-size: 12.5px; white-space: nowrap; }
+.ev .ms { font-size: 17px; color: var(--busy); }
+.ev.warn .ms { color: var(--slow); }
+.ev .ago { color: var(--tx3); font-family: var(--mono); font-size: 11px; }
+.ev:first-child { color: var(--tx); }
+.ev.go-out { position: absolute; top: 0; opacity: 0; transition: opacity 300ms var(--std); pointer-events: none; }
+@media (prefers-reduced-motion: no-preference) {
+  .new .ev:first-child { animation: slide 460ms var(--out); }
+  .new .n.hit-warn { animation: hitw 900ms var(--std); }
+}
+@keyframes slide { from { transform: translateX(-24px); opacity: 0; } }
+@keyframes drop { from { transform: translateY(-14px); opacity: 0; } }
+@keyframes hitw { 0% { box-shadow: inset 0 0 0 2px var(--slow), 0 0 0 0 rgba(240, 210, 122, .5); } 100% { box-shadow: inset 0 0 0 2px rgba(240, 210, 122, 0), 0 0 0 14px rgba(240, 210, 122, 0); } }
+.now .strip, .now .toast { display: none; }
+.e.broken { stroke: #ff6f61; stroke-width: 2.5; stroke-dasharray: 2 7; }
+.badge.broken { background: #ff6f61; color: #2b0a07; }
+.n.bad { background: #5c2a27; box-shadow: inset 0 0 0 1.5px #ff6f61; }
+.n.bad .st { color: var(--bad); }
+.card.bad .ci { background: #5c2a27; color: var(--bad); }
+.ev.bad .ms { color: #ff6f61; }
+
+/* notes */
+.notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.note { background: var(--panel); border-radius: 20px; padding: 16px 18px; display: flex; gap: 14px; align-items: flex-start; }
+.note .ni { width: 40px; height: 40px; border-radius: 14px; display: grid; place-items: center; flex: none; }
+.note:nth-child(1) .ni { background: var(--c-ok); color: var(--c-ok-on); }
+.note:nth-child(2) .ni { background: var(--c-pri); color: var(--c-pri-on); }
+.note:nth-child(3) .ni { background: var(--c-ter); color: #f8d8fe; }
+.note:nth-child(4) .ni { background: var(--c-sec); color: #d9e3f8; }
+.note b { display: block; font-weight: 500; margin-bottom: 2px; }
+.note span { color: var(--tx2); font-size: 13.5px; }
+.foot { color: var(--tx3); font-size: 13px; margin: 0; }
+</style>
+
+<div class="wrap">
+  <div class="top">
+    <div>
+      <h1>Argus live map</h1>
+      <p>The desktop landing screen with sample data. Switch between how it looks now and the proposal</p>
+    </div>
+    <div class="ctl">
+      <div class="seg" role="group" aria-label="Version">
+        <button type="button" id="v-now" aria-pressed="false">Now</button>
+        <button type="button" id="v-new" aria-pressed="true">Proposed</button>
+      </div>
+      <button type="button" class="btn" id="replay"><span class="ms">replay</span>Replay the opening</button>
+      <button type="button" class="btn" id="alert"><span class="ms">sell</span>Play a stock alert</button>
+      <button type="button" class="btn" id="down"><span class="ms">cloud_off</span>Take Life Hub down</button>
+    </div>
+  </div>
+
+  <div class="frame" id="frame">
+    <div class="app new" id="app">
+      <nav class="rail" aria-label="Sample navigation">
+        <div class="logo"><span class="ms f">visibility</span></div>
+        <div class="ri on"><i><span class="ms f">hub</span></i>Map</div>
+        <div class="ri"><i><span class="ms">forum</span></i>Ari</div>
+        <div class="ri"><i><span class="ms">extension</span></i>Plugins</div>
+        <div class="ri"><i><span class="ms">play_circle</span></i>Runs</div>
+        <div class="ri"><i><span class="ms">inbox</span></i>Inbox</div>
+        <div class="ri"><i><span class="ms">settings</span></i>Settings</div>
+      </nav>
+      <div class="main">
+        <div class="head">
+          <div class="card" id="att">
+            <span class="ci"><span class="ms f">schedule</span></span>
+            <div><b>Backups is running slow</b><span>40 s behind on Calypso</span></div>
+            <span class="go">Look</span>
+          </div>
+          <div class="right">
+            <span class="outl"><span class="ms">pause</span>Pause all</span>
+            <span class="pill"><span class="dot"></span>Live</span>
+          </div>
+        </div>
+        <div class="cv" id="cv">
+          <svg id="lines" width="1200" height="600" aria-hidden="true"></svg>
+        </div>
+        <div class="toast" id="toast" hidden>
+          <span class="ti"><span class="ms f">sell</span></span>
+          <div><b>Dune book is back in stock</b><span>LKR 4,495.5 at jeyabookcentre.com · told your phone and Ari</span></div>
+        </div>
+        <div class="strip" id="strip" aria-live="polite"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="notes">
+    <div class="note"><span class="ni"><span class="ms f">conversion_path</span></span><div><b>Jobs you can watch</b><span>Each job is a glowing dot that travels its real route, from the app through Argus and a machine to a plugin and a model</span></div></div>
+    <div class="note"><span class="ni"><span class="ms f">bolt</span></span><div><b>Boxes react</b><span>A box flashes once when work reaches it, and the count of today's jobs ticks up as they finish</span></div></div>
+    <div class="note"><span class="ni"><span class="ms f">motion_photos_on</span></span><div><b>A living core</b><span>Argus gets the rotating scalloped badge and a slow breathing ring, so the centre of the map reads as alive</span></div></div>
+    <div class="note"><span class="ni"><span class="ms f">draw</span></span><div><b>An opening</b><span>The boxes settle in column by column and the lines draw themselves when the page loads</span></div></div>
+    <div class="note"><span class="ni"><span class="ms f">sell</span></span><div><b>Alerts you can see</b><span>When a watched shop restocks, an amber dot runs from Watchers back to your phone and a banner says what happened</span></div></div>
+    <div class="note"><span class="ni"><span class="ms f">apps</span></span><div><b>Your apps on the map</b><span>Life Hub and Tracker get their own boxes with one line of status. If one stops answering, its line breaks and it tops the attention row</span></div></div>
+    <div class="note"><span class="ni"><span class="ms f">history</span></span><div><b>What just happened</b><span>A quiet strip along the bottom keeps the last three events, newest first, so a glance tells you what Argus did</span></div></div>
+  </div>
+  <p class="foot">Sample data, not your live Argus. The layout, colours and boxes are unchanged. All motion stops under reduced motion, as it will in Helios</p>
+</div>
+
+<script>
+(() => {
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const app = document.getElementById("app"), cv = document.getElementById("cv"), svg = document.getElementById("lines"), frame = document.getElementById("frame");
+  const NS = "http://www.w3.org/2000/svg";
+
+  // boxes: the five columns of Helios (x = 100, 385, 615, 850, 1100)
+  const nodes = [
+    { id: "phone", col: 0, x: 100, y: 110, w: 176, h: 54, icon: "smartphone", nm: "Phone", st: "Online" },
+    { id: "helios", col: 0, x: 100, y: 200, w: 176, h: 54, icon: "dashboard", nm: "Helios", st: "In use" },
+    { id: "voice", col: 0, x: 100, y: 290, w: 176, h: 54, icon: "mic", nm: "Ari", st: "Heard 3 min ago" },
+    { id: "lifehub", col: 0, x: 100, y: 380, w: 176, h: 54, icon: "home", nm: "Life Hub", st: "All synced" },
+    { id: "tracker", col: 0, x: 100, y: 470, w: 176, h: 54, icon: "checklist", nm: "Tracker", st: "3 open issues" },
+    { id: "argus", col: 1, x: 385, y: 300, w: 196, h: 76, icon: "visibility", nm: "Argus", st: "", skin: "big core" },
+    { id: "calypso", col: 2, x: 615, y: 230, w: 176, h: 68, icon: "laptop_chromebook", nm: "Calypso", st: "3 jobs", meter: .46 },
+    { id: "pc", col: 2, x: 615, y: 380, w: 176, h: 68, icon: "computer", nm: "PC", st: "1 job", meter: .18 },
+    { id: "send", col: 3, x: 850, y: 110, w: 210, h: 54, icon: "send", nm: "Send", st: "2 transfers", skin: "plug" },
+    { id: "backups", col: 3, x: 850, y: 200, w: 210, h: 54, icon: "backup", nm: "Backups", st: "Slow, 40 s behind", skin: "plug warn" },
+    { id: "notif", col: 3, x: 850, y: 290, w: 210, h: 54, icon: "notifications", nm: "Notifications", st: "Sorting 12", skin: "plug" },
+    { id: "watch", col: 3, x: 850, y: 380, w: 210, h: 54, icon: "sell", nm: "Watchers", st: "2 shop pages", skin: "plug" },
+    { id: "ari", col: 3, x: 850, y: 470, w: 210, h: 54, icon: "forum", nm: "Ari", st: "Idle", skin: "plug" },
+    { id: "ollama", col: 4, x: 1100, y: 250, w: 196, h: 54, icon: "memory", nm: "Local model", st: "qwen3 8b", skin: "model" },
+    { id: "claude", col: 4, x: 1100, y: 420, w: 196, h: 54, icon: "cloud", nm: "Claude", st: "2 asks today", skin: "model" },
+  ];
+  const routes = [
+    ["phone", "argus", "busy"], ["helios", "argus", "quiet"], ["voice", "argus", "quiet"], ["lifehub", "argus", "quiet"], ["tracker", "argus", "quiet"],
+    ["argus", "calypso", "busy"], ["argus", "pc", "quiet"],
+    ["calypso", "send", "busy"], ["calypso", "backups", "slow"], ["calypso", "notif", "busy"], ["calypso", "watch", "quiet"], ["pc", "ari", "quiet"],
+    ["notif", "ollama", "busy"], ["send", "ollama", "quiet"], ["ari", "claude", "esc"], ["ari", "ollama", "quiet"],
+  ];
+  const by = Object.fromEntries(nodes.map((n) => [n.id, n]));
+
+  // the scalloped "cookie" badge, 9 lobes
+  const cookie = (() => { let d = ""; for (let k = 0; k <= 180; k++) { const a = (k / 180) * Math.PI * 2, r = 22 + 2.6 * Math.cos(9 * a); d += `${k ? "L" : "M"}${(26 + r * Math.cos(a)).toFixed(2)} ${(26 + r * Math.sin(a)).toFixed(2)}`; } return d + "Z"; })();
+
+  let today = 184, running = 4;
+  const el = {};
+  for (const n of nodes) {
+    const b = document.createElement("div");
+    b.className = `n ${n.skin || ""}`;
+    b.style.cssText = `left:${n.x - n.w / 2}px;top:${n.y - n.h / 2}px;width:${n.w}px;height:${n.h}px;--col:${n.col}`;
+    const st = n.id === "argus" ? `<span class="num" id="run">${running}</span> running · <span class="num" id="today">${today}</span> today` : n.st;
+    b.innerHTML = `<span class="i">${n.id === "argus" ? `<svg class="cookie" viewBox="0 0 52 52"><path d="${cookie}"/></svg>` : ""}<span class="ms f">${n.icon}</span></span>
+      <span class="t"><span class="nm">${n.nm}</span><span class="st">${st}</span>${n.meter !== undefined ? `<span class="mb"><i style="width:${n.meter * 100}%"></i></span>` : ""}</span>`;
+    cv.appendChild(b);
+    el[n.id] = b;
+  }
+
+  const paths = {};
+  for (const [a, b, kind] of routes) {
+    const A = by[a], B = by[b], x1 = A.x + A.w / 2, x2 = B.x - B.w / 2, dx = (x2 - x1) / 2;
+    const p = document.createElementNS(NS, "path");
+    p.setAttribute("d", `M${x1} ${A.y} C${x1 + dx} ${A.y} ${x2 - dx} ${B.y} ${x2} ${B.y}`);
+    p.setAttribute("class", `e ${kind}`);
+    p.dataset.col = A.col;
+    svg.appendChild(p);
+    paths[`${a}>${b}`] = p;
+    if (kind === "slow") {
+      const m = p.getPointAtLength(p.getTotalLength() / 2), s = document.createElement("span");
+      s.className = "badge"; s.style.left = m.x + "px"; s.style.top = m.y + "px"; s.innerHTML = '<span class="ms">info</span>';
+      cv.appendChild(s);
+    }
+  }
+  const pk = document.createElementNS(NS, "g"); pk.setAttribute("class", "pk"); svg.appendChild(pk);
+
+  // ---- version switch
+  const isNew = () => app.classList.contains("new");
+  const setV = (v) => {
+    app.classList.toggle("new", v === "new"); app.classList.toggle("now", v === "now");
+    document.getElementById("v-now").setAttribute("aria-pressed", v === "now");
+    document.getElementById("v-new").setAttribute("aria-pressed", v === "new");
+    document.getElementById("replay").disabled = v === "now" || reduce;
+    document.getElementById("alert").disabled = v === "now" || reduce;
+    if (v === "now") { pk.replaceChildren(); live.length = 0; toast.hidden = true; }
+    else intro();
+  };
+  document.getElementById("v-now").onclick = () => setV("now");
+  document.getElementById("v-new").onclick = () => setV("new");
+  document.getElementById("replay").onclick = () => intro();
+
+  // ---- the opening: boxes settle by column, solid lines draw themselves
+  function intro() {
+    if (reduce || !isNew()) return;
+    app.classList.remove("intro"); void app.offsetWidth; app.classList.add("intro");
+    for (const p of Object.values(paths)) {
+      if (!/quiet|busy/.test(p.getAttribute("class"))) continue;
+      const len = p.getTotalLength();
+      p.style.transition = "none"; p.style.strokeDasharray = len; p.style.strokeDashoffset = len;
+      void p.getBoundingClientRect();
+      p.style.transition = `stroke-dashoffset 700ms cubic-bezier(.05,.7,.1,1) ${+p.dataset.col * 90 + 260}ms`;
+      p.style.strokeDashoffset = 0;
+      setTimeout(() => { p.style.transition = ""; p.style.strokeDasharray = ""; p.style.strokeDashoffset = ""; }, 1500);
+    }
+    setTimeout(() => app.classList.remove("intro"), 1600);
+  }
+
+  // ---- jobs travelling their routes
+  const journeys = [
+    ["phone>argus", "argus>calypso", "calypso>notif", "notif>ollama"],
+    ["phone>argus", "argus>calypso", "calypso>send"],
+    ["argus>calypso", "calypso>notif", "notif>ollama"],
+    ["phone>argus", "argus>calypso", "calypso>notif"],
+  ];
+  const live = [];
+  const flash = (id, tone) => { const b = el[id]; b.classList.remove("hit", "hit-warn"); void b.offsetWidth; b.classList.add(tone === "warn" ? "hit-warn" : "hit"); };
+  const bump = (id, v) => { const s = document.getElementById(id); s.textContent = v; s.classList.remove("tick"); void s.offsetWidth; s.classList.add("tick"); };
+  function dot(color) {
+    const g = document.createElementNS(NS, "g"), parts = [];
+    for (let k = 3; k >= 0; k--) {
+      const c = document.createElementNS(NS, "circle");
+      c.setAttribute("r", k ? 3.2 - k * .6 : 4.2); c.setAttribute("fill", k ? color : "#e8fff0");
+      c.setAttribute("opacity", k ? .5 - k * .12 : 1);
+      if (!k) c.style.filter = `drop-shadow(0 0 5px ${color})`;
+      g.appendChild(c); parts.unshift(c);
+    }
+    pk.appendChild(g); return { g, parts };
+  }
+  // a chain step is "a>b" (with the line) or "<a>b" (against it: news travelling back to the phone)
+  function travel(chain, i, color, end) {
+    if (!isNew() || i >= chain.length) return;
+    const back = chain[i][0] === "<", key = back ? chain[i].slice(1) : chain[i];
+    const p = paths[key], len = p.getTotalLength(), d = dot(color);
+    live.push({ p, len, d, back, t0: performance.now(), dur: len / (back ? 0.42 : 0.3), done: () => {
+      d.g.remove();
+      const [a, b] = key.split(">"), to = back ? a : b; flash(to, back ? "warn" : "");
+      if (i + 1 < chain.length) travel(chain, i + 1, color, end);
+      else if (end) end();
+      else { today++; bump("today", today); }
+    } });
+  }
+
+  // ---- what just happened: a strip of the last three events along the bottom of the map
+  const strip = document.getElementById("strip");
+  // FLIP: note where each chip is, add the new one, then glide the others from where they were. A chip that leaves
+  // is lifted out of the row first (absolute, at its old place) so the row never jumps while it fades.
+  const say = (icon, text, tone = "") => {
+    const kept = [...strip.children].filter((o) => !o.classList.contains("go-out"));
+    const before = new Map(kept.map((o) => [o, o.offsetLeft]));
+    const c = document.createElement("span");
+    c.className = `ev ${tone}`; c.innerHTML = `<span class="ms f">${icon}</span><span>${text}</span><span class="ago">now</span>`;
+    strip.prepend(c);
+    kept.slice(2).forEach((o) => {
+      o.style.left = `${before.get(o)}px`; o.classList.add("go-out");
+      setTimeout(() => o.remove(), 320);
+    });
+    const stay = kept.slice(0, 2);
+    stay.forEach((o, k) => { o.querySelector(".ago").textContent = k ? "12 s ago" : "4 s ago"; });
+    if (reduce || !isNew()) return;
+    for (const o of stay) {
+      const dx = before.get(o) - o.offsetLeft;
+      if (dx) o.animate([{ transform: `translateX(${dx}px)` }, { transform: "none" }], { duration: 460, easing: "cubic-bezier(.05,.7,.1,1)" });
+    }
+  };
+  const lines = [
+    ["notifications", "Notifications sorted 3 from your phone"], ["send", "Send moved a photo to the PC"],
+    ["memory", "The local model wrote a reply"], ["task_alt", "A job finished on Calypso"],
+  ];
+
+  // ---- a stock alert: Watchers on Calypso -> Argus -> your phone, then a banner
+  const toast = document.getElementById("toast");
+  function alertRun() {
+    if (!isNew() || reduce) return;
+    flash("watch", "warn");
+    travel(["<calypso>watch", "<argus>calypso"], 0, "#f0d27a", () => {
+      if (!down) travel(["<lifehub>argus"], 0, "#f0d27a", () => { lifeSt = "1 back in stock"; el.lifehub.querySelector(".st").textContent = lifeSt; });
+      travel(["<phone>argus"], 0, "#f0d27a", showToast);
+    });
+  }
+  function showToast() {
+    {
+      toast.hidden = false; toast.classList.remove("show"); void toast.offsetWidth; toast.classList.add("show");
+      say("sell", "Dune book is back in stock, told your phone and Ari", "warn");
+      clearTimeout(alertRun.t); alertRun.t = setTimeout(() => { toast.classList.remove("show"); setTimeout(() => { toast.hidden = true; }, 320); }, 5200);
+    }
+  }
+  document.getElementById("alert").onclick = alertRun;
+
+  // ---- an app that stops answering: red box, broken line, and it tops the attention row
+  let down = false, lifeSt = "All synced";
+  const lp = paths["lifehub>argus"], lm = lp.getPointAtLength(lp.getTotalLength() / 2);
+  const lb = document.createElement("span");
+  lb.className = "badge broken"; lb.style.left = lm.x + "px"; lb.style.top = lm.y + "px"; lb.innerHTML = '<span class="ms">close</span>'; lb.hidden = true;
+  cv.appendChild(lb);
+  const dbtn = document.getElementById("down"), att = document.getElementById("att");
+  const attOk = att.innerHTML;
+  dbtn.onclick = () => {
+    down = !down;
+    el.lifehub.classList.toggle("bad", down);
+    el.lifehub.querySelector(".st").textContent = down ? "Can't reach it since 14:20" : lifeSt;
+    lp.setAttribute("class", `e ${down ? "broken" : "quiet"}`);
+    lb.hidden = !down;
+    att.classList.toggle("bad", down);
+    att.innerHTML = down ? '<span class="ci"><span class="ms f">error</span></span><div><b>Life Hub isn\'t answering</b><span>Since 14:20 · Argus keeps trying every minute</span></div><span class="go">Look</span>' : attOk;
+    dbtn.innerHTML = down ? '<span class="ms">restart_alt</span>Bring Life Hub back' : '<span class="ms">cloud_off</span>Take Life Hub down';
+    if (down) { say("error", "Life Hub stopped answering", "bad"); flash("lifehub", "warn"); } else { say("task_alt", "Life Hub is back"); flash("lifehub"); }
+  };
+
+  // ---- pointing at a box dims what it isn't joined to (as Helios does), the dots too
+  for (const n of nodes) {
+    el[n.id].addEventListener("mouseenter", () => {
+      cv.classList.add("focus");
+      const near = new Set([n.id]);
+      for (const [key, p] of Object.entries(paths)) { const [a, b] = key.split(">"); const on = a === n.id || b === n.id; p.classList.toggle("dim", !on); if (on) { near.add(a); near.add(b); } }
+      for (const m of nodes) el[m.id].classList.toggle("dim", !near.has(m.id));
+      for (const j of live) j.d.g.classList.toggle("dim", j.p.classList.contains("dim"));
+    });
+    el[n.id].addEventListener("mouseleave", () => {
+      cv.classList.remove("focus");
+      for (const p of Object.values(paths)) p.classList.remove("dim");
+      for (const m of nodes) el[m.id].classList.remove("dim");
+      for (const j of live) j.d.g.classList.remove("dim");
+    });
+  }
+  const ease = (u) => .5 - Math.cos(Math.PI * u) / 2;
+  function frameLoop(now) {
+    for (let k = live.length - 1; k >= 0; k--) {
+      const j = live[k], u = Math.min(1, (now - j.t0) / j.dur);
+      j.d.parts.forEach((c, n) => { const f = ease(Math.max(0, u - n * .035)); const pt = j.p.getPointAtLength((j.back ? 1 - f : f) * j.len); c.setAttribute("cx", pt.x); c.setAttribute("cy", pt.y); });
+      if (u >= 1) { live.splice(k, 1); j.done(); }
+    }
+    requestAnimationFrame(frameLoop);
+  }
+  if (!reduce) {
+    requestAnimationFrame(frameLoop);
+    const spawn = () => {
+      if (isNew() && !document.hidden) {
+        if (Math.random() < .12) travel(["ari>claude"], 0, "#c9a6d1");
+        else { travel(journeys[Math.floor(Math.random() * journeys.length)], 0, "#6fcf8c"); flash("phone"); }
+        if (Math.random() < .45) say(...lines[Math.floor(Math.random() * lines.length)]);
+      }
+      setTimeout(spawn, 1000 + Math.random() * 900);
+    };
+    setTimeout(spawn, 1300);
+    // the machines' load wanders a little, and the running count with it
+    setInterval(() => {
+      if (!isNew()) return;
+      for (const [id, base] of [["calypso", .46], ["pc", .18]]) el[id].querySelector(".mb i").style.width = `${Math.round((base + (Math.random() - .5) * .18) * 100)}%`;
+      const r = 3 + Math.floor(Math.random() * 3); if (r !== running) { running = r; bump("run", running); }
+    }, 2600);
+  }
+
+  // ---- scale the 1296 x 740 app to the frame
+  const fit = () => { const s = frame.clientWidth / 1296; app.style.transform = `scale(${s})`; frame.style.height = `${740 * s}px`; };
+  new ResizeObserver(fit).observe(frame); fit();
+  setV("new");
+  say("task_alt", "A job finished on Calypso"); say("notifications", "Notifications sorted 3 from your phone");
+  if (!reduce) setTimeout(alertRun, 4200);
+})();
+</script>
