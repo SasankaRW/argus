@@ -55,6 +55,7 @@ from ..island_live import (
     weekday_letters,
 )
 from . import island_brief as ib
+from . import island_motion as im
 from .ari_mark import Mark, mark_state
 
 log = logging.getLogger("argus.ari_popup")
@@ -98,6 +99,7 @@ KEY = "#26262d"       # a round key
 ACCENT = "#a6c8ff"
 ON_ACCENT = "#141418"  # text on an accent fill
 GREEN, AMBER, CORAL = "#8fe3ad", "#ffc58f", "#ff9d94"
+VIOLET = "#d4b8f5"  # the weather beside the date
 MIC_DOT, CAM_DOT = "#fb923c", "#4ade80"  # the privacy dots keep their own colours: orange mic, green camera
 INK = (255, 255, 255)  # ink at 100 / 68 / 55 %: white, DIM, FAINT
 DIM, FAINT = 0.68, 0.55
@@ -609,6 +611,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
     p.add_argument("--hover", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--live", choices=sorted(LIVE_SCENARIOS), help=argparse.SUPPRESS)  # with --preview: fake activities
     p.add_argument("--page", default="ari", help=argparse.SUPPRESS)  # with --details: media, system, calendar
+    p.add_argument("--flip", type=float, help=argparse.SUPPRESS)  # with --details: drawn this far (0..1) into a flip
+    p.add_argument("--keys", action="store_true", help=argparse.SUPPRESS)  # with --preview: print the keys drawn
     p.add_argument("--brief", choices=("normal", "quiet", "trouble", "row"),
                    help=argparse.SUPPRESS)  # with --preview: the morning brief card (row: the Ari page's row)
     p.add_argument("--ask", action="store_true", help=argparse.SUPPRESS)  # the type-to-Ari box
@@ -848,6 +852,15 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             self.window = QTimer(self, singleShot=True)  # until the window opens again
             self.window.timeout.connect(self.arm)
             self.page = 0
+            self.flip_from: int | None = None  # the page a flip is leaving (drawn sliding out until it's done)
+            self.flip_dir, self.flip_t0 = 1, 0.0
+            self.prev_page = 0  # the page dot that shrinks while the new one stretches
+            self.ripples: list[tuple[Any, Any, float]] = []  # (the key's rect, where you pressed, when)
+            self.bars: dict[str, float] = {}  # each load bar as drawn, easing toward its value
+            self.bars_t = time.monotonic()
+            self.cpu_hist: list[float] = []  # the last 40 CPU readings: a line under its bar
+            self.page_t0 = time.monotonic()  # when this page appeared: its rows rise in
+            self.leaving = False  # drawing the page a flip is leaving: settled, nothing rises
             self.wheel_acc, self.wheel_at = 0.0, 0.0
             self.media: dict | None = None
             self.art: Any = None  # the album art (QImage)
@@ -1006,6 +1019,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                             self.art = img
             elif kind == "hw":
                 self.hw = data or {}
+                if isinstance(self.hw, dict) and self.hw.get("cpu") is not None:
+                    self.cpu_hist = (self.cpu_hist + [float(self.hw["cpu"])])[-40:]
             elif kind == "priv":
                 if data == self.priv:
                     return
@@ -1019,6 +1034,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
 
         def open_details(self) -> None:
             self.details = True
+            self.page_t0, self.flip_from = time.monotonic(), None
             self.clip_url = clipboard_url(QApplication.clipboard().text())
             self.load_info()
             self.refresh.start()
@@ -1335,6 +1351,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 self.draw_active(qp, body, tone, mode)
             elif mode == "details":
                 self.draw_details(qp, body)
+                self.draw_ripples(qp)
             elif mode == "live" and self.spring.h > 18:
                 self.draw_live(qp, body)
             qp.end()
@@ -1733,16 +1750,23 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             x0, x1 = body.x() + 20, body.right() - 20
             y = body.y() + 18
             pid = "brief" if self.card else self.page_id()
-            if pid == "brief":
-                y = self.draw_brief(qp, x0, x1, y)
-            elif pid == "media":
-                y = self.draw_media(qp, x0, x1, y)
-            elif pid == "system":
-                y = self.draw_system(qp, x0, x1, y)
-            elif pid == "calendar":
-                y = self.draw_calendar(qp, x0, x1, y)
+            t = (time.monotonic() - self.flip_t0) / im.FLIP_S
+            ps = self.pages()
+            if self.flip_from is not None and (t >= 1 or self.card or not 0 <= self.flip_from < len(ps)):
+                self.flip_from = None  # done (or the page it left is gone)
+            if self.flip_from is not None:
+                old, new = im.flip_frame(t, self.flip_dir, self.still)
+                if not self.still:  # under reduced motion it's gone at once: not drawn at all
+                    keep = list(self.buttons)  # the page sliding away is only drawn: its keys don't count
+                    self.leaving = True
+                    try:
+                        self.posed(qp, body, old, fade, lambda: self.draw_page(qp, ps[self.flip_from], x0, x1, y))
+                    finally:
+                        self.leaving = False
+                    self.buttons = keep
+                y = self.posed(qp, body, new, fade, lambda: self.draw_page(qp, pid, x0, x1, y))
             else:
-                y = self.draw_ari(qp, x0, x1, y)
+                y = self.draw_page(qp, pid, x0, x1, y)
             if self.flash_text:
                 qp.setFont(F_SMALL)
                 qp.setPen(QColor(GREEN))
@@ -1755,24 +1779,68 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 self.details_h = h
                 QTimer.singleShot(0, self.kick)
 
+        def draw_ripples(self, qp: Any) -> None:
+            """Press ripples: a soft circle spreading from where you pressed, kept inside the key, 600 ms."""
+            now, keep = time.monotonic(), []
+            for rect, at, t0 in self.ripples:
+                r = im.ripple(now - t0)
+                if r is None:
+                    continue
+                keep.append((rect, at, t0))
+                grow, alpha = r
+                qp.save()
+                clip = QPainterPath()
+                clip.addRoundedRect(rect, min(16.0, rect.height() / 2), min(16.0, rect.height() / 2))
+                qp.setClipPath(clip)
+                qp.setPen(Qt.PenStyle.NoPen)
+                qp.setBrush(ink(alpha))
+                reach = max(rect.width(), rect.height()) * 1.1 * grow
+                qp.drawEllipse(at, reach, reach)
+                qp.restore()
+            self.ripples = keep
+
+        def draw_page(self, qp: Any, pid: str, x0: float, x1: float, y: float) -> float:
+            if pid == "brief":
+                return self.draw_brief(qp, x0, x1, y)
+            if pid == "media":
+                return self.draw_media(qp, x0, x1, y)
+            if pid == "system":
+                return self.draw_system(qp, x0, x1, y)
+            if pid == "calendar":
+                return self.draw_calendar(qp, x0, x1, y)
+            return self.draw_ari(qp, x0, x1, y)
+
+        def posed(self, qp: Any, body: Any, pose: im.Pose, fade: float, draw: Any) -> float:
+            """Draw a page moved, faded and scaled (about the island's middle) for a flip."""
+            dx, alpha, scale = pose
+            qp.save()
+            c = body.center()
+            qp.translate(c.x() + dx, c.y())
+            qp.scale(scale, scale)
+            qp.translate(-c.x(), -c.y())
+            qp.setOpacity(fade * alpha)
+            y = draw()
+            qp.restore()
+            qp.setOpacity(fade)
+            return y
+
         def draw_dots(self, qp: Any, body: Any, y: float) -> float:
             """Which page is on show, as dots under it (click one, or scroll, to flip)."""
             n = len(self.pages())
             if n < 2:
                 return y
-            gap = 11
             y += 4
-            cx0 = body.center().x() - gap * (n - 1) / 2
-            for i in range(n):
-                c = QPointF(cx0 + i * gap, y + 6)
+            t = (time.monotonic() - self.flip_t0) / im.FLIP_S
+            widths = im.dot_widths(n, self.page, self.prev_page, t, self.still)
+            space = 6
+            x = body.center().x() - (sum(widths) + space * (n - 1)) / 2
+            for i, w in enumerate(widths):
                 on = i == self.page
                 qp.setPen(Qt.PenStyle.NoPen)
                 qp.setBrush(ink(1.0 if on else 0.5 if self.hot == f"page:{i}" else 0.35))
-                if on:
-                    qp.drawRoundedRect(QRectF(c.x() - 7, c.y() - 2.5, 14, 5), 2.5, 2.5)
-                else:
-                    qp.drawEllipse(c, 2.5, 2.5)
-                self.buttons.append((QRectF(c.x() - 6, c.y() - 7, 12, 14), f"page:{i}"))
+                qp.drawRoundedRect(QRectF(x, y + 3.5, w, 5), 2.5, 2.5)
+                self.buttons.append((QRectF(x + w / 2 - 6, y - 1, 12, 14), f"page:{i}"))
+                x += w + space
             return y + 14
 
         def pill(self, qp: Any, x: float, y: float, text: str, tone: str) -> float:
@@ -1794,100 +1862,323 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             self.symbol(qp, icon, x + 18, y + 18, 20, QColor(tone), filled=True)
 
         def draw_ari(self, qp: Any, x0: float, x1: float, y: float) -> float:
+            """The start page, compact (approved preview, 2026-11-21): the time, date and weather beside game mode,
+            power and Ari's orb; three tiles (how Argus is, what waits for you, the next job); what's playing, only
+            while it plays; the switches; your shortcuts. Each block rises in as the page appears."""
             info = self.info
             on = {w["id"] for w in info.widgets if w.get("on")}
-            order = [w["id"] for w in info.widgets if w.get("on")]
-            # header: the time (minutes dimmer, the colon in the accent) over the date; Talk on the right
-            talk = QRectF(x1 - 40, y + 6, 40, 40)
+            since = 99.0 if self.leaving else time.monotonic() - self.page_t0
+            block = [0]
+            base = qp.opacity()
+
+            def lift() -> None:  # the next block: a little below its place and faint, rising in
+                dy, a = im.rise(since, block[0], self.still)
+                block[0] += 1
+                qp.restore() if block[0] > 1 else None
+                qp.save()
+                qp.translate(0, dy)
+                qp.setOpacity(base * a)
+
+            lift()
+            # header: the time (the colon blinks once a second) over the date and the weather; keys on the right
+            orb = QRectF(x1 - 44, y + 3, 44, 44)
+            power = QRectF(orb.x() - 44, y + 7, 36, 36)
+            game = QRectF(power.x() - 44, y + 7, 36, 36)
+            helios = QRectF(game.x() - 44, y + 7, 36, 36)
             if "clock" in on:
                 now = time.localtime()
                 qp.setFont(F_CLOCK)
                 fm = QFontMetrics(F_CLOCK)
                 cx = x0
+                blink = 1.0 if self.still or int(time.time() * 2) % 2 == 0 else 0.3
                 for part, color in ((time.strftime("%H", now), ink()), (":", QColor(ACCENT)),
                                     (time.strftime("%M", now), ink(0.6))):
                     pw = fm.horizontalAdvance(part)
+                    if part == ":":
+                        color.setAlphaF(blink)
                     qp.setPen(color)
                     qp.drawText(QRectF(cx, y - 2, pw + 4, 34), Qt.AlignmentFlag.AlignVCenter, part)
                     cx += pw
                 qp.setFont(F_EYE)
                 qp.setPen(QColor(ACCENT))
-                qp.drawText(QRectF(x0, y + 31, talk.x() - x0 - 8, 16), Qt.AlignmentFlag.AlignVCenter,
-                            time.strftime("%a %d %b", now).upper())
+                date = time.strftime("%a %d %b", now).upper()
+                qp.drawText(QRectF(x0, y + 31, helios.x() - x0 - 8, 16), Qt.AlignmentFlag.AlignVCenter, date)
+                icon, temp, _ = ib.weather_line(self.weather)
+                wx = x0 + QFontMetrics(F_EYE).horizontalAdvance(date) + 12
+                if temp and wx + 52 <= helios.x():  # only where it fits beside the keys
+                    self.symbol(qp, icon, wx + 7, y + 39, 15, QColor(VIOLET), filled=True)
+                    qp.setFont(F_PILL)
+                    qp.setPen(QColor(VIOLET))
+                    qp.drawText(QRectF(wx + 17, y + 31, 50, 16), Qt.AlignmentFlag.AlignVCenter, temp)
             else:
                 qp.setFont(F_TITLE)
                 qp.setPen(ink())
                 qp.drawText(QRectF(x0, y, 120, 46), Qt.AlignmentFlag.AlignVCenter, "Ari")
-            self.round_key(qp, talk, "talk", "mic")
+            self.round_key(qp, helios, "helios:#ari", "more")
+            self.round_key(qp, game, "game", "game-on" if self.ari.game else "game")
+            self.round_key(qp, power, "power", "start" if self.ari.off else "power")
+            self.draw_orb(qp, orb)
             y += 58
-            # status rows: a tonal dot, the line, and what goes with it
+            # three tiles: how Argus is doing, what waits for you, the next job
             st = info.status or {}
             jobs = st.get("jobs") or {}
-            rows: list[tuple[str, str, str, str | None]] = []  # dot, text, right, click key
-            rows.append((AMBER if self.ari.game else "#8c8c92",
-                         "Game mode on" if self.ari.game else "Game mode off",
-                         "auto" if self.ari.game_auto else "manual", "gameauto"))
+            tiles = []
+            if "status" in on:
+                running = (jobs.get("running") or 0) + (jobs.get("leased") or 0)
+                queued = (jobs.get("queued") or 0) + (jobs.get("retry") or 0)
+                ok = st.get("status") == "ok"
+                sub = "idle" if not running and not queued else \
+                    " · ".join(x for x in (f"{running} running" if running else "",
+                                           f"{queued} queued" if queued else "") if x)
+                pid = self.pages().index("system") if "system" in self.pages() else None
+                tiles.append((GREEN if ok else AMBER, "check_circle" if ok else "error",
+                              "All good" if ok else "Needs a look", sub, f"page:{pid}" if pid is not None else None,
+                              None, ok))
+            if "inbox" in on:
+                tiles.append((AMBER, "inbox", f"{info.waiting} waiting" if info.waiting else "Nothing waiting",
+                              "for you" if info.waiting else "all done", "show:inbox", None, False))
+            if "next" in on and info.next and info.next.get("next_run_at"):
+                nxt = info.next
+                at = time.localtime(nxt["next_run_at"])
+                same_day = time.strftime("%Y%m%d", at) == time.strftime("%Y%m%d")
+                ring = im.countdown(time.time(), float(nxt["next_run_at"]))
+                pid = self.pages().index("calendar") if "calendar" in self.pages() else None
+                tiles.append((ACCENT, "schedule", time.strftime("%H:%M" if same_day else "%a %H:%M", at),
+                              nxt.get("label") or f"{nxt['plugin']} · {nxt['workflow']}",
+                              f"page:{pid}" if pid is not None else None, ring, False))
+            if tiles:
+                lift()
+                gap = 8
+                tw = (x1 - x0 - gap * (len(tiles) - 1)) / len(tiles)
+                for i, t in enumerate(tiles):
+                    self.draw_tile3(qp, QRectF(x0 + i * (tw + gap), y, tw, 90), *t)
+                y += 90 + 8
+            # what's playing: only while something plays
+            m = self.media
+            if "media" in on and m and m.get("playing") and m.get("title"):
+                lift()
+                self.draw_now_playing(qp, QRectF(x0, y, x1 - x0, 44), m)
+                y += 44 + 8
+            # the switches: clipboard sync with the phone (and Send link while a link is copied), auto game mode
+            lift()
             clip = info.clip
-            if clip is not None:  # clipboard sync with the phone (Send agent): the switch, and the copied link
-                rows.append((GREEN if clip.get("enabled") else "#8c8c92", "Clipboard sync",
-                             "on" if clip.get("enabled") else "off", "clip"))
-                if clip.get("enabled") and self.clip_url:
-                    rows.append((ACCENT, "Send link to phone", "›", "cliplink"))
-            for wid in order:
-                if wid == "status":
-                    running = (jobs.get("running") or 0) + (jobs.get("leased") or 0)
-                    queued = (jobs.get("queued") or 0) + (jobs.get("retry") or 0)
-                    ok = st.get("status") == "ok"
-                    right = "Idle" if not running and not queued else \
-                        " · ".join(x for x in (f"{running} running" if running else "",
-                                               f"{queued} queued" if queued else "") if x)
-                    rows.append((GREEN if ok else AMBER, "All good" if ok else "Needs a look", right, None))
-                elif wid == "inbox" and info.waiting:
-                    rows.append((AMBER, f"{info.waiting} waiting for you", "›", "show:inbox"))
-                elif wid == "next" and info.next and info.next.get("next_run_at"):
-                    nxt = info.next
-                    at = time.localtime(nxt["next_run_at"])
-                    same_day = time.strftime("%Y%m%d", at) == time.strftime("%Y%m%d")
-                    rows.append((ACCENT, nxt.get("label") or f"{nxt['plugin']} · {nxt['workflow']}",
-                                 time.strftime("%H:%M" if same_day else "%a %H:%M", at), None))
+            half = (x1 - x0 - 8) / 2
+            sx = x0
+            if clip is not None:
+                self.switch(qp, QRectF(sx, y, half, 36), "clip", "content_paste", "Clipboard",
+                            bool(clip.get("enabled")), GREEN)
+                sx += half + 8
+            self.switch(qp, QRectF(sx, y, x1 - sx, 36), "gameauto", "sports_esports", "Auto game",
+                        bool(self.ari.game_auto), AMBER)
+            y += 36 + 8
+            if clip is not None and clip.get("enabled") and self.clip_url:  # a link copied: send it to the phone
+                lift()
+                r = QRectF(x0 - 8, y, x1 - x0 + 16, 30)
+                self.buttons.append((r, "cliplink"))
+                if self.hot == "cliplink":
+                    qp.setPen(Qt.PenStyle.NoPen)
+                    qp.setBrush(ink(0.06))
+                    qp.drawRoundedRect(r, 10, 10)
+                self.line(qp, x0, x1, y, ACCENT, "Send the copied link to your phone", "›",
+                          hot=self.hot == "cliplink")
+                y += 34
             if self.brief_row if self.brief_row is not None else ib.row_open(datetime.now(), self.shown_day):
-                rows.append((ACCENT, "Morning brief", "›", "brief"))  # until noon: the card again
-            for dot, text, right, key in rows:
-                if key:
-                    r = QRectF(x0 - 8, y, x1 - x0 + 16, 30)
-                    self.buttons.append((r, key))
-                    if self.hot == key:
-                        qp.setPen(Qt.PenStyle.NoPen)
-                        qp.setBrush(ink(0.06))
-                        qp.drawRoundedRect(r, 10, 10)
-                self.line(qp, x0, x1, y, dot, text, right, hot=self.hot == key and key is not None)
-                y += 30
-            y += 8
+                lift()
+                r = QRectF(x0 - 8, y, x1 - x0 + 16, 30)
+                self.buttons.append((r, "brief"))
+                if self.hot == "brief":
+                    qp.setPen(Qt.PenStyle.NoPen)
+                    qp.setBrush(ink(0.06))
+                    qp.drawRoundedRect(r, 10, 10)
+                self.line(qp, x0, x1, y, ACCENT, "Morning brief", "›", hot=self.hot == "brief")
+                y += 34
             if "last" in on and info.last:
+                lift()
                 qp.setFont(F_SMALL)
                 qp.setPen(ink(DIM))
                 qp.drawText(QRectF(x0, y, x1 - x0, 34), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
                             two_lines("Ari: " + info.last, QFontMetrics(F_SMALL), int(x1 - x0)))
                 y += 42
-            # the keys: game mode, power, Helios
-            keys = (("game", "game-on" if self.ari.game else "game"), ("power", "start" if self.ari.off else "power"),
-                    ("helios:#ari", "more"))
-            kx = (x0 + x1) / 2 - (len(keys) * 40 + (len(keys) - 1) * 8) / 2
-            for i, (key, icon) in enumerate(keys):
-                self.round_key(qp, QRectF(kx + i * 48, y, 40, 40), key, icon)
-            y += 40 + 12
+            # your shortcuts: a row of icon + label, four to a row
             if "shortcuts" in on and info.shortcuts:
-                fm = QFontMetrics(F_CHIP)
-                cx = x0 - 4
-                for sc in info.shortcuts:
-                    label = fm.elidedText(sc["label"], Qt.TextElideMode.ElideRight, 110)
-                    cw = fm.horizontalAdvance(label) + 42
-                    if cx + cw > x1 + 4 and cx > x0:
-                        cx, y = x0 - 4, y + 36
-                    self.chip(qp, QRectF(cx, y, cw, 30), "sc:" + sc["action"], label)
-                    cx += cw + 6
-                y += 38
+                lift()
+                cols, cw, ch = 4, (x1 - x0) / 4, 52
+                for i, sc in enumerate(info.shortcuts):
+                    r = QRectF(x0 + (i % cols) * cw, y + (i // cols) * (ch + 4), cw, ch)
+                    self.shortcut_cell(qp, r, "sc:" + sc["action"], sc["label"], ICON_NAMES[icon_for(sc["action"])])
+                y += ((len(info.shortcuts) + cols - 1) // cols) * (ch + 4) + 2
+            if block[0]:
+                qp.restore()
+            qp.setOpacity(base)
             return y
+
+        def draw_orb(self, qp: Any, rect: Any) -> None:
+            """Talk, as Ari's orb: the accent circle with a small waveform that idles (quicker while you point at
+            it), and two rings breathing outward."""
+            c = rect.center()
+            r = rect.width() / 2
+            now = time.monotonic()
+            if not self.still:
+                for k in (0.0, 1.7):
+                    p = ((now + k) % 3.4) / 3.4
+                    grow = im.ease(p)
+                    ring = QColor(ACCENT)
+                    ring.setAlphaF(0.55 * (1 - grow))
+                    qp.setPen(QPen(ring, 2))
+                    qp.setBrush(Qt.BrushStyle.NoBrush)
+                    qp.drawEllipse(c, r + 12 * grow, r + 12 * grow)
+            qp.setPen(Qt.PenStyle.NoPen)
+            qp.setBrush(QColor(ACCENT))
+            qp.drawEllipse(c, r, r)
+            if self.hot == "talk":
+                qp.setBrush(ink(0.12))
+                qp.drawEllipse(c, r, r)
+            hs = [0.5] * 5 if self.still else im.wave(now * (2.2 if self.hot == "talk" else 1.0))
+            qp.setBrush(QColor(ON_ACCENT))
+            for i, h in enumerate(hs):
+                bh = 18 * h
+                qp.drawRoundedRect(QRectF(c.x() - 11 + i * 5, c.y() - bh / 2, 3, bh), 1.5, 1.5)
+            self.buttons.append((rect, "talk"))
+
+        def draw_tile3(self, qp: Any, rect: Any, tone: str, icon: str, title: str, sub: str, key: str | None,
+                       ring: tuple[float, str] | None, ping: bool) -> None:
+            """A start page tile: the tone at 13 %, its icon in a small tile (a ping while all is good, a ring that
+            closes over the next job's last hour), a bold line and a small one under it."""
+            qp.setPen(Qt.PenStyle.NoPen)
+            qp.setBrush(tint(tone, 0.13))
+            qp.drawRoundedRect(rect, 16, 16)
+            if key and self.hot == key:
+                qp.setBrush(ink(0.06))
+                qp.drawRoundedRect(rect, 16, 16)
+            ix, iy = rect.x() + 10, rect.y() + 10
+            ic = QPointF(ix + 12, iy + 12)
+            if ping and not self.still:
+                p = (time.monotonic() % 2.6) / 2.6
+                g = im.ease(p)
+                halo = QColor(tone)
+                halo.setAlphaF(0.45 * (1 - g))
+                qp.setBrush(halo)
+                qp.drawRoundedRect(QRectF(ix - 6 * g, iy - 6 * g, 24 + 12 * g, 24 + 12 * g), 8 + 4 * g, 8 + 4 * g)
+            if ring is not None:
+                frac, words = ring
+                qp.setBrush(Qt.BrushStyle.NoBrush)
+                qp.setPen(QPen(ink(0.12), 2.4))
+                qp.drawEllipse(ic, 12, 12)
+                pen = QPen(QColor(tone), 2.4)
+                pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                qp.setPen(pen)
+                qp.drawArc(QRectF(ic.x() - 12, ic.y() - 12, 24, 24), 90 * 16, int(-360 * 16 * frac))
+                qp.setFont(F_PILL)
+                qp.setPen(QColor(tone))
+                qp.drawText(QRectF(ix + 28, iy, rect.right() - ix - 38, 24),
+                            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, words)
+                self.symbol(qp, icon, ic.x(), ic.y(), 13, QColor(tone), filled=True)
+            else:
+                qp.setPen(Qt.PenStyle.NoPen)
+                qp.setBrush(tint(tone, 0.24))
+                qp.drawRoundedRect(QRectF(ix, iy, 24, 24), 8, 8)
+                self.symbol(qp, icon, ic.x(), ic.y(), 15, QColor(tone), filled=True)
+            tx, tw = rect.x() + 10, rect.width() - 20
+            qp.setFont(F_LABEL)
+            qp.setPen(ink())
+            fm = QFontMetrics(F_LABEL)
+            qp.drawText(QRectF(tx, rect.y() + 40, tw, 18), Qt.AlignmentFlag.AlignVCenter,
+                        fm.elidedText(title, Qt.TextElideMode.ElideRight, int(tw)))
+            qp.setFont(F_TINY)
+            qp.setPen(ink(DIM))
+            qp.drawText(QRectF(tx, rect.y() + 58, tw, 28), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+                        | Qt.TextFlag.TextWordWrap, two_lines(sub, QFontMetrics(F_TINY), int(tw)))
+            if key:
+                self.buttons.append((rect, key))
+
+        def draw_now_playing(self, qp: Any, rect: Any, m: dict) -> None:
+            """What's playing, in one strip (only drawn while it plays): the art, the song, moving bars and how far
+            it is. A click opens the music page."""
+            pid = self.pages().index("media") if "media" in self.pages() else None
+            key = f"page:{pid}" if pid is not None else None
+            qp.setPen(Qt.PenStyle.NoPen)
+            qp.setBrush(ink(0.06 if self.hot != key or key is None else 0.1))
+            qp.drawRoundedRect(rect, 14, 14)
+            art = QRectF(rect.x() + 7, rect.y() + 7, 30, 30)
+            if self.art is not None:
+                qp.save()
+                clip = QPainterPath()
+                clip.addRoundedRect(art, 9, 9)
+                qp.setClipPath(clip)
+                qp.drawImage(art, self.art)
+                qp.restore()
+            else:
+                qp.setBrush(QColor(KEY))
+                qp.drawRoundedRect(art, 9, 9)
+                self.symbol(qp, "music_note", art.center().x(), art.center().y(), 17, ink(DIM))
+            tx = art.right() + 10
+            right = rect.right() - 34
+            qp.setFont(F_LABEL)
+            qp.setPen(ink())
+            qp.drawText(QRectF(tx, rect.y() + 6, right - tx, 17), Qt.AlignmentFlag.AlignVCenter,
+                        QFontMetrics(F_LABEL).elidedText(m["title"], Qt.TextElideMode.ElideRight, int(right - tx)))
+            qp.setFont(F_TINY)
+            qp.setPen(ink(DIM))
+            qp.drawText(QRectF(tx, rect.y() + 22, right - tx, 15), Qt.AlignmentFlag.AlignVCenter,
+                        QFontMetrics(F_TINY).elidedText(m.get("artist") or m.get("app") or "",
+                                                        Qt.TextElideMode.ElideRight, int(right - tx)))
+            self.eq_bars(qp, rect.right() - 26, rect.center().y() + 7, GREEN)
+            end = float(m.get("end") or 0)
+            pos = position_now(m.get("pos"), m.get("end"), m.get("updated"), bool(m.get("playing"))) or 0.0
+            if end > 0:
+                bar = QRectF(rect.x() + 12, rect.bottom() - 5, rect.width() - 24, 2)
+                qp.setBrush(ink(0.1))
+                qp.drawRoundedRect(bar, 1, 1)
+                qp.setBrush(QColor(GREEN))
+                qp.drawRoundedRect(QRectF(bar.x(), bar.y(), bar.width() * max(0.0, min(1.0, pos / end)), 2), 1, 1)
+            if key:
+                self.buttons.append((rect, key))
+
+        def eq_bars(self, qp: Any, x: float, base: float, tone: str) -> None:
+            """Four little music bars that move while something plays (still under reduced motion)."""
+            qp.setPen(Qt.PenStyle.NoPen)
+            qp.setBrush(QColor(tone))
+            now = time.monotonic()
+            for i, period in enumerate((0.9, 0.64, 1.1, 0.76)):
+                h = 0.5 if self.still else 0.25 + 0.75 * (0.5 + 0.5 * math.sin(2 * math.pi * now / period + i))
+                qp.drawRoundedRect(QRectF(x + i * 5, base - 14 * h, 3, 14 * h), 1.5, 1.5)
+
+        def switch(self, qp: Any, rect: Any, key: str, icon: str, label: str, on: bool, tone: str) -> None:
+            """A switch pill: its icon (in the tone while on), the label, a small switch on the right."""
+            qp.setPen(Qt.PenStyle.NoPen)
+            qp.setBrush(ink(0.1 if self.hot == key else 0.06))
+            qp.drawRoundedRect(rect, 14, 14)
+            self.symbol(qp, icon, rect.x() + 19, rect.center().y(), 17, QColor(tone) if on else ink(DIM),
+                        filled=on)
+            sw = QRectF(rect.right() - 36, rect.center().y() - 7.5, 26, 15)
+            qp.setFont(F_CHIP)
+            qp.setPen(ink())
+            lw = sw.x() - rect.x() - 38
+            qp.drawText(QRectF(rect.x() + 34, rect.y(), lw, rect.height()), Qt.AlignmentFlag.AlignVCenter,
+                        QFontMetrics(F_CHIP).elidedText(label, Qt.TextElideMode.ElideRight, int(lw)))
+            qp.setPen(Qt.PenStyle.NoPen)
+            track = QColor(tone)
+            track.setAlphaF(0.55)
+            qp.setBrush(track if on else ink(0.2))
+            qp.drawRoundedRect(sw, 7.5, 7.5)
+            qp.setBrush(ink() if on else ink(0.75))
+            qp.drawEllipse(QPointF(sw.right() - 7.5 if on else sw.x() + 7.5, sw.center().y()), 5.5, 5.5)
+            self.buttons.append((rect, key))
+
+        def shortcut_cell(self, qp: Any, rect: Any, key: str, label: str, icon: str) -> None:
+            """A shortcut: its icon over its name (two short lines at most), lit while you point at it."""
+            if self.hot == key:
+                qp.setPen(Qt.PenStyle.NoPen)
+                qp.setBrush(ink(0.08))
+                qp.drawRoundedRect(rect.adjusted(2, 0, -2, 0), 14, 14)
+            self.symbol(qp, icon, rect.center().x(), rect.y() + 16, 19, ink(), filled=True)
+            qp.setFont(F_TINY)
+            qp.setPen(ink() if self.hot == key else ink(DIM))
+            fm = QFontMetrics(F_TINY)
+            qp.drawText(QRectF(rect.x() + 2, rect.y() + 28, rect.width() - 4, 26),
+                        Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
+                        two_lines(label, fm, int(rect.width() - 4)))
+            self.buttons.append((rect, key))
 
         def draw_media(self, qp: Any, x0: float, x1: float, y: float) -> float:
             """What's playing: the cover, title and artist, where it is in the song, and back / play / next."""
@@ -1899,6 +2190,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             qp.setFont(F_LABEL)
             qp.setPen(ink(0.6))
             qp.drawText(QRectF(tx, y, 150, 22), Qt.AlignmentFlag.AlignVCenter, "Now playing")
+            if m.get("playing"):
+                self.eq_bars(qp, x1 - 18, y + 18, GREEN)
             y += 34
             art = QRectF(x0, y, 60, 60)
             clip = QPainterPath()
@@ -1995,7 +2288,13 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 qp.setPen(ink(DIM))
                 qp.drawText(QRectF(x0, y, x1 - x0, 30), Qt.AlignmentFlag.AlignVCenter, "Reading…")
                 return y + 34
+            now = time.monotonic()
+            dt, self.bars_t = now - self.bars_t, now
             for label, value, pct in rows:
+                if pct is not None:  # ease toward the new reading (at once under reduced motion)
+                    was = self.bars.get(label, pct)
+                    pct = pct if self.still else im.approach(was, pct, dt)
+                    self.bars[label] = pct
                 qp.setFont(F_TEXT)
                 qp.setPen(ink())
                 qp.drawText(QRectF(x0, y, 140, 18), Qt.AlignmentFlag.AlignVCenter, label)
@@ -2012,6 +2311,19 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                     qp.drawRoundedRect(QRectF(bar.x(), bar.y(), bar.width() * max(0.02, min(1.0, pct / 100)), 4),
                                        2, 2)
                 y += 36
+                if label == "CPU" and len(self.cpu_hist) >= 2:  # the last readings as a small line
+                    pts, n = self.cpu_hist, len(self.cpu_hist)
+                    top = max(50.0, max(pts))  # scaled to the recent peak, so a quiet PC's line still has a shape
+                    path = QPainterPath()
+                    for i, v in enumerate(pts):
+                        pt = QPointF(x0 + (x1 - x0) * i / (n - 1), y + 14 - 13 * max(0.0, min(1.0, v / top)))
+                        path.moveTo(pt) if i == 0 else path.lineTo(pt)
+                    pen = QPen(QColor(GREEN), 1.5)
+                    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                    qp.setPen(pen)
+                    qp.setBrush(Qt.BrushStyle.NoBrush)
+                    qp.drawPath(path)
+                    y += 20
             if "down" in hw:
                 qp.setFont(F_TEXT)
                 qp.setPen(ink())
@@ -2064,6 +2376,14 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                     today = d == now.tm_mday
                     if today:
                         qp.setPen(Qt.PenStyle.NoPen)
+                        if not self.still:
+                            g = im.ease((time.monotonic() % 2.8) / 2.8)
+                            ring = QColor(ACCENT)
+                            ring.setAlphaF(0.6 * (1 - g))
+                            qp.setPen(QPen(ring, 2))
+                            qp.setBrush(Qt.BrushStyle.NoBrush)
+                            qp.drawEllipse(cell.center(), 10.5 + 5 * g, 10.5 + 5 * g)
+                            qp.setPen(Qt.PenStyle.NoPen)
                         qp.setBrush(QColor(ACCENT))
                         qp.drawEllipse(cell.center(), 10.5, 10.5)
                     qp.setFont(font(12, 600, tnum=True) if today else F_DAY)
@@ -2191,6 +2511,11 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                     webbrowser.open(target)
                 return
             key = self.key_at(e.position()) if (self.details or self.mode() == "active") else None
+            if key and self.details and not self.still:
+                pos = QPointF(e.position())
+                rect = next((r for r, k in self.buttons if k == key and r.contains(pos)), None)
+                if rect is not None:
+                    self.ripples.append((QRectF(rect), QPointF(e.position()), time.monotonic()))
             if key == "stop":
                 self.stop_ari()
                 return
@@ -2248,6 +2573,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             n = len(self.pages())
             new = max(0, min(n - 1, self.page + step))
             if new != self.page:
+                now = time.monotonic()
+                self.flip_from, self.flip_dir, self.flip_t0 = self.page, 1 if new > self.page else -1, now
+                self.prev_page, self.page_t0 = self.page, now
                 self.page = new
                 self.leave.stop()
                 self.kick()
@@ -2396,6 +2724,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
         first = ""
         while words and (not first or fm.horizontalAdvance(f"{first} {words[0]}") <= width):
             first = f"{first} {words.pop(0)}".strip()
+        first = fm.elidedText(first, Qt.TextElideMode.ElideRight, width)  # one long word still fits its line
         if not words:
             return first
         return first + "\n" + fm.elidedText(" ".join(words), Qt.TextElideMode.ElideRight, width)
@@ -2682,6 +3011,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             island.hw = {"cpu": 23.0, "ram": 78.0, "ram_used": 24.9, "ram_total": 32, "disk": 93.0,
                          "disk_free": 61, "down": 2_400_000, "up": 180_000,
                          "gpu": {"util": 41.0, "mem_used": 7.4, "mem_total": 12, "mem": 62.0, "temp": 58.0}}
+            island.cpu_hist = [18, 22, 19, 25, 31, 27, 24, 29, 35, 30, 26, 23, 28, 33, 38, 31, 27, 24, 21, 23]
             island.weather = {"place": "Colombo", "now": 29.4, "low": 25.1, "high": 31.2, "rain": 80,
                               "sky": "thunderstorms"}
             island.info = Info(status={"status": "ok", "jobs": {"running": 1, "queued": 2}}, waiting=3,
@@ -2693,10 +3023,20 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                                           {"label": "Helios", "action": "show:map"}],
                                clip={"enabled": True, "peer": "phone"})
             island.clip_url = "https://example.com/a-link"
+            if args.text == "nomusic":
+                island.media = {**island.media, "playing": False}
+            if args.flip is not None and island.page > 0:  # coming from the page before, this far in
+                island.still = False
+                island.flip_from, island.flip_dir, island.prev_page = island.page - 1, 1, island.page - 1
+                island.flip_t0 = time.monotonic() - args.flip * im.FLIP_S
         for _ in range(3):  # lay out (the details measure themselves), then settle the size
             island.spring.w, island.spring.h = island.target()
             island.grab()
+        if args.flip is not None and island.flip_from is not None:  # laying out took time: the picture is this far in
+            island.flip_t0 = time.monotonic() - args.flip * im.FLIP_S
         island.grab().save(args.preview)
+        if args.keys:
+            print(json.dumps([k for _r, k in island.buttons]))
         return 0
     island.show()
     island.arm()  # the morning brief: the sit-down check, 05:00-12:00

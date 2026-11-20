@@ -32,7 +32,8 @@ ICONS = ["mic", "hub", "sports_esports", "power_settings_new", "play_arrow", "pa
          "smartphone", "desktop_windows", "laptop_chromebook", "devices",  # Argus Send: the devices
          "swap_horiz", "timer", "play_circle", "fitness_center",  # live activities
          "wb_sunny", "partly_cloudy_day", "cloud", "rainy", "thunderstorm", "foggy", "weather_snowy",
-         "volume_up"]  # the morning brief card
+         "volume_up",  # the morning brief card
+         "check_circle", "error", "schedule", "content_paste", "send_to_mobile"]  # the start page tiles and switches
 # Latin, Latin-1, general punctuation and the few symbols the island prints.
 TEXT = ([*range(0x20, 0x7F), *range(0xA0, 0x100), 0x2013, 0x2014, 0x2018, 0x2019, 0x201C, 0x201D, 0x2026, 0x2022,
          0x2190, 0x2191, 0x2193, 0x2192, 0x203A, 0x2713, 0x266A, 0xB7, 0xB0])

@@ -1,0 +1,532 @@
+<title>Ari island preview</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,500,0..1,0&display=swap">
+<style>
+/* Layout: preview controls, a plain desktop with the island at its top edge, notes. Island in its Sonoma look (Inter,
+   Material Symbols Rounded, five tones on black). Single dark look on purpose. */
+:root {
+  --desk: #2b2d33; --isl: #000; --row: #141417; --chip: #1c1c20; --tile: #222227;
+  --tx: #f2f2f5; --tx2: #a7a8b0; --tx3: #6f7079;
+  --blue: #8db8ff; --green: #7fd39a; --amber: #f5b67a; --violet: #c9a6f0; --coral: #f28b82;
+  --out: cubic-bezier(.05, .7, .1, 1); --std: cubic-bezier(.2, 0, 0, 1);
+  --sans: Inter, system-ui, sans-serif;
+  color-scheme: dark;
+}
+html, body { background: #17181c; color: var(--tx); }
+body { font: 14px/1.45 var(--sans); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 24px 40px; }
+.wrap { max-width: 980px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+.ms { font-family: "Material Symbols Rounded"; font-weight: 500; font-size: 20px; line-height: 1; display: inline-block; font-variation-settings: "FILL" 1; user-select: none; }
+.top { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; justify-content: space-between; }
+.top h1 { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -.01em; }
+.top p { margin: 2px 0 0; color: var(--tx2); font-size: 13.5px; }
+.ctl { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.seg { display: inline-flex; background: #232429; border-radius: 999px; padding: 4px; gap: 4px; }
+.seg button, .btn { border: 0; font: inherit; font-size: 13.5px; font-weight: 600; color: var(--tx); background: transparent; border-radius: 999px; padding: 8px 15px; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
+.seg button[aria-pressed="true"] { background: #2f4f80; color: #dbe8ff; }
+.btn { background: #232429; }
+.btn:hover, .seg button:hover:not([aria-pressed="true"]) { background: #2c2d33; }
+.btn .ms { font-size: 18px; }
+button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+.desk { position: relative; background: var(--desk); border-radius: 22px; height: 590px; overflow: hidden; display: flex; justify-content: center; }
+.hint { position: absolute; bottom: 14px; left: 0; right: 0; text-align: center; color: #9a9ca6; font-size: 12.5px; }
+
+/* the island */
+.isl { position: relative; width: 336px; background: var(--isl); border-radius: 0 0 30px 30px; box-shadow: 0 14px 30px -12px #000c; overflow: hidden; transition: height 520ms var(--out); }
+.now .isl { transition: none; }
+.vp { position: relative; }
+.page { position: absolute; left: 0; top: 0; width: 100%; padding: 18px 20px 30px; box-sizing: border-box; }
+.page[hidden] { display: block !important; visibility: hidden; pointer-events: none; }
+.dots { position: absolute; bottom: 12px; left: 0; right: 0; display: flex; justify-content: center; gap: 5px; }
+.dots i { width: 5px; height: 5px; border-radius: 3px; background: #4a4b52; cursor: pointer; }
+.dots i.on { width: 16px; background: var(--tx); }
+.new .dots i { transition: width 420ms var(--out), background 300ms var(--std); }
+
+/* Ari page */
+.head { display: flex; align-items: flex-start; justify-content: space-between; }
+.clock { font-size: 34px; font-weight: 700; letter-spacing: -.02em; line-height: 1; display: flex; font-variant-numeric: tabular-nums; }
+.clock .colon { color: #8b8c94; padding: 0 1px; }
+.digit { display: inline-block; height: 1em; overflow: hidden; position: relative; width: .62em; text-align: center; }
+.digit span { display: block; height: 1em; }
+.date { margin-top: 6px; color: var(--blue); font-size: 11.5px; font-weight: 600; letter-spacing: .08em; }
+.mic { width: 44px; height: 44px; border-radius: 50%; background: var(--blue); color: #0b1b33; display: grid; place-items: center; position: relative; border: 0; cursor: pointer; }
+.mic .ms { font-size: 22px; position: relative; z-index: 1; }
+.rows { margin-top: 14px; display: flex; flex-direction: column; gap: 2px; }
+.r { display: flex; align-items: center; gap: 10px; padding: 6px 6px; margin: 0 -6px; border-radius: 12px; font-size: 13.5px; }
+.r .d { width: 8px; height: 8px; border-radius: 50%; flex: none; position: relative; }
+.r .t { width: 26px; height: 26px; border-radius: 9px; display: none; place-items: center; flex: none; }
+.r .t .ms { font-size: 16px; }
+.r .v { margin-left: auto; color: var(--tx2); font-variant-numeric: tabular-nums; }
+.c-coral { --c: var(--coral); } .c-green { --c: var(--green); } .c-amber { --c: var(--amber); } .c-blue { --c: var(--blue); } .c-grey { --c: #8b8c94; } .c-violet { --c: var(--violet); }
+.r .d { background: var(--c); }
+.icons { display: flex; justify-content: center; gap: 10px; margin-top: 12px; }
+.ib { width: 40px; height: 40px; border-radius: 50%; background: var(--chip); display: grid; place-items: center; color: var(--tx); }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.ch { background: var(--chip); border-radius: 999px; padding: 7px 13px 7px 10px; font-size: 13px; display: inline-flex; gap: 7px; align-items: center; }
+.ch .ms { font-size: 16px; color: var(--tx2); }
+
+/* the compact start page */
+.only-new { display: none; } .new .only-new { display: block; } .new .only-now { display: none; }
+.head2 { display: flex; align-items: center; justify-content: space-between; }
+.hbtn { display: flex; gap: 8px; align-items: center; }
+.rb { width: 36px; height: 36px; border-radius: 50%; border: 0; background: var(--chip); color: var(--tx); display: grid; place-items: center; cursor: pointer; transition: background 200ms var(--std); }
+.rb .ms { font-size: 19px; } .rb:hover { background: #2a2a30; }
+.tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 16px; }
+.tl2 { border-radius: 16px; padding: 10px 10px 9px; background: color-mix(in srgb, var(--c) 13%, #0c0c0e); display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tl2 .ti { width: 24px; height: 24px; border-radius: 8px; display: grid; place-items: center; background: color-mix(in srgb, var(--c) 24%, #000); color: var(--c); margin-bottom: 6px; position: relative; }
+.tl2 .ti .ms { font-size: 15px; }
+.tl2 b { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.tl2 small { font-size: 11px; line-height: 1.3; color: var(--tx2); font-variant-numeric: tabular-nums; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.tg { display: flex; gap: 8px; margin-top: 8px; }
+.tgl { flex: 1; display: inline-flex; align-items: center; gap: 8px; border: 0; border-radius: 14px; background: var(--row); color: var(--tx); font: inherit; font-size: 12.5px; padding: 9px 10px; cursor: pointer; transition: background 200ms var(--std); }
+.tgl:hover { background: #1e1e22; }
+.tgl .ms { font-size: 17px; color: var(--tx2); }
+.tgl:last-child { flex: 0 0 auto; }
+.sw { margin-left: auto; width: 26px; height: 15px; border-radius: 8px; background: #3a3b42; position: relative; transition: background 200ms var(--std); }
+.sw i { position: absolute; left: 2px; top: 2px; width: 11px; height: 11px; border-radius: 50%; background: #c8c9cf; transition: transform 260ms var(--out), background 200ms; }
+.tgl.on .sw { background: color-mix(in srgb, var(--green) 55%, #000); } .tgl.on .sw i { transform: translateX(11px); background: #fff; } .tgl.on > .ms { color: var(--green); }
+.sc { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 8px; }
+.sct { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 2px 7px; border-radius: 14px; font-size: 11px; color: var(--tx2); text-align: center; line-height: 1.2; cursor: pointer; transition: background 200ms var(--std), color 200ms; }
+.sct .ms { font-size: 19px; color: var(--tx); }
+.sct:hover { background: #ffffff10; color: var(--tx); }
+@media (prefers-reduced-motion: no-preference) {
+  .new .tl2.ok .ti::before { content: ""; position: absolute; inset: 0; border-radius: 8px; animation: ping 2.6s var(--out) infinite; }
+}
+
+/* more alive: the orb, weather, tile visuals, now playing, ripples */
+.wxp { margin-left: 10px; color: var(--violet); display: inline-flex; align-items: center; gap: 3px; letter-spacing: 0; }
+.wxp .ms { font-size: 14px; }
+.orb { width: 44px; height: 44px; border-radius: 50%; border: 0; background: var(--blue); display: grid; place-items: center; position: relative; cursor: pointer; }
+.wave { display: flex; gap: 2.5px; align-items: center; height: 18px; position: relative; z-index: 1; }
+.wave i { width: 3px; height: 30%; border-radius: 2px; background: #0b1b33; }
+.tt { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; gap: 6px; }
+.tt .ti { margin-bottom: 0; }
+.mini { width: 44px; height: 18px; }
+.src { display: flex; }
+.src i { width: 10px; height: 10px; border-radius: 50%; background: var(--c); border: 2px solid #1a140c; margin-left: -4px; }
+.ti.ring { background: transparent; width: 26px; height: 26px; }
+.ti.ring svg { position: absolute; inset: 0; width: 26px; height: 26px; }
+.ti.ring .ms { font-size: 13px; }
+.np { width: 100%; margin-top: 8px; border: 0; background: var(--row); border-radius: 14px; padding: 7px 12px 9px 7px; display: flex; align-items: center; gap: 10px; color: var(--tx); font: inherit; cursor: pointer; position: relative; overflow: hidden; text-align: left; }
+.np:hover { background: #1e1e22; }
+.npa { width: 30px; height: 30px; border-radius: 9px; background: var(--tile); display: grid; place-items: center; color: var(--tx2); flex: none; }
+.npa .ms { font-size: 18px; }
+.npt { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.25; }
+.npt b { font-size: 12.5px; font-weight: 600; } .npt small { font-size: 11px; color: var(--tx2); }
+.np-eq { display: flex !important; margin-left: 0; }
+.np { transition: max-height 420ms var(--out), opacity 260ms var(--std), margin 420ms var(--out), padding 420ms var(--out); max-height: 60px; }
+.np.gone { max-height: 0; opacity: 0; margin-top: 0; padding-top: 0; padding-bottom: 0; pointer-events: none; }
+.now .np { display: none; }
+.npb { position: absolute; left: 12px; right: 12px; bottom: 4px; height: 2px; border-radius: 1px; background: #2a2b30; overflow: hidden; }
+.npb i { display: block; height: 100%; width: 40%; background: var(--green); transition: width 900ms var(--std); }
+.rip { position: absolute; border-radius: 50%; background: #ffffff2e; transform: scale(0); pointer-events: none; animation: rip 600ms var(--out) forwards; }
+.sct, .tgl, .rb, .np { position: relative; overflow: hidden; }
+@keyframes rip { to { transform: scale(1); opacity: 0; } }
+.new .isl { transition: height 620ms cubic-bezier(.34, 1.36, .64, 1); }
+.new .page.left { transform: translateX(-36px) scale(.96); }
+.new .page.right { transform: translateX(36px) scale(.96); }
+@media (prefers-reduced-motion: no-preference) {
+  .new .orb::before, .new .orb::after { content: ""; position: absolute; inset: 0; border-radius: 50%; border: 2px solid var(--blue); opacity: 0; animation: orb 3.4s var(--out) infinite; }
+  .new .orb::after { animation-delay: 1.7s; }
+  .new .wave i { animation: wv 1.6s ease-in-out infinite; }
+  .new .wave i:nth-child(2) { animation-delay: .15s; } .new .wave i:nth-child(3) { animation-delay: .3s; }
+  .new .wave i:nth-child(4) { animation-delay: .45s; } .new .wave i:nth-child(5) { animation-delay: .6s; }
+  .new .orb:hover .wave i { animation-duration: .7s; }
+  .new #cd { transition: stroke-dashoffset 900ms var(--std); }
+  .new .mini path { stroke-dasharray: 120; animation: draw 1.4s var(--out) backwards; }
+}
+@keyframes orb { 0% { transform: scale(1); opacity: .6; } 100% { transform: scale(1.6); opacity: 0; } }
+@keyframes wv { 0%, 100% { height: 25%; } 50% { height: 85%; } }
+
+/* responsive: everything you can press answers */
+.due { font-size: 11px; color: var(--blue); font-weight: 600; }
+.tl2 { cursor: pointer; position: relative; overflow: hidden; transition: background 200ms var(--std), transform 160ms var(--std); }
+.tl2:hover { background: color-mix(in srgb, var(--c) 19%, #0c0c0e); }
+.new :is(.tl2, .sct, .tgl, .rb, .np, .orb, .ch, .ib, .big):active { transform: scale(.96); }
+.new :is(.sct, .tgl, .rb, .np, .orb, .big) { transition: background 200ms var(--std), transform 160ms var(--std); }
+.new .tl2:hover .ti { transform: rotate(-8deg); }
+.ti { transition: transform 300ms var(--out); }
+.ari-st { height: 0; overflow: hidden; color: var(--blue); font-size: 11.5px; font-weight: 600; transition: height 300ms var(--out); }
+.ari-st.on { height: 16px; margin-top: 3px; }
+.orb.listen { background: #b9d3ff; }
+.new .orb.listen .wave i { animation-duration: .45s; }
+.new .orb.listen::before { animation-duration: 1.2s; }
+.new .orb.listen::after { animation-duration: 1.2s; animation-delay: .6s; }
+
+/* calendar: holidays and events from Google */
+.grid span { position: relative; }
+.grid .hol { color: var(--coral); font-weight: 600; }
+.grid .has::after { content: ""; position: absolute; left: 50%; bottom: -3px; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: var(--c, var(--blue)); }
+.now .grid .hol { color: inherit; font-weight: 400; } .now .grid .has::after { display: none; }
+.ev { margin-top: 14px; display: flex; flex-direction: column; gap: 6px; }
+.evr { display: flex; align-items: center; gap: 10px; background: var(--row); border-radius: 12px; padding: 7px 10px 7px 7px; cursor: pointer; position: relative; overflow: hidden; transition: background 200ms var(--std), transform 160ms var(--std); }
+.evr:hover { background: #1e1e22; } .new .evr:active { transform: scale(.97); }
+.evd { width: 28px; height: 28px; border-radius: 9px; display: grid; place-items: center; font-size: 12.5px; font-weight: 700; background: color-mix(in srgb, var(--c) 20%, #000); color: var(--c); flex: none; }
+.evt { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.25; }
+.evt b { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.evt small { font-size: 11px; color: var(--tx2); }
+.evin { font-size: 11px; color: var(--blue); font-weight: 600; }
+.gsrc { margin-top: 10px; display: flex; align-items: center; gap: 6px; color: var(--tx3); font-size: 11px; }
+.gsrc .ms { font-size: 14px; }
+
+/* media */
+.mh { display: flex; align-items: center; gap: 10px; }
+.tag { background: #173322; color: var(--green); border-radius: 999px; padding: 4px 10px; font-size: 12px; font-weight: 600; }
+.mh small { color: var(--tx2); font-size: 13px; }
+.song { display: flex; gap: 14px; align-items: center; margin-top: 14px; }
+.art { width: 58px; height: 58px; border-radius: 14px; background: var(--tile); display: grid; place-items: center; color: var(--tx3); position: relative; overflow: hidden; }
+.art .ms { font-size: 26px; }
+.song b { display: block; font-size: 15px; font-weight: 600; }
+.song span { color: var(--tx2); font-size: 13px; }
+.eq { display: none; gap: 2px; align-items: flex-end; height: 14px; margin-left: auto; }
+.eq i { width: 3px; border-radius: 2px; background: var(--green); height: 30%; }
+.bar { height: 4px; border-radius: 2px; background: #26272c; margin-top: 16px; overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--blue); border-radius: 2px; }
+.times { display: flex; justify-content: space-between; color: var(--tx2); font-size: 11.5px; margin-top: 5px; font-variant-numeric: tabular-nums; }
+.play { display: flex; justify-content: center; align-items: center; gap: 22px; margin-top: 8px; }
+.play .big { width: 46px; height: 46px; border-radius: 50%; background: #fff; color: #000; display: grid; place-items: center; border: 0; cursor: pointer; }
+.play .ms { font-size: 24px; }
+
+/* system */
+.sh { display: flex; align-items: center; gap: 10px; color: var(--tx2); font-size: 13px; }
+.sh .tl { width: 34px; height: 34px; border-radius: 11px; background: var(--tile); display: grid; place-items: center; color: var(--blue); }
+.met { margin-top: 12px; }
+.met .l { display: flex; justify-content: space-between; font-size: 13.5px; }
+.met .l span:last-child { color: var(--tx2); font-variant-numeric: tabular-nums; }
+.met .bar { margin-top: 6px; }
+.met .bar i { background: var(--c); }
+.met .spark { display: none; }
+.net { display: flex; justify-content: space-between; margin-top: 12px; font-size: 13.5px; }
+.net span:last-child { color: var(--tx2); font-variant-numeric: tabular-nums; }
+
+/* calendar */
+.cal-h { display: flex; justify-content: space-between; align-items: baseline; }
+.cal-h b { font-size: 17px; font-weight: 600; }
+.temp { font-size: 17px; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; }
+.temp .ms { font-size: 20px; color: var(--violet); display: none; }
+.wx { color: var(--tx2); font-size: 12.5px; margin-top: 4px; text-align: right; }
+.grid { display: grid; grid-template-columns: repeat(7, 1fr); row-gap: 6px; margin-top: 12px; text-align: center; font-size: 13px; font-variant-numeric: tabular-nums; }
+.grid .wd { color: var(--tx3); font-size: 11.5px; }
+.grid .we { color: #8b8c94; }
+.grid .today { justify-self: center; width: 26px; height: 26px; border-radius: 50%; background: var(--blue); color: #0b1b33; display: grid; place-items: center; font-weight: 700; position: relative; }
+
+/* ---- proposed: alive, and smooth between pages */
+.new .page { transition: transform 460ms var(--out), opacity 300ms var(--std); }
+.new .page.left { transform: translateX(-44px); opacity: 0; }
+.new .page.right { transform: translateX(44px); opacity: 0; }
+.now .page.left, .now .page.right { opacity: 0; }
+.new .r .d { display: none; }
+.new .r .t { display: grid; background: color-mix(in srgb, var(--c) 18%, #000); color: var(--c); }
+.new .r:hover, .new .ch:hover, .new .ib:hover { background: #ffffff10; }
+.new .ch, .new .ib { transition: background 200ms var(--std); }
+.new .eq { display: flex; }
+.new .met .spark { display: block; height: 18px; margin-top: 4px; }
+.new .temp .ms { display: inline-block; }
+@media (prefers-reduced-motion: no-preference) {
+  .new .page.enter .stag > * { animation: rise 460ms var(--out) backwards; }
+  .new .page.enter .stag > *:nth-child(2) { animation-delay: 30ms; } .new .page.enter .stag > *:nth-child(3) { animation-delay: 60ms; }
+  .new .page.enter .stag > *:nth-child(4) { animation-delay: 90ms; } .new .page.enter .stag > *:nth-child(5) { animation-delay: 120ms; }
+  .new .page.enter .stag > *:nth-child(6) { animation-delay: 150ms; } .new .page.enter .stag > *:nth-child(7) { animation-delay: 180ms; }
+  .new .page.enter .stag > *:nth-child(8) { animation-delay: 210ms; }
+  .new .clock .colon { animation: blink 2s steps(1) infinite; }
+  .new .mic::before { content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--blue); opacity: .35; animation: breathe 3.2s var(--std) infinite; }
+  .new .c-green .t::after { content: ""; position: absolute; }
+  .new .r.ok .t { position: relative; }
+  .new .r.ok .t::before { content: ""; position: absolute; inset: 0; border-radius: 9px; box-shadow: 0 0 0 0 color-mix(in srgb, var(--green) 50%, transparent); animation: ping 2.6s var(--out) infinite; }
+  .new .eq.on i { animation: eq 900ms ease-in-out infinite alternate; }
+  .new .eq.on i:nth-child(2) { animation-duration: 640ms; } .new .eq.on i:nth-child(3) { animation-duration: 1100ms; } .new .eq.on i:nth-child(4) { animation-duration: 760ms; }
+  .new .art.on .ms { animation: spin 6s linear infinite; }
+  .new .bar i { transition: width 900ms var(--std); }
+  .new .grid .today::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; border: 2px solid var(--blue); opacity: 0; animation: ring 2.8s var(--out) infinite; }
+  .new .temp .ms { animation: bob 3.6s ease-in-out infinite; }
+  .new .digit.roll span { animation: roll 520ms var(--out); }
+  .new .num.tick { animation: tick 500ms var(--out); }
+  .new .spark path.draw { stroke-dasharray: 400; animation: draw 1.2s var(--out) backwards; }
+}
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+@keyframes blink { 50% { opacity: .25; } }
+@keyframes breathe { 0% { transform: scale(1); opacity: .35; } 70% { transform: scale(1.45); opacity: 0; } 100% { opacity: 0; } }
+@keyframes ping { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--green) 55%, transparent); } 70%, 100% { box-shadow: 0 0 0 8px transparent; } }
+@keyframes eq { from { height: 25%; } to { height: 100%; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes ring { 0% { opacity: .7; transform: scale(.9); } 100% { opacity: 0; transform: scale(1.35); } }
+@keyframes bob { 50% { transform: translateY(-2px); } }
+@keyframes roll { from { transform: translateY(-100%); } }
+@keyframes tick { from { transform: translateY(-4px); color: var(--green); } }
+@keyframes draw { from { stroke-dashoffset: 400; } }
+.num { display: inline-block; }
+
+.notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.note { background: #1e1f24; border-radius: 18px; padding: 14px 16px; display: flex; gap: 12px; }
+.note .ni { width: 36px; height: 36px; border-radius: 12px; display: grid; place-items: center; flex: none; background: color-mix(in srgb, var(--c) 18%, #000); color: var(--c); }
+.note b { display: block; font-weight: 600; margin-bottom: 2px; }
+.note span { color: var(--tx2); font-size: 13px; }
+.foot { color: #8b8c94; font-size: 12.5px; margin: 0; }
+</style>
+
+<div class="wrap">
+  <div class="top">
+    <div>
+      <h1>Ari's island</h1>
+      <p>Scroll on the island, use the arrows, or tap the dots to flip pages. Switch to compare with today</p>
+    </div>
+    <div class="ctl">
+      <div class="seg" role="group" aria-label="Version">
+        <button type="button" id="v-now" aria-pressed="false">Now</button>
+        <button type="button" id="v-new" aria-pressed="true">Proposed</button>
+      </div>
+      <button type="button" class="btn" id="prev" aria-label="Previous page"><span class="ms">chevron_left</span></button>
+      <button type="button" class="btn" id="next" aria-label="Next page"><span class="ms">chevron_right</span></button>
+      <button type="button" class="btn" id="music" aria-pressed="true"><span class="ms">music_note</span>Music on</button>
+      <button type="button" class="btn" id="open"><span class="ms">replay</span>Open it again</button>
+    </div>
+  </div>
+
+  <div class="desk">
+    <div class="app new" id="app" style="display:contents">
+      <div class="isl" id="isl">
+        <div class="vp" id="vp">
+          <!-- 1: Ari -->
+          <section class="page" data-i="0">
+            <div class="stag only-new">
+              <div class="head2">
+                <div><div class="clock" id="clock2"></div><div class="date"><span id="date2"></span><span class="wxp"><span class="ms">thunderstorm</span>29°</span></div><div class="ari-st" id="ariSt" aria-live="polite"></div></div>
+                <div class="hbtn">
+                  <button type="button" class="rb" title="Game mode: auto"><span class="ms">sports_esports</span></button>
+                  <button type="button" class="rb" title="PC power"><span class="ms">power_settings_new</span></button>
+                  <button type="button" class="orb" aria-label="Talk to Ari"><span class="wave"><i></i><i></i><i></i><i></i><i></i></span></button>
+                </div>
+              </div>
+              <div class="tiles">
+                <div class="tl2 c-green ok"><div class="tt"><span class="ti"><span class="ms">check_circle</span></span><svg class="mini" viewBox="0 0 44 18" preserveAspectRatio="none"><path id="jobs" fill="none" stroke="var(--green)" stroke-width="1.6" stroke-linecap="round"/></svg></div><b>All good</b><small><span class="num" id="run2">1</span> running · <span class="num" id="q2">2</span> queued</small></div>
+                <div class="tl2 c-amber"><div class="tt"><span class="ti"><span class="ms">inbox</span></span><span class="src"><i style="--c:var(--amber)"></i><i style="--c:var(--violet)"></i><i style="--c:var(--blue)"></i></span></div><b><span class="num">3</span> waiting</b><small>2 approvals, 1 chat</small></div>
+                <div class="tl2 c-blue"><div class="tt"><span class="ti ring"><svg viewBox="0 0 28 28"><circle cx="14" cy="14" r="12" fill="none" stroke="#ffffff1a" stroke-width="2.4"/><circle id="cd" cx="14" cy="14" r="12" fill="none" stroke="var(--blue)" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="75.4" stroke-dashoffset="20" transform="rotate(-90 14 14)"/></svg><span class="ms">schedule</span></span><span class="due num" id="inmin">23 min</span></div><b>23:49</b><small>homelab check</small></div>
+              </div>
+              <button type="button" class="np" id="np"><span class="npa"><span class="ms">album</span></span><span class="npt"><b>Midnight City</b><small>M83</small></span><span class="eq on np-eq"><i></i><i></i><i></i><i></i></span><span class="npb"><i id="npprog"></i></span></button>
+              <div class="tg">
+                <button type="button" class="tgl on" id="clipT"><span class="ms">content_paste</span>Clipboard sync<span class="sw"><i></i></span></button>
+                <button type="button" class="tgl" title="Send the link you copied to your phone"><span class="ms">send_to_mobile</span>Send link</button>
+              </div>
+              <div class="sc">
+                <span class="sct"><span class="ms">bolt</span>Sort downloads</span>
+                <span class="sct"><span class="ms">auto_awesome</span>Work mode</span>
+                <span class="sct"><span class="ms">inbox</span>Inbox</span>
+                <span class="sct"><span class="ms">grid_view</span>Helios</span>
+              </div>
+            </div>
+            <div class="stag only-now">
+              <div class="head">
+                <div><div class="clock" id="clock"></div><div class="date" id="date"></div></div>
+                <button type="button" class="mic" aria-label="Talk to Ari"><span class="ms">mic</span></button>
+              </div>
+              <div class="rows">
+                <div class="r c-grey"><span class="d"></span><span class="t"><span class="ms">sports_esports</span></span>Game mode off<span class="v">auto</span></div>
+                <div class="r c-green"><span class="d"></span><span class="t"><span class="ms">content_paste</span></span>Clipboard sync<span class="v">on</span></div>
+                <div class="r c-blue"><span class="d"></span><span class="t"><span class="ms">send_to_mobile</span></span>Send link to phone<span class="v"><span class="ms" style="font-size:18px">chevron_right</span></span></div>
+                <div class="r c-green ok"><span class="d"></span><span class="t"><span class="ms">check_circle</span></span>All good<span class="v"><span class="num" id="run">1</span> running · <span class="num" id="q">2</span> queued</span></div>
+                <div class="r c-amber"><span class="d"></span><span class="t"><span class="ms">inbox</span></span>3 waiting for you<span class="v"><span class="ms" style="font-size:18px">chevron_right</span></span></div>
+                <div class="r c-blue"><span class="d"></span><span class="t"><span class="ms">schedule</span></span>homelab · check<span class="v">23:49</span></div>
+              </div>
+              <div class="icons"><span class="ib"><span class="ms">sports_esports</span></span><span class="ib"><span class="ms">power_settings_new</span></span><span class="ib"><span class="ms">hub</span></span></div>
+              <div class="chips"><span class="ch"><span class="ms">bolt</span>Sort downloads</span><span class="ch"><span class="ms">auto_awesome</span>Work mode</span><span class="ch"><span class="ms">inbox</span>Inbox</span><span class="ch"><span class="ms">grid_view</span>Helios</span></div>
+            </div>
+          </section>
+          <!-- 2: media -->
+          <section class="page" data-i="1">
+            <div class="stag">
+              <div class="mh"><span class="tag">Spotify</span><small>Now playing</small><span class="eq on" id="eq"><i></i><i></i><i></i><i></i></span></div>
+              <div class="song"><div class="art on" id="art"><span class="ms">album</span></div><div><b>Midnight City</b><span>M83 · Hurry Up, We're Dreaming</span></div></div>
+              <div><div class="bar"><i id="prog" style="width:40%"></i></div><div class="times"><span id="pos">1:37</span><span>4:03</span></div></div>
+              <div class="play"><span class="ms">skip_previous</span><button type="button" class="big" id="pp" aria-label="Pause"><span class="ms">pause</span></button><span class="ms">skip_next</span></div>
+            </div>
+          </section>
+          <!-- 3: system -->
+          <section class="page" data-i="2">
+            <div class="stag">
+              <div class="sh"><span class="tl"><span class="ms">memory</span></span>PC</div>
+              <div class="met c-green"><div class="l"><span>CPU</span><span><span class="num" id="cpuv">23</span>%</span></div><div class="bar"><i id="cpu" style="width:23%"></i></div><svg class="spark" viewBox="0 0 296 18" preserveAspectRatio="none"><path id="cpus" fill="none" stroke="var(--green)" stroke-width="1.5" class="draw"/></svg></div>
+              <div class="met c-amber"><div class="l"><span>Memory</span><span><span class="num" id="memv">24.9</span> of 32 GB</span></div><div class="bar"><i id="mem" style="width:78%"></i></div></div>
+              <div class="met c-green"><div class="l"><span>GPU</span><span><span class="num" id="gpuv">41</span>% · 58°</span></div><div class="bar"><i id="gpu" style="width:41%"></i></div></div>
+              <div class="met c-coral"><div class="l"><span>Disk</span><span>61 GB free</span></div><div class="bar"><i style="width:93%"></i></div></div>
+              <div class="net"><span>Network</span><span>↓ <span class="num" id="down">2.4</span> MB/s &nbsp; ↑ 180 KB/s</span></div>
+            </div>
+          </section>
+          <!-- 4: calendar -->
+          <section class="page" data-i="3">
+            <div class="stag">
+              <div class="cal-h"><b>November 2026</b><span class="temp"><span class="ms">thunderstorm</span>29°</span></div>
+              <div class="wx">Colombo · thunderstorms, 25–31°, 80% rain</div>
+              <div class="grid" id="grid"></div>
+              <div class="ev only-new" id="evs">
+                <div class="evr c-coral"><span class="evd">24</span><span class="evt"><b>Il Full Moon Poya Day</b><small>Tue · holiday</small></span></div>
+                <div class="evr c-blue"><span class="evd">21</span><span class="evt"><b>Dentist</b><small>Sat · 10:30</small></span><span class="evin" id="evin">in 11 h</span></div>
+                <div class="evr c-violet"><span class="evd">25</span><span class="evt"><b>Team standup</b><small>Wed · 09:30 · Google Meet</small></span></div>
+              </div>
+              <div class="gsrc only-new"><span class="ms">event</span>From your Google Calendar and Sri Lanka holidays</div>
+            </div>
+          </section>
+        </div>
+        <div class="dots" id="dots"></div>
+      </div>
+    </div>
+    <div class="hint">Sample data · the real island keeps its size, look and pages</div>
+  </div>
+
+  <div class="notes">
+    <div class="note" style="--c: var(--blue)"><span class="ni"><span class="ms">swipe</span></span><div><b>Smooth page flips</b><span>The old page slides out and the new one glides in from the side you scrolled toward, the island's height eases to fit, and the current dot stretches into a pill</span></div></div>
+    <div class="note" style="--c: var(--coral)"><span class="ni"><span class="ms">event</span></span><div><b>Your Google Calendar</b><span>Holidays in coral with their name, a dot under days with events, and what's coming up under the month with a countdown to the next one. Read only, from Argus</span></div></div>
+    <div class="note" style="--c: var(--green)"><span class="ni"><span class="ms">music_off</span></span><div><b>Now playing only when it plays</b><span>The strip on the start page folds away when nothing is playing and slides back in when music starts</span></div></div>
+    <div class="note" style="--c: var(--amber)"><span class="ni"><span class="ms">touch_app</span></span><div><b>Answers every touch</b><span>Things press in softly when you tap them, ripple from your finger and light up when you point at them; tiles open what they show; tap the orb and Ari says it's listening</span></div></div>
+    <div class="note" style="--c: var(--blue)"><span class="ni"><span class="ms">graphic_eq</span></span><div><b>Ari, alive</b><span>The mic is now Ari's orb: a small waveform that idles, quickens when you point at it, and rings that breathe outward</span></div></div>
+    <div class="note" style="--c: var(--green)"><span class="ni"><span class="ms">monitoring</span></span><div><b>Tiles that show, not tell</b><span>A live jobs line in "All good", where the waiting things came from, and a ring that closes as the next job gets near</span></div></div>
+    <div class="note" style="--c: var(--violet)"><span class="ni"><span class="ms">music_note</span></span><div><b>Now playing, at a glance</b><span>A thin strip with the song, moving bars and its progress while music plays; tap it to open the music page. Gone when nothing plays</span></div></div>
+    <div class="note" style="--c: var(--coral)"><span class="ni"><span class="ms">dashboard</span></span><div><b>A compact start page</b><span>Three tiles for Argus, what waits for you and what's next; clipboard sync as a real switch; your shortcuts as a tidy row of four; game mode and power beside the mic</span></div></div>
+    <div class="note" style="--c: var(--green)"><span class="ni"><span class="ms">auto_awesome</span></span><div><b>Rows come in one by one</b><span>When the island opens or a page arrives, its rows rise in quickly one after another</span></div></div>
+    <div class="note" style="--c: var(--amber)"><span class="ni"><span class="ms">favorite</span></span><div><b>Small live details</b><span>The clock's digits roll and its colon blinks, the mic breathes, "All good" pings, numbers tick when they change</span></div></div>
+    <div class="note" style="--c: var(--violet)"><span class="ni"><span class="ms">equalizer</span></span><div><b>Pages that move</b><span>Music bars and a turning disc while playing, a live CPU line, load bars that ease to new values, today's date pulsing, a gently moving weather icon</span></div></div>
+  </div>
+  <p class="foot">Tonal icon tiles replace the plain dots, in the island's own five tones. Everything stays still under reduced motion and while the island is folded</p>
+</div>
+
+<script>
+(() => {
+  const app = document.getElementById("app"), isl = document.getElementById("isl"), vp = document.getElementById("vp");
+  const pages = [...vp.querySelectorAll(".page")];
+  const dots = document.getElementById("dots");
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let cur = 0;
+  const isNew = () => app.classList.contains("new");
+
+  // the dots: one per page and a sliding pill for the current one
+  pages.forEach((_, i) => { const d = document.createElement("i"); d.onclick = () => go(i); d.setAttribute("aria-label", `Page ${i + 1}`); dots.appendChild(d); });
+
+  function fit() { isl.style.height = pages[cur].offsetHeight + "px"; [...dots.children].forEach((d, k) => d.classList.toggle("on", k === cur)); }
+  function show(i, dir) {
+    pages.forEach((p, k) => {
+      p.classList.remove("left", "right", "enter");
+      if (k === i) { p.hidden = false; if (isNew() && !reduce && dir) { p.classList.add(dir > 0 ? "right" : "left"); void p.offsetWidth; p.classList.remove("left", "right"); } p.classList.add("enter"); }
+      else { p.classList.add(k < i ? "left" : "right"); p.hidden = !(isNew() && !reduce); if (!isNew()) p.hidden = true; }
+    });
+    setTimeout(() => pages.forEach((p, k) => { if (k !== i) p.hidden = true; }), isNew() ? 480 : 0);
+    fit();
+  }
+  function go(i) { i = Math.max(0, Math.min(pages.length - 1, i)); if (i === cur) return; const dir = i > cur ? 1 : -1; cur = i; show(i, dir); }
+  document.getElementById("prev").onclick = () => go(cur - 1);
+  document.getElementById("next").onclick = () => go(cur + 1);
+  let wheelAt = 0;
+  isl.addEventListener("wheel", (e) => { e.preventDefault(); const now = Date.now(); if (now - wheelAt < 380) return; wheelAt = now; go(cur + (e.deltaY > 0 || e.deltaX > 0 ? 1 : -1)); }, { passive: false });
+  document.getElementById("open").onclick = () => { isl.style.height = "0px"; setTimeout(() => show(cur, 0), 60); };
+
+  const setV = (v) => {
+    app.classList.toggle("new", v === "new"); app.classList.toggle("now", v === "now");
+    document.getElementById("v-now").setAttribute("aria-pressed", v === "now");
+    document.getElementById("v-new").setAttribute("aria-pressed", v === "new");
+    show(cur, 0);
+  };
+  document.getElementById("v-now").onclick = () => setV("now");
+  document.getElementById("v-new").onclick = () => setV("new");
+
+  // the clock: digits roll when they change
+  const clock = document.getElementById("clock");
+  let shown = "";
+  function drawClock() {
+    const d = new Date(), t = d.toTimeString().slice(0, 5);
+    if (t === shown) return;
+    const old = shown; shown = t;
+    const html = t.split("").map((ch, i) => ch === ":" ? '<span class="colon">:</span>' :
+      `<span class="digit${old && old[i] !== ch ? " roll" : ""}"><span>${ch}</span></span>`).join("");
+    const date = d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }).toUpperCase().replace(",", "");
+    for (const k of ["", "2"]) { document.getElementById("clock" + k).innerHTML = html; document.getElementById("date" + k).textContent = date; }
+  }
+  drawClock(); setInterval(drawClock, 1000);
+
+  // numbers that tick
+  const bump = (id, v) => { const s = document.getElementById(id); if (s.textContent === String(v)) return; s.textContent = v; s.classList.remove("tick"); void s.offsetWidth; s.classList.add("tick"); };
+
+  // media: playing / paused
+  let playing = true, pos = 97;
+  const pp = document.getElementById("pp");
+  pp.onclick = () => { if (typeof setMusic === "function") return setMusic(!playing); playing = !playing; pp.innerHTML = `<span class="ms">${playing ? "pause" : "play_arrow"}</span>`; pp.setAttribute("aria-label", playing ? "Pause" : "Play"); document.getElementById("eq").classList.toggle("on", playing); document.getElementById("art").classList.toggle("on", playing); document.querySelector(".np-eq").classList.toggle("on", playing); document.getElementById("np").hidden = !playing; fit(); };
+  setInterval(() => { if (!playing) return; pos = (pos + 1) % 243; document.getElementById("prog").style.width = (pos / 243 * 100) + "%"; document.getElementById("npprog").style.width = (pos / 243 * 100) + "%"; document.getElementById("pos").textContent = `${Math.floor(pos / 60)}:${String(pos % 60).padStart(2, "0")}`; }, 1000);
+
+  // system: values wander, the CPU line moves
+  const cpuHist = Array.from({ length: 40 }, () => 15 + Math.random() * 20);
+  const spark = () => { const max = 100; document.getElementById("cpus").setAttribute("d", cpuHist.map((v, i) => `${i ? "L" : "M"}${(i / (cpuHist.length - 1) * 296).toFixed(1)} ${(17 - v / max * 16).toFixed(1)}`).join(" ")); };
+  spark();
+  setInterval(() => {
+    const cpu = Math.round(12 + Math.random() * 30); cpuHist.push(cpu); cpuHist.shift(); spark();
+    bump("cpuv", cpu); document.getElementById("cpu").style.width = cpu + "%";
+    const gpu = Math.round(35 + Math.random() * 15); bump("gpuv", gpu); document.getElementById("gpu").style.width = gpu + "%";
+    const mem = (24.6 + Math.random() * .6).toFixed(1); bump("memv", mem); document.getElementById("mem").style.width = (mem / 32 * 100) + "%";
+    bump("down", (1.5 + Math.random() * 2).toFixed(1));
+    if (Math.random() < .4) { jobs.push(20 + Math.round(Math.random() * 14)); jobs.shift(); jl(); }
+    if (Math.random() < .3) { const r = 1 + Math.floor(Math.random() * 2), q = Math.floor(Math.random() * 3); bump("run", r); bump("q", q); bump("run2", r); bump("q2", q); }
+  }, 2000);
+
+  // calendar
+  const g = document.getElementById("grid");
+  g.innerHTML = ["M", "T", "W", "T", "F", "S", "S"].map((w) => `<span class="wd">${w}</span>`).join("") + "<span></span>".repeat(6) +
+    Array.from({ length: 30 }, (_, k) => {
+      const n = k + 1, dow = (6 + k) % 7;
+      if (n === 20) return `<span class="today">${n}</span>`;
+      const hol = { 24: "Il Full Moon Poya Day" }[n], ev = { 21: "Dentist 10:30", 25: "Team standup 09:30", 27: "Kalana's birthday" }[n];
+      const cls = [dow >= 5 ? "we" : "", hol ? "hol has" : "", ev && !hol ? "has" : ""].join(" ").trim();
+      const tone = hol ? "--c: var(--coral)" : n === 25 ? "--c: var(--violet)" : "";
+      return `<span class="${cls}" style="${tone}" title="${hol || ev || ""}">${n}</span>`;
+    }).join("");
+  const evin = () => { const d = new Date(), t = new Date(2026, 10, 21, 10, 30); const h = Math.max(0, Math.round((t - d) / 3600000)); document.getElementById("evin").textContent = h > 0 ? `in ${h} h` : "now"; };
+  evin(); setInterval(evin, 60000);
+
+  document.getElementById("clipT").onclick = (e) => { e.currentTarget.classList.toggle("on"); };
+  document.getElementById("np").onclick = () => go(1);
+  // music: the strip on the start page shows only while something is playing
+  const musicBtn = document.getElementById("music");
+  function setMusic(on) {
+    playing = on;
+    musicBtn.setAttribute("aria-pressed", on); musicBtn.innerHTML = `<span class="ms">${on ? "music_note" : "music_off"}</span>${on ? "Music on" : "Nothing playing"}`;
+    pp.innerHTML = `<span class="ms">${on ? "pause" : "play_arrow"}</span>`;
+    document.getElementById("eq").classList.toggle("on", on); document.getElementById("art").classList.toggle("on", on);
+    document.querySelector(".np-eq").classList.toggle("on", on);
+    document.getElementById("np").classList.toggle("gone", !on);
+    setTimeout(fit, 10);
+  }
+  musicBtn.onclick = () => setMusic(!playing);
+  // tiles open what they show; the orb listens for a moment
+  const tiles = document.querySelectorAll(".tl2");
+  tiles[0].onclick = () => go(2);
+  tiles[2].onclick = () => go(3);
+  tiles[1].onclick = () => flash("Opening your inbox in Helios");
+  const st = document.getElementById("ariSt");
+  let stT = 0;
+  function flash(text) { st.textContent = text; st.classList.add("on"); clearTimeout(stT); stT = setTimeout(() => { st.classList.remove("on"); fit(); }, 2600); fit(); }
+  const orb = document.querySelector(".orb");
+  orb.onclick = () => {
+    orb.classList.add("listen"); st.textContent = "Listening…"; st.classList.add("on"); fit();
+    clearTimeout(stT); stT = setTimeout(() => { orb.classList.remove("listen"); st.textContent = "Thinking…";
+      stT = setTimeout(() => { st.classList.remove("on"); fit(); }, 1400); }, 3000);
+  };
+  // jobs an hour, last 12 hours: a small line in the "All good" tile
+  const jobs = [8, 12, 9, 15, 22, 18, 25, 21, 30, 26, 33, 32];
+  const jl = () => document.getElementById("jobs").setAttribute("d", jobs.map((v, i) => `${i ? "L" : "M"}${(i / (jobs.length - 1) * 42 + 1).toFixed(1)} ${(16 - v / 36 * 14).toFixed(1)}`).join(" "));
+  jl();
+  // the next job: a ring that closes as it gets near (an hour in view)
+  const tick2 = () => {
+    const d = new Date(), due = new Date(d); due.setHours(23, 49, 0, 0); if (due < d) due.setDate(due.getDate() + 1);
+    const min = Math.max(0, Math.round((due - d) / 60000)), frac = Math.min(1, min / 60);
+    document.getElementById("cd").setAttribute("stroke-dashoffset", (75.4 * frac).toFixed(1));
+    document.getElementById("inmin").textContent = min < 60 ? `${min} min` : `${Math.floor(min / 60)} h`;
+  };
+  tick2(); setInterval(tick2, 15000);
+  // ripples from where you tap
+  document.addEventListener("pointerdown", (e) => {
+    const el = e.target.closest(".sct, .tgl, .rb, .np, .ch, .ib");
+    if (!el || !isNew() || reduce) return;
+    const r = el.getBoundingClientRect(), size = Math.max(r.width, r.height) * 2.2, dot = document.createElement("span");
+    dot.className = "rip"; dot.style.cssText = `width:${size}px;height:${size}px;left:${e.clientX - r.left - size / 2}px;top:${e.clientY - r.top - size / 2}px`;
+    el.appendChild(dot); setTimeout(() => dot.remove(), 650);
+  });
+  addEventListener("resize", fit);
+  document.fonts?.ready.then(() => show(cur, 0));
+  show(0, 0);
+})();
+</script>
