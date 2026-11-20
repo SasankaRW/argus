@@ -3,7 +3,7 @@ import { api, Approval, ArgusEvent, Job, Status } from "./api";
 import { startOfDay, useJobs } from "./jobsFeed";
 import { ApprovalCard } from "./Inspector";
 import type { IconName } from "./icons";
-import { IconTile, Ms, Tone } from "./m3";
+import { COOKIE, IconTile, Ms, Tone } from "./m3";
 
 // Helios on the phone, in Material 3 Expressive (design/material3): a greeting header, a status card, tonal cards on
 // #0b0b0e, Roboto Flex, and the standard M3 navigation bar (Home, Map, Ari, Inbox, More). The desktop (DeskLayer.tsx)
@@ -170,12 +170,6 @@ export function Pane({ label, icon, tone, meta, children, className = "" }: {
   );
 }
 
-// A 12-point scallop: a circle of radius 31 with 12 soft bumps of 3.
-const COOKIE = (() => {
-  const pts: string[] = [];
-  for (let i = 0; i < 144; i++) { const a = (i / 144) * Math.PI * 2, r = 31 + 3 * Math.cos(12 * a); pts.push(`${(r * Math.cos(a)).toFixed(2)} ${(r * Math.sin(a)).toFixed(2)}`); }
-  return `M${pts.join("L")}Z`;
-})();
 // The cookie: a scalloped badge that turns slowly behind the status icon.
 function Cookie({ icon }: { icon: IconName }) {
   return (
