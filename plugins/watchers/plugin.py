@@ -19,7 +19,7 @@ import time
 import urllib.parse
 from typing import Any
 
-from argus.worker import Context, PermanentError, workflow
+from argus.worker import Context, PermanentError, ToolFailed, workflow
 
 PLUGIN = "watchers"
 MAX_PAGE = 2_000_000
@@ -404,6 +404,7 @@ def remove(ctx: Context):
 def check(ctx: Context):
     todo = sorted(watches(ctx))
     told, problems = [], []
+    wishlist = False  # a Life Hub wishlist watch changed
     for name in todo:
         def one(name=name):
             w = watches(ctx).get(name)
@@ -436,6 +437,13 @@ def check(ctx: Context):
         r = ctx.step(f"check {name}", one)
         if r and r["told"]:
             told.append(r["told"])
+            if name.startswith("Wishlist: "):
+                wishlist = True
         if r and r["problem"]:
             problems.append(f"{name}: {r['problem']}")
+    if wishlist and not ctx.dry_run:  # Life Hub hears now (its banner), not at the advisor's next 6-hourly run
+        try:
+            ctx.step("life hub", lambda: ctx.tool("run_button", {"id": "run:advisor:prices"}))
+        except ToolFailed:  # no advisor plugin: the phone was still told
+            pass
     return {"checked": len(todo), "told": told, "problems": problems}

@@ -220,3 +220,38 @@ def test_a_shop_that_hides_the_price_when_sold_out():
     assert narrowed["stock"] == "out"
     whole = wt.read("<html><body><p>Sold out</p></body></html>", {"name": "x", "kind": "price", "part": ""})
     assert "stock" not in whole and "price" not in whole  # a whole page without a price says nothing about stock
+
+
+def test_a_wishlist_alert_updates_life_hub_at_once(monkeypatch):
+    """A restock seen by Watchers reaches Life Hub in the same minute (advisor.prices), not up to 6 hours later."""
+    class Store(dict):
+        def set(self, k, v):
+            self[k] = v
+
+    class Ctx:
+        dry_run = False
+
+        def __init__(self, watches):
+            self.store, self.tools, self.notes = Store(watches=watches), [], []
+
+        def step(self, _name, fn, *a):
+            return fn(*a)
+
+        def notify(self, *a, **k):
+            self.notes.append(a)
+
+        def tool(self, name, args=None):
+            self.tools.append((name, args))
+            return {"job_id": "j"}
+
+    monkeypatch.setattr(wt, "fetch", lambda ctx, url: "page")
+    w = {"name": "Wishlist: Dune book", "url": "https://x.lk/dune", "kind": "price",
+         "last": {"found": True, "stock": "out", "price": 4495.5, "cur": "LKR"}}
+    monkeypatch.setattr(wt, "read", lambda markup, w: {"found": True, "stock": "in", "price": 4495.5, "cur": "LKR",
+                                                       "text": "", "hash": "h"})
+    ctx = Ctx({"Wishlist: Dune book": dict(w)})
+    wt.check.__wrapped__(ctx) if hasattr(wt.check, "__wrapped__") else wt.check(ctx)
+    assert ctx.tools == [("run_button", {"id": "run:advisor:prices"})]
+    other = Ctx({"RTX": {**w, "name": "RTX"}})
+    wt.check.__wrapped__(other) if hasattr(wt.check, "__wrapped__") else wt.check(other)
+    assert other.notes and other.tools == []  # not a wishlist watch: Life Hub isn't asked
