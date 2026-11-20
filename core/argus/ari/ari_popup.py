@@ -855,6 +855,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             self.flip_from: int | None = None  # the page a flip is leaving (drawn sliding out until it's done)
             self.flip_dir, self.flip_t0 = 1, 0.0
             self.prev_page = 0  # the page dot that shrinks while the new one stretches
+            self.ripples: list[tuple[Any, Any, float]] = []  # (the key's rect, where you pressed, when)
+            self.bars: dict[str, float] = {}  # each load bar as drawn, easing toward its value
+            self.bars_t = time.monotonic()
+            self.cpu_hist: list[float] = []  # the last 40 CPU readings: a line under its bar
             self.page_t0 = time.monotonic()  # when this page appeared: its rows rise in
             self.wheel_acc, self.wheel_at = 0.0, 0.0
             self.media: dict | None = None
@@ -1014,6 +1018,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                             self.art = img
             elif kind == "hw":
                 self.hw = data or {}
+                if isinstance(self.hw, dict) and self.hw.get("cpu") is not None:
+                    self.cpu_hist = (self.cpu_hist + [float(self.hw["cpu"])])[-40:]
             elif kind == "priv":
                 if data == self.priv:
                     return
@@ -1344,6 +1350,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 self.draw_active(qp, body, tone, mode)
             elif mode == "details":
                 self.draw_details(qp, body)
+                self.draw_ripples(qp)
             elif mode == "live" and self.spring.h > 18:
                 self.draw_live(qp, body)
             qp.end()
@@ -1766,6 +1773,26 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 self.details_h = h
                 QTimer.singleShot(0, self.kick)
 
+        def draw_ripples(self, qp: Any) -> None:
+            """Press ripples: a soft circle spreading from where you pressed, kept inside the key, 600 ms."""
+            now, keep = time.monotonic(), []
+            for rect, at, t0 in self.ripples:
+                r = im.ripple(now - t0)
+                if r is None:
+                    continue
+                keep.append((rect, at, t0))
+                grow, alpha = r
+                qp.save()
+                clip = QPainterPath()
+                clip.addRoundedRect(rect, min(16.0, rect.height() / 2), min(16.0, rect.height() / 2))
+                qp.setClipPath(clip)
+                qp.setPen(Qt.PenStyle.NoPen)
+                qp.setBrush(ink(alpha))
+                reach = max(rect.width(), rect.height()) * 1.1 * grow
+                qp.drawEllipse(at, reach, reach)
+                qp.restore()
+            self.ripples = keep
+
         def draw_page(self, qp: Any, pid: str, x0: float, x1: float, y: float) -> float:
             if pid == "brief":
                 return self.draw_brief(qp, x0, x1, y)
@@ -2155,6 +2182,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             qp.setFont(F_LABEL)
             qp.setPen(ink(0.6))
             qp.drawText(QRectF(tx, y, 150, 22), Qt.AlignmentFlag.AlignVCenter, "Now playing")
+            if m.get("playing"):
+                self.eq_bars(qp, x1 - 18, y + 18, GREEN)
             y += 34
             art = QRectF(x0, y, 60, 60)
             clip = QPainterPath()
@@ -2251,7 +2280,13 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 qp.setPen(ink(DIM))
                 qp.drawText(QRectF(x0, y, x1 - x0, 30), Qt.AlignmentFlag.AlignVCenter, "Reading…")
                 return y + 34
+            now = time.monotonic()
+            dt, self.bars_t = now - self.bars_t, now
             for label, value, pct in rows:
+                if pct is not None:  # ease toward the new reading (at once under reduced motion)
+                    was = self.bars.get(label, pct)
+                    pct = pct if self.still else im.approach(was, pct, dt)
+                    self.bars[label] = pct
                 qp.setFont(F_TEXT)
                 qp.setPen(ink())
                 qp.drawText(QRectF(x0, y, 140, 18), Qt.AlignmentFlag.AlignVCenter, label)
@@ -2268,6 +2303,19 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                     qp.drawRoundedRect(QRectF(bar.x(), bar.y(), bar.width() * max(0.02, min(1.0, pct / 100)), 4),
                                        2, 2)
                 y += 36
+                if label == "CPU" and len(self.cpu_hist) >= 2:  # the last readings as a small line
+                    pts, n = self.cpu_hist, len(self.cpu_hist)
+                    top = max(50.0, max(pts))  # scaled to the recent peak, so a quiet PC's line still has a shape
+                    path = QPainterPath()
+                    for i, v in enumerate(pts):
+                        pt = QPointF(x0 + (x1 - x0) * i / (n - 1), y + 14 - 13 * max(0.0, min(1.0, v / top)))
+                        path.moveTo(pt) if i == 0 else path.lineTo(pt)
+                    pen = QPen(QColor(GREEN), 1.5)
+                    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                    qp.setPen(pen)
+                    qp.setBrush(Qt.BrushStyle.NoBrush)
+                    qp.drawPath(path)
+                    y += 20
             if "down" in hw:
                 qp.setFont(F_TEXT)
                 qp.setPen(ink())
@@ -2320,6 +2368,14 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                     today = d == now.tm_mday
                     if today:
                         qp.setPen(Qt.PenStyle.NoPen)
+                        if not self.still:
+                            g = im.ease((time.monotonic() % 2.8) / 2.8)
+                            ring = QColor(ACCENT)
+                            ring.setAlphaF(0.6 * (1 - g))
+                            qp.setPen(QPen(ring, 2))
+                            qp.setBrush(Qt.BrushStyle.NoBrush)
+                            qp.drawEllipse(cell.center(), 10.5 + 5 * g, 10.5 + 5 * g)
+                            qp.setPen(Qt.PenStyle.NoPen)
                         qp.setBrush(QColor(ACCENT))
                         qp.drawEllipse(cell.center(), 10.5, 10.5)
                     qp.setFont(font(12, 600, tnum=True) if today else F_DAY)
@@ -2447,6 +2503,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                     webbrowser.open(target)
                 return
             key = self.key_at(e.position()) if (self.details or self.mode() == "active") else None
+            if key and self.details and not self.still:
+                rect = next((r for r, k in self.buttons if k == key), None)
+                if rect is not None:
+                    self.ripples.append((QRectF(rect), QPointF(e.position()), time.monotonic()))
             if key == "stop":
                 self.stop_ari()
                 return
@@ -2941,6 +3001,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             island.hw = {"cpu": 23.0, "ram": 78.0, "ram_used": 24.9, "ram_total": 32, "disk": 93.0,
                          "disk_free": 61, "down": 2_400_000, "up": 180_000,
                          "gpu": {"util": 41.0, "mem_used": 7.4, "mem_total": 12, "mem": 62.0, "temp": 58.0}}
+            island.cpu_hist = [18, 22, 19, 25, 31, 27, 24, 29, 35, 30, 26, 23, 28, 33, 38, 31, 27, 24, 21, 23]
             island.weather = {"place": "Colombo", "now": 29.4, "low": 25.1, "high": 31.2, "rain": 80,
                               "sky": "thunderstorms"}
             island.info = Info(status={"status": "ok", "jobs": {"running": 1, "queued": 2}}, waiting=3,
