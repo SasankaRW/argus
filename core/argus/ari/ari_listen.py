@@ -31,6 +31,8 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
+from .notices import NoticeKeeper, notice_text  # noqa: F401 - notice_text stays importable from here
+
 log = logging.getLogger("argus.ari_listen")
 
 # What a call to argusd can raise: the connection (OSError covers URLError, HTTPError and timeouts), a body that
@@ -69,14 +71,6 @@ def speak_hours_ok(hours: str, now: time.struct_time) -> bool:
     m = now.tm_hour * 60 + now.tm_min
     lo, hi = (int(x[:2]) * 60 + int(x[3:]) for x in (a, b))
     return lo <= m < hi if lo <= hi else (m >= lo or m < hi)
-
-
-def notice_text(title: str, text: str) -> str:
-    """An important phone message, as one or two short spoken sentences."""
-    first = re.split(r"(?<=[.!?])\s|\n", " ".join(text.split("\n")[:2]).strip())[0] if text.strip() else ""
-    t = title.strip().rstrip(".")
-    said = t if not first or first.lower().startswith(t.lower()) else f"{t}. {first}"
-    return ("Heads up: " + (said if said else first)).strip()[:220]
 
 
 # ------------------------------------------------------------------ talking to argusd
@@ -523,7 +517,7 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device,
                    live_words=wake_t if cfg.ari.live_words else None, show=client.state, ask_async=True,
                    quiet=lambda: MIC["busy"] is not None, follow_ok=follow_ok, language=lang_t,
                    on_ignored=client.ignored, on_answered=client.answered)
-    spoke_up = [0.0]
+    keeper = NoticeKeeper()  # important news: said now, or kept and said when you're back
     voc_at = [time.monotonic()]
 
     def watch() -> None:
@@ -548,14 +542,15 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device,
             says = [e for e in evs if e.get("kind") == "ari.say"]
             if says and not paused() and not MIC["busy"]:  # the island's "Read it to me": the morning brief, aloud
                 player.add(vl.sentences(str((says[-1].get("data") or {}).get("text") or "")))
-            notes = [e for e in evs if e.get("kind") == "ari.notice"]
-            if notes and cfg.ari.speak_up and not paused() and speak_hours_ok(cfg.ari.speak_hours, time.localtime()) \
-                    and idle_seconds() < 300 and time.monotonic() - spoke_up[0] > 600 and not player.busy \
-                    and not talk.in_conversation:
-                d = notes[-1].get("data") or {}
-                spoke_up[0] = time.monotonic()
-                log.info("speaking up", extra={"title": d.get("title")})
-                player.say(vl.sentences(notice_text(str(d.get("title") or ""), str(d.get("text") or ""))))
+            for e in (e for e in evs if e.get("kind") == "ari.notice"):  # kept until Ari may say it
+                d = e.get("data") or {}
+                keeper.add(str(d.get("title") or ""), str(d.get("text") or ""), time.time())
+            here = cfg.ari.speak_up and not paused() and speak_hours_ok(cfg.ari.speak_hours, time.localtime()) \
+                and idle_seconds() < 300 and not player.busy and not talk.in_conversation and not MIC["busy"]
+            line = keeper.take(time.time(), here)
+            if line:  # now, or "While you were away: ..." once you're back
+                log.info("speaking up", extra={"line": line[:120]})
+                player.say(vl.sentences(line))
             if not evs and time.monotonic() - t0 < 1:  # Argus down, or one that doesn't wait: not a tight loop
                 time.sleep(2)
 
