@@ -99,6 +99,7 @@ class Registry:
     def __init__(self, store: Store, clock: Callable[[], float] = time.time):
         self.store = store
         self.clock = clock
+        self.phone_blocked: Callable[[], str] = lambda: ""  # set by Argus: why Android blocks the phone app's notes
 
     async def component(self, cid: str, kind: str, label: str, group: str | None = None,
                         meta: dict[str, Any] | None = None) -> bool:
@@ -226,6 +227,7 @@ class Registry:
                 if c["id"] == "phone-app":
                     node["unsent"] = outbox.get("pending", 0) + outbox.get("sending", 0)
                     node["failed"] = outbox.get("failed", 0)
+                    node["blocked"] = self.phone_blocked()
                 if c["kind"] == "model" and c["id"] in models:
                     st = models[c["id"]]
                     node["state"] = st["state"]

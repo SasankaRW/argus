@@ -58,6 +58,7 @@ class Argus:
         self.registry = Registry(self.store)
         self.models = ModelBoard(self.store, cfg)
         self.outbox = Outbox(self.store, cfg)
+        self.registry.phone_blocked = lambda: self.outbox.inbox.blocked_now() if self.outbox.inbox else ""
         self.approvals = Approvals(self.store, self.jobs, cfg)
         self.phone = PhoneWatch(self.store, cfg, self.approvals, self.outbox)
         self.plugin_host = PluginHost(cfg)

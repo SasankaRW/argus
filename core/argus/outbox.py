@@ -98,12 +98,20 @@ class PhoneInbox:
         self.clock = clock
         self.last_seen = 0.0
         self.device = ""
+        self.blocked = ""  # why Android won't show Argus's notifications, as the app last said ("" when it will)
         self.waiters: list[asyncio.Event] = []
 
-    def seen(self, device: str = "") -> None:
+    def seen(self, device: str = "", blocked: str | None = None) -> None:
+        """The app asked for its messages. `blocked`: why Android won't show them ("" = it will, None = not said)."""
         self.last_seen = self.clock()
         if device:
             self.device = device[:60]
+        if blocked is not None:
+            self.blocked = blocked.strip()[:120]
+
+    def blocked_now(self) -> str:
+        """Why the app said Android blocks its notifications, while it is still connected (an old reason is gone)."""
+        return self.blocked if self.connected() else ""
 
     def connected(self, within: float = 90.0) -> bool:
         return self.last_seen > 0 and self.clock() - self.last_seen < within
@@ -276,14 +284,15 @@ class Outbox:
 
         return await self.store.write(fn)
 
-    async def inbox_fetch(self, device: str = "", wait: float = 0.0, limit: int = 20) -> list[dict[str, Any]]:
+    async def inbox_fetch(self, device: str = "", wait: float = 0.0, limit: int = 20,
+                          blocked: str | None = None) -> list[dict[str, Any]]:
         """What the app has not collected yet, oldest first; when there is nothing, waits up to `wait` seconds for
         something (a long poll). Asking again before acknowledging returns the same messages."""
         box = self.inbox
         if box is None:
             return []
         kinds = self.pulled_kinds()
-        box.seen(device)
+        box.seen(device, blocked)
 
         def fn(conn: sqlite3.Connection) -> list[dict[str, Any]]:
             rows = conn.execute(
