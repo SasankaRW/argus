@@ -187,6 +187,11 @@ def test_watch_by_talking_then_the_check_tells_the_phone(tmp_path, monkeypatch):
         msgs = argus.store.read_sync(lambda c: [json.loads(x[0]) for x in c.execute("SELECT payload FROM outbox")])
         tell = [m for m in msgs if m.get("title") == "Watcher: RTX 5080"]
         assert len(tell) == 1 and tell[0]["priority"] >= 4 and tell[0].get("click") == page.url
+        assert tell[0]["tags"] == ["eyes"]
+        evs = argus.store.read_sync(lambda c: [json.loads(x[0]) for x in c.execute(
+            "SELECT data FROM events WHERE kind = 'notify.queued'")])
+        assert evs[-1] == {"title": "Watcher: RTX 5080", "priority": 4, "tags": ["eyes"],
+                           "text": "RTX 5080 is LKR 279,000, under your LKR 280,000."}
         listed = call("list")["result"]["watches"]
         assert listed[0]["price"] == "LKR 279,000" and listed[0]["tell_under"] == "LKR 280,000"
         assert call("check")["result"]["told"] == []  # told once
@@ -195,6 +200,12 @@ def test_watch_by_talking_then_the_check_tells_the_phone(tmp_path, monkeypatch):
         assert shared["say"] == "Watching Keyboard deal: it's Rs 12,500 now; I'll tell you when it's under Rs 13,000."
         assert call("remove", name="keyboard deal")["result"] == {"stopped": "Keyboard deal"}
         assert call("list")["result"]["watches"] == []
+
+
+def test_wishlist_watch_alerts_are_tagged():
+    assert wt.alert_tags({"name": "Wishlist: Dune book"}) == ["eyes", "wishlist"]
+    assert wt.alert_tags({"name": "Wishlist: Dune book · jumpbooks.lk"}) == ["eyes", "wishlist"]
+    assert wt.alert_tags({"name": "Dune book on x.lk"}) == ["eyes"]
 
 
 def test_a_misread_price_is_not_a_sale():

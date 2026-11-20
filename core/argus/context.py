@@ -513,7 +513,9 @@ class Argus:
             oid = add_message(conn, now, "phone", message, dedupe_key=f"notify:{key}", job_id=job_id)
             if oid is not None:
                 insert_event(conn, now, "notify.queued", job_id=job_id, src=job.plugin, dst="argus",
-                             data={"title": message.get("title")})
+                             data={"title": message.get("title"), "priority": message.get("priority"),
+                                   "tags": message.get("tags") or [],
+                                   "text": str(message.get("message") or "")[:200]})  # the map's news banner
             return oid is not None
 
         queued = await self.store.write(fn)

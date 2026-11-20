@@ -230,6 +230,12 @@ def read(markup: str, w: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def alert_tags(w: dict[str, Any]) -> list[str]:
+    """The phone message's tags: Life Hub's wishlist watches (named "Wishlist: …" by the advisor plugin) are marked, so
+    Helios's map, Ari and Life Hub can tell a wishlist alert from any other."""
+    return ["eyes", "wishlist"] if str(w.get("name", "")).startswith("Wishlist: ") else ["eyes"]
+
+
 def stock_words(stock: str | None) -> str:
     return {"in": "in stock", "out": "out of stock"}.get(stock or "", "")
 
@@ -424,7 +430,7 @@ def check(ctx: Context):
                 fresh[name] = w
                 ctx.store.set("watches", fresh)
             if msg:
-                ctx.notify("Watcher: " + w["name"], msg, priority="high", tags=["eyes"], link=w["url"])
+                ctx.notify("Watcher: " + w["name"], msg, priority="high", tags=alert_tags(w), link=w["url"])
             return {"told": msg, "problem": problem}
 
         r = ctx.step(f"check {name}", one)
