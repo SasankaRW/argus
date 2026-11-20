@@ -5,6 +5,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Diary:** dates said as a list ("19,20 December") no longer make every rewrite fail and the day get saved as typed; a new "Rewrite this day" (Helios button for today, or ask Ari "rewrite my diary for the 20th") writes a day again from what you said.
 - **Phone app 1.8:** a message Android would hide (its notification channel switched off) stays queued instead of counting as delivered, and Helios's Phone box turns amber with "Android is blocking Argus notifications". Install argus-packagesrgus-phone-app-1.8.apk.
 - **Helios live map:** work travels the lines as small dots and the box it reaches flashes; the Argus box has a turning badge and a breathing ring; the map opens with boxes settling in and lines drawing themselves; news for you (a wishlist restock, an important message) runs home to the Phone box with a banner; a strip at the bottom right says what just happened. All of it stops under reduced motion and with the Flow switch off.
 - **Watchers:** wishlist alerts are tagged `wishlist`, and `notify.queued` events carry the message's priority, tags and text.
