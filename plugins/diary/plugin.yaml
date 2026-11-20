@@ -9,10 +9,11 @@ runs_on: desktop            # with Life Hub and the notes vault (the PC now)
 triggers:
   - schedule: {workflow: tidy, cron: "*/10 * * * *"}   # what you typed into Life Hub's diary box
   - manual: {workflow: tidy, label: Take Life Hub's diary notes now}
+  - manual: {workflow: rewrite, label: Rewrite today's diary entry}
   - schedule: {workflow: reminders, cron: "0 4 * * *"}   # what the last 14 days of diary say is today, for the morning brief
   - manual: {workflow: reminders, label: Find today's reminders in my diary now}
 
-workflows: [tell, read, tidy, reminders]
+workflows: [tell, read, rewrite, tidy, reminders]
 
 permissions:
   files: {read: ["~/Vault/Diary"], write: ["~/Vault/Diary"], edit: ["~/Vault/Diary"], delete: none}
@@ -36,6 +37,11 @@ ari:
         text: {type: string, description: "what the user said about their day, in their words"}
         day: {type: string, description: '"today" (default), "yesterday" or a date YYYY-MM-DD'}
       required: [text]
+    - name: diary_rewrite
+      description: 'Write a day''s diary entry again from everything the user said that day, adding nothing ("rewrite my diary for yesterday", "redo the 20th"). Use when an entry looks like their raw words.'
+      workflow: rewrite
+      input:
+        day: {type: string, description: '"today" (default), "yesterday", a weekday or a date YYYY-MM-DD'}
     - name: diary_read
       description: 'Read the user''s diary for a day ("what did I do yesterday?", "how was last Sunday?", "read my diary for 2026-10-12").'
       workflow: read
