@@ -246,6 +246,30 @@ def test_rewrite_a_day_from_what_was_said(tmp_path, monkeypatch):
         assert missing["state"] == "dead" and "no diary entry" in missing["error"].lower()
 
 
+def test_rewriting_a_day_you_edited_uses_your_edit_and_makes_it_ari_s_again(tmp_path, monkeypatch):
+    # 20 Nov: saved as typed, then fixed by hand in Life Hub; "Rewrite this day" should still rewrite it
+    base, lh = fake_lifehub()
+    argus, _vault = setup(tmp_path, monkeypatch, base)
+    said = [{"at": "20:21", "text": "implemented the neg deal improvement on country level"}]
+    mine = "Implemented the neg deal improvement on country level. Trip to Galle with Kalana."
+    lh["diary"]["2026-11-20"] = {"day": "2026-11-20", "title": "implemented the neg deal", "entry": mine,
+                                 "mood": "okay", "highlights": [], "people": [], "places": [], "tags": [],
+                                 "said": said, "edited_at": "2026-11-20T16:32:51Z"}
+    good = {**ENTRY, "title": "Neg deal and a trip", "entry": "I implemented the neg deal improvement on country "
+            "level, and Kalana and I are going to Galle.", "people": ["Kalana"], "places": ["Galle"], "learned": []}
+    with FakeOllama({MODEL: [good]}) as ol, Server(argus.open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        r = run(cl, w, "rewrite", day="2026-11-20")
+        assert r["state"] == "succeeded", r["error"]
+        sent = json.loads(ol.requests[0]["messages"][1]["content"])
+        assert "your_edited_entry" not in sent and mine in sent["said"]  # your edit is something you said now
+        e = lh["diary"]["2026-11-20"]
+        assert e["title"] == "Neg deal and a trip" and e["edited"] is False  # Ari's again
+        assert e["said"][-1] == {"at": "edited", "text": mine}  # kept, so a later rewrite still has it
+
+
 # ------------------------------------------------------------------ reminders for the morning brief
 
 def seed_days(lh):
