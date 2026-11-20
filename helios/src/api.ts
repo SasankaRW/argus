@@ -25,6 +25,7 @@ export type MapNode = {
   pending?: number;
   unsent?: number;
   failed?: number;
+  blocked?: string;  // the phone app: why Android won't show Argus's notifications ("" when it will)
   implicit?: boolean;
   paused?: boolean; // plugins and workers: stopped from Helios (POST /plugins/{id}/stop, /workers/{id}/pause)
   since?: number; // when it was paused (epoch seconds)

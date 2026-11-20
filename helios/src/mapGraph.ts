@@ -169,13 +169,14 @@ export function buildLevels(map: ArgusMap, ctx: LevelCtx): Built {
   if (phone || phoneApp || phoneW) {
     const online = phoneW ? phoneW.state === "online" : (phone?.meta as { online?: boolean | null } | undefined)?.online;
     const since = (phone?.meta as { since?: number | null } | undefined)?.since;
-    const failed = phoneApp?.failed ?? 0, unsent = phoneApp?.unsent ?? 0;
+    const failed = phoneApp?.failed ?? 0, unsent = phoneApp?.unsent ?? 0, blocked = phoneApp?.blocked ?? "";
     const at = since ? new Date(since * 1000).toTimeString().slice(0, 5) : "";
     let tone: Tone = "ok", status = "online", problem: string | undefined, detail: string | undefined;
     if (online === false) {
       tone = "bad"; status = at ? `offline since ${at}` : "offline"; problem = "Phone is offline";
       detail = [at ? `since ${at}` : "", unsent ? `${unsent} message${unsent === 1 ? "" : "s"} waiting` : ""].filter(Boolean).join(" · ") || undefined;
     } else if (failed > 0) { tone = "bad"; status = `${failed} not delivered`; problem = "Phone is not getting its messages"; detail = status; }
+    else if (blocked) { tone = "warn"; status = "notifications blocked"; problem = "Android is blocking Argus notifications"; detail = blocked; }
     else if (unsent > 0) { tone = "warn"; status = `${unsent} waiting for it`; problem = "Phone is slow to receive"; detail = status; }
     else if (online == null) { tone = "idle"; status = "checking"; }
     add({ id: "phone", select: phoneW?.id ?? "phone", label: "Phone", icon: "smartphone", status, level: L.apps, skin: "plain", tone, problem, detail, paused: phoneW?.paused });

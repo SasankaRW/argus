@@ -350,3 +350,21 @@ describe("layout", () => {
     expect(l.height).toBeGreaterThan(l.placed.v1.y);
   });
 });
+
+describe("phone blocked by Android", () => {
+  const REASON = 'the "Approvals and warnings" notifications are off';
+  const phoneCard = (over: Partial<MapNode>, online = true) => buildLevels(sample({ nodes: [
+    node("phone-app", "service", over),
+    node("worker-phone", "worker", { state: online ? "online" : "offline", meta: { capabilities: ["phone"] } }),
+  ] }), ctx()).cards.find((c) => c.id === "phone");
+  it("turns the Phone box amber and says why", () => {
+    expect(phoneCard({ blocked: REASON })).toMatchObject({ tone: "warn", status: "notifications blocked",
+      problem: "Android is blocking Argus notifications", detail: REASON });
+  });
+  it("offline still wins", () => {
+    expect(phoneCard({ blocked: REASON }, false)?.tone).toBe("bad");
+  });
+  it("nothing said, nothing shown", () => {
+    expect(phoneCard({ blocked: "" })?.status).toBe("online");
+  });
+});
