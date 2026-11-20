@@ -19,6 +19,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 import sqlite3
 import time
 from collections.abc import Callable
@@ -58,6 +59,11 @@ def add_message(conn: sqlite3.Connection, now: float, kind: str, payload: dict[s
         insert_event(conn, now, "ari.notice", job_id=job_id, src="argus", dst="ari",
                      data={"title": str(payload.get("title") or "")[:200],
                            "text": str(payload.get("message") or "")[:400]})
+    if kind in ("phone", "ntfy") and "wishlist" in (payload.get("tags") or []):  # also in Ari's "Updates" chat
+        from .ari.ari import add_turn
+
+        text = re.sub(r"^(?:Watcher: )?(?:Wishlist: )?", "", str(payload.get("message") or payload.get("title") or ""))
+        add_turn(conn, "updates", "ari", text.strip()[:1000] or None)
     return oid
 
 

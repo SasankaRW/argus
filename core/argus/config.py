@@ -421,7 +421,7 @@ class AriConfig(_Strict):
     # Ari says important phone messages out loud at the PC (an overdue issue, a failed backup, an approval): only
     # while you're at the PC, between these hours, at most one every 10 minutes. Off: they stay on the island and
     # the phone, and Ari only speaks when you've spoken to it.
-    speak_up: bool = False
+    speak_up: bool = True  # important news out loud: now at the PC, or in one line when you're back
     speak_hours: str = Field("08:00-22:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d$")
     # Ari's popup over the whole screen while Ari listens, thinks or talks (python -m argus.ari.ari_popup; needs
     # pip install -e .[popup]; `dev.ps1 up` starts it when on).

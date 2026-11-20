@@ -58,7 +58,7 @@ export function MapBanner({ news, style }: { news: ArgusEvent | null; style?: Re
       <span className="lm-news-i"><Ms n={wish ? "sell" : "notifications"} fill /></span>
       <span className="lm-news-t">
         <b>{text && wish ? text.replace(/^Wishlist: /, "").replace(/\.$/, "") : title}</b>
-        <span>{!wish && text && text !== title ? text : "Told your phone"}</span>
+        <span>{wish ? "Told your phone and Ari" : text && text !== title ? text : "Told your phone"}</span>
       </span>
     </div>
   );

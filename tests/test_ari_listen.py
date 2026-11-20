@@ -70,7 +70,7 @@ def test_after_an_answer_the_pcs_sound_and_long_talk_need_hey_ari(monkeypatch):
 def test_speaking_up_is_off_unless_you_turn_it_on():
     from argus.config import AriConfig
 
-    assert AriConfig().speak_up is False
+    assert AriConfig().speak_up is True  # important news is said out loud by default (20 Nov)
     assert AriConfig(live=False, follow_up=True).talk_idle_s == 10  # old settings still load (ignored)
 
 
