@@ -11,7 +11,7 @@ def test_ease_starts_still_ends_still_and_never_goes_back():
     assert im.ease(0) == 0 and im.ease(1) == 1
     assert im.ease(-1) == 0 and im.ease(2) == 1
     xs = [im.ease(i / 20) for i in range(21)]
-    assert all(b >= a for a, b in zip(xs, xs[1:]))
+    assert all(b >= a for a, b in zip(xs, xs[1:], strict=False))
     assert im.ease(0.3) > 0.6  # decelerates: most of the way there early
 
 
