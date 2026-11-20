@@ -126,6 +126,8 @@ def times(text: str) -> str:
 def entry_check(said: str, edited: dict | None = None):
     heard = said.lower()
     numbers = set(NUM.findall(times(STAMP.sub("", said))))
+    # "19,20 December" is a list (19 and 20), but "4,495" is one number: a comma part of 3 digits is thousands
+    numbers |= {p for n in list(numbers) if "," in n and len(n.split(",")[1]) != 3 for p in n.split(",")}
     kept = " ".join(str((edited or {}).get("entry") or "").split())
 
     def check(e: Entry, _inp: Any) -> str | None:

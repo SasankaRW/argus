@@ -65,7 +65,21 @@ def test_times_written_differently_are_still_what_was_said():
     assert "numbers" in check(e.model_copy(update={"entry": "I went to bed at 21:15."}), None)
 
 
+def test_dates_said_as_a_list_are_still_what_was_said():
+    # typed "on 19,20 December": the entry writes "the 19th and 20th", which is what was said (20 Nov 2026)
+    check = dy.entry_check("20:24  Kalana invite me to go on a trip with them to gall on 19,20 December "
+                           "i said i will come")
+    e = dy.Entry(title="A trip in December", entry="Kalana invited me on a trip on the 19th and 20th of December.",
+                 people=["Kalana"])
+    assert check(e, None) is None
+    assert "numbers" in check(e.model_copy(update={"entry": "A trip on the 21st of December."}), None)
+    # a thousands comma is still one number: 4,495 doesn't make 495 something that was said
+    price = dy.entry_check("10:00  the book is 4,495 rupees")
+    assert "numbers" in price(dy.Entry(title="Book", entry="It was 495 rupees."), None)
+
+
 def fake_lifehub():
+
     state = {"diary": {}, "items": [], "deleted": [], "posted": []}
 
     class H(BaseHTTPRequestHandler):
