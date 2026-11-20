@@ -597,7 +597,8 @@ def chats(conn: sqlite3.Connection, limit: int = 100) -> list[dict]:
     """Every conversation, newest first: its first question (the title), the last thing said, how many turns."""
     rows = conn.execute(
         "SELECT conv, COUNT(*) AS turns, MIN(created_at) AS started, MAX(created_at) AS updated,"
-        " (SELECT text FROM ari_turns f WHERE f.conv = t.conv AND f.role = 'you' ORDER BY f.id LIMIT 1) AS title,"
+        " COALESCE((SELECT text FROM ari_turns f WHERE f.conv = t.conv AND f.role = 'you' ORDER BY f.id LIMIT 1),"
+        "  CASE WHEN t.conv = 'updates' THEN 'Updates from Argus' END) AS title,"
         " (SELECT text FROM ari_turns l WHERE l.conv = t.conv AND l.text IS NOT NULL"
         "  ORDER BY l.id DESC LIMIT 1) AS last"
         " FROM ari_turns t GROUP BY conv ORDER BY updated DESC LIMIT ?", (limit,)).fetchall()
