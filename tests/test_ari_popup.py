@@ -336,3 +336,22 @@ def test_the_live_pill_helpers():
     for name in ("timer", "soon", "timerend", "job", "custom", "transfer", "stack", "plus"):
         acts, _ = live_scenario(name, now)  # every preview scenario is well-formed
         assert acts and all({"id", "kind", "title", "detail", "icon"} <= set(a) for a in acts)
+
+
+def test_the_island_draws_a_page_mid_flip(tmp_path):
+    """Flipping draws the page leaving and the page arriving; the picture is made without a screen."""
+    import os
+    import subprocess
+    import sys
+
+    import pytest
+
+    pytest.importorskip("PySide6.QtWidgets")
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
+    for page, flip in (("system", "0.3"), ("calendar", "1"), ("ari", None)):
+        out = tmp_path / f"{page}.png"
+        cmd = [sys.executable, "-m", "argus.ari.ari_popup", "--preview", str(out), "--details", "--page", page,
+               "--url", "http://127.0.0.1:9"] + (["--flip", flip] if flip else [])
+        r = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=60)
+        assert r.returncode == 0, r.stderr[-800:]
+        assert out.stat().st_size > 2000

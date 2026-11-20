@@ -55,6 +55,7 @@ from ..island_live import (
     weekday_letters,
 )
 from . import island_brief as ib
+from . import island_motion as im
 from .ari_mark import Mark, mark_state
 
 log = logging.getLogger("argus.ari_popup")
@@ -609,6 +610,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
     p.add_argument("--hover", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--live", choices=sorted(LIVE_SCENARIOS), help=argparse.SUPPRESS)  # with --preview: fake activities
     p.add_argument("--page", default="ari", help=argparse.SUPPRESS)  # with --details: media, system, calendar
+    p.add_argument("--flip", type=float, help=argparse.SUPPRESS)  # with --details: drawn this far (0..1) into a flip
     p.add_argument("--brief", choices=("normal", "quiet", "trouble", "row"),
                    help=argparse.SUPPRESS)  # with --preview: the morning brief card (row: the Ari page's row)
     p.add_argument("--ask", action="store_true", help=argparse.SUPPRESS)  # the type-to-Ari box
@@ -848,6 +850,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             self.window = QTimer(self, singleShot=True)  # until the window opens again
             self.window.timeout.connect(self.arm)
             self.page = 0
+            self.flip_from: int | None = None  # the page a flip is leaving (drawn sliding out until it's done)
+            self.flip_dir, self.flip_t0 = 1, 0.0
+            self.prev_page = 0  # the page dot that shrinks while the new one stretches
+            self.page_t0 = time.monotonic()  # when this page appeared: its rows rise in
             self.wheel_acc, self.wheel_at = 0.0, 0.0
             self.media: dict | None = None
             self.art: Any = None  # the album art (QImage)
@@ -1019,6 +1025,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
 
         def open_details(self) -> None:
             self.details = True
+            self.page_t0, self.flip_from = time.monotonic(), None
             self.clip_url = clipboard_url(QApplication.clipboard().text())
             self.load_info()
             self.refresh.start()
@@ -1733,16 +1740,18 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             x0, x1 = body.x() + 20, body.right() - 20
             y = body.y() + 18
             pid = "brief" if self.card else self.page_id()
-            if pid == "brief":
-                y = self.draw_brief(qp, x0, x1, y)
-            elif pid == "media":
-                y = self.draw_media(qp, x0, x1, y)
-            elif pid == "system":
-                y = self.draw_system(qp, x0, x1, y)
-            elif pid == "calendar":
-                y = self.draw_calendar(qp, x0, x1, y)
+            t = (time.monotonic() - self.flip_t0) / im.FLIP_S
+            ps = self.pages()
+            if self.flip_from is not None and (t >= 1 or self.card or not 0 <= self.flip_from < len(ps)):
+                self.flip_from = None  # done (or the page it left is gone)
+            if self.flip_from is not None:
+                old, new = im.flip_frame(t, self.flip_dir, self.still)
+                keep = list(self.buttons)  # the page sliding away is only drawn: its keys don't count
+                self.posed(qp, body, old, fade, lambda: self.draw_page(qp, ps[self.flip_from], x0, x1, y))
+                self.buttons = keep
+                y = self.posed(qp, body, new, fade, lambda: self.draw_page(qp, pid, x0, x1, y))
             else:
-                y = self.draw_ari(qp, x0, x1, y)
+                y = self.draw_page(qp, pid, x0, x1, y)
             if self.flash_text:
                 qp.setFont(F_SMALL)
                 qp.setPen(QColor(GREEN))
@@ -1755,24 +1764,48 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 self.details_h = h
                 QTimer.singleShot(0, self.kick)
 
+        def draw_page(self, qp: Any, pid: str, x0: float, x1: float, y: float) -> float:
+            if pid == "brief":
+                return self.draw_brief(qp, x0, x1, y)
+            if pid == "media":
+                return self.draw_media(qp, x0, x1, y)
+            if pid == "system":
+                return self.draw_system(qp, x0, x1, y)
+            if pid == "calendar":
+                return self.draw_calendar(qp, x0, x1, y)
+            return self.draw_ari(qp, x0, x1, y)
+
+        def posed(self, qp: Any, body: Any, pose: im.Pose, fade: float, draw: Any) -> float:
+            """Draw a page moved, faded and scaled (about the island's middle) for a flip."""
+            dx, alpha, scale = pose
+            qp.save()
+            c = body.center()
+            qp.translate(c.x() + dx, c.y())
+            qp.scale(scale, scale)
+            qp.translate(-c.x(), -c.y())
+            qp.setOpacity(fade * alpha)
+            y = draw()
+            qp.restore()
+            qp.setOpacity(fade)
+            return y
+
         def draw_dots(self, qp: Any, body: Any, y: float) -> float:
             """Which page is on show, as dots under it (click one, or scroll, to flip)."""
             n = len(self.pages())
             if n < 2:
                 return y
-            gap = 11
             y += 4
-            cx0 = body.center().x() - gap * (n - 1) / 2
-            for i in range(n):
-                c = QPointF(cx0 + i * gap, y + 6)
+            t = (time.monotonic() - self.flip_t0) / im.FLIP_S
+            widths = im.dot_widths(n, self.page, self.prev_page, t, self.still)
+            space = 6
+            x = body.center().x() - (sum(widths) + space * (n - 1)) / 2
+            for i, w in enumerate(widths):
                 on = i == self.page
                 qp.setPen(Qt.PenStyle.NoPen)
                 qp.setBrush(ink(1.0 if on else 0.5 if self.hot == f"page:{i}" else 0.35))
-                if on:
-                    qp.drawRoundedRect(QRectF(c.x() - 7, c.y() - 2.5, 14, 5), 2.5, 2.5)
-                else:
-                    qp.drawEllipse(c, 2.5, 2.5)
-                self.buttons.append((QRectF(c.x() - 6, c.y() - 7, 12, 14), f"page:{i}"))
+                qp.drawRoundedRect(QRectF(x, y + 3.5, w, 5), 2.5, 2.5)
+                self.buttons.append((QRectF(x + w / 2 - 6, y - 1, 12, 14), f"page:{i}"))
+                x += w + space
             return y + 14
 
         def pill(self, qp: Any, x: float, y: float, text: str, tone: str) -> float:
@@ -2248,6 +2281,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             n = len(self.pages())
             new = max(0, min(n - 1, self.page + step))
             if new != self.page:
+                now = time.monotonic()
+                self.flip_from, self.flip_dir, self.flip_t0 = self.page, 1 if new > self.page else -1, now
+                self.prev_page, self.page_t0 = self.page, now
                 self.page = new
                 self.leave.stop()
                 self.kick()
@@ -2693,9 +2729,15 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                                           {"label": "Helios", "action": "show:map"}],
                                clip={"enabled": True, "peer": "phone"})
             island.clip_url = "https://example.com/a-link"
+            if args.flip is not None and island.page > 0:  # coming from the page before, this far in
+                island.still = False
+                island.flip_from, island.flip_dir, island.prev_page = island.page - 1, 1, island.page - 1
+                island.flip_t0 = time.monotonic() - args.flip * im.FLIP_S
         for _ in range(3):  # lay out (the details measure themselves), then settle the size
             island.spring.w, island.spring.h = island.target()
             island.grab()
+        if args.flip is not None and island.flip_from is not None:  # laying out took time: the picture is this far in
+            island.flip_t0 = time.monotonic() - args.flip * im.FLIP_S
         island.grab().save(args.preview)
         return 0
     island.show()
