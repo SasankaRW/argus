@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.Network
+import android.net.Uri
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
@@ -55,6 +56,8 @@ class WorkerService : Service() {
     @Volatile private var running = false
     private var loop: Thread? = null
     private var inboxLoop: Thread? = null
+    @Volatile private var blocked: String? = null  // why Android won't show messages (ShowCheck), told to Argus
+    private val blockedPriorities = mutableSetOf<Int>()  // messages that couldn't show: checked again before each poll
     private var liveLoop: Thread? = null
     private val livePause = Pause()
     private val workerPause = Pause()
@@ -109,7 +112,14 @@ class WorkerService : Service() {
         var backoff = 5_000L
         while (running) {
             try {
-                val r = api.call("GET", "/phone/inbox?device=$device&wait=25&limit=20", timeoutMs = 45_000)
+                // switched back on (even with nothing waiting any more): stop telling Argus it's blocked
+                if (blockedPriorities.isNotEmpty()) {
+                    val (left, why) = ShowCheck.recheck(blockedPriorities.toSet()) { Notifier.blockReason(this, it) }
+                    blockedPriorities.retainAll(left)
+                    blocked = why
+                }
+                val r = api.call("GET", "/phone/inbox?device=$device&wait=25&limit=20&blocked=${Uri.encode(blocked ?: "")}",
+                    timeoutMs = 45_000)
                 if (r.status == 401 || r.status == 403) {
                     inboxPause.sleep(60_000)
                     continue
@@ -126,6 +136,7 @@ class WorkerService : Service() {
                         shown.put(m.getString("id"))
                     } catch (e: Exception) {
                         Log.w(TAG, "can't show a notification", e)  // left queued: shown once Android allows it
+                        if (e is IllegalStateException) { blocked = e.message; blockedPriorities += m.optInt("priority", 3) }  // said on the next poll
                     }
                 }
                 if (shown.length() > 0) api.post("/phone/inbox/ack", JSONObject().put("ids", shown))

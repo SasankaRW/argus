@@ -82,11 +82,11 @@ def build_router(deps: Deps) -> APIRouter:
         return {"queued": oid}
 
     @router.get("/phone/inbox", dependencies=guarded)
-    async def phone_inbox(device: str = "", wait: float = Query(0, ge=0, le=30), limit: int = Query(20, ge=1, le=50)
-                          ) -> dict:
+    async def phone_inbox(device: str = "", wait: float = Query(0, ge=0, le=30), limit: int = Query(20, ge=1, le=50),
+                          blocked: str | None = Query(None, max_length=300)) -> dict:
         """The phone app's messages it has not collected yet (a long poll: with `wait=N` it hears the moment one
         is queued). It shows them as notifications, then acknowledges them."""
-        return {"messages": await argus.outbox.inbox_fetch(device, wait, limit)}
+        return {"messages": await argus.outbox.inbox_fetch(device, wait, limit, blocked)}
 
     @router.post("/phone/inbox/ack", dependencies=guarded)
     async def phone_inbox_ack(body: InboxAck) -> dict:

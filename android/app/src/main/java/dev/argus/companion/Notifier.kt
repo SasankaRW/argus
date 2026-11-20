@@ -48,12 +48,20 @@ object Notifier {
         }
     }
 
-    /** Throws when Android won't show it (notifications switched off): the caller then leaves the message queued. */
+    /** Why Android won't show a message of this priority right now, or null when it will (ShowCheck). */
+    fun blockReason(ctx: Context, priority: Int): String? {
+        val nm = ctx.getSystemService(NotificationManager::class.java)
+        channels(ctx)
+        val ch = nm.getNotificationChannel(channel(priority))
+        return ShowCheck.blockReason(nm.areNotificationsEnabled(), ch?.name?.toString() ?: channel(priority), ch?.importance)
+    }
+
+    /** Throws when Android won't show it (all notifications off, or its channel switched off): the caller then
+     *  leaves the message queued and tells Argus why (ShowCheck). */
     fun show(ctx: Context, msg: JSONObject) {
         val nm = ctx.getSystemService(NotificationManager::class.java)
-        if (!nm.areNotificationsEnabled()) throw IllegalStateException("notifications are off for Argus")
-        channels(ctx)
         val priority = msg.optInt("priority", 3)
+        blockReason(ctx, priority)?.let { throw IllegalStateException(it) }
         val id = 100 + (msg.optString("id").hashCode() and 0x7fffffff) % 1_000_000
         val title = msg.optString("title", "Argus")
         val text = msg.optString("message", "")
