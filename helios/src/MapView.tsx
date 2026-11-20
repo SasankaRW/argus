@@ -11,12 +11,13 @@ import { useClaude } from "./chips";
 import { useJobs } from "./jobsFeed";
 import { LevelCanvas } from "./LevelCanvas";
 import { Ms } from "./m3";
-import { buildLevels, Card, Dim, L, layoutLevels, PLUGINS } from "./mapGraph";
+import { boxOf, buildLevels, Card, Dim, L, layoutLevels, PLUGINS } from "./mapGraph";
 import { MapHead } from "./MapHead";
 import type { Selection } from "./mapInfo";
 import { buildPluginView, layoutPluginView, PL } from "./pluginGraph";
 import { useMapNav } from "./useMapNav";
 import { usePluginZoom } from "./usePluginZoom";
+import { reducedMotion, useMapFlow } from "./useMapFlow";
 import type { SendLiveItem } from "./sendLive";
 
 export type FitPad = { top: `${number}px`; right: `${number}px`; bottom: `${number}px`; left: `${number}px` };
@@ -115,6 +116,11 @@ export function MapView(p: Props) {
       : layoutLevels(built.cards, built.lines, { orient: "h", dims: deskDim, xs: DESK.xs, width: DESK.width, height: DESK.height, locked: [L.models], compact: [L.models, L.plugins] })),
     [built, vertical, compact],
   );
+  // the flow layer: dots for what happens from now on (off with the Flow switch, on a stale map, under reduced motion)
+  const of = useMemo(() => boxOf(p.map), [p.map]);
+  const flowOn = p.flow && !p.stale && !reducedMotion();
+  const fl = useMapFlow(events, layout.routes, of, flowOn);
+  const dots = useMemo(() => (flowOn ? { incoming: fl.incoming } : undefined), [flowOn, fl.incoming]);
   const waiting = p.map.nodes.find((n) => n.id === "approvals")?.pending ?? 0;
   const oldest = useOldestApproval(events, waiting);
   const items = useMemo(
@@ -212,7 +218,7 @@ export function MapView(p: Props) {
       {vertical ? (<>
         {!p.stale && head}
         <div className={stageCls} style={stageStyle}>
-          <LevelCanvas layout={layout} flow={p.flow} selected={sel} onPick={pick} label="Live map" />
+          <LevelCanvas layout={layout} flow={p.flow} selected={sel} onPick={pick} label="Live map" dots={dots} />
         </div>
         {navBtns}
       </>) : (<>
@@ -227,7 +233,7 @@ export function MapView(p: Props) {
         <div className={stageCls} style={stageStyle}>
           <div ref={zoom.refs.clip} className="lm-clip">
             <div ref={zoom.refs.cam} className="lm-cam">
-              <LevelCanvas layout={layout} flow={p.flow} selected={sel} onPick={pick} label="Live map" />
+              <LevelCanvas layout={layout} flow={p.flow} selected={sel} onPick={pick} label="Live map" dots={dots} />
             </div>
             <div ref={zoom.refs.view} className="lm-plug" aria-label="Inside the plugins" aria-hidden={!inPlugins} style={{ opacity: 0, pointerEvents: "none", ...plugFit }}>
               <div ref={zoom.refs.pbg} className="lm-pbg" />

@@ -1,7 +1,9 @@
 // One drawing of boxes and lines at a fixed logical size (MapView scales it to fit). Pointing at (or tabbing to) a box dims everything it is not connected to.
 
 import { memo, useState } from "react";
+import { FlowLayer } from "./FlowLayer";
 import { Ms } from "./m3";
+import type { Dot } from "./mapFlow";
 import type { Layout, Placed } from "./mapGraph";
 
 type Props = {
@@ -11,11 +13,12 @@ type Props = {
   onPick: (c: Placed) => void;
   label: string;
   className?: string;
+  dots?: { incoming: Dot[]; onArrive?: (box: string, tone: Dot["tone"], last: boolean) => void };  // the flow layer (MapView)
 };
 
 const BADGE: Record<string, "close" | "info"> = { broken: "close", slow: "info" };
 
-export const LevelCanvas = memo(function LevelCanvas({ layout, flow, selected, onPick, label, className }: Props) {
+export const LevelCanvas = memo(function LevelCanvas({ layout, flow, selected, onPick, label, className, dots }: Props) {
   const [focus, setFocus] = useState<string | null>(null);
   const near = new Set<string>();
   if (focus) {
@@ -24,12 +27,13 @@ export const LevelCanvas = memo(function LevelCanvas({ layout, flow, selected, o
   }
   const off = (r: { a: string; b: string }) => (focus && !(r.a === focus || r.b === focus) ? " dim" : "");
   return (
-    <div className={`lm-cv${focus ? " focus" : ""}${flow ? "" : " still"}${className ? ` ${className}` : ""}`} style={{ width: layout.width, height: layout.height }} role="group" aria-label={label}>
+    <div className={`lm-cv${focus ? " focus" : ""}${flow ? "" : " still"}${dots ? " dots" : ""}${className ? ` ${className}` : ""}`} style={{ width: layout.width, height: layout.height }} role="group" aria-label={label}>
       <svg className="lm-l" width={layout.width} height={layout.height} aria-hidden="true">
         {layout.routes.map((r) => (
           <path key={`${r.a}>${r.b}`} d={r.d} data-a={r.a} data-b={r.b} className={`lm-e ${r.kind}${off(r)}`} />
         ))}
       </svg>
+      {dots && <FlowLayer layout={layout} incoming={dots.incoming} near={focus ? near : null} onArrive={dots.onArrive} />}
       {Object.values(layout.placed).map((c) => (
         <button
           key={c.id}

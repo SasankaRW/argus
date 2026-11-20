@@ -6,7 +6,14 @@ import type { ArgusEvent } from "./api";
 import type { Routed } from "./mapGraph";
 import { PLUGINS, CORE } from "./mapGraph";
 
-export type Dot = { id: string; route: string; back: boolean; tone: "work" | "news"; at: number };
+// `next`: the steps still to go after this line ("a>b" or "<a>b"), for news travelling several lines in turn.
+export type Dot = { id: string; route: string; back: boolean; tone: "work" | "news"; at: number; next?: string[] };
+
+// One step ("a>b" along the line, "<a>b" against it) as a dot.
+export function stepDot(id: string, s: string, tone: Dot["tone"], at: number, next: string[] = []): Dot {
+  const back = s.startsWith("<");
+  return { id, route: back ? s.slice(1) : s, back, tone, at, next };
+}
 
 export const MAX_DOTS = 12;  // on screen at once
 export const GAP_MS = 600;  // per line: a burst of messages is one dot
