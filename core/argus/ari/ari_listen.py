@@ -545,9 +545,10 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device,
             for e in (e for e in evs if e.get("kind") == "ari.notice"):  # kept until Ari may say it
                 d = e.get("data") or {}
                 keeper.add(str(d.get("title") or ""), str(d.get("text") or ""), time.time())
-            here = cfg.ari.speak_up and not paused() and speak_hours_ok(cfg.ari.speak_hours, time.localtime()) \
-                and idle_seconds() < 300 and not player.busy and not talk.in_conversation and not MIC["busy"]
-            line = keeper.take(time.time(), here)
+            gone = not cfg.ari.speak_up or paused() or not speak_hours_ok(cfg.ari.speak_hours, time.localtime()) \
+                or idle_seconds() >= 300
+            here = not gone and not player.busy and not talk.in_conversation and not MIC["busy"]
+            line = keeper.take(time.time(), here, away=gone)
             if line:  # now, or "While you were away: ..." once you're back
                 log.info("speaking up", extra={"line": line[:120]})
                 player.say(vl.sentences(line))

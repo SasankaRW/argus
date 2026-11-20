@@ -57,11 +57,13 @@ class NoticeKeeper:
         self.items = (self.items + [{"key": key, "spoken": notice_text(title, text), "short": short_of(title, text),
                                      "at": now}])[-MAX_KEPT:]
 
-    def take(self, now: float, here: bool) -> str | None:
-        """The sentence to say now, or None. `here`: at the PC and free to speak."""
+    def take(self, now: float, here: bool, away: bool | None = None) -> str | None:
+        """The sentence to say now, or None. `here`: at the PC and free to speak. `away`: why not, if not: really
+        gone (idle, paused, outside speak hours; the default) or only busy for a moment (Ari talking, a call), which
+        doesn't make the news "while you were away"."""
         self.items = [i for i in self.items if now - i["at"] < KEEP_S]
         if not here:
-            if self.items:
+            if self.items and (away is None or away):
                 self.was_away = True
             return None
         if not self.items or now - self.last_spoke < GAP_S:

@@ -480,7 +480,7 @@ for quick asks, the bigger one first for harder ones), and Claude only after all
   and Smart Turn cut your sentences; tiny Whisper (no hints) checks for the wake phrase; the better model writes
   down the request with your names as hotwords. After an answer you can carry on without "Hey Ari" for a few
   seconds, except while the PC plays sound or for a long stream of words.
-- **Ari speaks only when spoken to.** Notices go to the island and the phone; `ari.speak_up` can say them aloud.
+- **Ari speaks only when spoken to.** Notices go to the island and the phone, and `ari.speak_up` (on by default) says them aloud: at once at the PC, or in one line when you're back.
 
 **The Ari pill.** Ari reports what it's doing as `ari.state` events (listening, thinking, working with the tool
 name, speaking, done). Helios shows a pill at the top (pulse or comet look), and `ari/ari_popup.py` shows the same pill

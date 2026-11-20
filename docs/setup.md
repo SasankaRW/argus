@@ -315,7 +315,7 @@ daily cap.
   1 GB". Uses Everything (voidtools) on the PC: install it, keep it running, and put its command line `es.exe`
   (voidtools.com/downloads) in the Everything folder. Names only; folders in `paths.blocked` never show up.
 - **Ari only speaks when you've spoken to it.** Important messages (a price under yours, an overdue issue, a
-  failed backup, an approval) go to the island and the phone. `ari.speak_up: true` also says them out loud at the
+  failed backup, an approval) go to the island and the phone. `ari.speak_up` (on by default; `false` to keep quiet) also says them out loud at the
   PC, only while you're using it, between `ari.speak_hours` (08:00-22:00), at most one every 10 minutes.
 - **Talking with Ari**: after "Hey Ari" you can carry on for 10 s after each answer without saying it again
   (`ari.talk_idle_s`); talk over Ari to interrupt (it pauses at once; if it was only "mm-hm" or its own voice

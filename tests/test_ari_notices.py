@@ -56,3 +56,11 @@ def test_catch_up_wording():
     assert catch_up_line(["a", "b"]) == "While you were away: a, and b."
     assert catch_up_line(["a", "b", "c"]) == "While you were away: a, b, and c."
     assert catch_up_line(["a", "b", "c", "d", "e"]) == "While you were away: a, b, c, and 2 more."
+
+
+def test_a_short_wait_while_here_is_not_being_away():
+    k = NoticeKeeper()
+    k.add(*DUNE, now=1000)
+    assert k.take(1000, here=False, away=False) is None  # Ari was talking, or you're on a call: still here
+    line = k.take(1005, here=True)
+    assert line.startswith("Heads up:") and "away" not in line
