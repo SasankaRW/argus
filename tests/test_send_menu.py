@@ -4,17 +4,22 @@ console window."""
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
 
 from argus.send import agent as agent_mod
 from argus.send import cli, toast
 
 
 def test_config_is_found_from_any_folder(tmp_path, monkeypatch):
+    # A pretend checkout with its own argus.yaml (the real one is never in git, so CI has none)
+    repo = tmp_path / "repo"
+    (repo / "core" / "argus" / "send").mkdir(parents=True)
+    (repo / "argus.yaml").write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(cli, "__file__", str(repo / "core" / "argus" / "send" / "cli.py"))
     monkeypatch.delenv("ARGUS_CONFIG", raising=False)
-    monkeypatch.chdir(tmp_path)  # like Explorer starting argus.exe in System32: no argus.yaml here
-    found = cli.config_path(None)
-    assert found and Path(found).name == "argus.yaml" and Path(found).parent == Path(cli.__file__).resolve().parents[3]
+    elsewhere = tmp_path / "System32"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)  # like Explorer starting argus.exe in System32: no argus.yaml here
+    assert cli.config_path(None) == str((repo / "argus.yaml").resolve())
 
 
 def test_an_explicit_config_still_wins(tmp_path, monkeypatch):
