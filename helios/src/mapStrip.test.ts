@@ -35,3 +35,9 @@ describe("stripLine", () => {
     expect(stripLine(ev("a", "b", "edge.added"), names)).toBeNull();
   });
 });
+
+describe("approvals", () => {
+  it("names the plugin that is waiting, not the approvals service", () => {
+    expect(stripLine(ev("screenshot-renamer", "approvals", "approval.requested"), names)).toMatchObject({ text: "Screenshot renamer is waiting for you", tone: "warn" });
+  });
+});

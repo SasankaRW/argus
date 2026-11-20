@@ -15,7 +15,7 @@ const wishlist = (e: ArgusEvent) => Array.isArray(e.data?.tags) && (e.data.tags 
 const RULES: Record<string, Rule> = {
   "job.succeeded": (e, n) => { const p = n(e.to); return p ? { icon: "task_alt", text: `${p} finished`, tone: "ok" } : null; },
   "job.dead": (e, n) => { const p = n(e.to); return p ? { icon: "error", text: `${p} failed`, tone: "bad" } : null; },
-  "approval.requested": (e, n) => { const p = n(e.to); return p ? { icon: "pan_tool", text: `${p} is waiting for you`, tone: "warn" } : null; },
+  "approval.requested": (e, n) => { const p = n(e.from); return p ? { icon: "pan_tool", text: `${p} is waiting for you`, tone: "warn" } : null; },
   "notify.queued": (e) => {
     const t = title(e);
     if (!t) return null;

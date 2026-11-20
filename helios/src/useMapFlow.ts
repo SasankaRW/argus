@@ -4,7 +4,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { ArgusEvent } from "./api";
-import { isNews, MAX_DOTS, newsRoute, pickDots, stepDot, type Dot } from "./mapFlow";
+import { freshEvents, isNews, MAX_DOTS, newsRoute, pickDots, stepDot, type Dot } from "./mapFlow";
 import type { Routed } from "./mapGraph";
 
 const KEEP = 30;  // new dots handed to the layer, kept so it can tell which it has already started
@@ -29,7 +29,7 @@ export function useMapFlow(events: ArgusEvent[], routes: Routed[], of: (id: stri
     const after = seq.current;
     if (newest <= after) return;
     seq.current = newest;
-    const fresh = events.filter((e) => e.seq > after);
+    const fresh = freshEvents(events, after, Date.now() / 1000);
     const got = fresh.filter(isNews);
     if (got.length) setNews((n) => [...n, ...got].slice(-5));
     if (!on || (typeof document !== "undefined" && document.hidden)) return;

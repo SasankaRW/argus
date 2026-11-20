@@ -18,6 +18,14 @@ export function stepDot(id: string, s: string, tone: Dot["tone"], at: number, ne
 export const MAX_DOTS = 12;  // on screen at once
 export const GAP_MS = 600;  // per line: a burst of messages is one dot
 
+export const FRESH_S = 15;  // seconds: an event older than this is history, not news, whatever its seq
+
+// The events after `afterSeq` that happened in the last FRESH_S seconds. Helios draws the map first and merges the
+// last 150 events in a moment later, and a reconnect can replay more: those have new seqs but are old news.
+export function freshEvents(events: ArgusEvent[], afterSeq: number, nowSec: number): ArgusEvent[] {
+  return events.filter((e) => e.seq > afterSeq && nowSec - e.at <= FRESH_S);
+}
+
 export const routeKey = (r: { a: string; b: string }) => `${r.a}>${r.b}`;
 
 // The line joining boxes x and y; `back` when it is drawn from y to x (the dot runs against the drawing).

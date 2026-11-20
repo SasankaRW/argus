@@ -6,6 +6,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ArgusEvent } from "./api";
 import { Ms } from "./m3";
+import { freshEvents } from "./mapFlow";
 import { stripLine, type StripLine } from "./mapStrip";
 import { reducedMotion } from "./useMapFlow";
 
@@ -38,7 +39,7 @@ export function useStrip(events: ArgusEvent[], name: (id: string) => string | nu
     if (newest <= after) return;
     seq.current = newest;
     let next = lines;
-    for (const e of events) if (e.seq > after) { const l = stripLine(e, name); next = pushLine(next, l ? { ...l, at: e.at } : null); }
+    for (const e of freshEvents(events, after, Date.now() / 1000)) { const l = stripLine(e, name); next = pushLine(next, l ? { ...l, at: e.at } : null); }
     if (next !== lines) setLines(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [events, name]);

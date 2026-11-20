@@ -13,7 +13,8 @@ const SPEED = { work: 0.3, news: 0.42 };  // canvas px per ms
 const HEAD = { work: "#e8fff0", news: "#fff4d0" };
 const TINT = { work: "var(--lm-busy)", news: "var(--lm-slow)" };
 const TRAIL = [{ r: 2.6, o: 0.38 }, { r: 2.0, o: 0.26 }, { r: 1.4, o: 0.14 }];
-const LAG = 0.035;  // each trail dot sits this much further back along the line
+const LAG = 0.035;
+const START_MS = 1500;  // a dot handed over longer ago than this is not started (the layer was off or remounted)  // each trail dot sits this much further back along the line
 
 type Run = { dot: Dot; path: SVGPathElement; len: number; t0: number; dur: number; g: SVGGElement; parts: SVGCircleElement[] };
 
@@ -97,13 +98,12 @@ export const FlowLayer = memo(function FlowLayer({ layout, incoming, near, onArr
 
   useEffect(() => {
     const live = new Set(layout.routes.map((r) => `${r.a}>${r.b}`));
+    const now = performance.now();
     const fresh = incoming.filter((d) => !seen.current.has(d.id));
-    if (!fresh.length) return;
     for (const d of fresh) seen.current.add(d.id);
     if (seen.current.size > 500) seen.current = new Set(incoming.map((d) => d.id));
-    const now = performance.now();
-    for (const d of fresh) start(d, now);
-    // keep at most MAX_DOTS: the oldest go first, and none on a line that is gone
+    for (const d of fresh) if (now - d.at <= START_MS) start(d, now);
+    // keep at most MAX_DOTS: the oldest go first, and none on a line that is gone (checked on every layout change)
     const keep = new Set(nextDots(runs.current.map((r) => r.dot), [], live).map((d) => d.id));
     for (const r of runs.current) if (!keep.has(r.dot.id)) r.g.remove();
     runs.current = runs.current.filter((r) => keep.has(r.dot.id));

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ArgusEvent, ArgusMap, MapEdge, MapNode } from "./api";
 import { boxOf, buildLevels, L, layoutLevels } from "./mapGraph";
-import { newsRoute, pickDots } from "./mapFlow";
+import { freshEvents, newsRoute, pickDots } from "./mapFlow";
 
 const NOW = 1_000_000;
 const node = (id: string, kind: MapNode["kind"], over: Partial<MapNode> = {}): MapNode =>
@@ -75,5 +75,14 @@ describe("newsRoute", () => {
   });
   it("ordinary messages are not news", () => {
     expect(newsRoute({ ...ev("advisor", "argus", 1, 12), kind: "notify.queued", data: { priority: 3 } }, routes, of)).toEqual([]);
+  });
+});
+
+describe("freshEvents", () => {
+  it("only events after the mark that happened in the last few seconds", () => {
+    const old = { ...ev("helios", "argus", 3 * 3600, 5) };  // history merged in after the map opened
+    const recent = { ...ev("helios", "argus", 2, 6) };
+    expect(freshEvents([old, recent], 0, NOW).map((e) => e.seq)).toEqual([6]);
+    expect(freshEvents([recent], 6, NOW)).toEqual([]);
   });
 });
