@@ -65,7 +65,21 @@ def test_times_written_differently_are_still_what_was_said():
     assert "numbers" in check(e.model_copy(update={"entry": "I went to bed at 21:15."}), None)
 
 
+def test_dates_said_as_a_list_are_still_what_was_said():
+    # typed "on 19,20 December": the entry writes "the 19th and 20th", which is what was said (20 Nov 2026)
+    check = dy.entry_check("20:24  Kalana invite me to go on a trip with them to gall on 19,20 December "
+                           "i said i will come")
+    e = dy.Entry(title="A trip in December", entry="Kalana invited me on a trip on the 19th and 20th of December.",
+                 people=["Kalana"])
+    assert check(e, None) is None
+    assert "numbers" in check(e.model_copy(update={"entry": "A trip on the 21st of December."}), None)
+    # a thousands comma is still one number: 4,495 doesn't make 495 something that was said
+    price = dy.entry_check("10:00  the book is 4,495 rupees")
+    assert "numbers" in price(dy.Entry(title="Book", entry="It was 495 rupees."), None)
+
+
 def fake_lifehub():
+
     state = {"diary": {}, "items": [], "deleted": [], "posted": []}
 
     class H(BaseHTTPRequestHandler):
@@ -210,6 +224,28 @@ def test_an_entry_you_edited_keeps_your_text_and_only_gets_the_new_part(tmp_path
         assert sent["your_edited_entry"]["entry"] == mine
 
 
+def test_rewrite_a_day_from_what_was_said(tmp_path, monkeypatch):
+    """"Rewrite this day": the day is written again from everything said, nothing added (20 Nov was saved as typed)."""
+    base, lh = fake_lifehub()
+    argus, _vault = setup(tmp_path, monkeypatch, base)
+    said = [{"at": "20:24", "text": "Kalana invite me to go on a trip with them to gall on 19,20 December"}]
+    lh["diary"]["2026-11-20"] = {"day": "2026-11-20", "title": "Kalana invite me to go", "entry": said[0]["text"],
+                                 "mood": "okay", "highlights": [], "people": [], "places": [], "tags": [], "said": said}
+    good = {**ENTRY, "title": "A trip in December", "entry": "Kalana invited me on a trip on the 19th and 20th of "
+            "December, and I said I'd come.", "people": ["Kalana"], "places": [], "learned": []}
+    with FakeOllama({MODEL: [good]}) as ol, Server(argus.open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        r = run(cl, w, "rewrite", day="2026-11-20")
+        assert r["state"] == "succeeded", r["error"]
+        e = lh["diary"]["2026-11-20"]
+        assert e["title"] == "A trip in December" and e["said"] == said  # rewritten, and nothing added to what was said
+        assert r["result"]["say"].startswith("Rewrote")
+        missing = run(cl, w, "rewrite", day="2026-11-01")
+        assert missing["state"] == "dead" and "no diary entry" in missing["error"].lower()
+
+
 # ------------------------------------------------------------------ reminders for the morning brief
 
 def seed_days(lh):
@@ -294,4 +330,4 @@ def test_the_reminders_check_and_the_schedule():
     assert "mentioned_on" in check(dy.Reminders(reminders=[dy.Reminder(text="x", mentioned_on="2026-01-01")]), None)
     manifest = (ROOT / "plugins" / "diary" / "plugin.yaml").read_text(encoding="utf-8")
     assert 'workflow: reminders, cron: "0 4 * * *"' in manifest
-    assert "workflows: [tell, read, tidy, reminders]" in manifest
+    assert "workflows: [tell, read, rewrite, tidy, reminders]" in manifest

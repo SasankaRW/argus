@@ -102,3 +102,13 @@ def test_a_finished_send_and_receive_are_remembered(tmp_path):
     assert a.mine_files("sent", oid) == [str(src)]
     got = b.mine_files("received", oid)
     assert got and got[0].endswith("notes.txt")
+
+
+def test_two_shares_in_the_same_clock_tick_still_list_newest_first(tmp_path, monkeypatch):
+    # Windows clocks can give two quick saves the same time: the one saved later is still the newer one
+    from argus.send import agent as agent_mod
+    monkeypatch.setattr(agent_mod.time, "time", lambda: 1_800_000_000.0)
+    a = make_agent(tmp_path, "pc", "PC", argus_url=HELIOS)
+    a.remember("received", OID, "photos", "my phone", [])
+    a.remember("sent", SID, "report.pdf", "Calypso", [])
+    assert [e["kind"] for e in a.mine()] == ["sent", "received"]

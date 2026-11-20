@@ -126,6 +126,8 @@ def times(text: str) -> str:
 def entry_check(said: str, edited: dict | None = None):
     heard = said.lower()
     numbers = set(NUM.findall(times(STAMP.sub("", said))))
+    # "19,20 December" is a list (19 and 20), but "4,495" is one number: a comma part of 3 digits is thousands
+    numbers |= {p for n in list(numbers) if "," in n and len(n.split(",")[1]) != 3 for p in n.split(",")}
     kept = " ".join(str((edited or {}).get("entry") or "").split())
 
     def check(e: Entry, _inp: Any) -> str | None:
@@ -197,6 +199,11 @@ def as_markdown(day: dt.date, e: dict) -> str:
 def tell_one(ctx: Context, text: str, day: dt.date, at: str, sfx: str = "") -> dict:
     old = ctx.step(f"load{sfx}", call, ctx, "GET", f"/api/diary/{day.isoformat()}", missing_ok=True) or {}
     said = [*(old.get("said") or []), {"at": at, "text": text}]
+    return write_day(ctx, day, said, old, sfx)
+
+
+def write_day(ctx: Context, day: dt.date, said: list[dict], old: dict, sfx: str = "") -> dict:
+    """Write `day`'s entry from everything said and save it (Life Hub, learned notes, the vault copy)."""
     edited = old if old.get("edited_at") else None  # you changed it in Life Hub: your text stays
     e = ctx.step(f"write{sfx}", lambda: write(ctx, day, said, edited).model_dump())
     if edited:  # your title, and what you listed, stay too
@@ -261,6 +268,22 @@ def tell(ctx: Context):
     out["say"] = (f"Added to {when} diary." if not ctx.dry_run else
                   "Dry-run: I'd add that to your diary. Turn the Diary plugin Live to keep it.") + \
         (f" I'll also put what you learned in your notes: {'; '.join(out['learned'][:2])}." if out["learned"] else "")
+    return out
+
+
+@workflow(PLUGIN, "rewrite")
+def rewrite(ctx: Context):
+    """"Rewrite this day": the entry written again from everything said that day, nothing added (for a day saved as
+    you typed it, when no writer could do it then). A day you edited in Life Hub keeps your text, as always."""
+    starts = int(ctx.config.get("day_starts") or 4)
+    day = which_day(str(ctx.input.get("day") or "today"), dt.datetime.now(), starts)
+    old = ctx.step("load", call, ctx, "GET", f"/api/diary/{day.isoformat()}", missing_ok=True) or {}
+    said = old.get("said") or []
+    if not said:
+        raise PermanentError(f"There's no diary entry for {day:%A %d %B} to rewrite.")
+    out = write_day(ctx, day, said, old)
+    out["say"] = (f"Rewrote your diary for {day:%A %d %B}: {out['title']}." if not ctx.dry_run else
+                  "Dry-run: I'd rewrite that day. Turn the Diary plugin Live to keep it.")
     return out
 
 

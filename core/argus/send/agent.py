@@ -175,7 +175,10 @@ class SendAgent:
         os.replace(tmp, self._mine_path())
 
     def mine(self) -> list[dict]:
-        return sorted(self._mine_book().values(), key=lambda e: -e.get("at", 0))
+        """Newest first. Two saves in the same clock tick (Windows clocks can be that coarse) keep their order: the
+        book is written in the order things happened, so the later entry is the newer one."""
+        book = list(self._mine_book().values())
+        return [e for _, e in sorted(enumerate(book), key=lambda p: (-p[1].get("at", 0), -p[0]))]
 
     def mine_files(self, kind: str, offer_id: str) -> list[str] | None:
         e = self._mine_book().get(f"{kind}:{offer_id}")
