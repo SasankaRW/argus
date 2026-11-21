@@ -303,6 +303,9 @@ def history(conn: sqlite3.Connection, conv: str) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = [{"role": t["role"], "text": t["text"], "job_id": t.get("job_id")}
                                  for t in turns(conn, conv, HISTORY)
                                  if t["text"] and float(t.get("created_at") or 0) >= recent]
+    # words Sas went on from while Ari was still thinking ("Yeah." then "Yeah. Read it"): only the combined question
+    out = [t for i, t in enumerate(out) if not (t["role"] == "you" and i + 1 < len(out) and out[i + 1]["role"] == "you"
+                                                and out[i + 1]["text"].startswith(t["text"].rstrip(".!? ")))]
     last = next((t for t in reversed(out) if t["role"] == "ari" and t["job_id"]), None)
     for t in out:
         if t["role"] != "ari" or not t["job_id"]:

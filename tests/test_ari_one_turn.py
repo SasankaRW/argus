@@ -231,3 +231,16 @@ def test_stop_clears_the_waiting_question():
 def test_joined():
     assert vl.joined("Yeah.", "Read it") == "Yeah. Read it"
     assert vl.joined("", "Read it") == "Read it"
+
+
+def test_history_drops_the_words_a_combined_question_replaced(store):
+    """"Yeah." was abandoned for "Yeah. Read it": the model sees the combined question once, not both."""
+    from argus.ari import ari as ari_mod
+
+    def fn(c):
+        ari_mod.add_turn(c, "v", "ari", "There's a new email about a failed PR run. Want me to read it?")
+        ari_mod.add_turn(c, "v", "you", "Yeah.")
+        ari_mod.add_turn(c, "v", "you", "Yeah. Read it")
+    store.write_sync(fn)
+    got = [(t["role"], t["text"]) for t in store.read_sync(lambda c: ari_mod.history(c, "v"))]
+    assert got == [("ari", "There's a new email about a failed PR run. Want me to read it?"), ("you", "Yeah. Read it")]
