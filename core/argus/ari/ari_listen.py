@@ -617,16 +617,25 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device,
     client.state("idle", "")  # the island's "starting…" ends: Ari can hear now
     print("Listening for \"Hey Ari\" (Ctrl+C to stop). Then just talk; \"thanks Ari\" ends it.", flush=True)
     loudest, since = 0.0, time.monotonic()
+    # where sound goes each minute, for the "microphone level" line: when Ari can't hear you, this says which stage
+    # dropped it (too old, not speech, Ari's own echo, the PC's sound, or speech that never became a turn)
+    seen = {"frames": 0, "old": 0, "speech": 0, "echo": 0, "pc_sound": 0, "starts": 0, "ends": 0}
     try:
         for at, frame in mic_blocks(device, vl.FRAME):
+            seen["frames"] += 1
             if time.monotonic() - at > 1.0:  # heard while Ari was busy thinking: too old to act on
+                seen["old"] += 1
                 continue
             rms = float(np.sqrt(np.mean(np.square(frame))))
             loudest = max(loudest, rms)
             live.add(rms)
             if time.monotonic() - since > 60:
                 skipped = vad.share_skipped() if isinstance(vad, vl.Quiet) else 0.0
-                log.info("microphone level", extra={"loudest": round(loudest, 4), "vad_skipped": round(skipped, 2)})
+                extra = {"loudest": round(loudest, 4), "vad_skipped": round(skipped, 2), **seen}
+                if guard is not None:
+                    extra["coupling"] = round(guard.coupling(), 3)
+                log.info("microphone level", extra=extra)
+                seen = dict.fromkeys(seen, 0)
                 MIC["loudest"] = round(loudest, 4)
                 loudest, since = 0.0, time.monotonic()
             if paused():  # the pause button / voice training: hear nothing, say nothing new
@@ -635,16 +644,25 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device,
                     talk.in_talk_until = 0.0
                 continue
             voice = vad(frame)
+            if voice >= 0.5:
+                seen["speech"] += 1
             if not gate(frame, player.busy and not talk.paused_for_barge):
+                if voice >= 0.5:
+                    seen["echo"] += 1
                 voice = 0.0
             if guard is not None:
                 STRICT["on"] = guard.others  # something else plays (not Ari's own voice): only a clear "Hey Ari"
                 if guard.explains(rms):  # the PC's own sound coming back (a video, music, Ari): not you
+                    if voice >= 0.5:
+                        seen["pc_sound"] += 1
                     voice = 0.0
             if wake_word is not None:
                 wake_word.feed(frame)
             try:
+                was = talk.turns.talking
                 talk.frame(frame, voice)
+                seen["starts"] += int(not was and talk.turns.talking)
+                seen["ends"] += int(was and not talk.turns.talking)
             except Exception as e:  # noqa: BLE001  # boundary: never stop listening because of one turn
                 log.warning("turn failed", extra={"error": str(e)[:200]}, exc_info=True)
                 talk.turns.reset()

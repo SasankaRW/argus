@@ -5,6 +5,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Ari's ears, explained:** the listener's once-a-minute "microphone level" line now counts where sound went (frames, too old, speech, Ari's echo, the PC's own sound, turns started and ended, the playback guard's coupling), so a time Ari can't hear you shows which stage dropped it.
 - **Clear the problem and dead counts:** in the console press `p` then `c` (or POST /problems/clear): the problems and the dead-jobs count start again from that moment. Nothing is deleted; jobs and their errors stay.
 - **Console:** the logs panel opens on Argus's own log (argusd and the workers, with the model calls); `l` switches to Ari's requests, which the Ari panel above already shows.
 - **Ari reads your mail:** "hello, can you check my emails" is a request, not small talk (check, read, mail, inbox, calendar and the like mark a request); when the model picks the mail tool itself, the mails are read out in code instead of a second model call that only promised to; an answer dropped because you went on talking leaves no "Sorry, I couldn't answer that" in the chat.
