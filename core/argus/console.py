@@ -277,6 +277,12 @@ class Api:
             self.up = False
             raise
 
+    def post(self, path: str, body: Any = None, timeout: float = 5) -> Any:
+        h = {"Content-Type": "application/json", **({"Authorization": f"Bearer {self.token}"} if self.token else {})}
+        req = urllib.request.Request(self.url + path, data=json.dumps(body or {}).encode(), headers=h, method="POST")
+        with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310 - our own argusd
+            return json.loads(r.read() or b"null")
+
 
 class Feed:
     """A long poll of the event stream in the background: new events go to every callback, oldest first."""
@@ -471,7 +477,8 @@ class Deck:
             tag.append(time.strftime("   %H:%M:%S · %a %d %b"), style=f"bold {TEXT}")
         parts = [logo, tag] + ([] if height else [Text("")]) + [card(grid, "status")]
         if self.show_problems and pr.get("problems"):
-            parts.append(card(problem_lines(Text, pr["problems"]), "not working · last 24 h", hint="p closes"))
+            parts.append(card(problem_lines(Text, pr["problems"]), "not working · last 24 h",
+                              hint="c clears · p closes"))
         if not height:
             parts.append(clock)
         if height:
@@ -670,6 +677,13 @@ class Deck:
         return out
 
     def key(self, k: str) -> None:
+        if k == "c" and self.show_problems:  # clear the problem and dead counts (nothing is deleted)
+            try:
+                self.api.post("/problems/clear")
+                self.data["problems"], self.show_problems = {}, False
+            except (*_API_ERRORS, *_SHAPE_ERRORS):
+                pass
+            return
         if k == "p":
             self.show_problems = not self.show_problems
 

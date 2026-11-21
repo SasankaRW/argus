@@ -731,7 +731,13 @@ class JobStore:
 
     async def counts(self) -> dict[str, int]:
         def fn(conn: sqlite3.Connection) -> dict[str, int]:
-            return {r[0]: r[1] for r in conn.execute("SELECT state, COUNT(*) FROM jobs GROUP BY state")}
+            from .. import cleared  # dead jobs count from the last clear (console `c`); nothing is deleted
+
+            out = {r[0]: r[1] for r in conn.execute(
+                "SELECT state, COUNT(*) FROM jobs WHERE state != 'dead' GROUP BY state")}
+            dead = conn.execute("SELECT COUNT(*) FROM jobs WHERE state = 'dead' AND COALESCE(finished_at, 0) > ?",
+                                (cleared.at(conn),)).fetchone()[0]
+            return {**out, **({"dead": dead} if dead else {})}
 
         return await self.store.read(fn)
 
