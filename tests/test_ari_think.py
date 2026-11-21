@@ -330,3 +330,59 @@ def test_fix_commands_ask_first_then_run_without_a_model(tmp_path):
         assert yes["reply"].startswith("Approved. TRK-5 gets fixed with sonnet on a new branch")
         r, last = say("how's the TRK-5 fix going")  # read only: answered at once
         assert last["text"] == "TRK-5 plan ready, waiting for your approval."
+
+
+MAIL_YAML = """id: fake-mail
+name: Fake mail
+version: 1.0.0
+kind: workflow
+argus_api: ">=1.0 <2.0"
+runs_on: desktop
+needs: [session]
+permissions: {models: []}
+ari:
+  tools:
+    - {name: check_email, description: Check new email., workflow: check, private: true}
+"""
+
+MAIL_PY = """from argus.worker import workflow
+
+@workflow("fake-mail", "check")
+def check(ctx):
+    return {"done": True, "count": 1, "mails": [{"from": "Kaancha <k@example.com>", "subject": "Dinner on Saturday"}]}
+"""
+
+
+def test_mail_the_model_asked_for_is_read_out_not_promised(tmp_path):
+    """The model picks check_email itself (not the direct route): Ari reads the result out in code, instead of a
+    second model call that only says "let me read through them"."""
+    pdir = tmp_path / "plugins" / "fake-mail"
+    pdir.mkdir(parents=True)
+    (pdir / "plugin.yaml").write_text(MAIL_YAML)
+    (pdir / "plugin.py").write_text(MAIL_PY)
+    replies = {"qwen2.5-coder:7b": [{"tool": "check_email", "args": {}},
+                                    {"reply": "Let me read through them for you. Starting with the first one..."}]}
+    argus = make(tmp_path)
+    argus.cfg.plugins.live.append("fake-mail")
+    with FakeOllama(replies) as ol, Server(argus.open()) as srv:
+        cl = client(srv.url)
+        w = Worker(cl, "pc", capabilities=["desktop", "session"], ollama_url=ol.url, watch_folders=False)
+        w.register()
+        r = cl.post("/ari", {"text": "hmm, go through my inbox please"})
+        last = settle(cl, w, r["conv"])
+        assert last["text"].startswith("One new email: from Kaancha, about Dinner on Saturday")
+        assert len(ol.requests) == 1  # no second model call to word it
+
+
+def test_an_answer_dropped_because_you_went_on_talking_leaves_no_turn(tmp_path):
+    """Voice cancels the think job when you keep talking: no "Sorry, I couldn't answer" in the chat or history."""
+    from argus.ari import ari as ari_mod
+    argus = make(tmp_path)
+    with Server(argus.open()) as srv:
+        cl = client(srv.url)
+        r = cl.post("/ari", {"text": "Hmm"})
+        cl.post(f"/jobs/{r['job_id']}/cancel", {"reason": "you went on talking"})
+        turns = cl.get(f"/ari/{r['conv']}")["turns"]
+        assert [t["role"] for t in turns] == ["you"]
+        assert not [t for t in argus.store.read_sync(lambda c: ari_mod.history(c, r["conv"])) if t["role"] == "ari"]
+        assert "couldn't answer" not in json.dumps(cl.get("/events?limit=50"))

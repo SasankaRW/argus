@@ -932,7 +932,8 @@ FEELING = re.compile(r"\b(?:i'?m (?:so |really |kinda |a bit |pretty )?(?:tired|
                      r"you there|forget it|no worries|all good)\b", re.I)
 TASKY = re.compile(r"\b(?:open|close|find|search|show|list|play|pause|set|turn|send|message|text|remind|schedule|"
                    r"run|start|stop|add|delete|move|copy|weather|screen|file|folder|note|status|issue|backup|"
-                   r"download|shut|restart|volume|timer)\b", re.I)
+                   r"download|shut|restart|volume|timer|check|read|e-?mails?|mail|inbox|calendar|events?|diary|"
+                   r"clipboard|price|watch)\b", re.I)
 
 CHAT_TEMPERATURE = 0.75  # small talk: varied, not the same words for the same question (tools stay at 0)
 
@@ -1463,6 +1464,12 @@ def _think(ctx: Context, text: str) -> dict[str, Any]:
                     return {"tool": s["tool"], "args": s["args"], "error": str(e)[:300], **mark}
 
             done.append(ctx.step(f"tool {i + 1}: {s['tool']}", use))
+            if s["tool"] in ("check_email", "read_email") and "error" not in done[-1]:
+                # your mail is read out in code, as on the direct route: a second model call tends to only promise
+                line = said_back(s["tool"], s["args"], done[-1].get("result"))
+                if line:
+                    ask = mail_follow_up(s["tool"], done[-1].get("result"))
+                    return {"reply": line, "used": done, **({"pending": ask} if ask else {})}
             continue
         if s["need_web"]:
             def web() -> dict:

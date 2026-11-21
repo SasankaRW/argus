@@ -229,7 +229,7 @@ class JobStore:
             dst=job.plugin,
             data={"from": job.state.value, **(event_data or {})},
         )
-        if job.plugin == "ari" and job.workflow == "think" and dst in (S.SUCCEEDED, S.DEAD, S.CANCELLED):
+        if job.plugin == "ari" and job.workflow == "think" and dst in (S.SUCCEEDED, S.DEAD):  # cancelled: no answer
             # Ari's answer is ready: the Ari pill (Helios, the PC's popup) shows it
             try:
                 reply = str((json.loads(fields.get("result") or "null") or {}).get("reply") or "")

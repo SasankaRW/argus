@@ -157,13 +157,18 @@ def build_router(deps: Deps) -> APIRouter:
     async def ari_conv(conv: str) -> dict:
         """The conversation; a model's answer is filled in here once its job finished."""
         rows = await argus.store.read(lambda c: ari_mod.turns(c, conv))
+        dropped = []
         for t in rows:
             if t["job_id"] and t["text"] is None:
                 try:
                     j = await argus.jobs.get(t["job_id"])
                 except JobNotFound:
                     j = None
-                if j is None or j.state.value in ("dead", "cancelled"):
+                if j is not None and j.state.value == "cancelled":  # you went on talking: no answer, no turn
+                    dropped.append(t)
+                    await argus.store.write(lambda c, t=t: c.execute("DELETE FROM ari_turns WHERE id = ?", (t["id"],)))
+                    continue
+                if j is None or j.state.value == "dead":
                     t["text"] = "Sorry, I couldn't answer that just now."
                 elif j.state.value == "succeeded":
                     r = j.result or {}
@@ -181,6 +186,7 @@ def build_router(deps: Deps) -> APIRouter:
                     "UPDATE ari_turns SET text = ?, action = ?, pending = ?, used = ? WHERE id = ?",
                     (t["text"], t["action"], json.dumps(t["pending"]) if t["pending"] else None,
                      json.dumps(t.get("used")) if t.get("used") else None, t["id"])))
+        rows = [t for t in rows if t not in dropped]
         labels = {a["id"]: a["label"] for a in ask_mod.catalog(argus.plugin_host)}
         for t in rows:
             t["label"] = labels.get(t["action"] or "")
