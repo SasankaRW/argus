@@ -91,7 +91,7 @@ export function newsRoute(e: ArgusEvent, routes: Routed[], of: (id: string) => s
   const home = step(CORE, "phone", routes);
   if (!head || !home) return [];
   const chains = [[...head, home]];
-  const hub = ["lifehub", "life-hub"].map((id) => step(CORE, id, routes)).find(Boolean);
+  const hub = ["app-lifehub", "lifehub", "life-hub"].map((id) => step(CORE, id, routes)).find(Boolean);
   if (tagsOf(e).includes("wishlist") && hub) chains.push([hub]);
   return chains;
 }

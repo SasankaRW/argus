@@ -25,6 +25,7 @@ export type Card = {
   paused?: boolean;  // stopped or paused from Helios
   slot?: Slot;  // a fixed place inside the Argus level
   big?: boolean;
+  top?: boolean;  // an app that stopped answering: first in the attention row
 };
 // busy: traffic in the last minute (the only lit line); quiet: connected, nothing lately; slow; broken; esc: asks a bigger model
 export type LineKind = "busy" | "quiet" | "slow" | "broken" | "esc";
@@ -150,7 +151,21 @@ export function lineKind(o: { tone: Tone; recent: number }): LineKind {
 
 type Built = { cards: Card[]; lines: Line[]; problems: Problem[] };
 
-const APP_ICONS: Record<string, IconName> = { lifehub: "home", "life-hub": "home", tracker: "done_all" };
+const APP_ICONS: Record<string, IconName> = { lifehub: "home", "life-hub": "home", "app-lifehub": "home", tracker: "done_all", "app-tracker": "done_all" };
+
+const hhmm = (sec: number) => new Date(sec * 1000).toTimeString().slice(0, 5);
+const everyText = (sec: number) => (sec <= 60 ? "minute" : sec % 60 === 0 ? `${sec / 60} minutes` : `${sec} seconds`);
+
+// An app Argus checks itself (Life Hub, Tracker): quiet while it answers, broken after 2 failed checks in a row.
+export function appHealthCard(a: MapNode, label: string): Pick<Card, "status" | "tone" | "problem" | "detail" | "top"> {
+  if (a.status === "down") {
+    const every = everyText(a.every ?? 120);
+    return { status: "not answering", tone: "bad", top: true, problem: `${label} isn't answering`,
+      detail: [a.since ? `since ${hhmm(a.since)}` : "", `Argus keeps trying every ${every}`].filter(Boolean).join(" · ") };
+  }
+  if (a.status === "checking") return { status: "checking", tone: "idle" };
+  return { status: a.line || "up", tone: "ok" };
+}
 
 export function buildLevels(map: ArgusMap, ctx: LevelCtx): Built {
   const of = boxOf(map);
@@ -189,7 +204,9 @@ export function buildLevels(map: ArgusMap, ctx: LevelCtx): Built {
     add({ id: "ari", select: "ari", label: "Ari", icon: "mic", status: last ? `heard ${ago(ctx.now - last)}` : "assistant", level: L.apps, skin: "plain", tone: "ok" });
   }
   for (const a of map.nodes.filter((n) => n.kind === "app" && !["helios", "ari", "phone", "phone-app"].includes(n.id))) {
-    add({ id: a.id, select: a.id, label: a.label || cap(a.id), icon: APP_ICONS[a.id] ?? "devices", status: (byBox.get(a.id) ?? 0) ? "in use" : "connected", level: L.apps, skin: "plain", tone: "ok" });
+    const label = a.label || cap(a.id);
+    const health = a.status ? appHealthCard(a, label) : { status: (byBox.get(a.id) ?? 0) ? "in use" : "connected", tone: "ok" as Tone };
+    add({ id: a.id, select: a.id, label, icon: APP_ICONS[a.id] ?? "devices", level: L.apps, skin: "plain", ...health });
   }
 
   // --- Argus, with the Scheduler above and Approvals and Backups below

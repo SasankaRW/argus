@@ -27,6 +27,12 @@ export type MapNode = {
   failed?: number;
   blocked?: string;  // the phone app: why Android won't show Argus's notifications ("" when it will)
   implicit?: boolean;
+  // apps (Life Hub, Tracker): from Argus's own check of their /api/health
+  status?: "up" | "down" | "checking";
+  line?: string;  // one short line of status
+  error?: string;  // why it isn't answering
+  every?: number;  // seconds between checks
+  fails?: number;  // checks in a row that failed
   paused?: boolean; // plugins and workers: stopped from Helios (POST /plugins/{id}/stop, /workers/{id}/pause)
   since?: number; // when it was paused (epoch seconds)
 };
