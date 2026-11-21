@@ -1,0 +1,26 @@
+id: calendar
+name: Google Calendar
+version: 1.0.0
+kind: workflow
+argus_api: ">=1.0 <2.0"
+description: Your Google Calendar events and the Sri Lanka holidays on the island's calendar page, read-only. Every 15 minutes it reads today and the next 30 days and keeps the last good answer, so the island works offline. You allow it once, in your own Chrome, with the same Google Cloud client as Gmail.
+runs_on: desktop
+needs: [session]          # Google's "Allow" page opens in your Chrome, on your desktop
+
+triggers:
+  - schedule: {workflow: sync, cron: "*/15 * * * *"}
+  - manual: {workflow: connect, label: Connect Google Calendar}
+  - manual: {workflow: sync, label: Refresh now}
+
+workflows: [sync, connect]
+
+permissions:
+  files: {read: [], write: [], delete: none}
+  models: []
+  network: [oauth2.googleapis.com, www.googleapis.com]
+  secrets: [GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET]   # the same Google Cloud OAuth client as Gmail, in .env
+
+config:
+  chrome_profile: {type: text, default: "Sasanka", label: The Chrome profile you allow it in (its name or email)}
+  calendars: {type: list, default: ["primary", "en.lk#holiday@group.v.calendar.google.com"], label: "Calendars to read, one id per line (primary is yours; a holiday calendar's id contains #holiday@)"}
+  days: {type: int, default: 30, label: How many days ahead to read}

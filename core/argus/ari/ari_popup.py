@@ -37,10 +37,11 @@ import urllib.parse
 import urllib.request
 import webbrowser
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from .. import gcal
 from ..activities import rank as rank_activities
 from ..island_live import (
     Hardware,
@@ -112,6 +113,25 @@ ICON_NAMES = {"inbox": "inbox", "grid": "grid_view", "chat": "chat_bubble", "pag
 FONT_DIR = Path(__file__).resolve().parent.parent / "island_fonts"
 FONT_FILES = ("Inter-Regular.ttf", "Inter-Medium.ttf", "Inter-SemiBold.ttf", "Inter-Display.ttf",
               "Symbols-Rounded.ttf", "Symbols-Rounded-Filled.ttf")
+
+
+def sample_calendar(now: datetime) -> dict:
+    """Made-up Google Calendar events for --preview: two events today, one in two days, a holiday in three."""
+    day = now.date()
+
+    def at(n: int, h: int, m: int = 0) -> str:
+        d = datetime.combine(day + timedelta(n), datetime.min.time()).replace(hour=h, minute=m)
+        return d.astimezone().isoformat()
+
+    evs = [{"title": "Poya day", "start": (day + timedelta(3)).isoformat(), "end": (day + timedelta(4)).isoformat(),
+            "all_day": True, "calendar": "holidays"},
+           {"title": "Dentist", "start": at(0, 15, 30), "end": at(0, 16, 15), "all_day": False, "calendar": "events"},
+           {"title": "Call with Kaancha", "start": at(0, 18), "end": at(0, 18, 30), "all_day": False,
+            "calendar": "events"},
+           {"title": "Rent due", "start": at(2, 9), "end": at(2, 9, 30), "all_day": False, "calendar": "events"},
+           {"title": "Christmas Day", "start": f"{day.year}-12-25", "end": f"{day.year}-12-26", "all_day": True,
+            "calendar": "holidays"}]
+    return {"connected": True, "updated": time.time(), "events": gcal.merge(evs)}
 
 
 def reduced_motion() -> bool:
@@ -655,7 +675,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
         flash = Signal(str)
         ask = Signal(dict)
         answered = Signal(str)
-        live = Signal(str, object)  # what the PC itself says: media, hw, priv, weather
+        live = Signal(str, object)  # what the PC itself says: media, hw, priv, weather, calendar
         activities = Signal(list, list, dict)  # live activities, Send's transfer details, the devices' names
         activity_done = Signal(dict)  # a timer reached its end
         hotkey = Signal(str)
@@ -666,9 +686,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
 
     class Live:
         """Reads the PC for the island on its own thread, only what is on show (Island.want): the mic/camera dots
-        every 2 s, what's playing every second, the load every 1.5 s, the weather every half hour."""
+        every 2 s, what's playing every second, the load every 1.5 s, the weather every half hour, Google Calendar
+        every 5 minutes."""
 
-        EVERY = {"priv": 2.0, "media": 1.0, "hw": 1.5, "weather": 1800.0}
+        EVERY = {"priv": 2.0, "media": 1.0, "hw": 1.5, "weather": 1800.0, "calendar": 300.0}
 
         def __init__(self) -> None:
             self.media = Media()
@@ -688,6 +709,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 return self.media.read()
             if kind == "hw":
                 return self.hw.read()
+            if kind == "calendar":
+                return api.call("GET", "/island/calendar")
             return api.call("GET", "/island/weather")
 
         def run(self) -> None:
@@ -869,6 +892,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             self.priv: dict = {"mic": [], "camera": []}
             self.weather: dict = {}
             self.weather_at = 0.0
+            self.cal: dict = {}  # Google Calendar: {connected, events}; empty until connected (nothing extra shown)
             self.tick = QTimer(self, interval=500)  # the media page's position moves on its own
             self.tick.timeout.connect(self.update)
             self.place()
@@ -926,7 +950,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 out.add("priv")
             if self.details:
                 pid = self.page_id()
-                out |= {"media": {"media"}, "system": {"hw"}, "calendar": {"weather"}}.get(pid, set())
+                out |= {"media": {"media"}, "system": {"hw"}, "calendar": {"weather", "calendar"}}.get(pid, set())
             elif self.hover and self.mode() == "idle":
                 out.add("media")
             return out
@@ -1027,6 +1051,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                 self.priv = data
             elif kind == "weather":
                 self.weather = data or {}
+            elif kind == "calendar":
+                self.cal = data if isinstance(data, dict) and data.get("connected") else {}
             self.kick()
 
         def load_info(self) -> None:
@@ -2362,6 +2388,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                             "Weather: set your town in Helios > Settings")
             y += 50
             first = 0  # Monday, as Sri Lanka's calendars do
+            evs = self.cal.get("events") or []
+            marked = gcal.marks(evs, now.tm_year, now.tm_mon)  # day -> {"events", "holidays"}
             cw = (x1 - x0) / 7
             qp.setFont(F_TINY)
             qp.setPen(ink(FAINT))
@@ -2387,10 +2415,40 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
                         qp.setBrush(QColor(ACCENT))
                         qp.drawEllipse(cell.center(), 10.5, 10.5)
                     qp.setFont(font(12, 600, tnum=True) if today else F_DAY)
-                    qp.setPen(QColor(ON_ACCENT) if today else ink(FAINT) if i >= 5 else ink(0.85))
+                    holiday = "holidays" in marked.get(d, ())
+                    qp.setPen(QColor(ON_ACCENT) if today else QColor(AMBER) if holiday
+                              else ink(FAINT) if i >= 5 else ink(0.85))
                     qp.drawText(cell, Qt.AlignmentFlag.AlignCenter, str(d))
+                    dot = QColor(AMBER) if holiday else QColor(GREEN) if "events" in marked.get(d, ()) else None
+                    if dot is not None and not today:  # a small dot under the number: amber holiday, green event
+                        qp.setPen(Qt.PenStyle.NoPen)
+                        qp.setBrush(dot)
+                        qp.drawEllipse(QPointF(cell.center().x(), cell.y() + 21.5), 1.6, 1.6)
                 y += 24
-            return y + 4
+            y += 4
+            if evs:
+                weeks = len(month_grid(now.tm_year, now.tm_mon, first))
+                y = self.draw_agenda(qp, x0, x1, y, evs, 3 if weeks <= 5 else 2)
+            return y
+
+        def draw_agenda(self, qp: Any, x0: float, x1: float, y: float, evs: list, rows: int) -> float:
+            """Today's holidays and events as rows (a holiday's dot amber, an event's green), then what comes next
+            with its day on the right, up to `rows` in all."""
+            today = datetime.now().date()
+            shown = []
+            for ev in evs:
+                days = gcal.days_of(ev)
+                if not days or days[-1] < today:
+                    continue
+                if today in days:
+                    shown.append((today, ev, "all day" if ev.get("all_day") else gcal.clock(ev)))
+                else:
+                    shown.append((days[0], ev, days[0].strftime("%a ") + str(days[0].day)))
+            shown.sort(key=lambda t: (t[0], 0 if t[1].get("all_day") else 1))
+            for _day, ev, right in shown[:rows]:
+                y = self.line(qp, x0, x1, y, AMBER if ev.get("calendar") == "holidays" else GREEN,
+                              ev.get("title", ""), right)
+            return y
 
         def line(self, qp: Any, x0: float, x1: float, y: float, dot: str, text: str, right: str,
                  hot: bool = False) -> float:
@@ -3025,6 +3083,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
             island.clip_url = "https://example.com/a-link"
             if args.text == "nomusic":
                 island.media = {**island.media, "playing": False}
+            if args.text != "nocal":  # sample Google Calendar events (nocal: not connected, nothing extra)
+                island.cal = sample_calendar(datetime.now())
             if args.flip is not None and island.page > 0:  # coming from the page before, this far in
                 island.still = False
                 island.flip_from, island.flip_dir, island.prev_page = island.page - 1, 1, island.page - 1
