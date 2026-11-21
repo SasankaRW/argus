@@ -1,4 +1,4 @@
-"""Ari P1: late answers in order, one voice, livelier talk, Ollama kept up, a full off / on."""
+"""Ari P1: one voice, livelier talk, Ollama kept up, a full off / on."""
 
 from __future__ import annotations
 
@@ -64,35 +64,6 @@ def speak(talk):
         talk.frame(F, 0.05)
 
 
-def test_a_late_answer_comes_after_the_newer_one_and_says_what_it_was_about():
-    talk, p, heard, gates, jobs = talk_with({"what's the weather tomorrow": "Sunny, 31 degrees.",
-                                             "open spotify": "Spotify's up."})
-    heard += ["Hey Ari, what's the weather tomorrow", "open spotify"]
-    speak(talk)  # asked; its answer is slow
-    speak(talk)  # you carry on while Ari works: no waiting for the first
-    gates["what's the weather tomorrow"].set()  # the older answer arrives first: it waits
-    wait_for(lambda: talk._held)
-    assert p.said == []
-    gates["open spotify"].set()
-    for j in jobs:
-        j.join(5)
-    assert p.said[0] == "Spotify's up."  # the newest question first
-    assert p.said[1].startswith("Oh, and about") and "weather tomorrow" in p.said[1] and "Sunny" in p.said[1]
-
-
-def test_a_late_answer_the_newer_question_replaced_is_dropped():
-    talk, p, heard, gates, jobs = talk_with({"what's the weather tomorrow": "Sunny.",
-                                             "what's the weather on sunday": "Rain on Sunday."})
-    heard += ["Hey Ari, what's the weather tomorrow", "what's the weather on sunday"]
-    speak(talk)
-    speak(talk)
-    gates["what's the weather on sunday"].set()
-    gates["what's the weather tomorrow"].set()
-    for j in jobs:
-        j.join(5)
-    assert p.said == ["Rain on Sunday."]
-
-
 def test_stop_drops_answers_on_their_way_and_a_slow_one_says_still_on_it():
     talk, p, heard, gates, jobs = talk_with({"what's running": "Two jobs."})
     heard += ["Hey Ari, what's running"]
@@ -105,13 +76,6 @@ def test_stop_drops_answers_on_their_way_and_a_slow_one_says_still_on_it():
     for j in jobs:
         j.join(5)
     assert p.said == ["Still on it."]
-
-
-def test_about_and_replaced():
-    assert vl.about("Hey Ari, can you tell me the weather for tomorrow in Colombo please") == \
-        "the weather for tomorrow in Colombo"
-    assert vl.replaced("weather tomorrow", ["and the weather on sunday?"])
-    assert not vl.replaced("open spotify", ["what's the weather"])
 
 
 def test_small_talk_is_not_said_the_same_way_every_time(tmp_path):

@@ -480,6 +480,9 @@ for quick asks, the bigger one first for harder ones), and Claude only after all
   and Smart Turn cut your sentences; tiny Whisper (no hints) checks for the wake phrase; the better model writes
   down the request with your names as hotwords. After an answer you can carry on without "Hey Ari" for a few
   seconds, except while the PC plays sound or for a long stream of words.
+  One conversation, one turn at a time: a pause under `JOIN_GAP_S` (1.2 s) doesn't end what you say (the bits are
+  joined); words said before Ari starts answering replace the question in flight (cancelled) and are asked once, together;
+  the next question is sent only after the previous reply is saved; talking over Ari stops it and your words are the next turn.
 - **Ari speaks only when spoken to.** Notices go to the island and the phone, and `ari.speak_up` (on by default) says them aloud: at once at the PC, or in one line when you're back.
 
 **The Ari pill.** Ari reports what it's doing as `ari.state` events (listening, thinking, working with the tool

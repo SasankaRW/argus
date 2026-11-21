@@ -117,6 +117,13 @@ class AriClient:
             return r.read()
 
     NEW_CHAT_S = 30 * 60
+    _calls = 0  # say() calls so far; the one in flight is the newest (asks never overlap)
+    _cancelled: set = set()  # calls whose answer is no longer wanted (what you said next replaced the question)
+
+    def cancel(self) -> None:
+        """The question being waited for is replaced: stop waiting and, if it already became a job, cancel the job."""
+        self._cancelled.add(self._calls)
+
     WAIT_S = 300.0  # how long an answer is waited for (the PC may have to wake its model first)
 
     def _later(self, method: str, path: str, body: dict) -> None:
@@ -140,6 +147,7 @@ class AriClient:
         """Ask Ari. `on_partial(text_so_far, mood)`: the finished sentences of a reply still being written (small
         talk streams), so they can be spoken before the rest is ready."""
         LAST_ASKED[0] = started = time.monotonic()
+        self._calls = me = self._calls + 1
         if self.conv and time.time() - self.used > self.NEW_CHAT_S:
             self.conv = None  # a while since we last talked: a fresh chat, so old ones don't leak into this one
         self.used = time.time()
@@ -164,6 +172,13 @@ class AriClient:
                 time.sleep(0.15)
                 n += 1
                 if STOPPED_AT[0] > started:  # the island's Stop button: drop this answer
+                    return {"reply": "", "stopped": True}
+                if me in self._cancelled:  # replaced by a longer question: stop the model, say nothing
+                    self._cancelled.discard(me)
+                    try:
+                        self._req("POST", f"/jobs/{job}/cancel", {}, timeout=5)
+                    except _REQ_ERRORS:
+                        pass
                     return {"reply": "", "stopped": True}
                 if on_partial is not None:
                     try:
@@ -515,6 +530,7 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device,
                    ask=ask, player=player, report=client.state, chime=lambda: player.cue(vl.chime_samples(), RATE),
                    idle_s=float(cfg.ari.talk_idle_s), on_false_barge=gate.fooled,
                    live_words=wake_t if cfg.ari.live_words else None, show=client.state, ask_async=True,
+                   join_gap_s=vl.JOIN_GAP_S, cancel=client.cancel,
                    quiet=lambda: MIC["busy"] is not None, follow_ok=follow_ok, language=lang_t,
                    on_ignored=client.ignored, on_answered=client.answered)
     keeper = NoticeKeeper()  # important news: said now, or kept and said when you're back
@@ -571,7 +587,7 @@ def live(cfg, client: AriClient, wake_t: Callable, cmd_t: Callable, device,
             check_busy(client, cfg=cfg)
             player.poll()
             talk.tick()
-            busy = player.busy or talk.in_conversation or talk.turns.talking
+            busy = player.busy or talk.in_conversation or talk.turns.talking or talk.waiting
             time.sleep(0.1 if busy else 0.5)
 
     threading.Thread(target=watch, daemon=True, name="ari-watch").start()
