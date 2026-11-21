@@ -4,7 +4,7 @@
                                       what isn't working (p: the details)
     python -m argus.console ari       the conversation with Ari as it happens
     python -m argus.console events    the timeline: a lane per machine with its jobs (+/- zoom), then the events
-    python -m argus.console logs      each request as one line (l: the raw logs with the model calls; f: failures;
+    python -m argus.console logs      argusd's and the workers' log (l: each Ari request as one line; f: failures;
                                       /: search; up/down and Enter: a request's full trace)
     python -m argus.console all       all four in one tmux window (what the laptop opens at login)
 
@@ -1098,7 +1098,8 @@ LEVEL = {"debug": (DIM, "DBG"), "info": (TEXT, "INF"), "warn": (WARN, "WRN"), "w
 
 
 class LogsView:
-    """What happened, one readable line each. Two modes (`l` switches):
+    """What happened, one readable line each. Two modes (`l` switches; Argus's log first, Ari's panel above already
+    shows the conversation):
     - requests: each thing you asked Ari as one line (heard → what Ari did → the answer or why it failed), and
       speech that was ignored, dimmed, with why. ↑/↓ choose a line, Enter opens its full trace, Esc closes it.
     - logs: argusd's and the worker's log lines (warnings amber, errors red) with the model calls in between.
@@ -1110,7 +1111,7 @@ class LogsView:
         self.calls: list[dict] = []
         self.stories: list[dict] = []
         self.at: dict[str, int | None] = {}
-        self.mode = "requests"
+        self.mode = "logs"
         self.failures_only = False
         self.search = ""
         self.typing: str | None = None  # the search being typed
