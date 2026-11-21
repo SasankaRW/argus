@@ -225,6 +225,7 @@ class Turns:
     _quiet_s: float = 0.0
     _talking: bool = False
     _asked_at_quiet: float = -1.0
+    quiet_at_end: float = 0.0  # how long it had been quiet when the last turn ended
 
     def reset(self) -> None:
         self._buf, self._voice_s, self._quiet_s, self._talking, self._asked_at_quiet = [], 0.0, 0.0, False, -1.0
@@ -281,11 +282,15 @@ class Turns:
         import numpy as np
 
         audio = np.concatenate(self._buf) if self._buf else np.zeros(0, dtype=np.float32)
+        self.quiet_at_end = self._quiet_s
         self._buf, self._talking, self._voice_s, self._quiet_s = [], False, 0.0, 0.0
         return ("end", audio)
 
 
 # ------------------------------------------------------------------ what was said, in a conversation
+
+# A pause shorter than this does not end what you are saying: bits that arrive within it are one question
+JOIN_GAP_S = 1.2
 
 # "okay, give me a moment", "one sec", "hold on": at the end of what you said (or all of it), after a pause mark
 HOLD = re.compile(r"^(?P<before>(?:.*?[.,!?…]\s*)?)(?:(?:ok(?:ay)?|so|um+|uh+)[\s,]+)*"
@@ -433,24 +438,9 @@ def _words(text: str) -> set[str]:
     return {w for w in re.findall(r"[a-z0-9']+", text.lower()) if w not in _SMALL and len(w) > 2}
 
 
-def replaced(question: str, newer: list[str]) -> bool:
-    """A newer question is about the same thing ("weather tomorrow" -> "and the weather on Sunday"): the old
-    answer is no longer wanted."""
-    old = _words(question)
-    return bool(old) and any(len(old & _words(n)) / len(old) >= 0.5 for n in newer)
-
-
-def about(question: str) -> str:
-    """What an earlier question was about, short, for "Oh, and about …"."""
-    q = re.sub(r"^(?:(?:hey|ok|okay)\s+)?ari[,\s]*", "", question.strip(), flags=re.I)
-    while True:  # "can you please tell me the weather" -> "the weather"
-        q2 = re.sub(r"^(?:(?:can|could|would) you|please|tell me|show me|let me know)[,\s]+", "", q, flags=re.I)
-        if q2 == q:
-            break
-        q = q2
-    q = re.sub(r"[,\s]+please$", "", q.rstrip(" ?.!"), flags=re.I)
-    words = q.split()
-    return " ".join(words[:7]) + ("…" if len(words) > 7 else "") if words else "what you asked"
+def joined(before: str, after: str) -> str:
+    """Two bits of one utterance as one ("Yeah." + "Read it" -> "Yeah. Read it")."""
+    return f"{before.strip()} {after.strip()}".strip()
 
 
 @dataclass
@@ -501,19 +491,27 @@ class Talk:
     _gen: int = 0
     _following: bool = False  # "following" was reported for this answer (the island's follow-up ring)
     paused_for_barge: bool = False
-    # Ask in the background (the PC's listener): you can keep talking while Ari works, and answers that come late
-    # are put in order (see _answered). False: ask and wait, as before.
+    # Ask in the background (the PC's listener): the loop keeps listening while Ari works. Only ever one question is
+    # in flight: words said before its answer starts being spoken are joined to it and ask again (the old one is
+    # cancelled); a new question waits until the previous reply is saved. False: ask and wait, as before.
     ask_async: bool = False
+    # A pause shorter than this does not end what you say: bits within it are one question (0: ask at once)
+    join_gap_s: float = 0.0
+    cancel: Callable[[], None] = lambda: None  # the question in flight is no longer wanted (stop the model if cheap)
     slow_after_s: float = 15.0  # no answer yet after this long: "Still on it." (once)
     _ask_seq: int = 0
-    _open: dict = field(default_factory=dict)  # seq -> {"q", "at", "slow"}: questions still being answered
-    _held: list = field(default_factory=list)  # (seq, question, answer): older answers waiting for a newer one
-    _spoken_seq: int = 0  # the newest question whose answer was spoken
+    _open: dict = field(default_factory=dict)  # seq -> {"q", "at", "slow", "spoken", "muted"}: the question in flight
+    _pending: dict | None = None  # {"text", "due", "heard"}: said, waiting out the gap (and for the reply in flight)
     _lock: Any = field(default_factory=threading.RLock)
 
     @property
     def in_conversation(self) -> bool:
         return self.clock() < self.in_talk_until
+
+    @property
+    def waiting(self) -> bool:
+        """Something you said is waiting out the pause gap (the clock must tick often)."""
+        return self._pending is not None
 
     def wake(self) -> None:
         """The island's Talk button: listen now, no wake phrase needed."""
@@ -572,6 +570,7 @@ class Talk:
         self.run(work)
 
     def _turn(self, audio) -> str | None:
+        t_end = self.clock()
         self._gen += 1  # words still being worked out for this turn are no longer wanted
         self._live_text = ""
         barged, self.paused_for_barge = self.paused_for_barge, False
@@ -618,6 +617,9 @@ class Talk:
                 self.player.resume()  # "mm", "yeah": you're listening, not interrupting
                 return "resumed"
             self.player.stop()
+            for o in self._open.values():  # an answer already being said: not said any more
+                if o["spoken"]:
+                    o["muted"] = True
         if not text:
             return None
         rest = self.wake_rest(text)
@@ -641,6 +643,9 @@ class Talk:
         hold = HOLD.match(command)
         if hold:  # "My day was... okay, give me a moment": keep listening for the rest, say nothing yet
             before = hold.group("before").strip()  # "My day was...", "In the morning,": kept as said
+            if self._pending is not None:  # "Yeah. Hold on": what came first is kept with it
+                self._held_text = joined(self._held_text, self._pending["text"])
+                self._pending = None
             self._held_text = f"{self._held_text} {before}".strip()
             self._hold_until = self.clock() + self.hold_s
             self.in_talk_until = max(self.in_talk_until, self._hold_until)
@@ -654,38 +659,72 @@ class Talk:
             self._held_text = ""
         self._hold_until = 0.0
         if BYE.match(command):
+            self._pending = None
+            if self._open:
+                self._abandon()
             self.in_talk_until = 0.0
             self.player.say(["Okay."])
             self.report("idle")
             return "bye"
         self._following = False
-        self._awaiting = False
+        heard = {**({k: lang.get(k) for k in ("accepted", "top", "top_p")} if lang else {}),
+                 **({"second_listen": True} if self.last_heard.get("second_listen") else {}),
+                 **({"follow_up": True} if self.in_conversation and not barged else {})}
+        log.info("heard", extra={"text": command, **({"english": lang.get("accepted"), "lang": lang.get("top")}
+                                                      if lang else {})})
+        if self._pending is not None:  # more of the same utterance (a pause is not the end)
+            command = joined(self._pending["text"], command)
+            heard = {**self._pending["heard"], **heard}
+        else:
+            cur = self._open.get(self._ask_seq)
+            if cur is not None and not cur["spoken"]:  # still thinking: what you add is part of the question
+                command = joined(cur["q"], command)
+                self._abandon()
+        quiet = max(0.0, self.turns.quiet_at_end)
+        self._pending = {"text": command, "heard": heard, "due": t_end + max(0.0, self.join_gap_s - quiet)}
+        self._awaiting = True  # the next words, if any, are still part of this
         if self.show is not None:
             self.show("thinking", command)  # the island keeps what you said on show while Ari works
         else:
             self.report("thinking")
-        log.info("heard", extra={"text": command, **({"english": lang.get("accepted"), "lang": lang.get("top")}
-                                                      if lang else {})})
-        self.last_heard = {**({k: lang.get(k) for k in ("accepted", "top", "top_p")} if lang else {}),
-                           **({"second_listen": True} if self.last_heard.get("second_listen") else {}),
-                           **({"follow_up": True} if self.in_conversation and not barged else {})}
+        self._keep_talking()
+        self._pump()
+        return command
+
+    def _abandon(self) -> None:
+        """The question in flight is replaced: its answer, streamed or whole, is never spoken."""
+        for seq in list(self._open):
+            self._open.pop(seq)
+            log.info("question replaced before its answer", extra={"seq": seq})
+        try:
+            self.cancel()
+        except Exception as e:  # noqa: BLE001 - stopping the model is a nicety
+            log.info("could not cancel", extra={"error": str(e)[:100]})
+
+    def _pump(self) -> None:
+        """Send the waiting question once the gap has passed, you are not talking and no reply is still on its way."""
+        p = self._pending
+        if p is None or self.turns.talking or self._open or self.clock() < p["due"]:
+            return
+        self._pending = None
+        self._awaiting = False
+        command, self.last_heard = p["text"], p["heard"]
         self._ask_seq += 1
         seq = self._ask_seq
-        self._last_q = command
-        self._open[seq] = {"q": command, "at": self.clock(), "slow": False}
+        self._open[seq] = {"q": command, "at": self.clock(), "slow": False, "spoken": False, "muted": False}
         streamed = {"text": "", "mood": "neutral"}
         if self.ask_async:
             self.run(lambda: self._answered(seq, command, self._call(seq, command, streamed), streamed))
             self._keep_talking()
-            return command
+            return
         self._answered(seq, command, self._call(seq, command, streamed), streamed)
-        return command
 
     def _call(self, seq: int, command: str, streamed: dict) -> dict:
         def partial(text: str, mood: str) -> None:  # a reply still being written: its finished sentences now
             with self._lock:
-                if seq != self._ask_seq or self._held or self.quiet():
-                    return  # not the newest question (or older answers wait, or quiet): this one in one go
+                cur = self._open.get(seq)
+                if cur is None or cur["muted"] or self.quiet():
+                    return  # replaced, talked over, or quiet: no half answers
                 if not text.startswith(streamed["text"]):
                     return
                 new = text[len(streamed["text"]):].strip()
@@ -695,6 +734,8 @@ class Talk:
                 streamed["text"] = text
                 if ps:
                     streamed["mood"] = ps[-1][0]
+                if ps:
+                    cur["spoken"] = True
                 self.player.add(tagged(ps))
 
         try:
@@ -704,29 +745,26 @@ class Talk:
             return {"reply": "Sorry, I can't reach Argus right now."}
 
     def _answered(self, seq: int, command: str, ans: dict, streamed: dict) -> None:
-        """An answer is back. Newest question first: an older answer that arrives while a newer question is still
-        being answered waits, then follows with "Oh, and about …". One the newer question replaced is dropped."""
+        """An answer is back (the turn is saved, so the next question sees it). One that was replaced or stopped
+        is ignored; one you talked over is not said."""
         with self._lock:
-            if seq not in self._open:
-                return  # dropped (Stop)
-            asked = self._open.pop(seq, None) or {}
+            asked = self._open.pop(seq, None)
+            if asked is None:
+                return  # dropped (Stop) or replaced by a longer question
             try:
                 self.on_answered({"answer_ms": round((self.clock() - float(asked.get("at") or self.clock())) * 1000),
-                                  "spoken": not self.quiet(), "empty": not (ans.get("reply") or "").strip()})
+                                  "spoken": not self.quiet() and not asked["muted"],
+                                  "empty": not (ans.get("reply") or "").strip()})
             except Exception:  # noqa: BLE001 - the timeline is a nicety
                 pass
             reply = (ans.get("reply") or "").strip()
-            if reply and any(s > seq for s in self._open):
-                self._held.append((seq, command, ans))
-                return
+            if asked["muted"]:
+                reply = ""  # you talked over it: what you said next is the question now
             if reply:
-                late = seq < self._spoken_seq
-                if late and replaced(command, self._newer_questions(seq)):
-                    log.info("late answer dropped: a newer question replaced it", extra={"q": command[:60]})
-                else:
-                    self._speak(command, reply, streamed, late)
-                    self._spoken_seq = max(self._spoken_seq, seq)
-            self._flush()
+                self._speak(reply, streamed)
+            if self._pending is not None:
+                self._pump()
+                return
             if ans.get("pending"):
                 self._awaiting = True  # "Shall I?": a plain yes / no is for Ari
             elif asks_you(reply):  # "How was your day?": your answer is for Ari, however long
@@ -734,15 +772,12 @@ class Talk:
                 self._long_turn()
             self._keep_talking()
 
-    def _speak(self, command: str, reply: str, streamed: dict, late: bool) -> None:
+    def _speak(self, reply: str, streamed: dict) -> None:
         if self.quiet():  # in a call or a game: shown, not said
             if self.show is not None:
-                self.show("done", f"About {about(command)}: {reply}" if late else reply)
+                self.show("done", reply)
             else:
                 self.report("done")
-            return
-        if late:  # after something newer: say what it was about first
-            self.player.add(tagged(phrases(f"Oh, and about {about(command)}: {reply}")))
             return
         rest = after_spoken(reply, streamed["text"]) if streamed["text"] else None
         if rest is not None:  # most of it is said already: the rest follows on
@@ -751,27 +786,12 @@ class Talk:
             # "[excited] We won! [sympathetic] Shame about the rain.": each sentence carries the mood it is said in
             self.player.say(tagged(phrases(reply)))
 
-    def _flush(self) -> None:
-        """Older answers that waited, oldest first, once nothing newer is still open."""
-        for item in sorted(self._held):
-            seq, command, ans = item
-            if any(s > seq for s in self._open):
-                continue
-            self._held.remove(item)
-            if replaced(command, self._newer_questions(seq)):
-                log.info("late answer dropped: a newer question replaced it", extra={"q": command[:60]})
-                continue
-            self._speak(command, (ans.get("reply") or "").strip(), {"text": ""}, late=True)
-
-    def _newer_questions(self, seq: int) -> list[str]:
-        return [o["q"] for s, o in self._open.items() if s > seq] + [q for s, q, _ in self._held if s > seq] + \
-            ([self._last_q] if getattr(self, "_last_q", None) and seq < self._spoken_seq else [])
-
     def drop_pending(self) -> None:
         """Stop: answers still on their way are not said."""
         with self._lock:
             self._open.clear()
-            self._held.clear()
+            self._pending = None
+            self._awaiting = False
 
     def _keep_talking(self) -> None:
         self.in_talk_until = self.clock() + self.idle_s + 30.0  # the reply's own length is added by tick()
@@ -789,6 +809,7 @@ class Talk:
         """Call often: the quiet clock only runs once Ari has finished talking; at the end, back to waiting."""
         now = self.clock()
         with self._lock:
+            self._pump()
             newest = self._open.get(self._ask_seq)
             if self.ask_async and newest and not newest["slow"] and now - newest["at"] > self.slow_after_s \
                     and not self.player.busy:
