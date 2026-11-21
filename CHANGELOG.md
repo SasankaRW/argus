@@ -5,6 +5,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Clear the problem and dead counts:** in the console press `p` then `c` (or POST /problems/clear): the problems and the dead-jobs count start again from that moment. Nothing is deleted; jobs and their errors stay.
 - **Console:** the logs panel opens on Argus's own log (argusd and the workers, with the model calls); `l` switches to Ari's requests, which the Ari panel above already shows.
 - **Ari reads your mail:** "hello, can you check my emails" is a request, not small talk (check, read, mail, inbox, calendar and the like mark a request); when the model picks the mail tool itself, the mails are read out in code instead of a second model call that only promised to; an answer dropped because you went on talking leaves no "Sorry, I couldn't answer that" in the chat.
 - **Ari, one turn at a time:** a pause under 1.2 s no longer ends what you say (the bits are joined into one question); words said while Ari is still thinking replace the question in flight (its job is cancelled and its answer never spoken) and are asked once, together, e.g. "Yeah. Read it"; the next question is sent only after the previous reply is saved, so Ari knows what it just said; and talking over Ari stops it and your words become the next turn. The "Oh, and about …" stitching of parallel answers is gone.

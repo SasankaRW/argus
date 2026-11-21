@@ -80,4 +80,11 @@ def build_router(deps: Deps) -> APIRouter:
         p = await argus.store.read(lambda c: timeline_mod.problems(c, time.time(), hours))
         return {**p, "headline": timeline_mod.headline(p)}
 
+    @router.post("/problems/clear", dependencies=guarded)
+    async def clear_problems() -> dict:
+        """Start the problem and dead-job counts again from now. Nothing is deleted: jobs and their errors stay."""
+        from ... import cleared
+
+        return {"cleared_at": await argus.store.write(lambda c: cleared.clear(c))}
+
     return router

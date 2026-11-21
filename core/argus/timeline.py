@@ -230,7 +230,9 @@ def hint(text: str) -> str | None:
 
 def problems(conn: sqlite3.Connection, now: float, hours: float = 24) -> dict[str, Any]:
     """What went wrong since `hours` ago, grouped by cause: [{area, what, count, last_at, example, hint}]."""
-    since = now - hours * 3600
+    from . import cleared
+
+    since = max(now - hours * 3600, cleared.at(conn))  # not before you last cleared them
     groups: dict[tuple[str, str], dict[str, Any]] = {}
 
     def add(area: str, what: str, at: float, example: dict | None = None) -> None:
