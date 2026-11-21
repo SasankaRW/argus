@@ -339,7 +339,7 @@ def new(ctx: Context):
         _client(ctx)
     except PermanentError as e:  # not set up yet: say so, plainly
         return {"done": False, "problem": str(e)}
-    key = ctx.step("key", access_token, ctx)
+    key = access_token(ctx)  # not a step: a job's steps are shown in Helios
     if not key:
         return ctx.step("allow", _needs_allow, ctx)
     try:
@@ -363,7 +363,7 @@ def read(ctx: Context):
         _client(ctx)
     except PermanentError as e:  # not set up yet: say so, plainly
         return {"done": False, "problem": str(e)}
-    key = ctx.step("key", access_token, ctx)
+    key = access_token(ctx)  # not a step: a job's steps are shown in Helios
     if not key:
         return ctx.step("allow", _needs_allow, ctx)
     mails = list((ctx.store.get("mail", []) if ctx.store is not None else []) or [])

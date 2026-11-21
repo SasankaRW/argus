@@ -17,7 +17,22 @@ from datetime import date, datetime, timedelta
 
 KINDS = ("events", "holidays")
 HORIZON_DAYS = 30
-DEFAULT_CALENDARS = ["primary", "en.lk#holiday@group.v.calendar.google.com"]  # yours, Sri Lanka's holidays
+DEFAULT_CALENDARS = ["all", "en.lk#holiday@group.v.calendar.google.com"]  # every ticked calendar, Sri Lanka's holidays
+
+
+def expand_calendars(ids: list[str], listed: list[dict] | None) -> list[str]:
+    """"all" -> every calendar ticked (selected, not hidden) in your Google Calendar list, in its order; the other ids
+    stay as written, without repeats. `listed` None (the list couldn't be read): "all" falls back to primary."""
+    out: list[str] = []
+    for i in ids:
+        if i != "all":
+            got = [i]
+        elif listed is None:
+            got = ["primary"]
+        else:
+            got = [str(c["id"]) for c in listed if c.get("id") and c.get("selected") and not c.get("hidden")]
+        out += [x for x in got if x not in out]
+    return out
 
 
 def kind_of(cal_id: str) -> str:
