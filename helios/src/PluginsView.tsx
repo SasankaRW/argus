@@ -3,6 +3,7 @@ import { api, Job } from "./api";
 import { FixerPanel } from "./FixerPanel";
 import { HoldButton, Ms, SectI } from "./m3";
 import { ago, tone } from "./format";
+import { calendarLine, type CalendarStatus } from "./calendarStatus";
 import type { Selection } from "./mapInfo";
 
 type PluginInfo = { id: string; name: string; description: string; live: boolean; runs_on: string; workflows: string[];
@@ -148,6 +149,7 @@ function PluginDetail({ id, onSelect, onChanged }: { id: string; onSelect: (s: S
             {d.rules && <button type="button" className="btn" onClick={() => { location.hash = `rules/${encodeURIComponent(d.id)}`; }}>Edit {d.rules.toLowerCase()}</button>}
           </div>
         )}
+        {d.id === "calendar" && <CalendarCard last={d.runs[0]?.state ?? ""} />}
         {msg && <div className="tip">{msg}</div>}
         {err && <div className="tip bad">{err}</div>}
       </div>
@@ -167,6 +169,14 @@ function PluginDetail({ id, onSelect, onChanged }: { id: string; onSelect: (s: S
       </div>
     </>
   );
+}
+
+// Google Calendar's own status: connected, or why not (the plugin saves it after every read).
+function CalendarCard({ last }: { last: string }) {
+  const [s, setS] = useState<CalendarStatus | null>(null);
+  useEffect(() => { api<{ value: CalendarStatus | null }>("/plugins/calendar/state/status").then((r) => setS(r.value)).catch(() => setS(null)); }, [last]);
+  const line = calendarLine(s);
+  return <div className={`tip${line.tone === "bad" ? " bad" : ""}`}>{line.text}</div>;
 }
 
 function Overview({ d }: { d: Detail }) {

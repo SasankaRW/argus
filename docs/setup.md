@@ -298,6 +298,22 @@ daily cap.
   4. Add `gmail` to `plugins.live` on the laptop, and say "check my mails". The first time Ari opens Google's page
      in your own Chrome (the profile in the plugin's `chrome_profile`, Sasanka by default): click Allow, then ask
      again. The key is kept in `data/plugins/gmail/token.json` on the PC (never in Git).
+- **Google Calendar** (`calendar`): your Google Calendar events and the Sri Lanka holidays on the island's calendar
+  page (holidays amber, events green in the month, today's and the next ones listed under it). Read-only
+  (`calendar.readonly`), its own key, the same Google Cloud client as Gmail. Every 15 minutes it reads today and the
+  next 30 days and keeps the last good answer, so the island works offline; not connected, the island shows
+  nothing extra. Calendars are the plugin's `calendars` setting (default `primary` and
+  `en.lk#holiday@group.v.calendar.google.com`). Set it up once:
+  1. In the same Google Cloud project as Gmail: APIs & Services > Library > **Google Calendar API** > Enable.
+  2. Google Auth Platform > Data access > Add or remove scopes: add
+     `https://www.googleapis.com/auth/calendar.readonly` (Gmail's scope stays). Save. (Needed if your consent screen
+     lists scopes; skip it if the Allow page already shows Calendar.)
+  3. Gmail's `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` are already in the PC's `.env`; if not, do Gmail's step 3 first,
+     then `.\scripts\pc-worker.ps1 restart` so the PC worker loads the new plugin.
+  4. Add `calendar` to `plugins.live` on the laptop. In Helios > Plugins > Google Calendar press **Connect Google
+     Calendar**: Google's page opens in your Chrome (the `chrome_profile` setting): click Allow. Then press
+     **Refresh now** (or wait up to 15 minutes). The card says "Connected", or why not in plain words (API not
+     enabled, OK taken back). The key is kept in `data/plugins/calendar/token.json` on the PC (never in Git).
 - **PC keyboard** (`pc-keys`): "type 'see you at 6' ", "press ctrl+s" in the window in front (always asks
   first; never types passwords).
 - **PC status** (`pc-system`): "how's the PC doing?", "what's using my GPU?", "how much space is left on G?",
