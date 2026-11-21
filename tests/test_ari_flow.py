@@ -107,6 +107,8 @@ def test_small_talk_is_just_talk(tmp_path):
 
     assert chatty("how are you") and chatty("I'm bored") and chatty("tell me a joke")
     assert not chatty("how's the weather") and not chatty("hi, set a timer for 5 minutes")
+    assert not chatty("Hello, can you check my emails") and not chatty("hey, read my mail")
+    assert not chatty("hi, any plans on my calendar tomorrow") and not chatty("hello, what is in my inbox")
     with FakeOllama({"qwen2.5-coder:7b": [{"reply": "Living the dream in your PC. You?"}]}) as ol, \
             Server(make(tmp_path).open()) as srv:
         cl = client(srv.url)
