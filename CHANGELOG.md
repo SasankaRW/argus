@@ -5,6 +5,7 @@ All notable changes to Argus. Versions follow `MAJOR.MINOR.PATCH`. New entries g
 
 ## Unreleased
 
+- **Watchers:** a wishlist restock or price drop also updates Life Hub at once (the advisor's price check runs right away instead of at its next 6-hourly run), for Life Hub's banner.
 - **Ari speaks up:** important news (a wishlist restock, a failed job) is said straight away when you're at the PC, or kept for up to a day and said in one line when you're back ("While you were away: Dune book is back in stock"); on by default (`ari.speak_up`). Wishlist news also goes into an "Updates from Argus" chat, and the map's banner says your phone and Ari were told.
 - **Island:** pages glide when you flip them and the page dot stretches into a pill; blocks rise in as a page appears; a compact start page (the time, date and weather beside game mode, power and Ari's orb; tiles for Argus, what waits for you and the next job with a closing ring; what's playing, only while it plays; Clipboard and Auto game switches; shortcuts as a row of icons); moving music bars, load bars that ease, a live CPU line, today pulsing on the calendar, and ripples where you press. Still under reduced motion.
 - **Diary:** dates said as a list ("19,20 December") no longer make every rewrite fail and the day get saved as typed; a new "Rewrite this day" (Helios button for today, or ask Ari "rewrite my diary for the 20th") writes a day again from what you said.
