@@ -689,7 +689,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one window, draw
         every 2 s, what's playing every second, the load every 1.5 s, the weather every half hour, Google Calendar
         every 5 minutes."""
 
-        EVERY = {"priv": 2.0, "media": 1.0, "hw": 1.5, "weather": 1800.0, "calendar": 300.0}
+        EVERY = {"priv": 2.0, "media": 1.0, "hw": 1.5, "weather": 1800.0, "calendar": 60.0}
 
         def __init__(self) -> None:
             self.media = Media()

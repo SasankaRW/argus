@@ -124,6 +124,8 @@ class FakeGoogle:
         if url == cal.TOKEN:
             return 200, json.dumps({"access_token": "A2", "expires_in": 3600}).encode()
         assert headers["Authorization"] == "Bearer A1" or headers["Authorization"] == "Bearer A2"
+        if url.startswith(cal.LIST):
+            return self.replies["__list__"]
         cid = urllib.parse.unquote(url[len(cal.API) + 1:].split("/events")[0])
         r = self.replies[cid]
         if isinstance(r, Exception):
@@ -139,7 +141,7 @@ def ctx(tmp_path, google, *, token=True, calendars=None):
     env = {"GMAIL_CLIENT_ID": "cid.apps.googleusercontent.com", "GMAIL_CLIENT_SECRET": "sec"}
     return SimpleNamespace(
         input={}, dry_run=False, config={"chrome_profile": "Sasanka", "days": 30,
-                                         "calendars": calendars or gcal.DEFAULT_CALENDARS}, data_dir=tmp_path,
+                                         "calendars": calendars or ["primary", HOL_ID]}, data_dir=tmp_path,
         secrets=SimpleNamespace(get=lambda k, d=None: env.get(k, d)), http=google,
         store=SimpleNamespace(get=lambda k, d=None: st.get(k, d), set=lambda k, v: st.__setitem__(k, v), data=st),
         step=lambda name, fn, *a, **k: fn(*a, **k))
@@ -228,7 +230,7 @@ def test_the_plugin_loads_and_its_default_calendars_are_a_setting(tmp_path, monk
     with Server(make(tmp_path, monkeypatch).open()) as srv:
         d = client(srv.url).get("/plugins/calendar")
     cfg = {s["name"]: s for s in d["settings"]}
-    assert cfg["calendars"]["default"] == ["primary", HOL_ID]
+    assert cfg["calendars"]["default"] == ["all", HOL_ID]
     assert [b["label"] for b in d["buttons"]] == ["Connect Google Calendar", "Refresh now"]
     assert any(s["workflow"] == "sync" and s["cron"] == "*/15 * * * *" for s in d["schedules"])
 
@@ -270,3 +272,24 @@ def test_the_island_draws_the_calendar_with_and_without_events(tmp_path):
         r = subprocess.run([*base, "--preview", str(png), *extra], capture_output=True, text=True, timeout=120,
                            cwd=ROOT / "core", env={**__import__("os").environ, "QT_QPA_PLATFORM": "offscreen"})
         assert r.returncode == 0 and png.stat().st_size > 1000, r.stderr[-400:]
+
+
+def test_all_means_every_calendar_ticked_in_google_calendar():
+    listed = [{"id": "me@example.com", "selected": True, "primary": True}, {"id": "f1", "selected": True},
+              {"id": "hidden", "selected": True, "hidden": True}, {"id": "unticked"}, {"id": HOL_ID, "selected": True}]
+    assert gcal.expand_calendars(["all", HOL_ID], listed) == ["me@example.com", "f1", HOL_ID]
+    assert gcal.expand_calendars(["primary", "f1"], listed) == ["primary", "f1"]  # no "all": as written
+    assert gcal.expand_calendars(["all", HOL_ID], None) == ["primary", HOL_ID]  # the list failed: yours at least
+
+
+def test_sync_reads_the_ticked_calendars_and_never_keeps_the_key_in_a_step(tmp_path):
+    timetable = {"summary": "Lecture", "start": {"dateTime": "2026-11-23T08:00:00+05:30"},
+                 "end": {"dateTime": "2026-11-23T10:00:00+05:30"}}
+    g = FakeGoogle({"__list__": ok({"id": "tt", "selected": True}, {"id": HOL_ID, "selected": True}),
+                    "tt": ok(timetable), HOL_ID: ok(HOLIDAY)})
+    c = ctx(tmp_path, g, calendars=["all", HOL_ID])
+    steps = []
+    c.step = lambda name, fn, *a, **k: (steps.append((name, fn(*a, **k))), steps[-1][1])[1]
+    assert cal.sync(c) == {"done": True, "events": 2}
+    assert "A1" not in json.dumps(steps, default=str)  # a job's steps are shown in Helios: no access key there
+    assert gcal.DEFAULT_CALENDARS[0] == "all"

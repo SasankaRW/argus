@@ -38,6 +38,7 @@ SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
 AUTH = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN = "https://oauth2.googleapis.com/token"  # noqa: S105 - Google's token address, not a secret
 API = "https://www.googleapis.com/calendar/v3/calendars"
+LIST = "https://www.googleapis.com/calendar/v3/users/me/calendarList"
 OFFLINE = "Couldn't reach Google (offline?): the island keeps showing the last events it got."
 PAGES = 4  # up to 1000 events per calendar
 _PENDING: dict[str, Any] = {}  # an "Allow" page that is open right now (one at a time)
@@ -247,6 +248,17 @@ def calendars_of(ctx: Context) -> list[str]:
     return [str(c).strip() for c in (ctx.config.get("calendars") or gcal.DEFAULT_CALENDARS) if str(c).strip()]
 
 
+def list_calendars(ctx: Context, key: str) -> list[dict] | None:
+    """Your Google Calendar list ({id, selected, hidden}), or None if it can't be read."""
+    q = {"minAccessRole": "reader", "fields": "items(id,selected,hidden)", "maxResults": 250}
+    try:
+        status, body = ctx.http.request("GET", f"{LIST}?{urllib.parse.urlencode(q)}",
+                                        headers={"Authorization": f"Bearer {key}"})
+    except OSError:
+        return None
+    return (json.loads(body or b"{}").get("items") or []) if status < 400 else None
+
+
 def save_status(ctx: Context, state: str, message: str) -> dict:
     status = {"state": state, "message": message, "at": time.time()}
     if ctx.store is not None:
@@ -264,7 +276,7 @@ def sync_now(ctx: Context, allow: bool) -> dict:
         save_status(ctx, "error", str(e))
         return {"done": False, "problem": str(e)}
     try:
-        key = ctx.step("key", access_token, ctx)
+        key = access_token(ctx)  # not a step: a job's steps are shown in Helios
     except OSError:  # offline while renewing the key
         save_status(ctx, "error", OFFLINE)
         return {"done": False, "problem": OFFLINE}
@@ -282,7 +294,9 @@ def sync_now(ctx: Context, allow: bool) -> dict:
     cache = ctx.store.get("cache", {}) if ctx.store is not None else {}
     days = int(ctx.config.get("days") or gcal.HORIZON_DAYS)
     problems = []
-    for cal in calendars_of(ctx):
+    ids = calendars_of(ctx)
+    listed = ctx.step("calendar list", list_calendars, ctx, key) if "all" in ids else None
+    for cal in gcal.expand_calendars(ids, listed):
         got = ctx.step(f"read {cal}", fetch_calendar, ctx, key, cal, days)
         if got.get("auth"):  # the key was refused or lacks the scope: only a new Allow fixes it
             msg = got["error"]

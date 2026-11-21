@@ -22,5 +22,5 @@ permissions:
 
 config:
   chrome_profile: {type: text, default: "Sasanka", label: The Chrome profile you allow it in (its name or email)}
-  calendars: {type: list, default: ["primary", "en.lk#holiday@group.v.calendar.google.com"], label: "Calendars to read, one id per line (primary is yours; a holiday calendar's id contains #holiday@)"}
+  calendars: {type: list, default: ["all", "en.lk#holiday@group.v.calendar.google.com"], label: "Calendars to read, one id per line (all = every calendar ticked in Google Calendar; primary = your main one; a holiday calendar's id contains #holiday@)"}
   days: {type: int, default: 30, label: How many days ahead to read}
