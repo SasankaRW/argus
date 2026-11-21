@@ -156,6 +156,8 @@ def test_the_timeline_and_events():
 def test_the_logs_view_tells_each_request_as_a_line_and_opens_its_trace():
     lg = con.LogsView(FakeApi())
     wait_for(lambda: lg.stories and lg.rows and lg.calls, 6)
+    assert lg.mode == "logs"  # Argus's own log first; Ari's requests are one key away
+    lg.key("l")
     out = text_of(lg.render(0.0, 30))
     assert "play famous on spotify" in out and "search box not found" in out and "kohomada" in out
     assert "what's the time" in out and "It's 7 pm." in out and "8.2s" in out
@@ -263,7 +265,9 @@ def test_the_panes_fill_their_space():
     logs = con.LogsView(api)
     wait_for(lambda: logs.stories and logs.rows)
     text = text_of(logs.render(1.0, 30, 160), 160)
-    assert "latest log lines" in text and "voice unavailable" in text
+    assert "voice unavailable" in text  # the log, first
+    logs.key("l")
+    assert "latest log lines" in text_of(logs.render(1.0, 30, 160), 160)
 
     from rich.text import Text
     chart = con.bars(Text, [{"ok": 1}, {"ok": 4, "failed": 2}, {}], [("ok", "x"), ("failed", "y")], 4, 12, start)
