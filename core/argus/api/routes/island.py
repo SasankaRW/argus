@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
 from ... import ask as ask_mod
+from ... import gcal
 from ... import island as island_mod
 from ...tools import ToolError
 from ..schemas import AskDo
@@ -53,6 +55,18 @@ def build_router(deps: Deps) -> APIRouter:
         """Today's weather for the island's calendar page (brief.weather's town); {} when no town is set or the
         forecast can't be reached. Kept for an hour, like the brief's."""
         return await argus.island_weather()
+
+    @router.get("/island/calendar", dependencies=guarded)
+    async def island_calendar() -> dict:
+        """Google Calendar events and holidays for the island's calendar page, from the `calendar` plugin's last
+        good read (today .. +30 days): {connected, updated, events: [{title, start, end, all_day, calendar}]}.
+        Not connected: {connected: false, events: []}, never an error."""
+        def fn(conn):
+            rows = conn.execute("SELECT key, value FROM plugin_state WHERE plugin = 'calendar' AND key IN "
+                                "('status', 'cache')").fetchall()
+            return {k: json.loads(v) for k, v in rows if v is not None}
+
+        return gcal.for_island(await argus.store.read(fn))
 
     @router.post("/island/run", dependencies=guarded)
     async def island_run(body: AskDo) -> dict:
