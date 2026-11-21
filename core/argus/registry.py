@@ -100,6 +100,7 @@ class Registry:
         self.store = store
         self.clock = clock
         self.phone_blocked: Callable[[], str] = lambda: ""  # set by Argus: why Android blocks the phone app's notes
+        self.app_nodes: Callable[[], list[dict[str, Any]]] = lambda: []  # set by Argus: Life Hub and Tracker's health
 
     async def component(self, cid: str, kind: str, label: str, group: str | None = None,
                         meta: dict[str, Any] | None = None) -> bool:
@@ -234,6 +235,11 @@ class Registry:
                     node["calls"] = st["calls"]
                     node["last_latency_ms"] = st["last_latency_ms"]
                 nodes.append(node)
+            for a in self.app_nodes():  # Life Hub and Tracker: only while their plugin is on with an address
+                if a.get("plugin") in paused["plugin"]:  # stopped from Helios
+                    continue
+                known.add(a["id"])
+                nodes.append(a)
             # endpoints seen in events but never registered (e.g. the watchdog) still get a box
             for e in edges:
                 for end in (e["src"], e["dst"]):

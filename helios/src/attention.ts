@@ -44,5 +44,6 @@ export function attentionItems(
       detail: o.approvals.oldest ? `oldest ${waited(o.now - o.approvals.oldest)}` : undefined, act: { kind: "review", label: "Review" } });
   }
   const rank = { bad: 0, plain: 1, warn: 2 } as const;
-  return items.sort((a, b) => rank[a.tone] - rank[b.tone]);
+  const top = new Set(cards.filter((c) => c.top).map((c) => c.id));  // an app that stopped answering leads the row
+  return items.sort((a, b) => Number(top.has(b.id)) - Number(top.has(a.id)) || rank[a.tone] - rank[b.tone]);
 }

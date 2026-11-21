@@ -12,6 +12,7 @@ from datetime import datetime
 from . import __version__
 from . import settings as settings_mod
 from .activities import Activities
+from .apphealth import APPS, AppHealth
 from .approvals import Approvals
 from .backup import Backups
 from .config import PRIORITY_BATCH, PRIORITY_INTERACTIVE, Config, ScheduleConfig
@@ -59,6 +60,8 @@ class Argus:
         self.models = ModelBoard(self.store, cfg)
         self.outbox = Outbox(self.store, cfg)
         self.registry.phone_blocked = lambda: self.outbox.inbox.blocked_now() if self.outbox.inbox else ""
+        self.app_health = AppHealth(self._app_targets)
+        self.registry.app_nodes = self.app_health.nodes
         self.approvals = Approvals(self.store, self.jobs, cfg)
         self.phone = PhoneWatch(self.store, cfg, self.approvals, self.outbox)
         self.plugin_host = PluginHost(cfg)
@@ -77,7 +80,7 @@ class Argus:
             cfg.jobs.watchdog_interval_seconds,
             extra=[lambda: self.registry.mark_stale_workers(stale_after), self.prune_events,
                    self.approval_tick, self.scheduler.tick,
-                   self.power.tick, self.backup_tick, self.daily_tick],
+                   self.power.tick, self.backup_tick, self.daily_tick, self.app_health.tick],
         )
         self.backups = Backups(cfg.db_path, cfg.backup.keep)
         self.last_backup: dict | None = None
@@ -97,6 +100,18 @@ class Argus:
         self.pruned_events = 0
         self.weather = Weather()
         self.base_settings = settings_mod.base_values(cfg)  # argus.yaml's values, before Helios's overrides
+
+    def _app_targets(self) -> dict[str, tuple[str, str]]:
+        """{plugin id: (address, API key)} of the apps to check: plugin loaded (not in plugins.off) with an address
+        set, else no box. Plugin.live is only the dry-run switch, so it is not used; a plugin stopped from Helios is
+        dropped from the map in Registry.map."""
+        out = {}
+        for pid, (_node, _name, key_env) in APPS.items():
+            p = self.plugin_host.plugins.get(pid)
+            url = str(p.config.get("url") or "").strip() if p else ""
+            if p and url:
+                out[pid] = (url, self.cfg.secrets.env.get(key_env, ""))
+        return out
 
     def model_needs(self) -> list[str]:
         """What a worker must offer to run model work (models.needs: [gpu] on the laptop)."""
@@ -589,6 +604,7 @@ class Argus:
                 await asyncio.gather(task, return_exceptions=True)
             self._activity_task = None
         await self.watchdog.stop()
+        await self.app_health.stop()
         await asyncio.to_thread(self.marker.stop)  # a clean stop: no "Argus is back" message next time
         await self.phone.stop()
         await self.outbox.stop()
